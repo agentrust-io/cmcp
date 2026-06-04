@@ -1,5 +1,11 @@
 # Phase 2 Proxy Security: Parser Fuzzing
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 This document defines the fuzzing definition of done (DoD) for the Phase 2 proxy parser. No Phase 2 release ships without satisfying every item below.
 
 ## Fuzz Targets
@@ -44,3 +50,4 @@ Every parse path has an explicit error handler. No input reaches undefined behav
 3. Do not pass partial parse results downstream. A partial result is treated as a failed parse.
 
 This contract applies to all four fuzz targets. Any code path that returns a null, panics, or passes a partial result downstream is a bug, not an acceptable error mode.
+
