@@ -1,5 +1,11 @@
 # Cedar Policy Specification
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 This document specifies the Cedar policy bundle format, policy expression examples, enforcement modes, evaluation decision flow, and related governance features for the cMCP Gateway.
 
 ---
@@ -346,3 +352,4 @@ Break-glass use is visible in the TRACE Claim:
 ```
 
 TRACE Claims with a non-empty `catalog_exceptions` list are flagged for auditor review. Break-glass use appears in all TRACE Claims for the duration of that enclave session.
+
