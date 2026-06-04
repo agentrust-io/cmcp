@@ -1,5 +1,11 @@
 # cmcp-verify: Verification Library Interface Spec
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 This document is the interface specification for the `cmcp-verify` Python library. Implementation is separate from this spec. All type stubs below define the public interface that the implementation must satisfy.
 
 ## Type Stubs
@@ -57,17 +63,66 @@ def verify_trace_claim(
     ...
 ```
 
-## Provider-Specific Verification Notes
+## Per-Provider Verification Steps
 
-**TPM.** Verify `attestation_report.measurement` against expected PCR values using TSS2 or tpm2-tools. Requires access to the TPM endorsement key certificate chain.
+### TPM Verification
 
-**SEV-SNP.** Verify `attestation_report.measurement` against AMD's VCEK certificate chain. AMD provides a public verification service at `kdsintf.amd.com`.
+1. Obtain the TPM Endorsement Key (EK) certificate from the TPM manufacturer (e.g., fetched from the TPM itself via Esys_ReadPublic or from the manufacturer's certificate authority at ek.{manufacturer}.com).
+2. Verify the EK certificate chains to a trusted manufacturer CA (TPM manufacturer CA roots are published by Microsoft, Amazon, Google for their vTPM implementations).
+3. Extract the TPM2B_ATTEST structure from attestation_report.raw_evidence.
+4. Verify the TPM2_Quote signature using the Attestation Key (AK) public key, which must be certified by the EK.
+5. Confirm the quote's qualifying_data matches SHA-256(tee_public_key || session_id) from the TRACE Claim -- this binds the quote to the specific gateway instance.
+6. Confirm the PCR values in the quote match attestation_report.measurement (compare byte-by-byte).
+7. If all checks pass: TEE identity is verified for TPM.
 
-**TDX.** Verify against Intel's DCAP attestation service. Requires Intel attestation collateral (PCK certificate, TCB info, QE identity).
+### SEV-SNP Verification
 
-**Opaque.** Verify against Opaque's managed attestation service. The managed runtime handles collateral retrieval.
+1. Fetch the AMD VCEK (Versioned Chip Endorsement Key) certificate for the specific CPU. VCEK fetch URL format: https://kdsintf.amd.com/vcek/v1/{product}/{hwid}?{tcb_params}. Product is "Milan" or "Genoa". hwid and tcb_params come from the SNP attestation report.
+2. Verify VCEK certificate chains to AMD Root CA (download from https://kdsintf.amd.com/vcek/v1/Milan/cert_chain).
+3. Parse the SNP attestation report from attestation_report.raw_evidence (binary format per AMD SEV-SNP Firmware ABI Specification, Table 22).
+4. Verify the report signature using the VCEK public key.
+5. Confirm report.REPORT_DATA == SHA-256(tee_public_key || session_id) (bytes 0-31 of REPORT_DATA).
+6. Confirm report.MEASUREMENT == bytes decoded from attestation_report.measurement (the 48-byte launch measurement).
+7. Confirm report.POLICY fields match expected configuration (no debug mode, SMT policy as expected).
+8. If all checks pass: TEE identity is verified for SEV-SNP.
 
-**Phase 1 support matrix.** Phase 1 must support TPM and SEV-SNP at minimum. TDX is high priority for the first release. Opaque is handled by the managed runtime and does not require a separate implementation path.
+### Intel TDX Verification
+
+1. Fetch TDX Quote Collateral using Intel's DCAP (Data Center Attestation Primitives) API at https://api.trustedservices.intel.com/tdx/certification/v4/qe/identity.
+2. Parse the TDX Quote from attestation_report.raw_evidence (follows Intel TDX Quote Generation Service format).
+3. Verify the Quote using the QE (Quoting Enclave) identity and PCK (Provisioning Certification Key) certificate chain from the collateral.
+4. Confirm TD_REPORT.REPORT_DATA == SHA-256(tee_public_key || session_id).
+5. Confirm TD_REPORT.MRTD || RTMR0 || RTMR1 || RTMR2 || RTMR3 == attestation_report.measurement (concatenated).
+6. If all checks pass: TEE identity is verified for TDX.
+
+### Opaque Managed Verification
+
+1. Call the Opaque attestation verification endpoint (provided at deployment time) with the attestation_report.raw_evidence as the request body.
+2. The endpoint returns: {verified: true|false, measurement_matched: true|false, error?: string}.
+3. If verified and measurement_matched: TEE identity is verified for Opaque Managed.
+
+## What "partially_verified" means
+
+VerificationStatus.PARTIALLY_VERIFIED is returned when:
+- tee_public_key and signature are verified, but the attestation provider is not supported by this version of cmcp-verify (e.g., a new provider added after the library version)
+- Some fields are verified but others are absent from the claim (e.g., tool_catalog.hash is missing -- older TRACE Claim format)
+- verified_fields lists what passed; unverified_fields lists what was skipped with reason
+
+## Error codes
+
+VerificationError enum:
+- UNSUPPORTED_PROVIDER: attestation_report.provider is not in the supported list for this library version
+- SIGNATURE_INVALID: signature does not verify against tee_public_key
+- PUBLIC_KEY_NOT_BOUND: tee_public_key is not bound to the attestation_report (measurement mismatch or quote verification failed)
+- POLICY_HASH_MISMATCH: policy_bundle.hash != approved.policy_bundle_hash
+- CATALOG_HASH_MISMATCH: tool_catalog.hash != approved.tool_catalog_hash
+- ATTESTATION_STALE: attestation_generated_at is older than max_attestation_age_seconds
+- CHAIN_BROKEN: audit_chain_root -> audit_chain_tip traversal fails (missing entries or hash mismatch)
+- CLAIM_MALFORMED: claim_json fails JSON Schema validation against the TRACE Claim schema
+
+## Phase 1 support matrix
+
+Phase 1 must support TPM and SEV-SNP at minimum. TDX is high priority for the first release. Opaque is handled by the managed runtime and does not require a separate implementation path.
 
 `SOFTWARE_ONLY` is a valid enum value for local development and CI environments. A claim with `provider: software-only` must always return `VerificationStatus.PARTIALLY_VERIFIED` with `failure_reason` set, never `VERIFIED`.
 
