@@ -1,5 +1,11 @@
 ﻿# Failure Mode Specification
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 Documents exact gateway behavior for every failure scenario.
 
 Closes #22.
