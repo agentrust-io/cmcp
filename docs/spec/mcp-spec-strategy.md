@@ -1,5 +1,11 @@
 # MCP Spec Evolution Strategy
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 This document covers the cMCP Gateway strategy for monitoring MCP spec evolution and contributing an attestation extension as an open standard.
 
 ## Monitoring Checklist (Weekly)
@@ -48,3 +54,4 @@ mcp_spec_version: "1.x.y"
 A version upgrade is blocked until the test suite passes with zero regressions.
 
 **Deprecation.** If MCP releases a breaking change to a message type the proxy depends on, the proxy maintains the old parser for one spec version cycle before requiring an upgrade. This gives operators one cycle to update their deployments.
+
