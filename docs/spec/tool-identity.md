@@ -1,10 +1,16 @@
 # Tool Identity and Catalog Specification
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 This document specifies how the cMCP Gateway identifies upstream MCP servers, prevents tool name collisions, and routes tool calls. These mechanisms close the protocol-level gap in MCP (issue #40): MCP defines no signed manifest binding a tool name to a publisher. The gateway closes this by maintaining a catalog that binds each tool name to a specific upstream server identity.
 
 ---
 
-## Section 1 — Server Identity Format
+## Section 1 -- Server Identity Format
 
 Each upstream MCP server has two identity anchors:
 
@@ -16,7 +22,7 @@ The SHA-256 fingerprint of the server's TLS certificate public key:
 SHA256:aabbccdd...
 ```
 
-This is a key-pinning approach: the fingerprint is stable across certificate renewals as long as the public key is stable. If the server rotates its private key, the fingerprint changes. The gateway detects this as an identity change and requires a catalog update before routing calls to that server.
+The fingerprint is computed over the server's public key. Its behavior at cert renewal depends on the configured rotation mode -- see [Cert Rotation Policy](#cert-rotation-policy) below.
 
 ### SPIFFE SVID
 
@@ -36,7 +42,7 @@ In Phase 1, each catalog entry must include at least one identity anchor (`tls_f
 
 ---
 
-## Section 2 — Catalog Entry Schema
+## Section 2 -- Catalog Entry Schema
 
 Each tool in the catalog has a full entry binding the tool name to its upstream server and approved definition:
 
@@ -47,7 +53,8 @@ Each tool in the catalog has a full entry binding the tool name to its upstream 
     "display_name": "Salesforce MCP Server",
     "url": "https://mcp.salesforce.com/mcp",
     "tls_fingerprint": "SHA256:aabbcc...",
-    "spiffe_id": "spiffe://corp.example/salesforce/mcp-server"
+    "spiffe_id": "spiffe://corp.example/salesforce/mcp-server",
+    "rotation_mode": "key-pinned"
   },
   "approved_definition": {
     "description": "Query Salesforce records by SOQL",
@@ -76,6 +83,7 @@ Each tool in the catalog has a full entry binding the tool name to its upstream 
 | `server.url` | string | yes | URL the gateway routes calls to for this tool. |
 | `server.tls_fingerprint` | string | at least one of `tls_fingerprint` or `spiffe_id` | SHA-256 fingerprint of the server's TLS public key. |
 | `server.spiffe_id` | string | at least one of `tls_fingerprint` or `spiffe_id` | SPIFFE SVID URI for the server. |
+| `server.rotation_mode` | string | no (default: `key-pinned`) | `key-pinned` or `cert-pinned`. Controls how cert renewal is handled. See [Cert Rotation Policy](#cert-rotation-policy). |
 | `approved_definition` | object | yes | The approved tool definition (description and schemas) as reviewed by the security team. |
 | `definition_hash` | string | yes | SHA-256 of `canonical_json(approved_definition)`. Used for mutation detection. |
 | `added_at` | ISO8601 | yes | Timestamp when the entry was added to the catalog. |
@@ -93,7 +101,7 @@ This closes the rug-pull attack vector (P4.2): a compromised upstream server can
 
 ---
 
-## Section 3 — Collision Detection
+## Section 3 -- Collision Detection
 
 Tool name uniqueness is enforced at catalog load time (enclave startup).
 
@@ -125,19 +133,19 @@ Silent collision resolution (e.g., last-write-wins or first-registered-wins) wou
 
 ---
 
-## Section 4 — Routing
+## Section 4 -- Routing
 
 When the gateway receives a tool call for `tool_name`:
 
 1. Look up `tool_name` in the catalog.
    - If not found: deny the call, log as `tool_not_in_catalog`.
 
-2. Extract `server.url`, `server.tls_fingerprint`, and `server.spiffe_id` from the catalog entry.
+2. Extract `server.url`, `server.tls_fingerprint`, `server.spiffe_id`, and `server.rotation_mode` from the catalog entry.
 
 3. Open (or reuse) a connection to `server.url`.
 
 4. Verify the server's identity:
-   - If `tls_fingerprint` is set: verify the server's TLS certificate public key fingerprint matches `catalog[tool_name].server.tls_fingerprint`.
+   - If `tls_fingerprint` is set: verify the server's TLS certificate public key fingerprint matches `catalog[tool_name].server.tls_fingerprint`. For `key-pinned` mode, the fingerprint is stable across cert renewals; for `cert-pinned` mode, a new cert triggers an identity mismatch even if the key is the same.
    - If `spiffe_id` is set: verify the server's SPIFFE SVID matches `catalog[tool_name].server.spiffe_id` via the SPIRE trust bundle.
    - If either verification that is configured fails: deny the call, log as `identity_mismatch`.
 
@@ -152,8 +160,31 @@ When the gateway receives a tool call for `tool_name`:
 
 An `identity_mismatch` event indicates one of:
 
-- The upstream server's TLS certificate was rotated with a new key (legitimate rotation, requires catalog update).
+- The upstream server's TLS certificate was rotated with a new key (legitimate rotation requiring catalog update, or key compromise).
+- The upstream server's TLS certificate was renewed with the same key but `cert-pinned` mode is configured (legitimate renewal requiring catalog update).
 - A man-in-the-middle or DNS hijack is in progress.
 - The server was replaced with a different instance (legitimate infrastructure change, requires catalog update).
 
 In all cases, the gateway denies the call and does not forward any data to the server until the catalog is updated and the enclave is restarted with the new measurement.
+
+---
+
+## Cert Rotation Policy
+
+Two modes are supported. The operator selects one when adding a server to the catalog by setting `server.rotation_mode`.
+
+**Mode A: Key-pinning (recommended)**
+The catalog entry stores the fingerprint of the server's current public key. The server reuses the same keypair at cert renewal (renewing only the certificate, not the key). The fingerprint does not change at renewal. No catalog update required.
+- Advantage: no operational disruption at cert renewal
+- Risk: if the server's private key is compromised, the attacker can use the same key indefinitely until the catalog is manually updated
+- Catalog field: `"rotation_mode": "key-pinned"`
+
+**Mode B: Cert-pinning**
+The catalog entry stores the fingerprint of the server's specific certificate (including its expiry). At cert renewal (even with the same keypair), the fingerprint changes. A catalog update and enclave restart are required.
+- Advantage: automatic detection of any cert change, including unauthorized renewal
+- Risk: operational overhead at every cert renewal; agents cannot call the tool until the catalog is updated
+- Catalog field: `"rotation_mode": "cert-pinned"`
+
+**Default:** Mode A (key-pinned) for HTTP/SSE MCP servers with long-lived endpoints. Mode B for short-lived or frequently rotated certs.
+
+**For SPIFFE-based identity:** SPIFFE SVIDs are short-lived (typically 1 hour). The catalog entry stores the SPIFFE ID URI (not the SVID certificate itself). SPIRE issues new SVIDs automatically; the SPIFFE ID URI is stable across renewals. No cert rotation policy needed when SPIFFE is the primary identity anchor.

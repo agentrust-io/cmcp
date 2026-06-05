@@ -1,0 +1,118 @@
+// cMCP Gateway Cedar Schema
+// This is the normative schema for all Cedar policies defined in the cMCP Gateway specification.
+// All entity types, action types, and context attributes used in SPEC.md policy examples
+// are declared here. Policy authors MUST validate policies against this schema before merging.
+//
+// Namespace: cMCP
+// Format: Cedar JSON schema (cedar-policy >= 3.x)
+
+{
+  "cMCP": {
+    "entityTypes": {
+      "Principal": {
+        "memberOfTypes": [],
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "session_id": {
+              "type": "String",
+              "required": true
+            },
+            "workflow_id": {
+              "type": "String",
+              "required": true
+            },
+            "user_identity": {
+              "type": "String",
+              "required": false
+            }
+          }
+        }
+      },
+      "Resource": {
+        "memberOfTypes": [],
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "tool_name": {
+              "type": "String",
+              "required": true
+            },
+            "server_identity": {
+              "type": "String",
+              "required": true
+            },
+            "compliance_domain": {
+              "type": "String",
+              "required": true
+            },
+            "baa_covered": {
+              "type": "Boolean",
+              "required": true
+            },
+            "requires_baa": {
+              "type": "Boolean",
+              "required": true
+            },
+            "destination_class": {
+              "type": "String",
+              "required": true
+            },
+            "tool_category": {
+              "type": "String",
+              "required": true
+            },
+            "sensitivity_level": {
+              "type": "String",
+              "required": true
+            }
+          }
+        }
+      }
+    },
+    "actions": {
+      "call_tool": {
+        "appliesTo": {
+          "principalTypes": ["cMCP::Principal"],
+          "resourceTypes": ["cMCP::Resource"],
+          "context": {
+            "type": "Record",
+            "attributes": {
+              "session_id": {
+                "type": "String",
+                "required": true
+              },
+              "session_sensitivity": {
+                "type": "String",
+                "required": true
+              },
+              "session_max_sensitivity": {
+                "type": "String",
+                "required": true
+              },
+              "workflow_id": {
+                "type": "String",
+                "required": true
+              },
+              "workflow_allowed_tools": {
+                "type": "Set",
+                "element": {
+                  "type": "String"
+                },
+                "required": true
+              },
+              "enforcement_mode": {
+                "type": "String",
+                "required": true
+              },
+              "catalog_hash": {
+                "type": "String",
+                "required": true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

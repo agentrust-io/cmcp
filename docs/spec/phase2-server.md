@@ -1,5 +1,11 @@
 # Phase 2 cMCP Server Specification
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 ## Section 1 — Phase 2 Architecture Overview
 
 Phase 2 targets a different buyer than Phase 1. The Phase 1 buyer is an agent developer who deploys a gateway in front of their own agents. The Phase 2 buyer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Their enterprise customers — Phase 1 buyers — eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.
@@ -221,3 +227,4 @@ SaaS providers running MCP servers typically serve multiple enterprise customers
 - Limitation: isolation is not hardware-isolated between tenants at the memory level. The `tenant_isolation_mode` field in the attestation report must be set to `shared_tee_hw_partitioned` or `shared_tee_sw_only` to communicate this accurately to verifiers.
 
 Both options are supported in Phase 2. The `server_attestation.tenant_isolation_mode` field tells verifiers which option is in use. Enterprise customers whose compliance requirements mandate hardware-isolated tenancy should verify that the value is `separate_tee` before accepting the server's TRACE Claim.
+

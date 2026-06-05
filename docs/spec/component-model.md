@@ -1,5 +1,11 @@
 ﻿# MCP Component Model and Trust Boundaries
 
+---
+Status: Draft v0.1
+Last updated: 2026-06-04
+Stability: Unstable — expect breaking changes before v1.0
+---
+
 Defines the full component model, trust levels per phase, and the hardware vs. software trust boundary.
 
 Closes #43.
