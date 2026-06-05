@@ -9,30 +9,39 @@ per-provider and added in issues #62, #67.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from pathlib import Path
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from cryptography.hazmat.primitives.asymmetric.utils import (  # noqa: F401
-    decode_dss_signature,
-)
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from pydantic import ValidationError
 
-_SCHEMA_PATH = Path(__file__).parent.parent.parent / "schemas" / "trace-claim.schema.json"
+from cmcp_gateway.audit.trace_claim import GatewayClaim
+
+_SW_ONLY_FIRMWARE = "software-only-dev-mode"
+
+_KNOWN_PLATFORMS = {
+    "amd-sev-snp",
+    "intel-tdx",
+    "tpm2",
+    "nvidia-h100",
+    "nvidia-blackwell",
+    "aws-nitro",
+    "arm-cca",
+    "google-confidential-space",
+}
 
 
-class VerificationStatus(str, Enum):
+class VerificationStatus(StrEnum):
     VERIFIED = "verified"
     UNVERIFIED = "unverified"
     PARTIALLY_VERIFIED = "partially_verified"
 
 
-class VerificationError(str, Enum):
+class VerificationError(StrEnum):
     UNSUPPORTED_PROVIDER = "UNSUPPORTED_PROVIDER"
     SIGNATURE_INVALID = "SIGNATURE_INVALID"
     PUBLIC_KEY_NOT_BOUND = "PUBLIC_KEY_NOT_BOUND"
@@ -69,20 +78,22 @@ def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
 
 
 def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
-    """Verify the Ed25519 signature over the canonical claim body."""
+    """Verify the Ed25519 signature using the JWK public key in trace.cnf.jwk.x."""
     try:
-        pub_hex: str = claim["tee_public_key"]
-        pub_bytes = bytes.fromhex(pub_hex)
+        x_b64: str = claim["trace"]["cnf"]["jwk"]["x"]
+        padding = 4 - (len(x_b64) % 4)
+        if padding != 4:
+            x_b64 += "=" * padding
+        pub_bytes = base64.urlsafe_b64decode(x_b64)
         pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
     except (KeyError, ValueError) as exc:
-        return False, f"cannot parse tee_public_key: {exc}"
+        return False, f"cannot parse trace.cnf.jwk.x: {exc}"
 
     sig_b64: str = claim.get("signature", "")
     if not sig_b64:
         return False, "signature field is empty"
 
     try:
-        # Add padding if needed for urlsafe base64
         padding = 4 - (len(sig_b64) % 4)
         if padding != 4:
             sig_b64 += "=" * padding
@@ -104,9 +115,9 @@ def _check_attestation_freshness(
 ) -> tuple[int, bool]:
     """Return (age_seconds, is_fresh)."""
     try:
-        generated_at_str: str = claim["attestation_report"]["attestation_generated_at"]
+        generated_at_str: str = claim["gateway"]["attestation_generated_at"]
         generated_at = datetime.fromisoformat(generated_at_str)
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         age = int((now - generated_at).total_seconds())
         return age, age <= max_age_seconds
     except (KeyError, ValueError):
@@ -114,31 +125,24 @@ def _check_attestation_freshness(
 
 
 def _check_audit_chain(claim: dict[str, Any]) -> tuple[bool, str | None]:
-    """
-    Check audit chain consistency: chain_root, chain_tip, and audit_chain_length
-    must be consistent. Full chain walk requires fetching the exported audit log
-    (issue #55) — here we verify the fields are present and non-empty.
-    """
-    root = claim.get("audit_chain_root", "")
-    tip = claim.get("audit_chain_tip", "")
-    length = claim.get("audit_chain_length", 0)
+    """Check that audit_chain root, tip, and length are present and non-empty."""
+    chain = claim.get("gateway", {}).get("audit_chain", {})
+    root = chain.get("root", "")
+    tip = chain.get("tip", "")
+    length = chain.get("length", 0)
     if not root or not tip:
-        return False, "audit_chain_root or audit_chain_tip is empty"
+        return False, "gateway.audit_chain.root or .tip is empty"
     if length < 1:
-        return False, "audit_chain_length is 0"
+        return False, "gateway.audit_chain.length is 0"
     return True, None
 
 
 def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None]:
-    """Validate against JSON Schema if available."""
-    if not _SCHEMA_PATH.exists():
-        return True, None
+    """Validate claim structure using the GatewayClaim Pydantic model."""
     try:
-        import jsonschema
-        schema = json.loads(_SCHEMA_PATH.read_text())
-        jsonschema.validate(claim, schema)
+        GatewayClaim.model_validate(claim)
         return True, None
-    except Exception as exc:
+    except ValidationError as exc:
         return False, str(exc)
 
 
@@ -151,13 +155,13 @@ def verify_trace_claim(
     Verify a TRACE Claim without trusting the operator.
 
     Steps:
-    1. JSON Schema validation
+    1. Pydantic schema validation (GatewayClaim)
     2. Ed25519 signature verification over canonical claim body
-    3. policy_bundle.hash check against approved.policy_bundle_hash
-    4. tool_catalog.hash check against approved.tool_catalog_hash
+    3. trace.policy.bundle_hash check against approved.policy_bundle_hash
+    4. gateway.catalog.hash check against approved.tool_catalog_hash
     5. Attestation freshness check
     6. Audit chain consistency check
-    7. Provider-specific attestation verification (dispatched per-provider)
+    7. Platform-specific attestation verification (dispatched per-platform)
 
     Returns VerificationResult with status and details.
 
@@ -194,14 +198,13 @@ def verify_trace_claim(
     sig_ok, sig_err = _verify_signature(claim_json)
     if sig_ok:
         verified.append("signature")
-        verified.append("tee_public_key")
     else:
-        unverified.extend(["signature", "tee_public_key"])
+        unverified.append("signature")
         failure = VerificationError.SIGNATURE_INVALID
         details["signature_error"] = sig_err or "invalid signature"
 
     # Step 3: Policy bundle hash
-    claimed_policy = claim_json.get("policy_bundle", {}).get("hash", "")
+    claimed_policy = claim_json.get("trace", {}).get("policy", {}).get("bundle_hash", "")
     expected_policy = approved.policy_bundle_hash.removeprefix("sha256:")
     actual_policy = claimed_policy.removeprefix("sha256:")
     if actual_policy == expected_policy:
@@ -214,7 +217,7 @@ def verify_trace_claim(
         details["policy_hash_actual"] = actual_policy[:16] + "..."
 
     # Step 4: Catalog hash
-    claimed_catalog = claim_json.get("tool_catalog", {}).get("hash", "")
+    claimed_catalog = claim_json.get("gateway", {}).get("catalog", {}).get("hash", "")
     expected_catalog = approved.tool_catalog_hash.removeprefix("sha256:")
     actual_catalog = claimed_catalog.removeprefix("sha256:")
     if actual_catalog == expected_catalog:
@@ -245,17 +248,19 @@ def verify_trace_claim(
         if chain_err:
             details["chain_error"] = chain_err
 
-    # Step 7: Provider-specific attestation (dispatched)
-    provider = claim_json.get("attestation_report", {}).get("provider", "")
-    if provider == "software-only":
+    # Step 7: Platform-specific attestation
+    runtime = claim_json.get("trace", {}).get("runtime", {})
+    platform = runtime.get("platform", "")
+    firmware_version = runtime.get("firmware_version", "")
+
+    if platform == "tpm2" and firmware_version == _SW_ONLY_FIRMWARE:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = "software-only mode — not hardware-backed"
-    elif provider in ("tpm", "sev-snp", "tdx", "opaque"):
-        # Provider-specific verification implemented in issues #62, #67, #70
+    elif platform in _KNOWN_PLATFORMS:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = (
-            f"Provider '{provider}' attestation verification not yet implemented — "
-            f"see issues #62 (TPM), #67 (SEV-SNP), #70 (TDX/Opaque)"
+            f"Platform '{platform}' attestation verification not yet implemented — "
+            f"see issues #62 (TPM2), #67 (SEV-SNP), #70 (TDX/Opaque)"
         )
     else:
         unverified.append("hardware_attestation")

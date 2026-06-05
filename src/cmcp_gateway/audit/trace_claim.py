@@ -1,20 +1,30 @@
-"""TRACE Claim generation, signing, and validation — implements issues #49, #50, #52."""
+"""TRACE Claim (cmcp profile) — GatewayClaim envelope wrapping canonical TRACE fields."""
 
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
-import jsonschema
+from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo, ToolTranscript
+from pydantic import BaseModel, ConfigDict, Field
 
-from cmcp_gateway.errors import ClaimValidationError
+# ── Provider → canonical platform mapping ─────────────────────────────────────
 
-_SCHEMA_PATH = Path(__file__).parent.parent.parent.parent / "schemas" / "trace-claim.schema.json"
+_PROVIDER_MAP: dict[str, str] = {
+    "sev-snp": "amd-sev-snp",
+    "tdx": "intel-tdx",
+    "opaque": "intel-tdx",
+    "tpm": "tpm2",
+    "software-only": "tpm2",
+}
+
+_SW_ONLY_MEASUREMENT = "sha256:" + "0" * 64
+_SW_ONLY_FIRMWARE = "software-only-dev-mode"
+
+# ── Input DTOs (unchanged interface for callers) ───────────────────────────────
 
 
 @dataclass
@@ -55,50 +65,106 @@ class AttestationReportInfo:
     attestation_generated_at: str
     attestation_validity_seconds: int
     measurement_note: str | None = None
-    raw_evidence: str | None = None  # base64-encoded if present
+    raw_evidence: str | None = None
 
 
-@dataclass
-class TraceClaim:
-    trace_version: str
+# ── Pydantic output models ─────────────────────────────────────────────────────
+
+
+class CallGraphOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    compliance_domains_touched: list[str]
+    cross_boundary_events: list[dict[str, str]]
+
+
+class CallSummaryOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_calls_total: int
+    tool_calls_allowed: int
+    tool_calls_denied: int
+    tool_calls_faulted: int
+    tools_invoked: list[str]
+    session_max_sensitivity: str
+    call_graph_summary: CallGraphOut
+
+
+class AuditChainSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    root: str
+    tip: str
+    length: int
+
+
+class CatalogSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hash: str
+    drift_detected: bool = False
+
+
+class GatewayTrace(BaseModel):
+    """Phase 1 TRACE fields applicable to the cmcp gateway context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    eat_profile: Literal["tag:agentrust.io,2026:trace-v0.1"]
+    iat: Annotated[int, Field(ge=1700000000)]
+    subject: Annotated[str, Field(pattern=r"^spiffe://")]
+    runtime: RuntimeInfo
+    policy: PolicyInfo
+    data_class: str
+    tool_transcript: ToolTranscript | None = None
+    cnf: ConfirmationKey
+
+
+class GatewayAddenda(BaseModel):
+    """cmcp-specific fields outside the canonical TRACE spec."""
+
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
-    timestamp_utc: str
-    tee_public_key: str
-    attestation_report: AttestationReportInfo
-    policy_bundle: PolicyBundleInfo
-    tool_catalog: ToolCatalogInfo
-    call_summary: CallSummary
-    audit_chain_root: str
-    audit_chain_tip: str
-    audit_chain_length: int
+    audit_chain: AuditChainSummary
+    call_summary: CallSummaryOut
+    catalog: CatalogSummary
+    attestation_generated_at: str
+    attestation_validity_seconds: int
     attestation_stale: bool
-    catalog_exceptions: list[dict[str, str]]
+    catalog_exceptions: list[dict[str, str]] = Field(default_factory=list)
+
+
+class GatewayClaim(BaseModel):
+    """cmcp TRACE profile — canonical trust fields nested inside a gateway envelope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cmcp_version: str = "1.0"
+    trace: GatewayTrace
+    gateway: GatewayAddenda
     signature: str = ""
 
 
-def _to_dict(obj: Any) -> Any:
-    """Recursively convert dataclasses to dicts suitable for JSON serialization."""
-    if hasattr(obj, "__dataclass_fields__"):
-        return {k: _to_dict(v) for k, v in asdict(obj).items() if v is not None or k == "signature"}
-    if isinstance(obj, list):
-        return [_to_dict(i) for i in obj]
-    if isinstance(obj, dict):
-        return {k: _to_dict(v) for k, v in obj.items()}
-    return obj
+# ── Serialization and signing ──────────────────────────────────────────────────
+
+
+def _to_dict(claim: GatewayClaim) -> dict[str, Any]:
+    return claim.model_dump(exclude_none=True)
 
 
 def canonical_json(claim_dict: dict[str, Any]) -> bytes:
-    """
-    Canonical serialization for signing: sorted keys, no whitespace, UTF-8.
+    """Canonical serialization for signing: sorted keys, no whitespace, UTF-8.
+
     The 'signature' field is excluded from the body being signed.
     """
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
-def sign_trace_claim(claim: TraceClaim, signing_key: Any) -> str:
-    """
-    Sign the TRACE Claim with the TEE-sealed Ed25519 private key.
+def sign_trace_claim(claim: GatewayClaim, signing_key: Any) -> str:
+    """Sign the GatewayClaim with the TEE-sealed Ed25519 private key.
+
     Returns base64url-encoded signature (no padding).
     """
     claim_dict = _to_dict(claim)
@@ -107,38 +173,56 @@ def sign_trace_claim(claim: TraceClaim, signing_key: Any) -> str:
     return base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
 
 
-def _load_schema() -> dict[str, Any] | None:
-    if _SCHEMA_PATH.exists():
-        return json.loads(_SCHEMA_PATH.read_text())
-    return None
+# ── Builder helpers ────────────────────────────────────────────────────────────
 
 
-def validate_trace_claim(claim_dict: dict[str, Any]) -> None:
-    """
-    Validate a TRACE Claim dict against schemas/trace-claim.schema.json.
-    Raises ClaimValidationError listing all violations.
+def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
+    provider = report.provider
+    platform = _PROVIDER_MAP.get(provider, "tpm2")
 
-    Called automatically in generate_trace_claim — callers cannot get an
-    invalid claim (conformance: TRACE-001).
-    """
-    schema = _load_schema()
-    if schema is None:
-        return  # schema not present (e.g. in test environment without schemas/)
-
-    validator = jsonschema.Draft7Validator(schema)
-    errors = list(validator.iter_errors(claim_dict))
-    if errors:
-        messages = [f"{'.'.join(str(p) for p in e.absolute_path) or 'root'}: {e.message}" for e in errors]
-        raise ClaimValidationError(
-            f"TRACE Claim schema validation failed ({len(errors)} errors)",
-            detail="; ".join(messages),
+    if provider == "software-only":
+        return RuntimeInfo(
+            platform=platform,
+            measurement=_SW_ONLY_MEASUREMENT,
+            firmware_version=_SW_ONLY_FIRMWARE,
         )
+
+    measurement = (
+        report.measurement
+        if report.measurement.startswith(("sha256:", "sha384:"))
+        else f"sha256:{report.measurement}"
+    )
+    try:
+        nonce = base64.urlsafe_b64encode(bytes.fromhex(report.report_data)).rstrip(b"=").decode()
+    except ValueError:
+        nonce = None
+
+    return RuntimeInfo(platform=platform, measurement=measurement, nonce=nonce)
+
+
+def _build_policy(bundle: PolicyBundleInfo) -> PolicyInfo:
+    mode_map = {"enforcing": "enforce", "advisory": "advisory", "silent": "silent"}
+    return PolicyInfo(
+        bundle_hash=bundle.hash,
+        enforcement_mode=mode_map.get(bundle.enforcement_mode, "advisory"),
+        version=bundle.policy_version,
+    )
+
+
+def _build_cnf(signing_key: Any) -> ConfirmationKey:
+    pub_hex: str = signing_key.public_key_hex
+    x = base64.urlsafe_b64encode(bytes.fromhex(pub_hex)).rstrip(b"=").decode()
+    kid = f"cmcp-{pub_hex[:8]}"
+    return ConfirmationKey(jwk=JWK(kty="OKP", crv="Ed25519", x=x, kid=kid))
+
+
+# ── Public API ─────────────────────────────────────────────────────────────────
 
 
 def generate_trace_claim(
     *,
     session_id: str,
-    tee_public_key: str,
+    signing_key: Any,
     attestation_report: AttestationReportInfo,
     policy_bundle: PolicyBundleInfo,
     tool_catalog: ToolCatalogInfo,
@@ -148,35 +232,66 @@ def generate_trace_claim(
     audit_chain_length: int,
     attestation_stale: bool = False,
     catalog_exceptions: list[dict[str, str]] | None = None,
-    signing_key: Any | None = None,
-) -> TraceClaim:
-    """
-    Generate a TRACE Claim from session data, validate it, and sign it.
+    do_sign: bool = True,
+) -> GatewayClaim:
+    """Generate a GatewayClaim from session data, validate it via Pydantic, and optionally sign it.
 
-    signing_key must be a SigningKey instance (from audit/keys.py) for production use.
-    If signing_key is None, the signature field is empty (dev mode only).
+    signing_key must be a SigningKey instance (audit/keys.py) — it is always required
+    to build the JWK confirmation key in trace.cnf.  Set do_sign=False to produce an
+    unsigned claim (e.g. in tests).
     """
-    claim = TraceClaim(
-        trace_version="1.0",
-        session_id=session_id,
-        timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
-        tee_public_key=tee_public_key,
-        attestation_report=attestation_report,
-        policy_bundle=policy_bundle,
-        tool_catalog=tool_catalog,
-        call_summary=call_summary,
-        audit_chain_root=audit_chain_root,
-        audit_chain_tip=audit_chain_tip,
-        audit_chain_length=audit_chain_length,
-        attestation_stale=attestation_stale,
-        catalog_exceptions=catalog_exceptions or [],
-        signature="",
+    tool_transcript_hash = (
+        audit_chain_tip
+        if audit_chain_tip.startswith(("sha256:", "sha384:"))
+        else f"sha256:{audit_chain_tip}"
     )
 
-    claim_dict = _to_dict(claim)
-    validate_trace_claim(claim_dict)
+    trace = GatewayTrace(
+        eat_profile="tag:agentrust.io,2026:trace-v0.1",
+        iat=int(datetime.now(tz=UTC).timestamp()),
+        subject=f"spiffe://cmcp.gateway/session/{session_id}",
+        runtime=_build_runtime(attestation_report),
+        policy=_build_policy(policy_bundle),
+        data_class=call_summary.session_max_sensitivity,
+        tool_transcript=ToolTranscript(
+            hash=tool_transcript_hash,
+            call_count=call_summary.tool_calls_total,
+        ),
+        cnf=_build_cnf(signing_key),
+    )
 
-    if signing_key is not None:
+    gateway = GatewayAddenda(
+        session_id=session_id,
+        audit_chain=AuditChainSummary(
+            root=audit_chain_root,
+            tip=audit_chain_tip,
+            length=audit_chain_length,
+        ),
+        call_summary=CallSummaryOut(
+            tool_calls_total=call_summary.tool_calls_total,
+            tool_calls_allowed=call_summary.tool_calls_allowed,
+            tool_calls_denied=call_summary.tool_calls_denied,
+            tool_calls_faulted=call_summary.tool_calls_faulted,
+            tools_invoked=call_summary.tools_invoked,
+            session_max_sensitivity=call_summary.session_max_sensitivity,
+            call_graph_summary=CallGraphOut(
+                compliance_domains_touched=call_summary.call_graph_summary.compliance_domains_touched,
+                cross_boundary_events=call_summary.call_graph_summary.cross_boundary_events,
+            ),
+        ),
+        catalog=CatalogSummary(
+            hash=tool_catalog.hash,
+            drift_detected=tool_catalog.drift_detected,
+        ),
+        attestation_generated_at=attestation_report.attestation_generated_at,
+        attestation_validity_seconds=attestation_report.attestation_validity_seconds,
+        attestation_stale=attestation_stale,
+        catalog_exceptions=catalog_exceptions or [],
+    )
+
+    claim = GatewayClaim(trace=trace, gateway=gateway)
+
+    if do_sign:
         claim.signature = sign_trace_claim(claim, signing_key)
 
     return claim

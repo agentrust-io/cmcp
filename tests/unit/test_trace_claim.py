@@ -1,4 +1,4 @@
-"""Tests for TRACE Claim generation, signing, and validation (issues #49, #50, #52)."""
+"""Tests for TRACE Claim generation and signing (cmcp TRACE profile)."""
 
 from __future__ import annotations
 
@@ -13,16 +13,14 @@ from cmcp_gateway.audit.trace_claim import (
     AttestationReportInfo,
     CallGraphSummary,
     CallSummary,
+    GatewayClaim,
     PolicyBundleInfo,
     ToolCatalogInfo,
-    TraceClaim,
     canonical_json,
     generate_trace_claim,
     sign_trace_claim,
-    validate_trace_claim,
     _to_dict,
 )
-from cmcp_gateway.errors import ClaimValidationError
 
 
 def _make_report() -> AttestationReportInfo:
@@ -50,11 +48,13 @@ def _make_call_summary() -> CallSummary:
     )
 
 
-def _make_claim(signing_key=None) -> TraceClaim:
+def _make_claim(signing_key: SigningKey | None = None) -> GatewayClaim:
+    key = signing_key or SigningKey()
+    sign = signing_key is not None
     chain = AuditChain("sess-001")
     return generate_trace_claim(
         session_id="sess-001",
-        tee_public_key="ab" * 32,
+        signing_key=key,
         attestation_report=_make_report(),
         policy_bundle=PolicyBundleInfo(
             hash="sha256:" + "0" * 64,
@@ -66,17 +66,16 @@ def _make_claim(signing_key=None) -> TraceClaim:
         audit_chain_root=chain.chain_root,
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,
-        signing_key=signing_key,
+        do_sign=sign,
     )
 
 
 # ── canonical_json ────────────────────────────────────────────────────────────
 
+
 def test_canonical_json_is_deterministic():
     d = {"b": 2, "a": 1, "signature": "sig"}
-    b1 = canonical_json(d)
-    b2 = canonical_json(d)
-    assert b1 == b2
+    assert canonical_json(d) == canonical_json(d)
 
 
 def test_canonical_json_excludes_signature():
@@ -94,19 +93,26 @@ def test_canonical_json_sorted_keys():
 
 # ── generate_trace_claim ──────────────────────────────────────────────────────
 
+
 def test_generate_claim_version():
     claim = _make_claim()
-    assert claim.trace_version == "1.0"
+    assert claim.cmcp_version == "1.0"
 
 
 def test_generate_claim_session_id():
     claim = _make_claim()
-    assert claim.session_id == "sess-001"
+    assert claim.gateway.session_id == "sess-001"
 
 
-def test_generate_claim_tee_public_key():
-    claim = _make_claim()
-    assert claim.tee_public_key == "ab" * 32
+def test_generate_claim_cnf_jwk():
+    key = SigningKey()
+    claim = _make_claim(signing_key=key)
+    assert claim.trace.cnf.jwk.kty == "OKP"
+    assert claim.trace.cnf.jwk.crv == "Ed25519"
+    assert claim.trace.cnf.jwk.x is not None
+    # JWK x must decode to the same bytes as the public key
+    x_b64 = claim.trace.cnf.jwk.x + "=="
+    assert base64.urlsafe_b64decode(x_b64) == bytes.fromhex(key.public_key_hex)
 
 
 def test_generate_claim_unsigned_has_empty_signature():
@@ -121,55 +127,96 @@ def test_generate_claim_signed_has_signature():
 
 
 def test_generate_claim_signature_verifiable():
-    """Conformance: TRACE-002 — signature verifies against tee_public_key."""
+    """TRACE-002 — signature verifies against trace.cnf.jwk."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    import cryptography.hazmat.primitives.serialization as ser
 
     key = SigningKey()
     claim = _make_claim(signing_key=key)
 
-    # Verify signature
     claim_dict = _to_dict(claim)
     body = canonical_json(claim_dict)
     sig_bytes = base64.urlsafe_b64decode(claim.signature + "==")
 
     pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(key.public_key_hex))
-    pub.verify(sig_bytes, body)  # raises if invalid
+    pub.verify(sig_bytes, body)  # raises InvalidSignature if wrong
 
 
 def test_generate_claim_tee_key_consistent_in_session():
-    """Conformance: ATTEST-003 — same tee_public_key across all claims in a session."""
+    """ATTEST-003 — same JWK across all claims produced with the same signing key."""
     key = SigningKey()
     c1 = _make_claim(signing_key=key)
     c2 = _make_claim(signing_key=key)
-    assert c1.tee_public_key == c2.tee_public_key
+    assert c1.trace.cnf.jwk.x == c2.trace.cnf.jwk.x
 
 
 def test_generate_claim_audit_chain_fields():
     chain = AuditChain("sess-002")
     chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
+    key = SigningKey()
     claim = generate_trace_claim(
         session_id="sess-002",
-        tee_public_key="00" * 32,
+        signing_key=key,
         attestation_report=_make_report(),
-        policy_bundle=PolicyBundleInfo(hash="sha256:" + "0" * 64, enforcement_mode="advisory", policy_version="0.1"),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64,
+            enforcement_mode="advisory",
+            policy_version="0.1",
+        ),
         tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
         call_summary=_make_call_summary(),
         audit_chain_root=chain.chain_root,
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,
+        do_sign=False,
     )
-    assert claim.audit_chain_root == chain.chain_root
-    assert claim.audit_chain_tip == chain.chain_tip
-    assert claim.audit_chain_length == 2  # session_start + tool_call
+    assert claim.gateway.audit_chain.root == chain.chain_root
+    assert claim.gateway.audit_chain.tip == chain.chain_tip
+    assert claim.gateway.audit_chain.length == 2  # session_start + tool_call
 
 
-# ── validate_trace_claim ──────────────────────────────────────────────────────
+def test_generate_claim_enforcement_mode_mapped():
+    """'enforcing' in PolicyBundleInfo maps to 'enforce' in the canonical TRACE field."""
+    key = SigningKey()
+    chain = AuditChain("sess-001")
+    claim = generate_trace_claim(
+        session_id="sess-001",
+        signing_key=key,
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64,
+            enforcement_mode="enforcing",
+            policy_version="1.0.0",
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        do_sign=False,
+    )
+    assert claim.trace.policy.enforcement_mode == "enforce"
 
-def test_validate_passes_for_valid_claim():
-    # Just check it doesn't raise (schema may not be present in test env)
+
+def test_generate_claim_software_only_platform():
+    """software-only provider maps to tpm2 platform with firmware marker."""
     claim = _make_claim()
-    claim_dict = _to_dict(claim)
-    # If schema is available, this validates; if not, it's a no-op
-    validate_trace_claim(claim_dict)
+    assert claim.trace.runtime.platform == "tpm2"
+    assert claim.trace.runtime.firmware_version == "software-only-dev-mode"
+
+
+# ── GatewayClaim Pydantic validation ─────────────────────────────────────────
+
+
+def test_gateway_claim_roundtrips_through_dict():
+    """GatewayClaim serializes and re-validates cleanly."""
+    claim = _make_claim()
+    d = _to_dict(claim)
+    GatewayClaim.model_validate(d)
+
+
+def test_to_dict_includes_signature_field():
+    """signature="" must appear in serialized dict even when empty."""
+    claim = _make_claim(signing_key=None)
+    d = _to_dict(claim)
+    assert "signature" in d
+    assert d["signature"] == ""
