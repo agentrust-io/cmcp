@@ -1,0 +1,45 @@
+// cMCP Cedar schema for the BFSI demo
+// See schemas/cedar-schema.cedarschema for the full normative schema
+
+{
+  "cMCP": {
+    "entityTypes": {
+      "Principal": {
+        "memberOfTypes": [],
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "session_id": { "type": "String", "required": true },
+            "workflow_id": { "type": "String", "required": true }
+          }
+        }
+      },
+      "Resource": {
+        "memberOfTypes": [],
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "tool_name": { "type": "String", "required": true },
+            "compliance_domain": { "type": "String", "required": true },
+            "baa_covered": { "type": "Bool", "required": true }
+          }
+        }
+      }
+    },
+    "actions": {
+      "call_tool": {
+        "appliesTo": {
+          "principalTypes": ["cMCP::Principal"],
+          "resourceTypes": ["cMCP::Resource"],
+          "context": {
+            "type": "Record",
+            "attributes": {
+              "session_max_sensitivity": { "type": "String", "required": true },
+              "workflow_id": { "type": "String", "required": true }
+            }
+          }
+        }
+      }
+    }
+  }
+}

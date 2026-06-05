@@ -1,0 +1,5 @@
+attestation:
+  provider: auto
+  enforcement_mode: advisory
+policy_bundle_path: ./policies/
+catalog_path: ./catalog.json
