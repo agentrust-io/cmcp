@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,9 +13,8 @@ from cmcp_gateway.catalog.loader import (
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.config import Config, AttestationConfig, EnforcementMode
+from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
 from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.bundle import PolicyBundle, PolicyManifest
 from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_gateway.session.state import SessionState
 

@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-import pytest
-
-from cmcp_gateway.catalog.loader import CatalogEntry, ServerIdentity, ApprovedDefinition
-from cmcp_gateway.inspection.pipeline import InspectionPipeline, _stage1_size_check, _stage4_injection_detection
+from cmcp_gateway.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
+from cmcp_gateway.inspection.pipeline import (
+    InspectionPipeline,
+    _stage1_size_check,
+    _stage4_injection_detection,
+)
 
 
 def _make_entry(sensitivity_level: str = "public", compliance_domain: str = "external") -> CatalogEntry:

@@ -7,8 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from cmcp_gateway.errors import CatalogHashMismatch, CatalogToolNameCollision, ConfigError, ToolNotInCatalog
 from cmcp_gateway.catalog.loader import ToolCatalog, load_catalog
+from cmcp_gateway.errors import (
+    CatalogHashMismatch,
+    CatalogToolNameCollision,
+    ConfigError,
+    ToolNotInCatalog,
+)
 
 ENTRY_1 = {
     "tool_name": "crm.query",

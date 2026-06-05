@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from datetime import datetime
 from unittest.mock import patch
 
 import pytest
 
-from cmcp_gateway.config import Config, AttestationConfig, TEEProvider as TEEProviderEnum
+from cmcp_gateway.config import Config
+from cmcp_gateway.config import TEEProvider as TEEProviderEnum
 from cmcp_gateway.errors import AttestationProviderUnsupported
 from cmcp_gateway.tee.base import SoftwareOnlyProvider, make_nonce
 from cmcp_gateway.tee.detect import detect_provider
@@ -91,9 +91,9 @@ def test_detect_returns_software_only_in_dev_mode(dev_config):
 
 
 def test_detect_raises_when_no_hardware_and_no_dev_mode(no_dev_config):
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None):
-        with pytest.raises(AttestationProviderUnsupported):
-            detect_provider(no_dev_config)
+    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None), \
+         pytest.raises(AttestationProviderUnsupported):
+        detect_provider(no_dev_config)
 
 
 def test_detect_via_env_var(no_dev_config, monkeypatch):
@@ -112,9 +112,9 @@ def test_detect_uses_first_available_provider(dev_config):
             return mock_provider
         return None
 
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", side_effect=_mock_get):
-        with patch.object(mock_provider, "detect", return_value=True):
-            provider = detect_provider(dev_config)
+    with patch("cmcp_gateway.tee.detect._get_provider_impl", side_effect=_mock_get), \
+         patch.object(mock_provider, "detect", return_value=True):
+        provider = detect_provider(dev_config)
     assert provider is mock_provider
 
 

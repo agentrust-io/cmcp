@@ -15,13 +15,12 @@ import logging
 import uuid
 from typing import Any
 
-from agent_os.stateless import ExecutionContext, ExecutionResult, StatelessKernel
+from agent_os.stateless import StatelessKernel
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from cmcp_gateway.errors import McpParseFailure, ToolNotInCatalog, PolicyDeny, TeeFault
 from cmcp_gateway.mcp.proxy import CMCPProxy
 
 logger = logging.getLogger(__name__)
@@ -77,9 +76,9 @@ class MCPServer:
 
         if method == "tools/call":
             return await self._handle_tool_call(rpc_id, params)
-        elif method == "tools/list":
+        if method == "tools/list":
             return await self._handle_tools_list(rpc_id)
-        elif method == "initialize":
+        if method == "initialize":
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": rpc_id,
@@ -89,18 +88,17 @@ class MCPServer:
                     "serverInfo": {"name": "cmcp-gateway", "version": "0.1.0"},
                 },
             })
-        else:
-            return JSONResponse(
-                {
-                    "jsonrpc": "2.0",
-                    "error": {
-                        "code": -32601,
-                        "message": f"Method not found: {method}",
-                    },
-                    "id": rpc_id,
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32601,
+                    "message": f"Method not found: {method}",
                 },
-                status_code=404,
-            )
+                "id": rpc_id,
+            },
+            status_code=404,
+        )
 
     async def _handle_tool_call(self, rpc_id: Any, params: dict[str, Any]) -> Response:
         """Route a tools/call request through the proxy."""

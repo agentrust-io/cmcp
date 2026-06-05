@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 
 from cmcp_gateway.errors import ConfigError, PolicyHashMismatch
-from cmcp_gateway.policy.bundle import PolicyBundle, load_policy_bundle, _canonical_bundle_hash
-
+from cmcp_gateway.policy.bundle import PolicyBundle, load_policy_bundle
 
 MANIFEST = {
     "version": "1.0.0",

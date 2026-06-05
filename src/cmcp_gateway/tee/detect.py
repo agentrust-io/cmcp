@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import os
 
-from cmcp_gateway.config import Config, TEEProvider as TEEProviderEnum
+from cmcp_gateway.config import Config
+from cmcp_gateway.config import TEEProvider as TEEProviderEnum
 from cmcp_gateway.errors import AttestationProviderUnsupported
 from cmcp_gateway.tee.base import SoftwareOnlyProvider, TEEProvider
 

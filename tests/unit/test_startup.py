@@ -11,7 +11,6 @@ import pytest
 
 from cmcp_gateway.startup import GatewayContext, run_startup
 
-
 MANIFEST = {
     "version": "1.0.0",
     "authored_at": "2026-06-04T00:00:00Z",
@@ -98,10 +97,10 @@ def test_startup_fails_on_no_tee_no_dev_mode(tmp_path):
     catalog_path.write_text("[]")
 
     # No CMCP_DEV_MODE, no hardware TEE → should exit 1
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None):
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(SystemExit) as exc_info:
-                run_startup(str(config_path))
+    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None), \
+         patch.dict(os.environ, {}, clear=True), \
+         pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
     assert exc_info.value.code == 1
 
 
