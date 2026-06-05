@@ -30,10 +30,12 @@ dependencies = [
     "starlette>=0.37",
     "uvicorn>=0.29",
     "click>=8.1",
-    "agent-os-kernel>=4.0",
 ]
 
 [project.optional-dependencies]
+agt = [
+    "agent-os-kernel>=3.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -43,6 +45,7 @@ dev = [
     "types-pyyaml",
     "bandit[toml]>=1.7",
     "pip-audit>=2.6",
+    "agent-os-kernel>=3.0",
 ]
 
 [project.scripts]
