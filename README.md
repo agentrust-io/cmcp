@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/icon.svg" width="96" height="96" alt="cMCP"/>
+</p>
+
 # cMCP — Confidential MCP Gateway
 
 Hardware-attested policy enforcement for MCP tool calls. Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine running inside a Trusted Execution Environment (TEE). The policy bundle hash is measured into the hardware attestation report before any code runs.
