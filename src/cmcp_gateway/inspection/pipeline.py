@@ -110,7 +110,7 @@ def _stage4_injection_detection(
                     injection_pattern=f"agt:{pattern_name}",
                 )
             return StageResult(stage="injection", decision="allow")
-        except Exception:
+        except Exception:  # nosec B110
             pass  # Fall through to regex
 
     # Fallback: regex patterns
@@ -157,7 +157,7 @@ def _classify_sensitivity(
                 if "pii" not in tags and "confidential" not in tags and \
                    "hipaa_phi" not in tags and "mnpi" not in tags:
                     tags.append("pii")
-        except Exception:
+        except Exception:  # nosec B110
             pass  # Degraded gracefully
 
     return tags
@@ -260,7 +260,7 @@ class InspectionPipeline:
                     deny_reasons.append(f"AGT MCPResponseScanner: {threat_name}")
                     injection_pattern = f"agt_mcp:{threat_name}"
                     stage_results["injection"] = "deny"
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
         s4 = _stage4_injection_detection(

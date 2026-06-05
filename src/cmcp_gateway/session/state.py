@@ -15,7 +15,7 @@ SENSITIVITY_ORDER: dict[str, int] = {
     "confidential": 2,
     "hipaa_phi": 3,
     "mnpi": 3,
-    "trade_secret": 3,
+    "trade_secret": 3,  # nosec B105
 }
 
 
