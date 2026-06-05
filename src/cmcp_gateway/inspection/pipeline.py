@@ -1,4 +1,14 @@
-"""Response inspection pipeline — implements issues #61, #65, #81."""
+"""
+Response inspection pipeline — implements issues #61, #65, #81.
+
+Stage 4 (injection detection) and Stage 3 (sensitivity classification) now
+delegate to AGT components where available:
+  - agent_os.prompt_injection.PromptInjectionDetector  (Stage 4)
+  - agent_os.credential_redactor.CredentialRedactor    (Stage 3 PII redaction)
+  - agent_os.mcp_response_scanner.MCPResponseScanner   (Stage 4 MCP-specific threats)
+
+Falls back to the original regex-based detection if AGT is unavailable.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +20,17 @@ from typing import Any
 
 from cmcp_gateway.catalog.loader import CatalogEntry
 
-# ── Injection detection patterns (Stage 4) ────────────────────────────────────
+# ── AGT components (optional — fall back gracefully) ─────────────────────────
+try:
+    from agent_os.prompt_injection import PromptInjectionDetector, ThreatLevel
+    from agent_os.credential_redactor import CredentialRedactor
+    from agent_os.mcp_response_scanner import MCPResponseScanner as AGTResponseScanner
+    _AGT_AVAILABLE = True
+except ImportError:
+    _AGT_AVAILABLE = False
+
+# ── Fallback injection patterns (used when AGT not available) ─────────────────
 # Starter set per docs/spec/response-inspection.md §Stage 4.
-# False positive notes inline; list is configurable — these are defaults only.
 _DEFAULT_INJECTION_PATTERNS: list[tuple[str, str]] = [
     (r"<system>[\s\S]*?</system>", "xml-system-tag"),
     (r"<instructions>[\s\S]*?</instructions>", "xml-instructions-tag"),
@@ -70,13 +88,36 @@ def _stage1_size_check(response_bytes: bytes, max_bytes: int) -> StageResult:
 def _stage4_injection_detection(
     response_text: str,
     custom_patterns: list[tuple[re.Pattern[str], str]] | None = None,
+    _agt_detector: Any | None = None,
 ) -> StageResult:
-    """Stage 4: detect indirect prompt injection patterns in the response text."""
+    """
+    Stage 4: detect indirect prompt injection patterns in the response text.
+
+    Uses AGT PromptInjectionDetector (12-vector) when available, falls back to
+    the regex starter set from docs/spec/response-inspection.md §Stage 4.
+    """
+    # Try AGT first
+    if _AGT_AVAILABLE and _agt_detector is not None:
+        try:
+            result = _agt_detector.detect(response_text)
+            if result.is_injection:
+                pattern_name = result.injection_type.value if hasattr(result.injection_type, "value") else str(result.injection_type)
+                # Log pattern name and bounded window, not full content
+                return StageResult(
+                    stage="injection",
+                    decision="deny",
+                    reason=f"AGT injection detected: {pattern_name} (confidence={result.confidence:.2f})",
+                    injection_pattern=f"agt:{pattern_name}",
+                )
+            return StageResult(stage="injection", decision="allow")
+        except Exception:
+            pass  # Fall through to regex
+
+    # Fallback: regex patterns
     patterns = custom_patterns or _COMPILED_PATTERNS
     for pattern, name in patterns:
         match = pattern.search(response_text)
         if match:
-            # Log the pattern name and a 50-char window, NOT the full content
             start = max(0, match.start() - 25)
             end = min(len(response_text), match.end() + 25)
             context_window = repr(response_text[start:end])
@@ -89,16 +130,36 @@ def _stage4_injection_detection(
     return StageResult(stage="injection", decision="allow")
 
 
-def _classify_sensitivity(catalog_entry: CatalogEntry) -> list[str]:
+def _classify_sensitivity(
+    catalog_entry: CatalogEntry,
+    response_text: str | None = None,
+    _agt_redactor: Any | None = None,
+) -> list[str]:
     """
-    Stage 3 (simplified for Phase 1): derive sensitivity tags from catalog metadata.
+    Stage 3: derive sensitivity tags from catalog metadata and content.
 
-    Full pattern-matching classification is implemented in issue #80 (Phase 1 GA).
-    This Phase 1 implementation uses only catalog-level annotations.
+    When AGT CredentialRedactor is available, also scans response content for
+    credentials, PII, and sensitive patterns. Catalog-level annotation is always
+    applied regardless of content scanning.
     """
-    tags = []
+    tags: list[str] = []
+
+    # Catalog-level annotation (always applied)
     if catalog_entry.sensitivity_level and catalog_entry.sensitivity_level != "public":
         tags.append(catalog_entry.sensitivity_level)
+
+    # AGT CredentialRedactor — scan response content for PII/credentials
+    if _AGT_AVAILABLE and _agt_redactor is not None and response_text:
+        try:
+            matches = _agt_redactor.find_credentials(response_text)
+            if matches:
+                # Any credential/PII match elevates to at least 'pii'
+                if "pii" not in tags and "confidential" not in tags and \
+                   "hipaa_phi" not in tags and "mnpi" not in tags:
+                    tags.append("pii")
+        except Exception:
+            pass  # Degraded gracefully
+
     return tags
 
 
@@ -111,6 +172,11 @@ class InspectionPipeline:
 
     After completing all stages, calls session.update_from_inspection() to
     propagate sensitivity state (the only place session state is updated).
+
+    When agent-os-kernel is installed, stages 3 and 4 use AGT components:
+      Stage 3: AGT CredentialRedactor + catalog annotations
+      Stage 4: AGT PromptInjectionDetector (12-vector) + AGT MCPResponseScanner
+    Falls back to regex patterns and catalog-only classification if AGT is unavailable.
     """
 
     def __init__(
@@ -120,6 +186,21 @@ class InspectionPipeline:
     ) -> None:
         self._max_bytes = max_response_size_bytes
         self._injection_patterns = custom_injection_patterns
+
+        # Instantiate AGT components once per pipeline instance
+        if _AGT_AVAILABLE:
+            try:
+                self._agt_injection_detector = PromptInjectionDetector()
+                self._agt_redactor = CredentialRedactor()
+                self._agt_response_scanner = AGTResponseScanner()
+            except Exception:
+                self._agt_injection_detector = None
+                self._agt_redactor = None
+                self._agt_response_scanner = None
+        else:
+            self._agt_injection_detector = None
+            self._agt_redactor = None
+            self._agt_response_scanner = None
 
     def run(
         self,
@@ -149,17 +230,44 @@ class InspectionPipeline:
         # Stage 2: schema validation (Phase 1 GA — issue #74; skipped here)
         stage_results["schema"] = "skip"
 
-        # Stage 3: sensitivity classification
-        s3_tags = _classify_sensitivity(catalog_entry)
+        # Stage 3: sensitivity classification (AGT CredentialRedactor + catalog)
+        try:
+            response_text_for_s3 = response_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            response_text_for_s3 = ""
+        s3_tags = _classify_sensitivity(
+            catalog_entry,
+            response_text=response_text_for_s3,
+            _agt_redactor=self._agt_redactor,
+        )
         sensitivity_tags.extend(s3_tags)
         stage_results["classification"] = "allow"
 
-        # Stage 4: injection detection
+        # Stage 4: injection detection (AGT PromptInjectionDetector + MCPResponseScanner)
         try:
-            response_text = response_bytes.decode("utf-8", errors="replace")
+            response_text = response_text_for_s3
         except Exception:
             response_text = ""
-        s4 = _stage4_injection_detection(response_text, self._injection_patterns)
+
+        # AGT MCPResponseScanner catches MCP-specific threats (tool poisoning in responses)
+        if self._agt_response_scanner is not None:
+            try:
+                agt_scan = self._agt_response_scanner.scan_response(
+                    response_text, tool_name=catalog_entry.tool_name
+                )
+                if not agt_scan.is_safe:
+                    threat_name = str(agt_scan.threats[0]) if agt_scan.threats else "mcp_threat"
+                    deny_reasons.append(f"AGT MCPResponseScanner: {threat_name}")
+                    injection_pattern = f"agt_mcp:{threat_name}"
+                    stage_results["injection"] = "deny"
+            except Exception:
+                pass
+
+        s4 = _stage4_injection_detection(
+            response_text,
+            self._injection_patterns,
+            _agt_detector=self._agt_injection_detector,
+        )
         stage_results["injection"] = s4.decision
         if s4.decision == "deny":
             deny_reasons.append(s4.reason or "injection detected")
