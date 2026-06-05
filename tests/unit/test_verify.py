@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from datetime import datetime, timezone, timedelta
 
@@ -31,16 +30,13 @@ POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
 
 
-def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH, seconds_ago=0):
+def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH):
     key = SigningKey()
     chain = AuditChain("test-session")
 
-    from datetime import timezone
-    from unittest.mock import patch
-
     claim = generate_trace_claim(
         session_id="test-session",
-        tee_public_key=key.public_key_hex,
+        signing_key=key,
         attestation_report=AttestationReportInfo(
             provider="software-only",
             measurement="DEVELOPMENT_ONLY",
@@ -61,12 +57,15 @@ def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH, secon
             tool_calls_faulted=0,
             tools_invoked=["test.tool"],
             session_max_sensitivity="public",
-            call_graph_summary=CallGraphSummary(compliance_domains_touched=[], cross_boundary_events=[]),
+            call_graph_summary=CallGraphSummary(
+                compliance_domains_touched=[],
+                cross_boundary_events=[],
+            ),
         ),
         audit_chain_root=chain.chain_root,
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,
-        signing_key=key,
+        do_sign=True,
     )
     return _to_dict(claim), key
 
@@ -77,6 +76,7 @@ def _approved():
 
 # ── Signature verification ────────────────────────────────────────────────────
 
+
 def test_valid_signature_is_verified():
     claim_dict, _ = _make_signed_claim()
     result = verify_trace_claim(claim_dict, _approved())
@@ -85,7 +85,7 @@ def test_valid_signature_is_verified():
 
 def test_tampered_signature_fails():
     claim_dict, _ = _make_signed_claim()
-    claim_dict["signature"] = "AAAA" * 16  # garbage signature
+    claim_dict["signature"] = "AAAA" * 16
     result = verify_trace_claim(claim_dict, _approved())
     assert "signature" in result.unverified_fields
     assert result.failure_reason == VerificationError.SIGNATURE_INVALID
@@ -101,12 +101,13 @@ def test_empty_signature_fails():
 def test_tampered_claim_body_fails_signature():
     """TRACE-002 — signature fails if claim body is modified after signing."""
     claim_dict, _ = _make_signed_claim()
-    claim_dict["session_id"] = "tampered-session"
+    claim_dict["gateway"]["session_id"] = "tampered-session"
     result = verify_trace_claim(claim_dict, _approved())
     assert result.failure_reason == VerificationError.SIGNATURE_INVALID
 
 
 # ── Hash checks ───────────────────────────────────────────────────────────────
+
 
 def test_matching_policy_hash_is_verified():
     claim_dict, _ = _make_signed_claim()
@@ -116,7 +117,9 @@ def test_matching_policy_hash_is_verified():
 
 def test_mismatched_policy_hash_fails():
     claim_dict, _ = _make_signed_claim()
-    approved = ApprovedHashes(policy_bundle_hash="sha256:" + "0" * 64, tool_catalog_hash=CATALOG_HASH)
+    approved = ApprovedHashes(
+        policy_bundle_hash="sha256:" + "0" * 64, tool_catalog_hash=CATALOG_HASH
+    )
     result = verify_trace_claim(claim_dict, approved)
     assert "policy_bundle.hash" in result.unverified_fields
 
@@ -129,12 +132,15 @@ def test_matching_catalog_hash_is_verified():
 
 def test_mismatched_catalog_hash_fails():
     claim_dict, _ = _make_signed_claim()
-    approved = ApprovedHashes(policy_bundle_hash=POLICY_HASH, tool_catalog_hash="sha256:" + "0" * 64)
+    approved = ApprovedHashes(
+        policy_bundle_hash=POLICY_HASH, tool_catalog_hash="sha256:" + "0" * 64
+    )
     result = verify_trace_claim(claim_dict, approved)
     assert "tool_catalog.hash" in result.unverified_fields
 
 
 # ── Attestation freshness ─────────────────────────────────────────────────────
+
 
 def test_fresh_attestation_is_verified():
     claim_dict, _ = _make_signed_claim()
@@ -144,14 +150,14 @@ def test_fresh_attestation_is_verified():
 
 def test_stale_attestation_fails():
     claim_dict, _ = _make_signed_claim()
-    # Override generated_at to 2 days ago
     old = (datetime.now(tz=timezone.utc) - timedelta(days=2)).isoformat()
-    claim_dict["attestation_report"]["attestation_generated_at"] = old
+    claim_dict["gateway"]["attestation_generated_at"] = old
     result = verify_trace_claim(claim_dict, _approved(), max_attestation_age_seconds=86400)
     assert result.is_attestation_fresh is False
 
 
 # ── Audit chain ───────────────────────────────────────────────────────────────
+
 
 def test_valid_audit_chain_is_verified():
     claim_dict, _ = _make_signed_claim()
@@ -161,15 +167,16 @@ def test_valid_audit_chain_is_verified():
 
 def test_missing_audit_chain_root_fails():
     claim_dict, _ = _make_signed_claim()
-    claim_dict["audit_chain_root"] = ""
+    claim_dict["gateway"]["audit_chain"]["root"] = ""
     result = verify_trace_claim(claim_dict, _approved())
     assert "audit_chain" in result.unverified_fields
 
 
 # ── Status ────────────────────────────────────────────────────────────────────
 
+
 def test_software_only_provider_is_partially_verified():
-    """software-only attestation is never VERIFIED — always PARTIALLY_VERIFIED at best."""
+    """software-only attestation is never fully VERIFIED."""
     claim_dict, _ = _make_signed_claim()
     result = verify_trace_claim(claim_dict, _approved())
     assert result.status in (VerificationStatus.PARTIALLY_VERIFIED, VerificationStatus.VERIFIED)
