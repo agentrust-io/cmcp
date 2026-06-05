@@ -34,7 +34,7 @@ dev = [
 cmcp = "cmcp_gateway.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cmcp_gateway"]
+packages = ["src/cmcp_gateway", "src/cmcp_verify"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
