@@ -27,10 +27,11 @@ CATALOG_ENTRY = {
     "server": {
         "display_name": "Test",
         "url": "https://test.example.com/mcp",
-        "tls_fingerprint": "SHA256:AAAA/BBBB/CCCC/DDDD/EEEE/FFFF/GGGG/HHHH/IIII/JJJJ/KK==",
+        "tls_fingerprint": "SHA256:AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
         "transport": "http-sse",
     },
     "approved_definition": {"description": "test", "input_schema": {}},
+    "definition_hash": "sha256:17e2f3382a5c3582d0ed6ba64511ce791a242051319529d810ff2b4fe499821a",
     "compliance_domain": "external",
     "requires_baa": False,
     "sensitivity_level": "public",
