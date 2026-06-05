@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/agentrust-io/cmcp/security/advisories/new
+    about: Report a security vulnerability via GitHub Security Advisories. Do not open a public issue.
+  - name: Design discussion
+    url: https://github.com/agentrust-io/cmcp/discussions
+    about: Start a design discussion or ask a broad question in GitHub Discussions before opening an issue.
+  - name: Trace spec proposal
+    url: https://github.com/agentrust-io/trace-spec/issues/new
+    about: Propose a change to the cMCP trace specification in the trace-spec repo.

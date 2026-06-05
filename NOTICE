@@ -1,0 +1,28 @@
+cMCP - Confidential MCP Gateway
+
+Copyright 2026 Agentic AI Foundation contributors
+
+This project is licensed under the MIT License.
+
+
+Third-Party Dependencies
+------------------------
+
+cryptography
+  License: Apache 2.0
+  https://github.com/pyca/cryptography
+
+PyYAML
+  License: MIT
+  https://github.com/yaml/pyyaml
+
+agentrust-trace
+  License: Apache 2.0
+
+Pydantic
+  License: MIT
+  https://github.com/pydantic/pydantic
+
+Cedar (policy engine)
+  License: Apache 2.0
+  https://github.com/cedar-policy/cedar

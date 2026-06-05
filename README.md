@@ -4,6 +4,8 @@
 
 # cMCP — Confidential MCP Gateway
 
+[![CI](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/cmcp-gateway)](https://pypi.org/project/cmcp-gateway/) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/agentrust-io/cmcp/badge)](https://scorecard.dev/viewer/?uri=github.com/agentrust-io/cmcp)
+
 Hardware-attested policy enforcement for MCP tool calls. Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine running inside a Trusted Execution Environment (TEE). The policy bundle hash is measured into the hardware attestation report before any code runs.
 
 ```yaml
@@ -30,14 +32,15 @@ cmcp start --config cmcp-config.yaml
 ## Architecture
 
 ```
-Agent → cMCP Gateway → Cedar Policy Engine (TEE) → Tool
-                    ↓
-              TRACE Claim Output
-              - policy_bundle_hash
-              - enforcement_mode
-              - audit_chain_root
-              - trust_score
-              - tee_public_key
+Agent -> cMCP Gateway -> Cedar Policy Engine (TEE) -> Tool
+                     |
+               GatewayClaim (TRACE Profile)
+               +-- trace.eat_profile
+               +-- trace.runtime.platform + measurement
+               +-- trace.policy.bundle_hash
+               +-- trace.cnf.jwk  (Ed25519 confirmation key)
+               +-- gateway.audit_chain (root/tip/length)
+               +-- signature (Ed25519 over canonical JSON)
 ```
 
 ## Hardware Providers
@@ -51,8 +54,12 @@ Agent → cMCP Gateway → Cedar Policy Engine (TEE) → Tool
 
 ## Status
 
-Private. Launching at CC Summit June 23, 2026. See [agentrust-io](https://github.com/agentrust-io) for release timeline.
+Developer preview. Launching at CC Summit, June 23 2026. See [ROADMAP.md](ROADMAP.md) for what is planned.
 
 ## License
 
 MIT
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
