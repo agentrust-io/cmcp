@@ -1,0 +1,22 @@
+[
+  {
+    "tool_name": "echo",
+    "server": {
+      "display_name": "Echo MCP Server (mock)",
+      "url": "http://localhost:9001/mcp",
+      "tls_fingerprint": "SHA256:REPLACE_WITH_REAL_FINGERPRINT",
+      "transport": "http-sse",
+      "rotation_mode": "key-pinned"
+    },
+    "approved_definition": {
+      "description": "Returns its input unchanged. For testing only.",
+      "input_schema": {"type": "object", "properties": {"message": {"type": "string"}}},
+      "output_schema": {"type": "object", "properties": {"message": {"type": "string"}}}
+    },
+    "compliance_domain": "public",
+    "requires_baa": false,
+    "sensitivity_level": "public",
+    "added_at": "2026-06-04T00:00:00Z",
+    "approved_by": "developer@example.com"
+  }
+]

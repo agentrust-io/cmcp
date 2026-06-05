@@ -1,0 +1,9 @@
+attestation:
+  provider: auto           # auto-detects: tpm -> sev-snp -> tdx -> opaque
+  enforcement_mode: enforcing
+  validity_seconds: 86400
+
+policy_bundle_path: ./policies/
+catalog_path: ./catalog.json
+listen_addr: "0.0.0.0:8443"
+max_response_size_bytes: 2097152  # 2MB
