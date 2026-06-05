@@ -8,6 +8,18 @@ version = "0.1.0"
 description = "Hardware-attested MCP gateway — TEE-enforced policy and TRACE Claim generation"
 readme = "README.md"
 license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 requires-python = ">=3.11"
 dependencies = [
     "cryptography>=42.0",
@@ -29,6 +41,8 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "types-pyyaml",
+    "bandit[toml]>=1.7",
+    "pip-audit>=2.6",
 ]
 
 [project.scripts]
@@ -50,6 +64,16 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "PIE", "T20", "RET", "SIM"]
 ignore = ["E501"]
+
+[tool.bandit]
+skips = ["B101"]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/cli.py"]
+
+[tool.coverage.report]
+fail_under = 70
 
 [tool.mypy]
 python_version = "3.11"
