@@ -30,7 +30,7 @@ dependencies = [
     "starlette>=0.37",
     "uvicorn>=0.29",
     "click>=8.1",
-    "agent-os-kernel>=4.0",
+    "agent-os-kernel>=3.7",
 ]
 
 [project.optional-dependencies]

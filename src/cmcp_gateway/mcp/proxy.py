@@ -75,7 +75,6 @@ class CMCPProxy:
         allowed_tools = list(catalog.entries.keys())
         gov_policy = GovernancePolicy(
             allowed_tools=allowed_tools,
-            max_calls_per_minute=60,
         )
 
         # AGT MCPGateway — handles protocol, sanitization, rate limiting

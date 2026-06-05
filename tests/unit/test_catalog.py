@@ -15,13 +15,14 @@ ENTRY_1 = {
     "server": {
         "display_name": "CRM MCP Server",
         "url": "https://crm.example.com/mcp",
-        "tls_fingerprint": "SHA256:AAAA/BBBB/CCCC/DDDD/EEEE/FFFF/GGGG/HHHH/IIII/JJJJ/KK==",
+        "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "transport": "http-sse",
     },
     "approved_definition": {
         "description": "Query CRM records",
         "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
     },
+    "definition_hash": "sha256:8a32c564635ceea9faab7116e81057efb9d89d3b3946dff734612120b0a34fab",
     "compliance_domain": "pii",
     "requires_baa": False,
     "sensitivity_level": "pii",
@@ -34,14 +35,15 @@ ENTRY_2 = {
     "server": {
         "display_name": "HR MCP Server",
         "url": "https://hr.example.com/mcp",
-        "tls_fingerprint": "SHA256:ZZZZ/YYYY/XXXX/WWWW/VVVV/UUUU/TTTT/SSSS/RRRR/QQQQ/PP==",
+        "tls_fingerprint": "SHA256:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
         "transport": "http-sse",
     },
     "approved_definition": {
         "description": "Look up HR records",
         "input_schema": {"type": "object"},
     },
-    "compliance_domain": "confidential",
+    "definition_hash": "sha256:d2db6ce8fc66b6db6e182b1d94d242249174aae362841927c47d9dc4d604ab35",
+    "compliance_domain": "internal",
     "requires_baa": False,
     "sensitivity_level": "confidential",
     "added_at": "2026-06-01T00:00:00Z",
@@ -140,6 +142,6 @@ def test_catalog_not_a_list(catalog_file):
 def test_catalog_hash_changes_when_entry_changes(catalog_file):
     c1 = load_catalog(catalog_file([ENTRY_1]))
     modified = dict(ENTRY_1)
-    modified["approved_definition"] = dict(ENTRY_1["approved_definition"], description="changed")
+    modified["approved_by"] = "changed@example.com"
     c2 = load_catalog(catalog_file([modified]))
     assert c1.catalog_hash != c2.catalog_hash
