@@ -1,7 +1,6 @@
 """Tests for configuration parser (issue #64)."""
 
 import textwrap
-import warnings
 from pathlib import Path
 
 import pytest
@@ -69,12 +68,11 @@ def test_invalid_validity_seconds(config_file):
         load_config(path)
 
 
-def test_unknown_key_warns(config_file):
+def test_unknown_key_raises(config_file):
+    """CONF-001 — unknown config keys must fail closed, not silently ignore."""
     path = config_file("unknown_key: value\n")
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    with pytest.raises(ConfigError, match="unknown_key"):
         load_config(path)
-    assert any("unknown_key" in str(warning.message) for warning in w)
 
 
 def test_empty_config_uses_defaults(config_file):

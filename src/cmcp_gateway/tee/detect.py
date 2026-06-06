@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from cmcp_gateway.config import Config
 from cmcp_gateway.config import TEEProvider as TEEProviderEnum
@@ -58,7 +57,7 @@ def detect_provider(config: Config) -> TEEProvider:
 
     If config.attestation.provider is not "auto", only that provider is tried.
     """
-    dev_mode = config.dev_mode or os.environ.get("CMCP_DEV_MODE", "0") == "1"
+    dev_mode = config.dev_mode
 
     if config.attestation.provider != TEEProviderEnum.AUTO:
         # Explicit provider requested
