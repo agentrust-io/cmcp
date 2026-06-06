@@ -185,19 +185,16 @@ class InspectionPipeline:
         self._injection_patterns = custom_injection_patterns
 
         # Instantiate AGT components once per pipeline instance
+        self._agt_injection_detector: Any = None
+        self._agt_redactor: Any = None
+        self._agt_response_scanner: Any = None
         if _AGT_AVAILABLE:
             try:
                 self._agt_injection_detector = PromptInjectionDetector()
                 self._agt_redactor = CredentialRedactor()
                 self._agt_response_scanner = AGTResponseScanner()
-            except Exception:
-                self._agt_injection_detector = None
-                self._agt_redactor = None
-                self._agt_response_scanner = None
-        else:
-            self._agt_injection_detector = None
-            self._agt_redactor = None
-            self._agt_response_scanner = None
+            except Exception:  # nosec B110
+                pass
 
     def run(
         self,

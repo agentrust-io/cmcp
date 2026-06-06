@@ -182,7 +182,7 @@ def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
 
     if provider == "software-only":
         return RuntimeInfo(
-            platform=platform,
+            platform=platform,  # type: ignore[arg-type]
             measurement=_SW_ONLY_MEASUREMENT,
             firmware_version=_SW_ONLY_FIRMWARE,
         )
@@ -197,14 +197,14 @@ def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
     except ValueError:
         nonce = None
 
-    return RuntimeInfo(platform=platform, measurement=measurement, nonce=nonce)
+    return RuntimeInfo(platform=platform, measurement=measurement, nonce=nonce)  # type: ignore[arg-type]
 
 
 def _build_policy(bundle: PolicyBundleInfo) -> PolicyInfo:
     mode_map = {"enforcing": "enforce", "advisory": "advisory", "silent": "silent"}
     return PolicyInfo(
         bundle_hash=bundle.hash,
-        enforcement_mode=mode_map.get(bundle.enforcement_mode, "advisory"),
+        enforcement_mode=mode_map.get(bundle.enforcement_mode, "advisory"),  # type: ignore[arg-type]
         version=bundle.policy_version,
     )
 
