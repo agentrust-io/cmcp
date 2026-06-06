@@ -36,10 +36,7 @@ class TPMProvider(TEEProvider):
         try:
             if sys.platform != "linux":
                 return False
-            for dev in _TPM_DEVICES:
-                if dev.exists():
-                    return True
-            return False
+            return any(dev.exists() for dev in _TPM_DEVICES)
         except Exception:  # noqa: BLE001
             return False
 
@@ -59,8 +56,8 @@ class TPMProvider(TEEProvider):
         from tpm2_pytss.ESAPI import ESAPI  # type: ignore[import-not-found]
         from tpm2_pytss.types import (  # type: ignore[import-not-found]
             TPM2_ALG,
-            TPML_PCR_SELECTION,
             TPM2B_DATA,
+            TPML_PCR_SELECTION,
         )
 
         with ESAPI() as ectx:
