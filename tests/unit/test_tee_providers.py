@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -64,9 +64,8 @@ def test_sev_snp_get_report_raises_on_ioctl_failure(monkeypatch: pytest.MonkeyPa
     mock_fd.__enter__ = MagicMock(return_value=mock_fd)
     mock_fd.__exit__ = MagicMock(return_value=False)
 
-    with patch("builtins.open", return_value=mock_fd):
-        with pytest.raises(RuntimeError, match="SEV-SNP attestation failed"):
-            SEVSNPProvider().get_attestation_report(b"\x00" * 32)
+    with patch("builtins.open", return_value=mock_fd), pytest.raises(RuntimeError, match="SEV-SNP attestation failed"):
+        SEVSNPProvider().get_attestation_report(b"\x00" * 32)
 
 
 def test_sev_snp_get_report_raises_when_fcntl_unavailable(
@@ -112,9 +111,8 @@ def test_tdx_get_report_raises_on_ioctl_failure(monkeypatch: pytest.MonkeyPatch)
     mock_fd.__enter__ = MagicMock(return_value=mock_fd)
     mock_fd.__exit__ = MagicMock(return_value=False)
 
-    with patch("builtins.open", return_value=mock_fd):
-        with pytest.raises(RuntimeError, match="TDX attestation failed"):
-            TDXProvider().get_attestation_report(b"\x00" * 32)
+    with patch("builtins.open", return_value=mock_fd), pytest.raises(RuntimeError, match="TDX attestation failed"):
+        TDXProvider().get_attestation_report(b"\x00" * 32)
 
 
 # ── TPMProvider ────────────────────────────────────────────────────────────────

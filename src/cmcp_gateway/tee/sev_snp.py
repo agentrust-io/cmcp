@@ -65,8 +65,6 @@ class SEVSNPProvider(TEEProvider):
         # struct: 96s user_data, I vmpl, 28s reserved
         req = struct.pack("96sI28s", user_data, vmpl, b"\x00" * 28)
 
-        # Response buffer: 4-byte status + 4-byte report_size + 24-byte reserved + report
-        resp = bytearray(_SNP_RESP_SIZE)
         # Place request into response buffer (ioctl arg is a combined req/resp struct)
         # The kernel driver takes a pointer to snp_guest_request_ioctl which contains
         # pointers; however the simplified /dev/sev-guest interface accepts the request

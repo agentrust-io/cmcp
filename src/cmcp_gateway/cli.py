@@ -17,8 +17,9 @@ def main() -> None:
 @click.option("--config", required=True, type=click.Path(exists=True), help="Path to cmcp-config.yaml")
 def start(config: str) -> None:
     """Start the cMCP Gateway."""
-    import uvicorn
     from uuid import uuid4
+
+    import uvicorn
 
     from cmcp_gateway.audit.chain import AuditChain
     from cmcp_gateway.mcp.proxy import CMCPProxy

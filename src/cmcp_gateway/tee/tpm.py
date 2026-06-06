@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
+import subprocess  # nosec B404
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,10 +36,7 @@ class TPMProvider(TEEProvider):
         try:
             if sys.platform != "linux":
                 return False
-            for dev in _TPM_DEVICES:
-                if dev.exists():
-                    return True
-            return False
+            return any(dev.exists() for dev in _TPM_DEVICES)
         except Exception:  # noqa: BLE001
             return False
 
@@ -59,8 +56,8 @@ class TPMProvider(TEEProvider):
         from tpm2_pytss.ESAPI import ESAPI  # type: ignore[import-not-found]
         from tpm2_pytss.types import (  # type: ignore[import-not-found]
             TPM2_ALG,
-            TPML_PCR_SELECTION,
             TPM2B_DATA,
+            TPML_PCR_SELECTION,
         )
 
         with ESAPI() as ectx:
@@ -123,7 +120,7 @@ class TPMProvider(TEEProvider):
     def _report_via_subprocess(self, nonce: bytes) -> AttestationReport:
         """Read PCRs 0-7 using tpm2_pcrread subprocess."""
         try:
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(  # noqa: S603  # nosec B603, B607
                 ["tpm2_pcrread", "sha256:0,1,2,3,4,5,6,7"],  # noqa: S607
                 capture_output=True,
                 text=True,
@@ -135,7 +132,7 @@ class TPMProvider(TEEProvider):
 
         if result.returncode != 0:
             # Try SHA-1
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(  # noqa: S603  # nosec B603, B607
                 ["tpm2_pcrread", "sha1:0,1,2,3,4,5,6,7"],  # noqa: S607
                 capture_output=True,
                 text=True,
