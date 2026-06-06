@@ -253,6 +253,24 @@ class CMCPProxy:
                 latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )
+        except Exception as exc:
+            # POLICY-003: Cedar backend raised an unexpected exception (e.g. malformed
+            # policy). Write a fault audit entry so the incident is traceable, then
+            # re-raise so server.py can return a generic 500.
+            logger.error("CEDAR_FAULT: tool=%s error=%s", tool_name, exc, exc_info=True)
+            self._audit.append(
+                "fault",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                policy_decision="fault",
+                policy_rule_matched=f"cedar_exception:{type(exc).__name__}",
+                request_payload_hash=request_payload_hash,
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+                detail={"exception_type": type(exc).__name__},
+            )
+            raise
 
         # Step 3: AGT MCPGateway enforcement
         # AGT handles per-agent rate limiting, parameter sanitization, and

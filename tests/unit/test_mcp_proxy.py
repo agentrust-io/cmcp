@@ -253,3 +253,26 @@ async def test_audit_payload_hash_is_canonical_sha256():
     expected_bytes = json.dumps(args, sort_keys=True, separators=(",", ":")).encode()
     expected = f"sha256:{hashlib.sha256(expected_bytes).hexdigest()}"
     assert entry.request_payload_hash == expected
+
+
+# ── POLICY-003: Cedar exception writes fault audit entry ──────────────────────
+
+@pytest.mark.asyncio
+async def test_cedar_exception_writes_fault_audit_entry():
+    """POLICY-003 — Cedar backend exception must emit a fault audit entry before re-raising."""
+    evaluator = MagicMock(spec=_make_evaluator().__class__)
+    evaluator.evaluate.side_effect = RuntimeError("malformed Cedar policy")
+    evaluator.authorize_egress.return_value = MagicMock(would_have_denied=False)
+    evaluator.bundle_hash = "sha256:" + "0" * 64
+    evaluator.enforcement_mode = EnforcementMode.ENFORCING
+
+    proxy, _, chain = _make_proxy(evaluator=evaluator)
+
+    with pytest.raises(RuntimeError):
+        await proxy.call_tool("c1", "test.tool", {"x": 1})
+
+    fault_entries = [e for e in chain.entries if e.entry_type == "fault"]
+    assert len(fault_entries) == 1
+    assert fault_entries[0].policy_decision == "fault"
+    assert "RuntimeError" in (fault_entries[0].policy_rule_matched or "")
+    assert fault_entries[0].request_payload_hash is not None

@@ -156,6 +156,28 @@ def test_unknown_method_truncated_at_64_chars():
 
 # ── INJECT-003: deny_reason not reflected to caller ──────────────────────────
 
+# ── NET-004: unhandled exceptions return generic 500 ─────────────────────────
+
+def test_unhandled_exception_returns_generic_500():
+    """NET-004 — truly unhandled exception must not leak class or message to caller.
+
+    Uses /tools/list which has no try/except — an exception from catalog.entries.items()
+    propagates out of the handler and must be caught by the global exception handler.
+    """
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries.items.side_effect = RuntimeError("secret internal detail")
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.get("/tools/list")
+    assert resp.status_code == 500
+    body = resp.json()
+    assert "secret internal detail" not in str(body)
+    assert "RuntimeError" not in str(body)
+    assert body.get("error_code") == "INTERNAL_ERROR"
+
+
 def test_deny_response_does_not_include_internal_reason():
     """INJECT-003 — internal deny_reason must not appear in 403 response body."""
     proxy = MagicMock()

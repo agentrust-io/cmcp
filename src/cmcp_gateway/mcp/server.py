@@ -37,6 +37,21 @@ logger = logging.getLogger(__name__)
 _AUTH_EXEMPT_PATHS = {"/health"}
 
 
+async def _unhandled_error_handler(request: Request, exc: Exception) -> Response:
+    """NET-004: return generic 500 without leaking exception class or message."""
+    logger.error(
+        "UNHANDLED_EXCEPTION: method=%s path=%s error=%s",
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=True,
+    )
+    return JSONResponse(
+        {"error": "Internal server error", "error_code": "INTERNAL_ERROR"},
+        status_code=500,
+    )
+
+
 class _BearerAuthMiddleware(BaseHTTPMiddleware):
     """AUTH-001 (CRITICAL): validate Authorization: Bearer <token> on all protected endpoints."""
 
@@ -114,6 +129,7 @@ class MCPServer:
                 ),
             ],
             middleware=middleware,
+            exception_handlers={Exception: _unhandled_error_handler},
         )
 
     async def _handle_mcp(self, request: Request) -> Response:
