@@ -215,35 +215,126 @@ def _stage4_injection_detection(
     return StageResult(stage="injection", decision="allow")
 
 
+# Fallback PII patterns for when AGT CredentialRedactor is not available
+_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "pii"),           # SSN
+    (re.compile(r"\b4\d{3}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "pii"),  # Visa
+    (re.compile(r"\b5[1-5]\d{2}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "pii"),  # MC
+    (re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"), "pii"),  # email
+    (re.compile(r"\b(\+1[\s\-]?)?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4}\b"), "pii"),  # phone
+    (re.compile(r"\b(?:dob|date of birth|birthdate)[:\s]+\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b", re.I), "pii"),
+    (re.compile(r"\b(?:patient|mrn|member\s*id)[:\s]+[A-Z0-9\-]{4,20}\b", re.I), "hipaa_phi"),
+    (re.compile(r"\b(?:diagnosis|icd[- ]?\d+|cpt[- ]?\d+)\b", re.I), "hipaa_phi"),
+]
+
+
+def _extract_schema_sensitivity_tags(
+    response_json: dict[str, Any],
+    output_schema: dict[str, Any] | None,
+) -> list[str]:
+    """Extract sensitivity tags from x-sensitivity annotations in output_schema properties."""
+    if output_schema is None:
+        return []
+    tags: list[str] = []
+    properties = output_schema.get("properties", {})
+    for field_name, field_schema in properties.items():
+        sensitivity = field_schema.get("x-sensitivity")
+        if sensitivity and field_name in response_json:
+            if isinstance(sensitivity, str):
+                if sensitivity not in tags:
+                    tags.append(sensitivity)
+            elif isinstance(sensitivity, list):
+                for s in sensitivity:
+                    if s not in tags:
+                        tags.append(s)
+    return tags
+
+
 def _classify_sensitivity(
     catalog_entry: CatalogEntry,
     response_text: str | None = None,
     _agt_redactor: Any | None = None,
 ) -> list[str]:
     """
-    Stage 3: derive sensitivity tags from catalog metadata and content.
+    Stage 3: derive sensitivity tags from three sources (applied in order):
 
-    When AGT CredentialRedactor is available, also scans response content for
-    credentials, PII, and sensitive patterns. Catalog-level annotation is always
-    applied regardless of content scanning.
+    1. catalog_entry.sensitivity_level — always applied
+    2. field-level x-sensitivity annotations in output_schema properties
+    3. pattern matching on response content (AGT CredentialRedactor or regex fallback)
     """
     tags: list[str] = []
 
-    # Catalog-level annotation (always applied)
-    if catalog_entry.sensitivity_level and catalog_entry.sensitivity_level != "public":
+    # Source 1: catalog-level annotation
+    if (catalog_entry.sensitivity_level and catalog_entry.sensitivity_level != "public"
+            and catalog_entry.sensitivity_level not in tags):
         tags.append(catalog_entry.sensitivity_level)
 
-    # AGT CredentialRedactor — scan response content for PII/credentials
-    if _AGT_AVAILABLE and _agt_redactor is not None and response_text:
+    # Source 2: field-level tags from output_schema
+    if response_text:
         try:
-            matches = _agt_redactor.find_credentials(response_text)
-            if matches and "pii" not in tags and "confidential" not in tags and \
-                    "hipaa_phi" not in tags and "mnpi" not in tags:
-                tags.append("pii")
-        except Exception:  # nosec B110
-            pass  # Degraded gracefully
+            response_json = json.loads(response_text)
+            if isinstance(response_json, dict):
+                schema_tags = _extract_schema_sensitivity_tags(
+                    response_json,
+                    catalog_entry.approved_definition.output_schema,
+                )
+                for t in schema_tags:
+                    if t not in tags:
+                        tags.append(t)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Source 3: content pattern matching
+    if response_text:
+        if _AGT_AVAILABLE and _agt_redactor is not None:
+            try:
+                matches = _agt_redactor.find_credentials(response_text)
+                if matches and not any(t in tags for t in ("pii", "confidential", "hipaa_phi", "mnpi")):
+                    tags.append("pii")
+            except Exception:  # nosec B110
+                pass
+        else:
+            # Regex fallback for when AGT is unavailable
+            for pattern, tag in _PII_PATTERNS:
+                if pattern.search(response_text) and tag not in tags:
+                    tags.append(tag)
+                    if len(tags) >= 4:  # cap scan at 4 distinct tags
+                        break
 
     return tags
+
+
+class SensitivityClassificationStage:
+    """
+    Stage 3 of the InspectionPipeline — sensitivity classification.
+
+    Applies three classification sources in order:
+    1. catalog_entry.sensitivity_level annotation
+    2. x-sensitivity field-level tags in output_schema properties
+    3. Content pattern matching (AGT CredentialRedactor or regex fallback)
+    """
+
+    def run(
+        self,
+        response_json: dict[str, Any],
+        catalog_entry: CatalogEntry,
+        _agt_redactor: Any | None = None,
+    ) -> StageResult:
+        """
+        Classify a tool response and return a StageResult with sensitivity_tags set.
+        response_json is the parsed JSON body; pass {} for non-JSON responses.
+        """
+        response_text = json.dumps(response_json, separators=(",", ":"), ensure_ascii=False)
+        tags = _classify_sensitivity(
+            catalog_entry,
+            response_text=response_text,
+            _agt_redactor=_agt_redactor,
+        )
+        return StageResult(
+            stage="classification",
+            decision="allow",
+            sensitivity_tags=tags,
+        )
 
 
 class InspectionPipeline:
