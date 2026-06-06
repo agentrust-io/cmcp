@@ -93,3 +93,90 @@ def test_audit_export_requires_auth():
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.get("/audit/export?session_id=sess-1")
     assert resp.status_code == 401
+
+
+# ── DOS-001: request body size limit ─────────────────────────────────────────
+
+def test_oversized_body_returns_413():
+    """DOS-001 — request body exceeding max_request_bytes is rejected before parsing."""
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        proxy = MagicMock()
+        proxy._catalog = MagicMock()
+        proxy._catalog.entries = {}
+        server = MCPServer(proxy, max_request_bytes=16)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.post("/mcp", content=b"x" * 17, headers={"Content-Type": "application/json"})
+    assert resp.status_code == 413
+
+
+def test_content_length_check_rejects_before_body_read():
+    """DOS-001 — Content-Length check rejects before reading body."""
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        proxy = MagicMock()
+        proxy._catalog = MagicMock()
+        proxy._catalog.entries = {}
+        server = MCPServer(proxy, max_request_bytes=100)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.post(
+        "/mcp",
+        content=b"{}",
+        headers={"Content-Type": "application/json", "Content-Length": "9999"},
+    )
+    assert resp.status_code == 413
+
+
+# ── INJECT-002: sanitize method in error responses ────────────────────────────
+
+def test_unknown_method_non_ascii_is_replaced():
+    """INJECT-002 — non-ASCII bytes in method are replaced so they cannot corrupt logs."""
+    server = _make_server()
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "tools/call😀emoji-injection", "id": 1},
+    )
+    assert resp.status_code == 404
+    msg = resp.json()["error"]["message"]
+    assert msg.isascii()
+
+
+def test_unknown_method_truncated_at_64_chars():
+    """INJECT-002 — method longer than 64 chars is truncated."""
+    server = _make_server()
+    client = TestClient(server.app, raise_server_exceptions=False)
+    long_method = "a" * 200
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": long_method, "id": 1},
+    )
+    assert resp.status_code == 404
+    msg = resp.json()["error"]["message"]
+    assert len(msg) <= len("Method not found: ") + 64
+
+
+# ── INJECT-003: deny_reason not reflected to caller ──────────────────────────
+
+def test_deny_response_does_not_include_internal_reason():
+    """INJECT-003 — internal deny_reason must not appear in 403 response body."""
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {}
+    proxy.call_tool = AsyncMock(return_value=MagicMock(
+        allowed=False,
+        deny_reason="Cedar eval error: AttributeAccessError on principal.secret_field",
+        audit_entry_hash=None,
+        would_have_denied=False,
+        latency_us=0,
+    ))
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "t", "arguments": {}}, "id": 1},
+    )
+    assert resp.status_code == 403
+    body = resp.json()
+    assert "Cedar eval error" not in str(body)
+    assert "AttributeAccessError" not in str(body)
+    assert body["error"]["message"] == "Request denied by policy"
