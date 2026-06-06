@@ -214,7 +214,9 @@ class MCPServer:
 
     async def _handle_tool_call(self, rpc_id: Any, params: dict[str, Any]) -> Response:
         """Route a tools/call request through the proxy."""
-        tool_name: str = params.get("name", "")
+        # POLICY-002: canonicalize tool names at ingress so Cedar policy, catalog, and
+        # request all use the same case — prevents case-variant bypass of deny rules.
+        tool_name: str = params.get("name", "").lower()
         arguments: dict[str, Any] = params.get("arguments", {})
         call_id = str(uuid.uuid4())
         workflow_id: str | None = params.get("_cmcp", {}).get("workflow_id")

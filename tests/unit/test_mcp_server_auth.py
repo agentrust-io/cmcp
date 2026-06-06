@@ -178,6 +178,34 @@ def test_unhandled_exception_returns_generic_500():
     assert body.get("error_code") == "INTERNAL_ERROR"
 
 
+# ── POLICY-002: ingress tool name canonicalized to lowercase ─────────────────
+
+def test_tool_name_is_lowercased_at_ingress():
+    """POLICY-002 — tool name from MCP request must be lowercased before catalog lookup."""
+    received_names: list[str] = []
+
+    async def _capture(call_id, tool_name, arguments, **kwargs):
+        received_names.append(tool_name)
+        return MagicMock(
+            allowed=True, deny_reason=None, response="ok",
+            audit_entry_hash="sha256:" + "0" * 64,
+            would_have_denied=False, latency_us=100,
+        )
+
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {}
+    proxy.call_tool = _capture
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "UPPER_TOOL", "arguments": {}}, "id": 1},
+    )
+    assert received_names == ["upper_tool"]
+
+
 def test_deny_response_does_not_include_internal_reason():
     """INJECT-003 — internal deny_reason must not appear in 403 response body."""
     proxy = MagicMock()

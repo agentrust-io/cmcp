@@ -127,6 +127,13 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
         _validate_entry(raw, entry_schema)
 
         tool_name: str = raw["tool_name"]
+        # POLICY-002: enforce lowercase-only tool names so ingress canonicalization
+        # (server.py .lower()) never silently renames a correctly-spelled tool.
+        if tool_name != tool_name.lower():
+            raise ConfigError(
+                f"Catalog entry tool_name '{tool_name}' must be lowercase; "
+                "use lowercase in catalog and Cedar policy documents"
+            )
         if tool_name in entries:
             raise CatalogToolNameCollision(
                 f"Duplicate tool_name '{tool_name}' — gateway will not start",
