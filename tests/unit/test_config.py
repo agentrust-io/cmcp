@@ -82,6 +82,13 @@ def test_empty_config_uses_defaults(config_file):
     assert cfg.attestation.provider == TEEProvider.AUTO
 
 
+def test_default_enforcement_mode_is_enforcing(config_file):
+    """POLICY-003 — omitting enforcement_mode must default to enforcing, not advisory."""
+    path = config_file("")
+    cfg = load_config(path)
+    assert cfg.attestation.enforcement_mode == EnforcementMode.ENFORCING
+
+
 def test_non_mapping_config(config_file):
     path = config_file("- item1\n- item2\n")
     with pytest.raises(ConfigError, match="mapping"):
