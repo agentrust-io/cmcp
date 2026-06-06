@@ -108,6 +108,17 @@ def run_startup(config_path: str) -> GatewayContext:
         attestation_report.measurement[:16],
     )
 
+    # AUTH-001 (CRITICAL): require a bearer token in production to authenticate
+    # inbound MCP calls. Without it, any network client can invoke any tool.
+    if config.bearer_token is None and not config.dev_mode:
+        _fatal(
+            "BEARER_TOKEN_REQUIRED",
+            "CMCP_BEARER_TOKEN env var is not set. "
+            "Set it to a secret token that agent hosts must present in the "
+            "Authorization header. Set CMCP_DEV_MODE=1 only in development.",
+        )
+        sys.exit(1)
+
     # Step 4: policy bundle
     policy_expected_hash = os.environ.get("CMCP_POLICY_HASH")
     if policy_expected_hash is None and not config.dev_mode:
