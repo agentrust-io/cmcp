@@ -24,7 +24,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.mcp.proxy import CMCPProxy
+from cmcp_gateway.session.state import SessionState
 
 if TYPE_CHECKING:
     from cmcp_gateway.audit.chain import AuditChain
@@ -80,6 +82,7 @@ class MCPServer:
         proxy: CMCPProxy,
         *,
         session_manager: SessionManager | None = None,
+        session: SessionState | None = None,
         audit_chain: AuditChain | None = None,
         bearer_token: str | None = None,
         session: SessionState | None = None,
@@ -87,9 +90,11 @@ class MCPServer:
     ) -> None:
         self._proxy = proxy
         self._session_manager = session_manager
+        self._session = session
         self._audit_chain = audit_chain
         self._session = session
         self._max_request_bytes = max_request_bytes
+        self._audit = audit_chain
         self._kernel = StatelessKernel()
         middleware = (
             [Middleware(_BearerAuthMiddleware, bearer_token=bearer_token)]
@@ -220,6 +225,23 @@ class MCPServer:
             )
 
         if not result.allowed:
+            _HEALTH_REASONS = {"attestation_stale", "catalog_drift"}
+            if result.deny_reason in _HEALTH_REASONS:
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32000,
+                            "message": result.deny_reason,
+                            "data": {
+                                "error_code": result.deny_reason.upper(),
+                                "call_id": call_id,
+                            },
+                        },
+                        "id": rpc_id,
+                    },
+                    status_code=503,
+                )
             # INJECT-003: log deny_reason internally; do not reflect internal detail to caller
             error_code = (
                 "TOOL_NOT_IN_CATALOG"
