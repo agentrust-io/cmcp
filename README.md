@@ -20,6 +20,15 @@ attestation:
 cmcp start --config cmcp-config.yaml
 ```
 
+## Quick Start
+
+```bash
+pip install cmcp-gateway
+CMCP_DEV_MODE=1 cmcp start --config cmcp-config.yaml
+```
+
+See [docs/quickstart.md](docs/quickstart.md) for a full walkthrough: Cedar policy, tool catalog, first TRACE Claim, and verification — no hardware TEE required.
+
 ## Why TEE
 
 | Threat | Software Governance | cMCP |
