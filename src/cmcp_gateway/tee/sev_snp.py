@@ -74,7 +74,7 @@ class SEVSNPProvider(TEEProvider):
 
         try:
             with open(_SEV_GUEST_DEVICE, "rb") as fd:
-                fcntl.ioctl(fd, _SNP_GET_REPORT, buf)  # type: ignore[attr-defined]
+                fcntl.ioctl(fd, _SNP_GET_REPORT, buf)
         except OSError as exc:
             raise RuntimeError(f"SEV-SNP attestation failed: {exc}") from exc
 
