@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +13,6 @@ from cmcp_gateway.tee.opaque import OpaqueProvider
 from cmcp_gateway.tee.sev_snp import SEVSNPProvider
 from cmcp_gateway.tee.tdx import TDXProvider
 from cmcp_gateway.tee.tpm import TPMProvider
-
 
 # ── OpaqueProvider ─────────────────────────────────────────────────────────────
 
