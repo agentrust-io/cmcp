@@ -35,7 +35,7 @@ class StalenessPolicy(StrEnum):
 @dataclass
 class AttestationConfig:
     provider: TEEProvider = TEEProvider.AUTO
-    enforcement_mode: EnforcementMode = EnforcementMode.ADVISORY
+    enforcement_mode: EnforcementMode = EnforcementMode.ENFORCING
     validity_seconds: int = 86400
     staleness_policy: StalenessPolicy = StalenessPolicy.FAIL_CLOSED
 
@@ -92,7 +92,7 @@ def load_config(path: str) -> Config:
         raise ConfigError(f"attestation.provider must be one of {valid}") from err
 
     try:
-        enforcement_mode = EnforcementMode(attest_raw.get("enforcement_mode", "advisory"))
+        enforcement_mode = EnforcementMode(attest_raw.get("enforcement_mode", "enforcing"))
     except ValueError as err:
         valid = [m.value for m in EnforcementMode]
         raise ConfigError(f"attestation.enforcement_mode must be one of {valid}") from err
