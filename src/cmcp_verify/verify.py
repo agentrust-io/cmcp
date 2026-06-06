@@ -256,11 +256,31 @@ def verify_trace_claim(
     if platform == "tpm2" and firmware_version == _SW_ONLY_FIRMWARE:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = "software-only mode — not hardware-backed"
+    elif platform == "tpm2" and firmware_version != _SW_ONLY_FIRMWARE:
+        from cmcp_verify.tpm import verify_tpm_measurement
+
+        raw_ev = runtime.get("raw_evidence")
+        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        tpm_result = verify_tpm_measurement(
+            measurement=runtime.get("measurement", ""),
+            raw_evidence=raw_bytes,
+            tee_public_key_hex=claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x"),
+            session_id=claim_json.get("gateway", {}).get("session_id"),
+        )
+        if tpm_result.verified:
+            verified.append("hardware_attestation")
+            verified.extend(tpm_result.verified_fields)
+        else:
+            unverified.append("hardware_attestation")
+            if tpm_result.failure_reason:
+                details["tpm_failure"] = tpm_result.failure_reason
+        unverified.extend(tpm_result.unverified_fields)
+        details.update(tpm_result.details)
     elif platform in _KNOWN_PLATFORMS:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = (
             f"Platform '{platform}' attestation verification not yet implemented — "
-            f"see issues #62 (TPM2), #67 (SEV-SNP), #70 (TDX/Opaque)"
+            f"see issues #67 (SEV-SNP), #70 (TDX/Opaque)"
         )
     else:
         unverified.append("hardware_attestation")
