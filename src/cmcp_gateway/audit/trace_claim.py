@@ -189,7 +189,13 @@ def sign_trace_claim(claim: GatewayClaim, signing_key: Any) -> str:
 
 def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
     provider = report.provider
-    platform = _PROVIDER_MAP.get(provider, "tpm2")
+    if provider not in _PROVIDER_MAP:
+        raise ValueError(
+            f"Attestation provider '{provider}' is not in the allowed set "
+            f"{sorted(_PROVIDER_MAP.keys())}. "
+            "Rejecting claim construction to prevent spoofed attestation reports."
+        )
+    platform = _PROVIDER_MAP[provider]
 
     if provider == "software-only":
         return RuntimeInfo(
