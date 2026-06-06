@@ -333,10 +333,35 @@ class InspectionPipeline:
         stage_results["classification"] = "allow"
 
         # Stage 4: injection detection (AGT PromptInjectionDetector + MCPResponseScanner)
+        # INJECT-005: scan bytes decoded strictly — non-UTF-8 is treated as a deny to
+        # prevent bypass via invalid byte sequences that errors="replace" would corrupt.
         try:
-            response_text = response_text_for_s3
-        except Exception:
-            response_text = ""
+            response_text = response_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            deny_reasons.append("INJECT-005: non-UTF-8 response rejected before injection scan")
+            injection_pattern = "non-utf8-response"
+            stage_results["injection"] = "deny"
+            final = "deny"
+            if session is not None:
+                session.update_from_inspection(
+                    call_id=call_id,
+                    sensitivity_tags=sensitivity_tags,
+                    injection_detected=True,
+                    response_allowed=False,
+                )
+            return InspectionResult(
+                call_id=call_id,
+                final_decision="deny",
+                deny_reason="; ".join(deny_reasons),
+                sensitivity_tags=sensitivity_tags,
+                stripped_fields=stripped_fields,
+                injection_pattern_matched=injection_pattern,
+                stage_results=stage_results,
+                response_payload_hash=response_payload_hash,
+                modified_response=None,
+            )
+
+        agt_mcp_denied = False
 
         # AGT MCPResponseScanner catches MCP-specific threats (tool poisoning in responses)
         if self._agt_response_scanner is not None:
@@ -348,7 +373,10 @@ class InspectionPipeline:
                     threat_name = str(agt_scan.threats[0]) if agt_scan.threats else "mcp_threat"
                     deny_reasons.append(f"AGT MCPResponseScanner: {threat_name}")
                     injection_pattern = f"agt_mcp:{threat_name}"
+                    # POLICY-006: record deny from AGT scanner before running regex stage;
+                    # regex stage below must not overwrite a deny with allow.
                     stage_results["injection"] = "deny"
+                    agt_mcp_denied = True
             except Exception:  # nosec B110
                 pass
 
@@ -357,7 +385,10 @@ class InspectionPipeline:
             self._injection_patterns,
             _agt_detector=self._agt_injection_detector,
         )
-        stage_results["injection"] = s4.decision
+        # POLICY-006: only overwrite injection decision if regex/AGT detector found a new deny,
+        # or if the stage had not yet been set to deny by the MCPResponseScanner above.
+        if s4.decision == "deny" or not agt_mcp_denied:
+            stage_results["injection"] = s4.decision
         if s4.decision == "deny":
             deny_reasons.append(s4.reason or "injection detected")
             injection_pattern = s4.injection_pattern
@@ -366,7 +397,8 @@ class InspectionPipeline:
 
         # Handoff to session state — happens even for denied responses
         # (a denied high-sensitivity response still raises session sensitivity)
-        injection_detected = s4.decision == "deny"
+        # INJECT-004: injection_detected must reflect both scanners, not only s4.
+        injection_detected = s4.decision == "deny" or agt_mcp_denied
         if session is not None:
             session.update_from_inspection(
                 call_id=call_id,

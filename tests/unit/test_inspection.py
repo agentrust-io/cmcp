@@ -185,3 +185,68 @@ def test_pipeline_calls_session_update_on_deny():
     _, kwargs = mock_session.update_from_inspection.call_args
     assert kwargs["injection_detected"] is True
     assert kwargs["response_allowed"] is False
+
+
+# ── INJECT-005: non-UTF-8 response handling ───────────────────────────────────
+
+def test_pipeline_denies_non_utf8_response():
+    """INJECT-005: non-UTF-8 bytes must be rejected before injection scanning."""
+    pipeline = InspectionPipeline()
+    entry = _make_entry()
+    non_utf8 = b"\xff\xfe invalid utf-8 payload"
+    result = pipeline.run("call-1", entry, non_utf8)
+    assert result.final_decision == "deny"
+    assert result.injection_pattern_matched == "non-utf8-response"
+
+
+def test_pipeline_non_utf8_calls_session_update_with_injection_detected():
+    """INJECT-004: injection_detected=True even for non-UTF-8 path."""
+    pipeline = InspectionPipeline()
+    entry = _make_entry()
+    mock_session = MagicMock()
+    pipeline.run("call-1", entry, b"\xff\xfe bad", session=mock_session)
+    mock_session.update_from_inspection.assert_called_once()
+    _, kwargs = mock_session.update_from_inspection.call_args
+    assert kwargs["injection_detected"] is True
+    assert kwargs["response_allowed"] is False
+
+
+# ── POLICY-006 / INJECT-004: AGT MCPResponseScanner deny propagation ──────────
+
+def test_agt_mcp_scanner_deny_sets_injection_detected_on_session():
+    """INJECT-004: AGT MCPResponseScanner deny must set injection_detected on session."""
+    pipeline = InspectionPipeline()
+    entry = _make_entry()
+
+    # Inject a mock AGT response scanner that returns unsafe
+    mock_scanner = MagicMock()
+    mock_scan_result = MagicMock()
+    mock_scan_result.is_safe = False
+    mock_scan_result.threats = ["tool_poisoning"]
+    mock_scanner.scan_response.return_value = mock_scan_result
+    pipeline._agt_response_scanner = mock_scanner
+
+    mock_session = MagicMock()
+    pipeline.run("call-1", entry, NORMAL_RESPONSE, session=mock_session)
+
+    _, kwargs = mock_session.update_from_inspection.call_args
+    assert kwargs["injection_detected"] is True
+    assert kwargs["response_allowed"] is False
+
+
+def test_agt_mcp_scanner_deny_is_not_overwritten_by_regex_allow():
+    """POLICY-006: regex stage returning allow must not overwrite AGT scanner deny."""
+    pipeline = InspectionPipeline()
+    entry = _make_entry()
+
+    mock_scanner = MagicMock()
+    mock_scan_result = MagicMock()
+    mock_scan_result.is_safe = False
+    mock_scan_result.threats = ["tool_poisoning"]
+    mock_scanner.scan_response.return_value = mock_scan_result
+    pipeline._agt_response_scanner = mock_scanner
+
+    # NORMAL_RESPONSE has no regex injection patterns
+    result = pipeline.run("call-1", entry, NORMAL_RESPONSE)
+    assert result.final_decision == "deny"
+    assert result.stage_results["injection"] == "deny"
