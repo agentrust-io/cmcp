@@ -117,10 +117,15 @@ class AuditChain:
         workflow_id: str | None = None,
     ) -> AuditEntry:
         prev_hash = self._entries[-1].entry_hash if self._entries else "genesis"
+        now = datetime.now(tz=UTC)
+        if self._entries:
+            prev_ts = datetime.fromisoformat(self._entries[-1].timestamp_utc)
+            if now < prev_ts:
+                now = prev_ts
         entry = AuditEntry(
             entry_id=str(uuid4()),
             sequence_number=len(self._entries),
-            timestamp_utc=datetime.now(tz=UTC).isoformat(),
+            timestamp_utc=now.isoformat(),
             session_id=self._session_id,
             call_id=call_id,
             entry_type=entry_type,
