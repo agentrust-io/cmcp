@@ -375,10 +375,12 @@ class MCPServer:
             return JSONResponse(
                 {"error": f"session_id={session_id} not found"}, status_code=404
             )
-        old_id, new_id = self._session.reset(
-            reason="operator reset via API",
-            authorized_by="api",
-        )
+        # AUTH-002: lock guards against a concurrent tool-call coroutine modifying sensitivity.
+        async with self._session.mutation_lock:
+            old_id, new_id = self._session.reset(
+                reason="operator reset via API",
+                authorized_by="api",
+            )
         self._audit_chain.append(
             "session_reset",
             call_id=None,

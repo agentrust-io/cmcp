@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
 from cmcp_gateway.session.state import SENSITIVITY_ORDER, SessionState, _max_sensitivity
 
 # ── _max_sensitivity ──────────────────────────────────────────────────────────
@@ -107,3 +111,31 @@ def test_update_highest_tag_wins_per_update():
     state.update_from_inspection("c1", ["pii", "mnpi", "confidential"], False, True)
     assert state.max_sensitivity in ("mnpi", "hipaa_phi", "trade_secret")
     assert SENSITIVITY_ORDER[state.max_sensitivity] == 3
+
+
+# ── AUTH-002: asyncio.Lock guards concurrent mutations ────────────────────────
+
+def test_session_state_has_mutation_lock():
+    """AUTH-002 — SessionState must expose an asyncio.Lock for concurrent-mutation protection."""
+    import asyncio
+    state = SessionState(session_id="s-lock")
+    assert isinstance(state.mutation_lock, asyncio.Lock)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_update_and_reset_do_not_corrupt_state():
+    """AUTH-002 — concurrent update_from_inspection and reset must not leave state inconsistent."""
+    state = SessionState(session_id="s-concurrent")
+
+    async def _update():
+        async with state.mutation_lock:
+            state.update_from_inspection("c1", ["pii"], False, True)
+
+    async def _reset():
+        async with state.mutation_lock:
+            state.reset(reason="concurrent reset", authorized_by="test")
+
+    # Run 10 interleaved updates and resets; state must be valid throughout.
+    tasks = [_update() for _ in range(5)] + [_reset() for _ in range(5)]
+    await asyncio.gather(*tasks)
+    assert state.max_sensitivity in SENSITIVITY_ORDER

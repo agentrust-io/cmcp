@@ -384,14 +384,16 @@ class CMCPProxy:
             )
 
         # Step 4: session update from response sensitivity
+        # AUTH-002: lock protects against race with concurrent session reset requests.
         response_sensitivity = getattr(agt_result, "sensitivity_tags", [])
         injection_detected = getattr(agt_result, "injection_detected", False)
-        self._session.update_from_inspection(
-            call_id=call_id,
-            sensitivity_tags=response_sensitivity or [entry.sensitivity_level],
-            injection_detected=injection_detected,
-            response_allowed=True,
-        )
+        async with self._session.mutation_lock:
+            self._session.update_from_inspection(
+                call_id=call_id,
+                sensitivity_tags=response_sensitivity or [entry.sensitivity_level],
+                injection_detected=injection_detected,
+                response_allowed=True,
+            )
 
         # Step 5: egress Cedar policy check
         # Derive response bytes for size accounting and egress evaluation.
