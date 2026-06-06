@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -55,6 +56,8 @@ class SessionState:
     suspicious_sequences: int = 0
     attestation_stale: bool = False
     catalog_drift: bool = False
+    # AUTH-002: guards concurrent mutations from tool-call coroutines and session-reset requests
+    mutation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False, compare=False)
 
     def update_from_inspection(
         self,
