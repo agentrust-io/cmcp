@@ -96,11 +96,12 @@ def test_detect_raises_when_no_hardware_and_no_dev_mode(no_dev_config):
         detect_provider(no_dev_config)
 
 
-def test_detect_via_env_var(no_dev_config, monkeypatch):
+def test_detect_env_var_alone_does_not_bypass_config(no_dev_config, monkeypatch):
+    """CONF-002 — CMCP_DEV_MODE in env after config load must not enable software-only."""
     monkeypatch.setenv("CMCP_DEV_MODE", "1")
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None):
-        provider = detect_provider(no_dev_config)
-    assert isinstance(provider, SoftwareOnlyProvider)
+    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None), \
+         pytest.raises(AttestationProviderUnsupported):
+        detect_provider(no_dev_config)
 
 
 def test_detect_uses_first_available_provider(dev_config):
