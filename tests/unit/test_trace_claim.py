@@ -217,3 +217,35 @@ def test_to_dict_includes_signature_field():
     d = _to_dict(claim)
     assert "signature" in d
     assert d["signature"] == ""
+
+
+# ── CRYPTO-003: nonce binding ─────────────────────────────────────────────────
+
+
+def test_build_runtime_valid_report_data_produces_nonce():
+    """CRYPTO-003: valid hex report_data must produce a nonce in RuntimeInfo."""
+    from cmcp_gateway.audit.trace_claim import _build_runtime, AttestationReportInfo
+    report = AttestationReportInfo(
+        provider="sev-snp",
+        measurement="sha256:" + "a" * 64,
+        report_data="deadbeef" * 8,  # valid hex
+        attestation_generated_at="2026-06-06T00:00:00+00:00",
+        attestation_validity_seconds=86400,
+    )
+    runtime = _build_runtime(report)
+    assert runtime.nonce is not None
+
+
+def test_build_runtime_malformed_report_data_raises():
+    """CRYPTO-003: malformed report_data must raise ValueError, not set nonce=None."""
+    import pytest
+    from cmcp_gateway.audit.trace_claim import _build_runtime, AttestationReportInfo
+    report = AttestationReportInfo(
+        provider="sev-snp",
+        measurement="sha256:" + "a" * 64,
+        report_data="not-hex!!",
+        attestation_generated_at="2026-06-06T00:00:00+00:00",
+        attestation_validity_seconds=86400,
+    )
+    with pytest.raises(ValueError, match="malformed report_data"):
+        _build_runtime(report)

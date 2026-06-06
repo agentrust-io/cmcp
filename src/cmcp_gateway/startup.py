@@ -84,9 +84,13 @@ def run_startup(config_path: str) -> GatewayContext:
     signing_key = SigningKey()
     logger.info("Signing key generated: %s...", signing_key.public_key_hex[:16])
 
-    # Attest with nonce = SHA-256(public_key || "startup")
+    # CRYPTO-002: nonce must be session-unique. Use SHA-256(public_key || random_session_id)
+    # so two gateways with different random bytes produce different nonces even if they
+    # share the same keypair (e.g. during blue-green deploy).
     import hashlib
-    nonce = hashlib.sha256(signing_key.public_key_bytes + b"startup").digest()
+    import secrets
+    session_id = secrets.token_bytes(32)
+    nonce = hashlib.sha256(signing_key.public_key_bytes + session_id).digest()
     try:
         attestation_report = tee_provider.get_attestation_report(nonce)
     except Exception as exc:
