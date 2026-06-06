@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import jsonschema
 
@@ -49,6 +49,7 @@ class CatalogEntry:
     added_at: str
     approved_by: str
     catalog_exception: bool = False
+    schema_validation_mode: Literal["redact", "strict", "log"] = field(default="redact")
 
 
 @dataclass
@@ -157,6 +158,14 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
                 f"Stored: {raw['definition_hash']}, computed: {computed_def_hash}"
             )
 
+        raw_mode = raw.get("schema_validation_mode", "redact")
+        if raw_mode not in ("redact", "strict", "log"):
+            raise ConfigError(
+                f"Catalog entry '{tool_name}': invalid schema_validation_mode '{raw_mode}'; "
+                "must be 'redact', 'strict', or 'log'"
+            )
+        schema_validation_mode: Literal["redact", "strict", "log"] = raw_mode
+
         entries[tool_name] = CatalogEntry(
             tool_name=tool_name,
             server=server,
@@ -168,6 +177,7 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
             added_at=raw.get("added_at", ""),
             approved_by=raw.get("approved_by", ""),
             catalog_exception=raw.get("catalog_exception", False),
+            schema_validation_mode=schema_validation_mode,
         )
 
     computed_hash = _catalog_hash(raw_list)
