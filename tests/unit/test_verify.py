@@ -26,16 +26,17 @@ POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
 
 
-def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH):
+def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH, provider="software-only"):
     key = SigningKey()
     chain = AuditChain("test-session")
+    measurement = "DEVELOPMENT_ONLY" if provider == "software-only" else "ab" * 32
 
     claim = generate_trace_claim(
         session_id="test-session",
         signing_key=key,
         attestation_report=AttestationReportInfo(
-            provider="software-only",
-            measurement="DEVELOPMENT_ONLY",
+            provider=provider,
+            measurement=measurement,
             report_data="00" * 32,
             attestation_generated_at=datetime.now(tz=UTC).isoformat(),
             attestation_validity_seconds=86400,
@@ -187,3 +188,56 @@ def test_all_software_only_verified_fields_are_present():
     assert "tool_catalog.hash" in result.verified_fields
     assert "attestation_freshness" in result.verified_fields
     assert "audit_chain" in result.verified_fields
+
+
+# ── TEE-001: known hardware platform without verifier ─────────────────────────
+
+
+def test_known_hardware_platform_without_verifier_is_partially_verified():
+    """TEE-001 — amd-sev-snp with no verifier impl must be PARTIALLY_VERIFIED not VERIFIED."""
+    claim_dict, key = _make_signed_claim(provider="sev-snp")
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+    )
+    assert result.status == VerificationStatus.PARTIALLY_VERIFIED
+    assert result.failure_reason == VerificationError.UNSUPPORTED_PROVIDER
+    assert "hardware_attestation" in result.unverified_fields
+
+
+# ── CRYPTO-001: public key binding ────────────────────────────────────────────
+
+
+def test_matching_trusted_public_key_is_verified():
+    """CRYPTO-001 — trusted_public_key_hex matching JWK adds public_key_binding to verified."""
+    claim_dict, key = _make_signed_claim()
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+    )
+    assert "public_key_binding" in result.verified_fields
+    assert "public_key_binding" not in result.unverified_fields
+
+
+def test_mismatched_trusted_public_key_fails():
+    """CRYPTO-001 — wrong trusted key → PUBLIC_KEY_NOT_BOUND."""
+    claim_dict, _ = _make_signed_claim()
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex="00" * 32
+    )
+    assert "public_key_binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.PUBLIC_KEY_NOT_BOUND
+
+
+def test_no_trusted_key_for_hardware_platform_fails():
+    """CRYPTO-001 — hardware platform without trusted_public_key_hex → PUBLIC_KEY_NOT_BOUND."""
+    claim_dict, _ = _make_signed_claim(provider="sev-snp")
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "public_key_binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.PUBLIC_KEY_NOT_BOUND
+
+
+def test_no_trusted_key_for_software_only_is_not_penalized():
+    """CRYPTO-001 — software-only is exempt from the trusted key binding requirement."""
+    claim_dict, _ = _make_signed_claim()
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "public_key_binding" not in result.unverified_fields
+    assert "public_key_binding" not in result.verified_fields

@@ -77,6 +77,16 @@ def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
+def _jwk_x_to_hex(x_b64: str) -> str | None:
+    """Decode trace.cnf.jwk.x (base64url, no padding) to hex. Returns None on error."""
+    try:
+        padding = 4 - (len(x_b64) % 4)
+        padded = x_b64 + ("=" * padding if padding != 4 else "")
+        return base64.urlsafe_b64decode(padded).hex()
+    except Exception:
+        return None
+
+
 def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
     """Verify the Ed25519 signature using the JWK public key in trace.cnf.jwk.x."""
     try:
@@ -150,6 +160,8 @@ def verify_trace_claim(
     claim_json: dict[str, Any],
     approved: ApprovedHashes,
     max_attestation_age_seconds: int = 86400,
+    *,
+    trusted_public_key_hex: str | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -203,6 +215,30 @@ def verify_trace_claim(
         failure = VerificationError.SIGNATURE_INVALID
         details["signature_error"] = sig_err or "invalid signature"
 
+    # Step 2b: Public key binding — verify JWK x matches an externally-trusted key.
+    # Without this, a malicious gateway can sign with any key and embed it in the claim.
+    _runtime = claim_json.get("trace", {}).get("runtime", {})
+    _is_sw_only = (
+        _runtime.get("platform") == "tpm2"
+        and _runtime.get("firmware_version") == _SW_ONLY_FIRMWARE
+    )
+    _x_b64 = claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
+    if trusted_public_key_hex:
+        actual_hex = _jwk_x_to_hex(_x_b64) if _x_b64 else None
+        normalized = trusted_public_key_hex.lower().removeprefix("0x")
+        if actual_hex == normalized:
+            verified.append("public_key_binding")
+        else:
+            unverified.append("public_key_binding")
+            failure = failure or VerificationError.PUBLIC_KEY_NOT_BOUND
+            details["public_key_binding"] = "trace.cnf.jwk.x does not match trusted_public_key_hex"
+    elif not _is_sw_only:
+        unverified.append("public_key_binding")
+        failure = failure or VerificationError.PUBLIC_KEY_NOT_BOUND
+        details["public_key_binding"] = (
+            "no trusted_public_key_hex provided — TEE key binding cannot be verified"
+        )
+
     # Step 3: Policy bundle hash
     claimed_policy = claim_json.get("trace", {}).get("policy", {}).get("bundle_hash", "")
     expected_policy = approved.policy_bundle_hash.removeprefix("sha256:")
@@ -249,9 +285,8 @@ def verify_trace_claim(
             details["chain_error"] = chain_err
 
     # Step 7: Platform-specific attestation
-    runtime = claim_json.get("trace", {}).get("runtime", {})
-    platform = runtime.get("platform", "")
-    firmware_version = runtime.get("firmware_version", "")
+    platform = _runtime.get("platform", "")
+    firmware_version = _runtime.get("firmware_version", "")
 
     if platform == "tpm2" and firmware_version == _SW_ONLY_FIRMWARE:
         unverified.append("hardware_attestation")
@@ -259,10 +294,10 @@ def verify_trace_claim(
     elif platform == "tpm2" and firmware_version != _SW_ONLY_FIRMWARE:
         from cmcp_verify.tpm import verify_tpm_measurement
 
-        raw_ev = runtime.get("raw_evidence")
+        raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
         tpm_result = verify_tpm_measurement(
-            measurement=runtime.get("measurement", ""),
+            measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
             tee_public_key_hex=claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x"),
             session_id=claim_json.get("gateway", {}).get("session_id"),
@@ -278,6 +313,7 @@ def verify_trace_claim(
         details.update(tpm_result.details)
     elif platform in _KNOWN_PLATFORMS:
         unverified.append("hardware_attestation")
+        failure = failure or VerificationError.UNSUPPORTED_PROVIDER
         details["hardware_attestation"] = (
             f"Platform '{platform}' attestation verification not yet implemented — "
             f"see issues #67 (SEV-SNP), #70 (TDX/Opaque)"
