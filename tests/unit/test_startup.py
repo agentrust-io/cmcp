@@ -118,3 +118,47 @@ def test_startup_fails_on_catalog_hash_mismatch(complete_setup, monkeypatch):
     with pytest.raises(SystemExit) as exc_info:
         run_startup(complete_setup)
     assert exc_info.value.code == 1
+
+
+def test_startup_fails_when_policy_hash_unset_and_not_dev_mode(tmp_path):
+    """POLICY-001 (CRITICAL): CMCP_POLICY_HASH must be set outside dev mode."""
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    config_path.write_text(f"policy_bundle_path: {policy_dir}\ncatalog_path: {catalog_path}\n")
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+
+    env = {"CMCP_DEV_MODE": "0"}
+    with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
+
+
+def test_startup_fails_when_catalog_hash_unset_and_not_dev_mode(tmp_path, monkeypatch):
+    """POLICY-002 (CRITICAL): CMCP_CATALOG_HASH must be set outside dev mode."""
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    config_path.write_text(f"policy_bundle_path: {policy_dir}\ncatalog_path: {catalog_path}\n")
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+
+    import json as _json
+
+    from cmcp_gateway.policy.bundle import _canonical_bundle_hash
+    manifest_raw = _json.loads((policy_dir / "manifest.json").read_text())
+    policy_files = {"allow.cedar": CEDAR_POLICY}
+    computed = _canonical_bundle_hash(manifest_raw, policy_files, SCHEMA)
+    policy_hash = f"sha256:{computed}"
+
+    env = {"CMCP_DEV_MODE": "0", "CMCP_POLICY_HASH": policy_hash}
+    with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
