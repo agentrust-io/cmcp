@@ -50,6 +50,7 @@ class AuditEntry:
     session_sensitivity_before: str | None
     session_sensitivity_after: str | None
     detail: dict[str, str | int] | None  # optional structured detail (e.g. suspicious_call_sequence)
+    workflow_id: str | None
     prev_entry_hash: str  # "genesis" for first entry
     entry_hash: str = field(default="")  # computed after construction
 
@@ -92,6 +93,7 @@ class AuditChain:
             response_inspection_result="n/a",
             session_sensitivity_before=None,
             session_sensitivity_after="public",
+            workflow_id=None,
         )
 
     def append(
@@ -110,6 +112,7 @@ class AuditChain:
         session_sensitivity_before: str | None = None,
         session_sensitivity_after: str | None = None,
         detail: dict[str, str | int] | None = None,
+        workflow_id: str | None = None,
     ) -> AuditEntry:
         prev_hash = self._entries[-1].entry_hash if self._entries else "genesis"
         entry = AuditEntry(
@@ -130,6 +133,7 @@ class AuditChain:
             session_sensitivity_before=session_sensitivity_before,
             session_sensitivity_after=session_sensitivity_after,
             detail=detail,
+            workflow_id=workflow_id,
             prev_entry_hash=prev_hash,
         )
         entry.entry_hash = entry.compute_hash()
