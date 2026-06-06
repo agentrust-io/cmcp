@@ -10,6 +10,7 @@ Phase 1 scope: HTTP/SSE transport only. stdio excluded (docs/spec/transport.md).
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import uuid
@@ -17,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 from agent_os.stateless import StatelessKernel
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -28,6 +31,39 @@ if TYPE_CHECKING:
     from cmcp_gateway.session.manager import SessionManager
 
 logger = logging.getLogger(__name__)
+
+# Endpoints exempt from bearer-token auth (Kubernetes liveness / readiness probes)
+_AUTH_EXEMPT_PATHS = {"/health"}
+
+
+class _BearerAuthMiddleware(BaseHTTPMiddleware):
+    """AUTH-001 (CRITICAL): validate Authorization: Bearer <token> on all protected endpoints."""
+
+    def __init__(self, app: Any, *, bearer_token: str) -> None:
+        super().__init__(app)
+        self._token = bearer_token
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        if request.url.path in _AUTH_EXEMPT_PATHS:
+            return await call_next(request)
+        auth = request.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if not auth.startswith(prefix):
+            return JSONResponse(
+                {"error": "unauthorized", "error_code": "MISSING_BEARER_TOKEN"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer realm=\"cmcp-gateway\""},
+            )
+        provided = auth[len(prefix):]
+        # Constant-time compare to prevent timing oracle on the token
+        if not hmac.compare_digest(provided, self._token):
+            logger.warning("AUTH_FAILURE: invalid bearer token from %s", request.client)
+            return JSONResponse(
+                {"error": "unauthorized", "error_code": "INVALID_BEARER_TOKEN"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer realm=\"cmcp-gateway\""},
+            )
+        return await call_next(request)
 
 
 class MCPServer:
@@ -44,22 +80,31 @@ class MCPServer:
         *,
         session_manager: SessionManager | None = None,
         audit_chain: AuditChain | None = None,
+        bearer_token: str | None = None,
     ) -> None:
         self._proxy = proxy
         self._session_manager = session_manager
         self._audit_chain = audit_chain
         self._kernel = StatelessKernel()
-        self.app = Starlette(routes=[
-            Route("/mcp", self._handle_mcp, methods=["POST"]),
-            Route("/health", self._health, methods=["GET"]),
-            Route("/tools/list", self._list_tools, methods=["GET"]),
-            Route(
-                "/sessions/{session_id}/trace-claim",
-                self._get_trace_claim,
-                methods=["GET"],
-            ),
-            Route("/audit/export", self._audit_export, methods=["GET"]),
-        ])
+        middleware = (
+            [Middleware(_BearerAuthMiddleware, bearer_token=bearer_token)]
+            if bearer_token is not None
+            else []
+        )
+        self.app = Starlette(
+            routes=[
+                Route("/mcp", self._handle_mcp, methods=["POST"]),
+                Route("/health", self._health, methods=["GET"]),
+                Route("/tools/list", self._list_tools, methods=["GET"]),
+                Route(
+                    "/sessions/{session_id}/trace-claim",
+                    self._get_trace_claim,
+                    methods=["GET"],
+                ),
+                Route("/audit/export", self._audit_export, methods=["GET"]),
+            ],
+            middleware=middleware,
+        )
 
     async def _handle_mcp(self, request: Request) -> Response:
         """Handle MCP JSON-RPC 2.0 calls."""

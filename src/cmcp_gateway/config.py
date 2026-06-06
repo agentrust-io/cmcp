@@ -48,6 +48,7 @@ class Config:
     listen_addr: str = "0.0.0.0:8443"
     max_response_size_bytes: int = 2 * 1024 * 1024  # 2MB
     dev_mode: bool = False
+    bearer_token: str | None = None
 
 
 _KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes"}
@@ -109,6 +110,7 @@ def load_config(path: str) -> Config:
         raise ConfigError("max_response_size_bytes must be a positive integer")
 
     dev_mode = os.environ.get("CMCP_DEV_MODE", "0") == "1"
+    bearer_token = os.environ.get("CMCP_BEARER_TOKEN") or None
 
     return Config(
         attestation=AttestationConfig(
@@ -122,4 +124,5 @@ def load_config(path: str) -> Config:
         listen_addr=raw.get("listen_addr", "0.0.0.0:8443"),
         max_response_size_bytes=max_bytes,
         dev_mode=dev_mode,
+        bearer_token=bearer_token,
     )
