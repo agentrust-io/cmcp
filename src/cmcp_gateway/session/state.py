@@ -52,6 +52,7 @@ class SessionState:
     sensitivity_raised_by_call: str | None = None
     injection_events: list[InjectionEvent] = field(default_factory=list)
     reset_count: int = 0
+    suspicious_sequences: int = 0
 
     def update_from_inspection(
         self,
@@ -92,6 +93,7 @@ class SessionState:
         self.max_sensitivity = "public"
         self.sensitivity_raised_at = None
         self.sensitivity_raised_by_call = None
+        self.suspicious_sequences = 0
         self.reset_count += 1
         # reason and authorized_by are logged by the caller in the audit chain
         return previous_session_id, self.session_id
