@@ -21,7 +21,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.mcp.proxy import CMCPProxy
+from cmcp_gateway.session.state import SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +36,21 @@ class MCPServer:
     The proxy routes calls to upstream servers based on the attested catalog.
     """
 
-    def __init__(self, proxy: CMCPProxy) -> None:
+    def __init__(
+        self,
+        proxy: CMCPProxy,
+        session: SessionState | None = None,
+        audit_chain: AuditChain | None = None,
+    ) -> None:
         self._proxy = proxy
+        self._session = session
+        self._audit = audit_chain
         self._kernel = StatelessKernel()
         self.app = Starlette(routes=[
             Route("/mcp", self._handle_mcp, methods=["POST"]),
             Route("/health", self._health, methods=["GET"]),
             Route("/tools/list", self._list_tools, methods=["GET"]),
+            Route("/sessions/{session_id}/reset", self._reset_session, methods=["POST"]),
         ])
 
     async def _handle_mcp(self, request: Request) -> Response:
@@ -124,6 +134,23 @@ class MCPServer:
             )
 
         if not result.allowed:
+            _HEALTH_REASONS = {"attestation_stale", "catalog_drift"}
+            if result.deny_reason in _HEALTH_REASONS:
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32000,
+                            "message": result.deny_reason,
+                            "data": {
+                                "error_code": result.deny_reason.upper(),
+                                "call_id": call_id,
+                            },
+                        },
+                        "id": rpc_id,
+                    },
+                    status_code=503,
+                )
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
@@ -173,6 +200,34 @@ class MCPServer:
     async def _list_tools(self, request: Request) -> Response:
         """GET /tools/list convenience endpoint."""
         return await self._handle_tools_list(None)
+
+    async def _reset_session(self, request: Request) -> Response:
+        """POST /sessions/{session_id}/reset — operator-only session reset (issue #92)."""
+        if self._session is None or self._audit is None:
+            return JSONResponse({"error": "session management not configured"}, status_code=501)
+
+        requested_id = request.path_params.get("session_id", "")
+        if requested_id != self._session.session_id:
+            return JSONResponse(
+                {"error": f"session '{requested_id}' not found"},
+                status_code=404,
+            )
+
+        old_session_id, new_session_id = self._session.reset(
+            reason="operator_reset",
+            authorized_by="operator",
+        )
+        self._audit.append(
+            "session_reset",
+            session_sensitivity_before=None,
+            session_sensitivity_after=self._session.max_sensitivity,
+        )
+
+        return JSONResponse({
+            "old_session_id": old_session_id,
+            "new_session_id": new_session_id,
+            "status": "reset",
+        })
 
     async def _health(self, request: Request) -> Response:
         return JSONResponse({"status": "ok"})

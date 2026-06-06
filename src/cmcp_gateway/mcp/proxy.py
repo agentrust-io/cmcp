@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from agent_os.mcp_gateway import GovernancePolicy, MCPGateway  # type: ignore[attr-defined]
@@ -63,6 +64,9 @@ class CMCPProxy:
         session: SessionState,
         audit_chain: AuditChain,
         config: Config,
+        attestation_generated_at: datetime | None = None,
+        attestation_validity_seconds: int = 86400,
+        catalog_hash: str | None = None,
     ) -> None:
         self._catalog = catalog
         self._policy = policy_evaluator
@@ -70,6 +74,9 @@ class CMCPProxy:
         self._audit = audit_chain
         self._config = config
         self._enforcement = config.attestation.enforcement_mode
+        self._attestation_generated_at = attestation_generated_at
+        self._attestation_validity_seconds = attestation_validity_seconds
+        self._catalog_hash = catalog_hash or catalog.catalog_hash
 
         # Build AGT GovernancePolicy from cMCP catalog
         allowed_tools = list(catalog.entries.keys())
@@ -82,6 +89,53 @@ class CMCPProxy:
             policy=gov_policy,
             response_scanner=MCPResponseScanner(),
         )
+
+    def _check_health(self) -> str | None:
+        """
+        Check attestation staleness and catalog drift.
+
+        Returns a reason string if unhealthy, or None if healthy.
+        Side-effects: sets flags on session and appends audit entries on first detection.
+        """
+        # Attestation staleness check
+        if self._attestation_generated_at is not None and not self._session.attestation_stale:
+            age = datetime.now(UTC) - self._attestation_generated_at
+            if age.total_seconds() > self._attestation_validity_seconds:
+                logger.warning(
+                    "Attestation stale: age_seconds=%.0f validity_seconds=%d",
+                    age.total_seconds(),
+                    self._attestation_validity_seconds,
+                )
+                self._session.attestation_stale = True
+                self._audit.append(
+                    "attestation_stale",
+                    session_sensitivity_before=self._session.max_sensitivity,
+                    session_sensitivity_after=self._session.max_sensitivity,
+                )
+
+        if self._session.attestation_stale:
+            return "attestation_stale"
+
+        # Catalog drift check
+        if not self._session.catalog_drift:
+            current_hash = self._catalog.catalog_hash
+            if current_hash != self._catalog_hash:
+                logger.warning(
+                    "Catalog drift detected: expected=%s actual=%s",
+                    self._catalog_hash,
+                    current_hash,
+                )
+                self._session.catalog_drift = True
+                self._audit.append(
+                    "catalog_drift",
+                    session_sensitivity_before=self._session.max_sensitivity,
+                    session_sensitivity_after=self._session.max_sensitivity,
+                )
+
+        if self._session.catalog_drift:
+            return "catalog_drift"
+
+        return None
 
     def _build_cedar_context(
         self, tool_name: str, arguments: dict[str, Any]
@@ -123,6 +177,20 @@ class CMCPProxy:
         t0 = time.perf_counter()
         sensitivity_before = self._session.max_sensitivity
         would_have_denied = False
+
+        # Step 0: health check (attestation staleness, catalog drift)
+        unhealthy_reason = self._check_health()
+        if unhealthy_reason is not None:
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=False,
+                response=None,
+                deny_reason=unhealthy_reason,
+                latency_us=int((time.perf_counter() - t0) * 1_000_000),
+                audit_entry_hash=self._audit.chain_tip,
+            )
 
         # Step 1: catalog lookup
         entry = self._catalog.lookup(tool_name)
