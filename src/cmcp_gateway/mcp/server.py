@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_os.stateless import StatelessKernel
 from starlette.applications import Starlette
@@ -22,6 +22,10 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from cmcp_gateway.mcp.proxy import CMCPProxy
+
+if TYPE_CHECKING:
+    from cmcp_gateway.audit.chain import AuditChain
+    from cmcp_gateway.session.manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +38,27 @@ class MCPServer:
     The proxy routes calls to upstream servers based on the attested catalog.
     """
 
-    def __init__(self, proxy: CMCPProxy) -> None:
+    def __init__(
+        self,
+        proxy: CMCPProxy,
+        *,
+        session_manager: SessionManager | None = None,
+        audit_chain: AuditChain | None = None,
+    ) -> None:
         self._proxy = proxy
+        self._session_manager = session_manager
+        self._audit_chain = audit_chain
         self._kernel = StatelessKernel()
         self.app = Starlette(routes=[
             Route("/mcp", self._handle_mcp, methods=["POST"]),
             Route("/health", self._health, methods=["GET"]),
             Route("/tools/list", self._list_tools, methods=["GET"]),
+            Route(
+                "/sessions/{session_id}/trace-claim",
+                self._get_trace_claim,
+                methods=["GET"],
+            ),
+            Route("/audit/export", self._audit_export, methods=["GET"]),
         ])
 
     async def _handle_mcp(self, request: Request) -> Response:
@@ -176,3 +194,45 @@ class MCPServer:
 
     async def _health(self, request: Request) -> Response:
         return JSONResponse({"status": "ok"})
+
+    async def _get_trace_claim(self, request: Request) -> Response:
+        """GET /sessions/{session_id}/trace-claim — returns signed TRACE Claim for a closed session."""
+        if self._session_manager is None:
+            return JSONResponse(
+                {"error": "session management not available"}, status_code=501
+            )
+        session_id: str = request.path_params["session_id"]
+        claim = self._session_manager.get_trace_claim(session_id)
+        if claim is None:
+            return JSONResponse(
+                {"error": f"trace claim not found for session_id={session_id}"},
+                status_code=404,
+            )
+        return JSONResponse(claim)
+
+    async def _audit_export(self, request: Request) -> Response:
+        """GET /audit/export?session_id=<id> — returns signed audit bundle."""
+        if self._session_manager is None or self._audit_chain is None:
+            return JSONResponse(
+                {"error": "audit export not available"}, status_code=501
+            )
+        session_id: str | None = request.query_params.get("session_id")
+        if not session_id:
+            return JSONResponse(
+                {"error": "query parameter 'session_id' is required"},
+                status_code=400,
+            )
+        try:
+            bundle = self._session_manager.get_audit_bundle(
+                session_id, self._audit_chain
+            )
+        except ValueError as exc:
+            logger.error(
+                "Audit chain integrity failure: session_id=%s error=%s",
+                session_id,
+                exc,
+            )
+            return JSONResponse(
+                {"error": "audit chain integrity check failed"}, status_code=500
+            )
+        return JSONResponse(bundle)
