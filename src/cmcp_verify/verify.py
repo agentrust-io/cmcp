@@ -331,12 +331,49 @@ def verify_trace_claim(
                 details["sev_snp_failure"] = snp_result.failure_reason
         unverified.extend(snp_result.unverified_fields)
         details.update(snp_result.details)
+    elif platform == "intel-tdx":
+        from cmcp_verify.tdx import verify_tdx_measurement
+
+        raw_ev = _runtime.get("raw_evidence")
+        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        report_data_hex = _runtime.get("report_data")
+        tdx_result = verify_tdx_measurement(
+            measurement=_runtime.get("measurement", ""),
+            raw_evidence=raw_bytes,
+            report_data_hex=report_data_hex,
+        )
+        if tdx_result.verified:
+            verified.append("hardware_attestation")
+            verified.extend(tdx_result.verified_fields)
+        else:
+            unverified.append("hardware_attestation")
+            if tdx_result.failure_reason:
+                details["tdx_failure"] = tdx_result.failure_reason
+        unverified.extend(tdx_result.unverified_fields)
+        details.update(tdx_result.details)
+    elif platform in ("opaque", "opaque-managed"):
+        from cmcp_verify.opaque import verify_opaque_measurement
+
+        raw_ev = _runtime.get("raw_evidence")
+        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        opaque_result = verify_opaque_measurement(
+            measurement=_runtime.get("measurement", ""),
+            raw_evidence=raw_bytes,
+        )
+        if opaque_result.verified:
+            verified.append("hardware_attestation")
+            verified.extend(opaque_result.verified_fields)
+        else:
+            unverified.append("hardware_attestation")
+            if opaque_result.failure_reason:
+                details["opaque_failure"] = opaque_result.failure_reason
+        unverified.extend(opaque_result.unverified_fields)
+        details.update(opaque_result.details)
     elif platform in _KNOWN_PLATFORMS:
         unverified.append("hardware_attestation")
         failure = failure or VerificationError.UNSUPPORTED_PROVIDER
         details["hardware_attestation"] = (
-            f"Platform '{platform}' attestation verification not yet implemented — "
-            f"see issues #67 (SEV-SNP), #70 (TDX/Opaque)"
+            f"Platform '{platform}' attestation verification not yet implemented"
         )
     else:
         unverified.append("hardware_attestation")
