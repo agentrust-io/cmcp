@@ -81,10 +81,12 @@ class MCPServer:
         session_manager: SessionManager | None = None,
         audit_chain: AuditChain | None = None,
         bearer_token: str | None = None,
+        max_request_bytes: int = 1 * 1024 * 1024,
     ) -> None:
         self._proxy = proxy
         self._session_manager = session_manager
         self._audit_chain = audit_chain
+        self._max_request_bytes = max_request_bytes
         self._kernel = StatelessKernel()
         middleware = (
             [Middleware(_BearerAuthMiddleware, bearer_token=bearer_token)]
@@ -108,8 +110,28 @@ class MCPServer:
 
     async def _handle_mcp(self, request: Request) -> Response:
         """Handle MCP JSON-RPC 2.0 calls."""
+        # DOS-001: reject oversized requests before parsing to prevent OOM
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > self._max_request_bytes:
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Request body too large"},
+                    "id": None,
+                },
+                status_code=413,
+            )
         try:
             body = await request.body()
+            if len(body) > self._max_request_bytes:
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32600, "message": "Request body too large"},
+                        "id": None,
+                    },
+                    status_code=413,
+                )
             msg = json.loads(body)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             import hashlib
@@ -151,12 +173,14 @@ class MCPServer:
                     "serverInfo": {"name": "cmcp-gateway", "version": "0.1.0"},
                 },
             })
+        # INJECT-002: sanitize method before reflecting it in the error response
+        safe_method = (method or "")[:64].encode("ascii", errors="replace").decode("ascii")
         return JSONResponse(
             {
                 "jsonrpc": "2.0",
                 "error": {
                     "code": -32601,
-                    "message": f"Method not found: {method}",
+                    "message": f"Method not found: {safe_method}",
                 },
                 "id": rpc_id,
             },
@@ -187,14 +211,24 @@ class MCPServer:
             )
 
         if not result.allowed:
+            # INJECT-003: log deny_reason internally; do not reflect internal detail to caller
+            error_code = (
+                "TOOL_NOT_IN_CATALOG"
+                if "catalog" in (result.deny_reason or "")
+                else "POLICY_DENY"
+            )
+            logger.info(
+                "POLICY_DENY: call_id=%s error_code=%s reason=%s",
+                call_id, error_code, result.deny_reason,
+            )
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
                     "error": {
                         "code": -32000,
-                        "message": result.deny_reason or "Denied",
+                        "message": "Request denied by policy",
                         "data": {
-                            "error_code": "POLICY_DENY" if "catalog" not in (result.deny_reason or "") else "TOOL_NOT_IN_CATALOG",
+                            "error_code": error_code,
                             "call_id": call_id,
                         },
                     },
