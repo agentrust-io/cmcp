@@ -50,8 +50,7 @@ def _make_catalog(*tools: str) -> ToolCatalog:
 
 
 def _make_evaluator() -> PolicyEvaluator:
-    evaluator = MagicMock(spec=PolicyEvaluator)
-    evaluator.evaluate.return_value = PolicyDecision(
+    _decision = PolicyDecision(
         allowed=True,
         enforcement_mode=EnforcementMode.ENFORCING,
         rule_matched=None,
@@ -59,6 +58,9 @@ def _make_evaluator() -> PolicyEvaluator:
         evaluation_ms=0.1,
         would_have_denied=False,
     )
+    evaluator = MagicMock(spec=PolicyEvaluator)
+    evaluator.evaluate.return_value = _decision
+    evaluator.authorize_egress.return_value = _decision
     evaluator.bundle_hash = "sha256:" + "0" * 64
     evaluator.enforcement_mode = EnforcementMode.ENFORCING
     return evaluator
