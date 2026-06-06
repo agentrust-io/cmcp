@@ -62,6 +62,15 @@ def _make_evaluator(allow: bool = True, would_deny: bool = False) -> PolicyEvalu
         )
     else:
         evaluator.evaluate.side_effect = PolicyDeny("denied by Cedar")
+    # authorize_egress always allows in ingress-focused proxy tests
+    evaluator.authorize_egress.return_value = PolicyDecision(
+        allowed=True,
+        enforcement_mode=EnforcementMode.ENFORCING,
+        rule_matched=None,
+        advice={},
+        evaluation_ms=0.1,
+        would_have_denied=False,
+    )
     evaluator.bundle_hash = "sha256:" + "0" * 64
     evaluator.enforcement_mode = EnforcementMode.ENFORCING
     return evaluator

@@ -65,6 +65,7 @@ packages = ["src/cmcp_gateway", "src/cmcp_verify"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+pythonpath = ["src"]
 
 [tool.ruff]
 src = ["src"]
