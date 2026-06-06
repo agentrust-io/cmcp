@@ -84,25 +84,31 @@ class CMCPProxy:
         )
 
     def _build_cedar_context(
-        self, tool_name: str, arguments: dict[str, Any]
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        workflow_id: str | None = None,
     ) -> dict[str, Any]:
         """Build the Cedar evaluation context from call details + session state."""
         entry = self._catalog.lookup(tool_name)
-        return {
+        ctx: dict[str, Any] = {
             "tool_name": tool_name,
             "server_identity": entry.server.url if entry else "",
             "compliance_domain": entry.compliance_domain if entry else "external",
             "baa_covered": (not entry.requires_baa) if entry else False,
             "destination_class": "external",
             "session_max_sensitivity": self._session.max_sensitivity,
-            "workflow_id": getattr(self._session, "workflow_id", "default"),
         }
+        if workflow_id is not None:
+            ctx["workflow_id"] = workflow_id
+        return ctx
 
     async def call_tool(
         self,
         call_id: str,
         tool_name: str,
         arguments: dict[str, Any],
+        workflow_id: str | None = None,
     ) -> CallResult:
         """
         Execute one MCP tool call through the full enforcement pipeline.
@@ -138,6 +144,7 @@ class CMCPProxy:
                 request_payload_hash=None,
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
+                workflow_id=workflow_id,
             )
             return CallResult(
                 call_id=call_id,
@@ -151,7 +158,7 @@ class CMCPProxy:
             )
 
         # Step 2: Cedar policy evaluation
-        cedar_context = self._build_cedar_context(tool_name, arguments)
+        cedar_context = self._build_cedar_context(tool_name, arguments, workflow_id)
         policy_rule: str | None = None
         try:
             decision = self._policy.evaluate(cedar_context)
@@ -167,6 +174,7 @@ class CMCPProxy:
                 policy_rule_matched=str(exc),
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
+                workflow_id=workflow_id,
             )
             return CallResult(
                 call_id=call_id,
@@ -200,6 +208,7 @@ class CMCPProxy:
                 policy_rule_matched=f"agt_gateway:{type(exc).__name__}",
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
+                workflow_id=workflow_id,
             )
             return CallResult(
                 call_id=call_id,
@@ -235,6 +244,7 @@ class CMCPProxy:
             latency_us=latency_us,
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
+            workflow_id=workflow_id,
         )
 
         return CallResult(
