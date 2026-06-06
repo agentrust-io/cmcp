@@ -106,6 +106,17 @@ def run_startup(config_path: str) -> GatewayContext:
 
     # Step 4: policy bundle
     policy_expected_hash = os.environ.get("CMCP_POLICY_HASH")
+    if policy_expected_hash is None and not config.dev_mode:
+        # POLICY-001 (CRITICAL): without a pinned hash, a compromised policy bundle
+        # loads silently. Require CMCP_POLICY_HASH in production; set CMCP_DEV_MODE=1
+        # only for local development.
+        _fatal(
+            "POLICY_HASH_REQUIRED",
+            "CMCP_POLICY_HASH env var is not set. "
+            "Set it to the sha256:<hex> of the policy bundle to prevent policy tampering. "
+            "Set CMCP_DEV_MODE=1 only in development to skip this check.",
+        )
+        sys.exit(1)
     try:
         policy_bundle = load_policy_bundle(config.policy_bundle_path, expected_hash=policy_expected_hash)
     except PolicyHashMismatch as exc:
@@ -124,6 +135,16 @@ def run_startup(config_path: str) -> GatewayContext:
 
     # Step 5: catalog
     catalog_expected_hash = os.environ.get("CMCP_CATALOG_HASH")
+    if catalog_expected_hash is None and not config.dev_mode:
+        # POLICY-002 (CRITICAL): without a pinned hash, a compromised catalog loads
+        # silently, allowing unauthorized tools. Require CMCP_CATALOG_HASH in production.
+        _fatal(
+            "CATALOG_HASH_REQUIRED",
+            "CMCP_CATALOG_HASH env var is not set. "
+            "Set it to the sha256:<hex> of the tool catalog to prevent catalog tampering. "
+            "Set CMCP_DEV_MODE=1 only in development to skip this check.",
+        )
+        sys.exit(1)
     try:
         catalog = load_catalog(config.catalog_path, expected_hash=catalog_expected_hash)
     except CatalogHashMismatch as exc:
