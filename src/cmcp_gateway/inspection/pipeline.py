@@ -13,9 +13,12 @@ Falls back to the original regex-based detection if AGT is unavailable.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+import jsonschema
 
 from cmcp_gateway.catalog.loader import CatalogEntry
 
@@ -82,6 +85,89 @@ def _stage1_size_check(response_bytes: bytes, max_bytes: int) -> StageResult:
             reason=f"response size {len(response_bytes)} exceeds limit {max_bytes}",
         )
     return StageResult(stage="size", decision="allow")
+
+
+def _stage2_schema_validation(
+    response_bytes: bytes,
+    catalog_entry: CatalogEntry,
+) -> tuple[StageResult, bytes]:
+    """
+    Stage 2: validate response against the catalog entry's approved output_schema.
+
+    Mode is per catalog entry (catalog_entry.schema_validation_mode, default "redact").
+
+    Returns a (StageResult, response_bytes) tuple where response_bytes may be
+    modified (surplus fields stripped) in redact mode.
+    """
+    output_schema = catalog_entry.approved_definition.output_schema
+    if output_schema is None:
+        return StageResult(stage="schema", decision="skip"), response_bytes
+
+    # Only validate JSON responses; non-JSON passes through
+    try:
+        payload: Any = json.loads(response_bytes)
+    except (json.JSONDecodeError, ValueError):
+        return StageResult(stage="schema", decision="allow", reason="non-JSON response; schema check skipped"), response_bytes
+
+    # Identify surplus fields at the top level only
+    surplus: list[str] = []
+    if isinstance(payload, dict) and isinstance(output_schema.get("properties"), dict):
+        allowed_props: set[str] = set(output_schema["properties"].keys())
+        surplus = [k for k in payload if k not in allowed_props]
+
+    mode = catalog_entry.schema_validation_mode
+
+    if not surplus:
+        # No surplus fields — still run jsonschema for type/required violations
+        try:
+            jsonschema.validate(payload, output_schema)
+        except jsonschema.ValidationError as exc:
+            return (
+                StageResult(
+                    stage="schema",
+                    decision="deny",
+                    reason=f"RESPONSE_SCHEMA_VIOLATION: {exc.message}",
+                ),
+                response_bytes,
+            )
+        return StageResult(stage="schema", decision="allow"), response_bytes
+
+    # Surplus fields present — mode determines action
+    if mode == "strict":
+        return (
+            StageResult(
+                stage="schema",
+                decision="deny",
+                reason="RESPONSE_SCHEMA_VIOLATION_STRICT",
+                stripped_fields=surplus,
+            ),
+            response_bytes,
+        )
+
+    if mode == "log":
+        return (
+            StageResult(
+                stage="schema",
+                decision="allow",
+                reason="surplus fields logged",
+                stripped_fields=surplus,
+            ),
+            response_bytes,
+        )
+
+    # mode == "redact" (default): strip surplus fields and return modified bytes
+    assert isinstance(payload, dict)  # guaranteed by surplus check above
+    redacted = {k: v for k, v in payload.items() if k not in surplus}
+    modified_bytes = json.dumps(redacted, separators=(",", ":"), ensure_ascii=False).encode()
+    return (
+        StageResult(
+            stage="schema",
+            decision="allow",
+            reason="surplus fields redacted",
+            stripped_fields=surplus,
+        ),
+        modified_bytes,
+    )
 
 
 def _stage4_injection_detection(
@@ -214,6 +300,7 @@ class InspectionPipeline:
         stripped_fields: list[str] | None = None
         injection_pattern: str | None = None
         sensitivity_tags: list[str] = []
+        modified_response: bytes | None = None
 
         # Stage 1: size check
         s1 = _stage1_size_check(response_bytes, self._max_bytes)
@@ -221,8 +308,16 @@ class InspectionPipeline:
         if s1.decision == "deny":
             deny_reasons.append(s1.reason or "size exceeded")
 
-        # Stage 2: schema validation (Phase 1 GA — issue #74; skipped here)
-        stage_results["schema"] = "skip"
+        # Stage 2: schema validation (issue #74)
+        s2, response_bytes = _stage2_schema_validation(response_bytes, catalog_entry)
+        stage_results["schema"] = s2.decision
+        if s2.decision == "deny":
+            deny_reasons.append(s2.reason or "schema violation")
+        if s2.stripped_fields:
+            stripped_fields = s2.stripped_fields
+        if s2.decision == "allow" and s2.stripped_fields and s2.reason == "surplus fields redacted":
+            # Redact mode modified the bytes — expose to caller
+            modified_response = response_bytes
 
         # Stage 3: sensitivity classification (AGT CredentialRedactor + catalog)
         try:
@@ -289,5 +384,5 @@ class InspectionPipeline:
             injection_pattern_matched=injection_pattern,
             stage_results=stage_results,
             response_payload_hash=response_payload_hash,
-            modified_response=None,
+            modified_response=modified_response,
         )
