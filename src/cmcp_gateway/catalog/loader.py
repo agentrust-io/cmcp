@@ -84,7 +84,7 @@ def _catalog_hash(raw_entries: list[dict[str, Any]]) -> str:
 
 def _load_entry_schema() -> dict[str, Any] | None:
     if _CATALOG_ENTRY_SCHEMA_PATH.exists():
-        return json.loads(_CATALOG_ENTRY_SCHEMA_PATH.read_text())
+        return dict(json.loads(_CATALOG_ENTRY_SCHEMA_PATH.read_text()))
     return None
 
 

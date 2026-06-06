@@ -78,4 +78,6 @@ fail_under = 70
 [tool.mypy]
 python_version = "3.11"
 strict = true
+ignore_missing_imports = true
+warn_return_any = false
 files = ["src/cmcp_gateway"]

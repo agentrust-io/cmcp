@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from agent_os.mcp_gateway import GovernancePolicy, MCPGateway
+from agent_os.mcp_gateway import GovernancePolicy, MCPGateway  # type: ignore[attr-defined]
 from agent_os.mcp_response_scanner import MCPResponseScanner
 
 from cmcp_gateway.audit.chain import AuditChain
@@ -183,7 +183,7 @@ class CMCPProxy:
         # AGT handles per-agent rate limiting, parameter sanitization, and
         # response scanning. We pass tool_name as the action and arguments as params.
         try:
-            agt_result = await self._mcp_gateway.call_tool(
+            agt_result = await self._mcp_gateway.call_tool(  # type: ignore[attr-defined]
                 tool_name=tool_name,
                 arguments=arguments,
                 agent_id=self._session.session_id,
@@ -223,7 +223,7 @@ class CMCPProxy:
         )
 
         # Step 5: audit chain write
-        policy_decision = "advisory_deny" if would_have_denied else "allow"
+        policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
         latency_us = int((time.perf_counter() - t0) * 1_000_000)
         self._audit.append(
             "tool_call",

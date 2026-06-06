@@ -103,7 +103,7 @@ class MCPServer:
     async def _handle_tool_call(self, rpc_id: Any, params: dict[str, Any]) -> Response:
         """Route a tools/call request through the proxy."""
         tool_name: str = params.get("name", "")
-        arguments: dict = params.get("arguments", {})
+        arguments: dict[str, Any] = params.get("arguments", {})
         call_id = str(uuid.uuid4())
 
         try:
