@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_os.policies.backends import CedarBackend
 
 from cmcp_gateway.config import Config, EnforcementMode
 from cmcp_gateway.errors import PolicyDeny
 from cmcp_gateway.policy.bundle import PolicyBundle
+from cmcp_gateway.session.state import SENSITIVITY_ORDER
+
+if TYPE_CHECKING:
+    from cmcp_gateway.session.state import SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +126,32 @@ class PolicyEvaluator:
             evaluation_ms=evaluation_ms,
             would_have_denied=True,
         )
+
+    def authorize_egress(
+        self,
+        tool_name: str,
+        response_bytes: bytes,
+        session: SessionState,
+    ) -> PolicyDecision:
+        """
+        Evaluate Cedar egress policies after a tool response is received.
+
+        Uses the same CedarBackend as ingress evaluation but passes egress-specific
+        context fields so Cedar policies can distinguish direction.  The principal
+        and action are implicit in the context dict the backend receives.
+
+        Returns PolicyDecision(allowed=True/False, ...).  In ENFORCING mode a deny
+        raises PolicyDeny; in ADVISORY/SILENT a deny is flagged via would_have_denied.
+        """
+        context: dict[str, Any] = {
+            "tool_name": tool_name,
+            "egress": True,
+            "sensitivity_level": SENSITIVITY_ORDER.get(session.max_sensitivity, 0),
+            "injection_events": len(session.injection_events),
+            "reset_count": session.reset_count,
+            "response_size_bytes": len(response_bytes),
+        }
+        return self.evaluate(context)
 
     @property
     def bundle_hash(self) -> str:

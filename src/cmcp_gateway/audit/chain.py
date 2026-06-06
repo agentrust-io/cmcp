@@ -14,6 +14,7 @@ EntryType = Literal[
     "session_end",
     "session_reset",
     "tool_call",
+    "egress_denied",
     "attestation_refresh",
     "policy_load",
     "catalog_load",

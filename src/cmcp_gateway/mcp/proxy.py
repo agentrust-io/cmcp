@@ -222,7 +222,48 @@ class CMCPProxy:
             response_allowed=True,
         )
 
-        # Step 5: audit chain write
+        # Step 5: egress Cedar policy check
+        # Derive response bytes for size accounting and egress evaluation.
+        # Prefer a bytes-typed modified_response (Stage 2 redaction output);
+        # fall back to str() so we never block on an un-serialisable AGT object.
+        modified = getattr(agt_result, "modified_response", None)
+        if isinstance(modified, bytes):
+            response_bytes: bytes = modified
+        else:
+            response_bytes = str(agt_result).encode()
+
+        try:
+            egress_decision = self._policy.authorize_egress(
+                tool_name, response_bytes, self._session
+            )
+            egress_would_deny = egress_decision.would_have_denied
+        except PolicyDeny as exc:
+            egress_deny_reason = str(exc)
+            self._audit.append(
+                "egress_denied",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                policy_decision="deny",
+                policy_rule_matched=egress_deny_reason,
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+            )
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=False,
+                response=None,
+                deny_reason=egress_deny_reason,
+                latency_us=int((time.perf_counter() - t0) * 1_000_000),
+                audit_entry_hash=self._audit.chain_tip,
+            )
+
+        # Merge egress advisory flag into the overall would_have_denied
+        would_have_denied = would_have_denied or egress_would_deny
+
+        # Step 6: audit chain write
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
         latency_us = int((time.perf_counter() - t0) * 1_000_000)
         self._audit.append(
