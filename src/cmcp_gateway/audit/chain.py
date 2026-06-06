@@ -19,6 +19,7 @@ EntryType = Literal[
     "policy_load",
     "catalog_load",
     "fault",
+    "suspicious_call_sequence",
 ]
 
 PolicyDecision = Literal["allow", "deny", "redact", "advisory_deny", "fault", "n/a"]
@@ -48,6 +49,7 @@ class AuditEntry:
     response_inspection_result: InspectionResult | None
     session_sensitivity_before: str | None
     session_sensitivity_after: str | None
+    detail: dict[str, str | int] | None  # optional structured detail (e.g. suspicious_call_sequence)
     prev_entry_hash: str  # "genesis" for first entry
     entry_hash: str = field(default="")  # computed after construction
 
@@ -107,6 +109,7 @@ class AuditChain:
         response_inspection_result: InspectionResult | None = None,
         session_sensitivity_before: str | None = None,
         session_sensitivity_after: str | None = None,
+        detail: dict[str, str | int] | None = None,
     ) -> AuditEntry:
         prev_hash = self._entries[-1].entry_hash if self._entries else "genesis"
         entry = AuditEntry(
@@ -126,6 +129,7 @@ class AuditChain:
             response_inspection_result=response_inspection_result,
             session_sensitivity_before=session_sensitivity_before,
             session_sensitivity_after=session_sensitivity_after,
+            detail=detail,
             prev_entry_hash=prev_hash,
         )
         entry.entry_hash = entry.compute_hash()

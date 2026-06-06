@@ -15,11 +15,13 @@ from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.trace_claim import (
     AttestationReportInfo,
     CallGraphSummary,
+    CallLogSummary,
     CallSummary,
     PolicyBundleInfo,
     ToolCatalogInfo,
     generate_trace_claim,
 )
+from cmcp_gateway.session.call_log import CallLog
 from cmcp_gateway.session.state import SessionState
 from cmcp_gateway.startup import GatewayContext
 
@@ -43,7 +45,11 @@ class SessionManager:
         return state, chain
 
     def close_session(
-        self, session_id: str, state: SessionState, chain: AuditChain
+        self,
+        session_id: str,
+        state: SessionState,
+        chain: AuditChain,
+        call_log: CallLog | None = None,
     ) -> dict[str, Any]:
         """
         Close a session:
@@ -141,6 +147,14 @@ class SessionManager:
             ),
         )
 
+        call_log_summary: CallLogSummary | None = None
+        if call_log is not None:
+            call_log_summary = CallLogSummary(
+                total_calls=len(call_log.records),
+                tools_called=call_log.tools_called(),
+                suspicious_sequences_detected=state.suspicious_sequences,
+            )
+
         claim = generate_trace_claim(
             session_id=session_id,
             signing_key=ctx.signing_key,
@@ -153,6 +167,7 @@ class SessionManager:
             audit_chain_length=chain.length,
             attestation_stale=attestation_stale,
             catalog_exceptions=catalog_exceptions,
+            call_log_summary=call_log_summary,
             do_sign=True,
         )
 
