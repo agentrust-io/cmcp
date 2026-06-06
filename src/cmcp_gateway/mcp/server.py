@@ -24,9 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.mcp.proxy import CMCPProxy
-from cmcp_gateway.session.state import SessionState
 
 if TYPE_CHECKING:
     from cmcp_gateway.audit.chain import AuditChain
@@ -82,7 +80,6 @@ class MCPServer:
         proxy: CMCPProxy,
         *,
         session_manager: SessionManager | None = None,
-        session: SessionState | None = None,
         audit_chain: AuditChain | None = None,
         bearer_token: str | None = None,
         session: SessionState | None = None,
@@ -90,7 +87,6 @@ class MCPServer:
     ) -> None:
         self._proxy = proxy
         self._session_manager = session_manager
-        self._session = session
         self._audit_chain = audit_chain
         self._session = session
         self._max_request_bytes = max_request_bytes
