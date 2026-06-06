@@ -80,7 +80,7 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 warn_return_any = false
-files = ["src/cmcp_gateway"]
+files = ["src/cmcp_gateway", "src/cmcp_verify"]
 
 [[tool.mypy.overrides]]
 module = ["cmcp_gateway.tee.sev_snp", "cmcp_gateway.tee.tdx"]
