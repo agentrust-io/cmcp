@@ -71,8 +71,9 @@ def load_config(path: str) -> Config:
 
     for key in raw:
         if key not in _KNOWN_TOP_KEYS:
-            import warnings
-            warnings.warn(f"Unknown config key '{key}' — ignored", stacklevel=2)
+            raise ConfigError(
+                f"Unknown config key '{key}'. Valid keys: {sorted(_KNOWN_TOP_KEYS)}"
+            )
 
     attest_raw = raw.get("attestation", {})
     if not isinstance(attest_raw, dict):
@@ -80,8 +81,9 @@ def load_config(path: str) -> Config:
 
     for key in attest_raw:
         if key not in _KNOWN_ATTEST_KEYS:
-            import warnings
-            warnings.warn(f"Unknown attestation key '{key}' — ignored", stacklevel=2)
+            raise ConfigError(
+                f"Unknown attestation key '{key}'. Valid keys: {sorted(_KNOWN_ATTEST_KEYS)}"
+            )
 
     try:
         provider = TEEProvider(attest_raw.get("provider", "auto"))
