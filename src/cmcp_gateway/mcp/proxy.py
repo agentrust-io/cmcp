@@ -13,6 +13,8 @@ Network topology:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -94,6 +96,7 @@ class CMCPProxy:
         entry = self._catalog.lookup(tool_name)
         return {
             "tool_name": tool_name,
+            "arguments": arguments,
             "server_identity": entry.server.url if entry else "",
             "compliance_domain": entry.compliance_domain if entry else "external",
             "baa_covered": (not entry.requires_baa) if entry else False,
@@ -166,6 +169,9 @@ class CMCPProxy:
         sensitivity_before = self._session.max_sensitivity
         would_have_denied = False
 
+        _payload_bytes = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+        request_payload_hash = f"sha256:{hashlib.sha256(_payload_bytes).hexdigest()}"
+
         # Step 1: catalog lookup
         entry = self._catalog.lookup(tool_name)
         if entry is None:
@@ -177,7 +183,7 @@ class CMCPProxy:
                 server_identity=None,
                 policy_decision="deny",
                 policy_rule_matched="catalog_miss",
-                request_payload_hash=None,
+                request_payload_hash=request_payload_hash,
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
             )
@@ -216,6 +222,7 @@ class CMCPProxy:
                 server_identity=entry.server.url,
                 policy_decision="deny",
                 policy_rule_matched=str(exc),
+                request_payload_hash=request_payload_hash,
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
             )
@@ -258,6 +265,7 @@ class CMCPProxy:
                 server_identity=entry.server.url,
                 policy_decision="deny",
                 policy_rule_matched=f"agt_gateway:{type(exc).__name__}",
+                request_payload_hash=request_payload_hash,
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
             )
@@ -315,6 +323,7 @@ class CMCPProxy:
                 server_identity=entry.server.url,
                 policy_decision="deny",
                 policy_rule_matched=egress_deny_reason,
+                request_payload_hash=request_payload_hash,
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
             )
@@ -343,6 +352,7 @@ class CMCPProxy:
             policy_decision=policy_decision,
             policy_rule_matched=policy_rule,
             latency_us=latency_us,
+            request_payload_hash=request_payload_hash,
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
         )
