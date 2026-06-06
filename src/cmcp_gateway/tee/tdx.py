@@ -64,7 +64,7 @@ class TDXProvider(TEEProvider):
 
         try:
             with open(_TDX_GUEST_DEVICE, "rb") as fd:
-                fcntl.ioctl(fd, _TDX_CMD_GET_REPORT0, buf)
+                fcntl.ioctl(fd, _TDX_CMD_GET_REPORT0, buf)  # type: ignore[attr-defined]
         except OSError as exc:
             raise RuntimeError(f"TDX attestation failed: {exc}") from exc
 
