@@ -91,7 +91,7 @@ def _make_proxy(*, allowed: bool = True) -> MagicMock:
 
     if allowed:
         # Return allowed for known tools; denied for unknown tools (catalog miss).
-        def _call_side_effect(call_id: str, tool_name: str, arguments: dict) -> CallResult:  # type: ignore[type-arg]
+        def _call_side_effect(call_id: str, tool_name: str, arguments: dict, **kwargs) -> CallResult:  # type: ignore[type-arg]
             if tool_name in catalog.entries:
                 return _make_allowed_result(call_id, tool_name)
             return _make_denied_result(call_id, tool_name)
@@ -99,7 +99,7 @@ def _make_proxy(*, allowed: bool = True) -> MagicMock:
         proxy.call_tool = AsyncMock(side_effect=_call_side_effect)
     else:
         proxy.call_tool = AsyncMock(
-            side_effect=lambda call_id, tool_name, arguments: _make_denied_result(call_id, tool_name)
+            side_effect=lambda call_id, tool_name, arguments, **kwargs: _make_denied_result(call_id, tool_name)
         )
     return proxy
 
