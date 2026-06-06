@@ -104,3 +104,19 @@ class SessionState:
         self.catalog_drift = False
         # reason and authorized_by are logged by the caller in the audit chain
         return previous_session_id, self.session_id
+
+    def upgrade_attestation(self) -> tuple[str, str]:
+        """
+        Rotate the session token when attestation upgrades (e.g. software-only → hardware TEE).
+
+        Unlike reset(), session sensitivity state is preserved — the ongoing session
+        continues at its current sensitivity level. Only the session_id is rotated so
+        that any trust assertions cached against the old ID are invalidated.
+
+        Returns (previous_session_id, new_session_id). The caller is responsible for
+        writing an attestation_refresh audit entry.
+        """
+        previous_session_id = self.session_id
+        self.session_id = str(uuid4())
+        self.attestation_stale = False
+        return previous_session_id, self.session_id
