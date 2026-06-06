@@ -314,11 +314,11 @@ def verify_trace_claim(
     elif platform == "sev-snp" and firmware_version != _SW_ONLY_FIRMWARE:
         from cmcp_verify.sev_snp import verify_sev_snp_measurement
 
-        raw_ev = runtime.get("raw_evidence")
+        raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
-        report_data_hex = runtime.get("report_data")
+        report_data_hex = _runtime.get("report_data")
         snp_result = verify_sev_snp_measurement(
-            measurement=runtime.get("measurement", ""),
+            measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
             report_data_hex=report_data_hex,
         )

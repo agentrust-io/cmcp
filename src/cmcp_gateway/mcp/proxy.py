@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from agent_os.mcp_gateway import GovernancePolicy, MCPGateway  # type: ignore[attr-defined]
@@ -25,6 +26,7 @@ from cmcp_gateway.catalog.loader import ToolCatalog
 from cmcp_gateway.config import Config
 from cmcp_gateway.errors import PolicyDeny
 from cmcp_gateway.policy.evaluator import PolicyEvaluator
+from cmcp_gateway.session.call_log import CallLog, CallRecord
 from cmcp_gateway.session.state import SessionState
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,7 @@ class CMCPProxy:
         session: SessionState,
         audit_chain: AuditChain,
         config: Config,
+        call_log: CallLog | None = None,
     ) -> None:
         self._catalog = catalog
         self._policy = policy_evaluator
@@ -70,6 +73,7 @@ class CMCPProxy:
         self._audit = audit_chain
         self._config = config
         self._enforcement = config.attestation.enforcement_mode
+        self._call_log: CallLog = call_log if call_log is not None else CallLog(session_id=session.session_id)
 
         # Build AGT GovernancePolicy from cMCP catalog
         allowed_tools = list(catalog.entries.keys())
@@ -98,6 +102,42 @@ class CMCPProxy:
             "workflow_id": getattr(self._session, "workflow_id", "default"),
         }
 
+    def _record_call(
+        self,
+        tool_name: str,
+        called_at: datetime,
+        duration_ms: float,
+        allowed: bool,
+        sensitivity_before: str,
+        stage_results: dict[str, str],
+    ) -> None:
+        """
+        Append a CallRecord to the session call log and check for suspicious
+        sequences. On detection: write a suspicious_call_sequence audit entry
+        and increment session.suspicious_sequences.
+        """
+        sensitivity_raised = self._session.max_sensitivity != sensitivity_before
+        self._call_log.record(
+            CallRecord(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=duration_ms,
+                allowed=allowed,
+                sensitivity_raised=sensitivity_raised,
+                stage_results=stage_results,
+            )
+        )
+        if self._call_log.suspicious_sequence():
+            consecutive = self._call_log.consecutive_count(tool_name)
+            self._audit.append(
+                "suspicious_call_sequence",
+                tool_name=tool_name,
+                detail={"repeated_tool": tool_name, "consecutive_calls": consecutive},
+                session_sensitivity_before=self._session.max_sensitivity,
+                session_sensitivity_after=self._session.max_sensitivity,
+            )
+            self._session.suspicious_sequences += 1
+
     async def call_tool(
         self,
         call_id: str,
@@ -114,6 +154,7 @@ class CMCPProxy:
           4. Forward to upstream (via AGT)
           5. Audit chain write
           6. Session state update
+          7. Call log record + suspicious-sequence check
 
         Returns CallResult regardless of allow/deny so the caller can always
         write a complete audit entry.
@@ -121,6 +162,7 @@ class CMCPProxy:
         import time
 
         t0 = time.perf_counter()
+        called_at = datetime.now(UTC)
         sensitivity_before = self._session.max_sensitivity
         would_have_denied = False
 
@@ -139,6 +181,15 @@ class CMCPProxy:
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
             )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"catalog": "deny"},
+            )
             return CallResult(
                 call_id=call_id,
                 tool_name=tool_name,
@@ -146,7 +197,7 @@ class CMCPProxy:
                 would_have_denied=False,
                 response=None,
                 deny_reason=deny_reason,
-                latency_us=int((time.perf_counter() - t0) * 1_000_000),
+                latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )
 
@@ -168,6 +219,15 @@ class CMCPProxy:
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
             )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"policy": "deny"},
+            )
             return CallResult(
                 call_id=call_id,
                 tool_name=tool_name,
@@ -175,7 +235,7 @@ class CMCPProxy:
                 would_have_denied=False,
                 response=None,
                 deny_reason=str(exc),
-                latency_us=int((time.perf_counter() - t0) * 1_000_000),
+                latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )
 
@@ -201,6 +261,15 @@ class CMCPProxy:
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
             )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"agt_gateway": "deny"},
+            )
             return CallResult(
                 call_id=call_id,
                 tool_name=tool_name,
@@ -208,7 +277,7 @@ class CMCPProxy:
                 would_have_denied=would_have_denied,
                 response=None,
                 deny_reason=str(exc),
-                latency_us=int((time.perf_counter() - t0) * 1_000_000),
+                latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )
 
@@ -276,6 +345,17 @@ class CMCPProxy:
             latency_us=latency_us,
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
+        )
+
+        # Step 6: call log record + suspicious-sequence check
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        self._record_call(
+            tool_name=tool_name,
+            called_at=called_at,
+            duration_ms=elapsed_ms,
+            allowed=True,
+            sensitivity_before=sensitivity_before,
+            stage_results={"policy": str(policy_decision)},
         )
 
         return CallResult(

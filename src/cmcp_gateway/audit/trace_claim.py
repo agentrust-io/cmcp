@@ -120,6 +120,16 @@ class GatewayTrace(BaseModel):
     cnf: ConfirmationKey
 
 
+class CallLogSummary(BaseModel):
+    """Per-session call log summary included in the gateway addenda."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_calls: int
+    tools_called: list[str]
+    suspicious_sequences_detected: int
+
+
 class GatewayAddenda(BaseModel):
     """cmcp-specific fields outside the canonical TRACE spec."""
 
@@ -133,6 +143,7 @@ class GatewayAddenda(BaseModel):
     attestation_validity_seconds: int
     attestation_stale: bool
     catalog_exceptions: list[dict[str, str]] = Field(default_factory=list)
+    call_log_summary: CallLogSummary | None = None
 
 
 class GatewayClaim(BaseModel):
@@ -239,6 +250,7 @@ def generate_trace_claim(
     audit_chain_length: int,
     attestation_stale: bool = False,
     catalog_exceptions: list[dict[str, str]] | None = None,
+    call_log_summary: CallLogSummary | None = None,
     do_sign: bool = True,
 ) -> GatewayClaim:
     """Generate a GatewayClaim from session data, validate it via Pydantic, and optionally sign it.
@@ -294,6 +306,7 @@ def generate_trace_claim(
         attestation_validity_seconds=attestation_report.attestation_validity_seconds,
         attestation_stale=attestation_stale,
         catalog_exceptions=catalog_exceptions or [],
+        call_log_summary=call_log_summary,
     )
 
     claim = GatewayClaim(trace=trace, gateway=gateway)
