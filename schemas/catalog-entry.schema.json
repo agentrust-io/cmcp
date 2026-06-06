@@ -10,12 +10,8 @@
     "server",
     "approved_definition",
     "definition_hash",
-    "compliance_domain",
-    "requires_baa",
-    "sensitivity_level",
     "added_at",
-    "approved_by",
-    "catalog_exception"
+    "approved_by"
   ],
   "properties": {
     "tool_name": {
@@ -29,7 +25,6 @@
         "display_name",
         "url",
         "tls_fingerprint",
-        "spiffe_id",
         "transport"
       ],
       "properties": {

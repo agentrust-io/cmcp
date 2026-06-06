@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
-
 
 # Sensitivity level ordering — monotonically increasing only.
 # hipaa_phi, mnpi, trade_secret are all at level 3 (equal highest).
@@ -15,7 +14,7 @@ SENSITIVITY_ORDER: dict[str, int] = {
     "confidential": 2,
     "hipaa_phi": 3,
     "mnpi": 3,
-    "trade_secret": 3,
+    "trade_secret": 3,  # nosec B105
 }
 
 
@@ -70,14 +69,14 @@ class SessionState:
             new_max = _max_sensitivity(self.max_sensitivity, tag)
             if new_max != self.max_sensitivity:
                 self.max_sensitivity = new_max
-                self.sensitivity_raised_at = datetime.now(tz=timezone.utc).isoformat()
+                self.sensitivity_raised_at = datetime.now(tz=UTC).isoformat()
                 self.sensitivity_raised_by_call = call_id
 
         if injection_detected:
             self.injection_events.append(
                 InjectionEvent(
                     call_id=call_id,
-                    timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                    timestamp=datetime.now(tz=UTC).isoformat(),
                 )
             )
 

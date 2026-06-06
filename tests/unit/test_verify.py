@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone, timedelta
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.keys import SigningKey
@@ -15,8 +12,8 @@ from cmcp_gateway.audit.trace_claim import (
     CallSummary,
     PolicyBundleInfo,
     ToolCatalogInfo,
-    generate_trace_claim,
     _to_dict,
+    generate_trace_claim,
 )
 from cmcp_verify.verify import (
     ApprovedHashes,
@@ -24,7 +21,6 @@ from cmcp_verify.verify import (
     VerificationStatus,
     verify_trace_claim,
 )
-
 
 POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
@@ -41,7 +37,7 @@ def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH):
             provider="software-only",
             measurement="DEVELOPMENT_ONLY",
             report_data="00" * 32,
-            attestation_generated_at=datetime.now(tz=timezone.utc).isoformat(),
+            attestation_generated_at=datetime.now(tz=UTC).isoformat(),
             attestation_validity_seconds=86400,
         ),
         policy_bundle=PolicyBundleInfo(
@@ -150,7 +146,7 @@ def test_fresh_attestation_is_verified():
 
 def test_stale_attestation_fails():
     claim_dict, _ = _make_signed_claim()
-    old = (datetime.now(tz=timezone.utc) - timedelta(days=2)).isoformat()
+    old = (datetime.now(tz=UTC) - timedelta(days=2)).isoformat()
     claim_dict["gateway"]["attestation_generated_at"] = old
     result = verify_trace_claim(claim_dict, _approved(), max_attestation_age_seconds=86400)
     assert result.is_attestation_fresh is False

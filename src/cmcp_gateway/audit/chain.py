@@ -5,10 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
-
 
 EntryType = Literal[
     "session_start",
@@ -112,7 +111,7 @@ class AuditChain:
         entry = AuditEntry(
             entry_id=str(uuid4()),
             sequence_number=len(self._entries),
-            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
+            timestamp_utc=datetime.now(tz=UTC).isoformat(),
             session_id=self._session_id,
             call_id=call_id,
             entry_type=entry_type,

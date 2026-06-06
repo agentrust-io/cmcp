@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -70,7 +70,7 @@ class SoftwareOnlyProvider(TEEProvider):
             measurement="DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION",
             report_data=nonce.hex(),
             raw_evidence=None,
-            attestation_generated_at=datetime.now(tz=timezone.utc),
+            attestation_generated_at=datetime.now(tz=UTC),
             attestation_validity_seconds=86400,
             measurement_note="software-only mode — not hardware-backed",
         )

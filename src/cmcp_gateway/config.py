@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
+from enum import StrEnum
 from typing import Any
 
 import yaml
@@ -13,7 +12,7 @@ import yaml
 from cmcp_gateway.errors import ConfigError
 
 
-class TEEProvider(str, Enum):
+class TEEProvider(StrEnum):
     TPM = "tpm"
     SEV_SNP = "sev-snp"
     TDX = "tdx"
@@ -22,13 +21,13 @@ class TEEProvider(str, Enum):
     SOFTWARE_ONLY = "software-only"
 
 
-class EnforcementMode(str, Enum):
+class EnforcementMode(StrEnum):
     ENFORCING = "enforcing"
     ADVISORY = "advisory"
     SILENT = "silent"
 
 
-class StalenessPolicy(str, Enum):
+class StalenessPolicy(StrEnum):
     FAIL_CLOSED = "fail_closed"
     WARN_ONLY = "warn_only"
 
@@ -85,21 +84,21 @@ def load_config(path: str) -> Config:
 
     try:
         provider = TEEProvider(attest_raw.get("provider", "auto"))
-    except ValueError:
+    except ValueError as err:
         valid = [p.value for p in TEEProvider]
-        raise ConfigError(f"attestation.provider must be one of {valid}")
+        raise ConfigError(f"attestation.provider must be one of {valid}") from err
 
     try:
         enforcement_mode = EnforcementMode(attest_raw.get("enforcement_mode", "advisory"))
-    except ValueError:
+    except ValueError as err:
         valid = [m.value for m in EnforcementMode]
-        raise ConfigError(f"attestation.enforcement_mode must be one of {valid}")
+        raise ConfigError(f"attestation.enforcement_mode must be one of {valid}") from err
 
     try:
         staleness_policy = StalenessPolicy(attest_raw.get("staleness_policy", "fail_closed"))
-    except ValueError:
+    except ValueError as err:
         valid = [s.value for s in StalenessPolicy]
-        raise ConfigError(f"attestation.staleness_policy must be one of {valid}")
+        raise ConfigError(f"attestation.staleness_policy must be one of {valid}") from err
 
     validity_seconds = attest_raw.get("validity_seconds", 86400)
     if not isinstance(validity_seconds, int) or validity_seconds <= 0:

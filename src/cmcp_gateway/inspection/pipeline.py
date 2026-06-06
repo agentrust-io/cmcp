@@ -13,7 +13,6 @@ Falls back to the original regex-based detection if AGT is unavailable.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,9 +21,9 @@ from cmcp_gateway.catalog.loader import CatalogEntry
 
 # ── AGT components (optional — fall back gracefully) ─────────────────────────
 try:
-    from agent_os.prompt_injection import PromptInjectionDetector, ThreatLevel
     from agent_os.credential_redactor import CredentialRedactor
     from agent_os.mcp_response_scanner import MCPResponseScanner as AGTResponseScanner
+    from agent_os.prompt_injection import PromptInjectionDetector
     _AGT_AVAILABLE = True
 except ImportError:
     _AGT_AVAILABLE = False
@@ -110,7 +109,7 @@ def _stage4_injection_detection(
                     injection_pattern=f"agt:{pattern_name}",
                 )
             return StageResult(stage="injection", decision="allow")
-        except Exception:
+        except Exception:  # nosec B110
             pass  # Fall through to regex
 
     # Fallback: regex patterns
@@ -152,12 +151,10 @@ def _classify_sensitivity(
     if _AGT_AVAILABLE and _agt_redactor is not None and response_text:
         try:
             matches = _agt_redactor.find_credentials(response_text)
-            if matches:
-                # Any credential/PII match elevates to at least 'pii'
-                if "pii" not in tags and "confidential" not in tags and \
-                   "hipaa_phi" not in tags and "mnpi" not in tags:
-                    tags.append("pii")
-        except Exception:
+            if matches and "pii" not in tags and "confidential" not in tags and \
+                    "hipaa_phi" not in tags and "mnpi" not in tags:
+                tags.append("pii")
+        except Exception:  # nosec B110
             pass  # Degraded gracefully
 
     return tags
@@ -260,7 +257,7 @@ class InspectionPipeline:
                     deny_reasons.append(f"AGT MCPResponseScanner: {threat_name}")
                     injection_pattern = f"agt_mcp:{threat_name}"
                     stage_results["injection"] = "deny"
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
         s4 = _stage4_injection_detection(

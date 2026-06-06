@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
-
-import pytest
-
 from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.keys import SigningKey
-
 
 # ── SigningKey ────────────────────────────────────────────────────────────────
 

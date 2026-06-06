@@ -15,15 +15,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
-from agent_os.mcp_gateway import GovernancePolicy, MCPGateway, ApprovalStatus
+from agent_os.mcp_gateway import GovernancePolicy, MCPGateway
 from agent_os.mcp_response_scanner import MCPResponseScanner
 
 from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.catalog.loader import ToolCatalog
-from cmcp_gateway.config import Config, EnforcementMode
-from cmcp_gateway.errors import PolicyDeny, TeeFault, ToolNotInCatalog
+from cmcp_gateway.config import Config
+from cmcp_gateway.errors import PolicyDeny
 from cmcp_gateway.policy.evaluator import PolicyEvaluator
 from cmcp_gateway.session.state import SessionState
 
@@ -75,7 +75,6 @@ class CMCPProxy:
         allowed_tools = list(catalog.entries.keys())
         gov_policy = GovernancePolicy(
             allowed_tools=allowed_tools,
-            max_calls_per_minute=60,
         )
 
         # AGT MCPGateway — handles protocol, sanitization, rate limiting

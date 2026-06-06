@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from cmcp_gateway.session.state import SENSITIVITY_ORDER, SessionState, _max_sensitivity
-
 
 # ── _max_sensitivity ──────────────────────────────────────────────────────────
 

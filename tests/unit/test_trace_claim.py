@@ -5,8 +5,6 @@ from __future__ import annotations
 import base64
 import json
 
-import pytest
-
 from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.keys import SigningKey
 from cmcp_gateway.audit.trace_claim import (
@@ -16,10 +14,9 @@ from cmcp_gateway.audit.trace_claim import (
     GatewayClaim,
     PolicyBundleInfo,
     ToolCatalogInfo,
+    _to_dict,
     canonical_json,
     generate_trace_claim,
-    sign_trace_claim,
-    _to_dict,
 )
 
 

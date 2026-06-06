@@ -16,12 +16,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from cmcp_gateway.catalog.loader import CatalogEntry, ToolCatalog
+from cmcp_gateway.catalog.loader import ToolCatalog
 
 logger = logging.getLogger(__name__)
 
 try:
-    from agent_os.mcp_security import MCPSecurityScanner, MCPThreatType, MCPSeverity
+    from agent_os.mcp_security import MCPSecurityScanner
     _AGT_AVAILABLE = True
 except ImportError:
     _AGT_AVAILABLE = False
