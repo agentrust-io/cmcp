@@ -276,6 +276,26 @@ def verify_trace_claim(
                 details["tpm_failure"] = tpm_result.failure_reason
         unverified.extend(tpm_result.unverified_fields)
         details.update(tpm_result.details)
+    elif platform == "sev-snp" and firmware_version != _SW_ONLY_FIRMWARE:
+        from cmcp_verify.sev_snp import verify_sev_snp_measurement
+
+        raw_ev = runtime.get("raw_evidence")
+        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        report_data_hex = runtime.get("report_data")
+        snp_result = verify_sev_snp_measurement(
+            measurement=runtime.get("measurement", ""),
+            raw_evidence=raw_bytes,
+            report_data_hex=report_data_hex,
+        )
+        if snp_result.verified:
+            verified.append("hardware_attestation")
+            verified.extend(snp_result.verified_fields)
+        else:
+            unverified.append("hardware_attestation")
+            if snp_result.failure_reason:
+                details["sev_snp_failure"] = snp_result.failure_reason
+        unverified.extend(snp_result.unverified_fields)
+        details.update(snp_result.details)
     elif platform in _KNOWN_PLATFORMS:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = (
