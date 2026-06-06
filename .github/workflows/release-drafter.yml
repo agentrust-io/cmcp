@@ -1,0 +1,25 @@
+name: Release Drafter
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  draft-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "cmcp ${{ github.ref_name }}" \
+            --generate-notes \
+            --draft
