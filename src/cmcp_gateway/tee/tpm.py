@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
+import subprocess  # nosec B404
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -123,7 +123,7 @@ class TPMProvider(TEEProvider):
     def _report_via_subprocess(self, nonce: bytes) -> AttestationReport:
         """Read PCRs 0-7 using tpm2_pcrread subprocess."""
         try:
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(  # noqa: S603  # nosec B603, B607
                 ["tpm2_pcrread", "sha256:0,1,2,3,4,5,6,7"],  # noqa: S607
                 capture_output=True,
                 text=True,
@@ -135,7 +135,7 @@ class TPMProvider(TEEProvider):
 
         if result.returncode != 0:
             # Try SHA-1
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(  # noqa: S603  # nosec B603, B607
                 ["tpm2_pcrread", "sha1:0,1,2,3,4,5,6,7"],  # noqa: S607
                 capture_output=True,
                 text=True,
