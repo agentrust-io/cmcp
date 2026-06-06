@@ -150,8 +150,9 @@ def test_startup_fails_when_catalog_hash_unset_and_not_dev_mode(tmp_path, monkey
     (policy_dir / "schema.cedarschema").write_text(SCHEMA)
     catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
 
-    from cmcp_gateway.policy.bundle import _canonical_bundle_hash
     import json as _json
+
+    from cmcp_gateway.policy.bundle import _canonical_bundle_hash
     manifest_raw = _json.loads((policy_dir / "manifest.json").read_text())
     policy_files = {"allow.cedar": CEDAR_POLICY}
     computed = _canonical_bundle_hash(manifest_raw, policy_files, SCHEMA)
