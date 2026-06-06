@@ -97,11 +97,15 @@ class SessionManager:
         )
 
         catalog = ctx.catalog
-        # Detect catalog exceptions — entries where catalog_exception=True.
+        # Collect catalog exceptions from the runtime exception list (richer metadata).
         catalog_exceptions: list[dict[str, str]] = [
-            {"tool_name": name}
-            for name, entry in catalog.entries.items()
-            if entry.catalog_exception
+            {
+                "tool_name": exc.tool_name,
+                "reason": exc.reason,
+                "authorized_by": exc.authorized_by,
+                "added_at": exc.added_at,
+            }
+            for exc in catalog.exceptions
         ]
         catalog_info = ToolCatalogInfo(
             hash=catalog.catalog_hash,

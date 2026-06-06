@@ -281,6 +281,25 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
+        # Step 1b: break-glass warning — log and audit every call via an exception entry
+        if entry.catalog_exception:
+            logger.warning(
+                "BREAK_GLASS_ACTIVE: tool=%s call_id=%s server=%s",
+                tool_name,
+                call_id,
+                entry.server.url,
+            )
+            self._audit.append(
+                "break_glass_used",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                policy_decision="allow",
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+                workflow_id=workflow_id,
+            )
+
         # Step 2: Cedar policy evaluation
         cedar_context = self._build_cedar_context(tool_name, arguments, workflow_id)
         policy_rule: str | None = None

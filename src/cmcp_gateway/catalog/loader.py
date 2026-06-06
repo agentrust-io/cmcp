@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -53,9 +54,20 @@ class CatalogEntry:
 
 
 @dataclass
+class CatalogException:
+    """Metadata for a runtime break-glass exception entry."""
+
+    tool_name: str
+    reason: str
+    authorized_by: str
+    added_at: str  # ISO 8601 UTC
+
+
+@dataclass
 class ToolCatalog:
     entries: dict[str, CatalogEntry]  # tool_name -> entry
-    catalog_hash: str  # sha256:<hex> measured into the TEE report
+    catalog_hash: str  # sha256:<hex> measured into the TEE report; never mutated
+    exceptions: list[CatalogException] = field(default_factory=list)
 
     def lookup(self, tool_name: str) -> CatalogEntry | None:
         return self.entries.get(tool_name)
@@ -65,6 +77,28 @@ class ToolCatalog:
         if entry is None:
             raise ToolNotInCatalog(f"Tool '{tool_name}' not in attested catalog")
         return entry
+
+    def add_exception(
+        self,
+        entry: CatalogEntry,
+        reason: str,
+        authorized_by: str,
+    ) -> None:
+        """Add a runtime catalog exception without modifying catalog_hash.
+
+        The sealed catalog_hash reflects the original measured catalog only.
+        Exception entries are visible in the TRACE Claim under gateway.catalog_exceptions.
+        """
+        entry.catalog_exception = True
+        self.entries[entry.tool_name] = entry
+        self.exceptions.append(
+            CatalogException(
+                tool_name=entry.tool_name,
+                reason=reason,
+                authorized_by=authorized_by,
+                added_at=datetime.now(UTC).isoformat(),
+            )
+        )
 
 
 def _sha256_hex(data: bytes) -> str:
