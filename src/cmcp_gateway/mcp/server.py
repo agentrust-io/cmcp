@@ -192,9 +192,10 @@ class MCPServer:
         tool_name: str = params.get("name", "")
         arguments: dict[str, Any] = params.get("arguments", {})
         call_id = str(uuid.uuid4())
+        workflow_id: str | None = params.get("_cmcp", {}).get("workflow_id")
 
         try:
-            result = await self._proxy.call_tool(call_id, tool_name, arguments)
+            result = await self._proxy.call_tool(call_id, tool_name, arguments, workflow_id=workflow_id)
         except Exception as exc:
             logger.error("TEE_FAULT during call_tool: call_id=%s error=%s", call_id, exc)
             return JSONResponse(
@@ -237,17 +238,20 @@ class MCPServer:
                 status_code=403,
             )
 
+        cmcp_meta: dict[str, Any] = {
+            "call_id": call_id,
+            "audit_entry_hash": result.audit_entry_hash,
+            "would_have_denied": result.would_have_denied,
+            "latency_us": result.latency_us,
+        }
+        if workflow_id is not None:
+            cmcp_meta["workflow_id"] = workflow_id
         return JSONResponse({
             "jsonrpc": "2.0",
             "id": rpc_id,
             "result": {
                 "content": [{"type": "text", "text": str(result.response)}],
-                "_cmcp": {
-                    "call_id": call_id,
-                    "audit_entry_hash": result.audit_entry_hash,
-                    "would_have_denied": result.would_have_denied,
-                    "latency_us": result.latency_us,
-                },
+                "_cmcp": cmcp_meta,
             },
         })
 
