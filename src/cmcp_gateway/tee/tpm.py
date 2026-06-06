@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     pass
 
 try:
-    import tpm2_pytss  # type: ignore[import-not-found]
+    import tpm2_pytss
 
     _TSS2_AVAILABLE = True
 except ImportError:
@@ -53,8 +53,8 @@ class TPMProvider(TEEProvider):
     # ── tpm2-pytss path ───────────────────────────────────────────────────────
 
     def _report_via_tss2(self, nonce: bytes) -> AttestationReport:
-        from tpm2_pytss.ESAPI import ESAPI  # type: ignore[import-not-found]
-        from tpm2_pytss.types import (  # type: ignore[import-not-found]
+        from tpm2_pytss.ESAPI import ESAPI
+        from tpm2_pytss.types import (
             TPM2_ALG,
             TPM2B_DATA,
             TPML_PCR_SELECTION,
