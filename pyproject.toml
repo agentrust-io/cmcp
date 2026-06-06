@@ -8,6 +8,10 @@ version = "0.1.0"
 description = "Hardware-attested MCP gateway — TEE-enforced policy and TRACE Claim generation"
 readme = "README.md"
 license = { text = "MIT" }
+authors = [
+    { name = "AgentTrust Contributors", email = "oss@agentrust.io" },
+]
+keywords = ["mcp", "tee", "attestation", "security", "ai-agents", "cedar"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -47,6 +51,12 @@ dev = [
 
 [project.scripts]
 cmcp = "cmcp_gateway.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/agentrust-io/cmcp"
+Repository = "https://github.com/agentrust-io/cmcp"
+Documentation = "https://github.com/agentrust-io/cmcp#readme"
+"Bug Tracker" = "https://github.com/agentrust-io/cmcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cmcp_gateway", "src/cmcp_verify"]
