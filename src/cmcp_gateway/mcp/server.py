@@ -29,6 +29,7 @@ from cmcp_gateway.mcp.proxy import CMCPProxy
 if TYPE_CHECKING:
     from cmcp_gateway.audit.chain import AuditChain
     from cmcp_gateway.session.manager import SessionManager
+    from cmcp_gateway.session.state import SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +82,13 @@ class MCPServer:
         session_manager: SessionManager | None = None,
         audit_chain: AuditChain | None = None,
         bearer_token: str | None = None,
-        max_request_bytes: int = 1 * 1024 * 1024,
+        session: SessionState | None = None,
+        max_request_bytes: int = 1_000_000,
     ) -> None:
         self._proxy = proxy
         self._session_manager = session_manager
         self._audit_chain = audit_chain
+        self._session = session
         self._max_request_bytes = max_request_bytes
         self._kernel = StatelessKernel()
         middleware = (
@@ -104,6 +107,11 @@ class MCPServer:
                     methods=["GET"],
                 ),
                 Route("/audit/export", self._audit_export, methods=["GET"]),
+                Route(
+                    "/sessions/{session_id}/reset",
+                    self._session_reset,
+                    methods=["POST"],
+                ),
             ],
             middleware=middleware,
         )
@@ -315,3 +323,33 @@ class MCPServer:
                 {"error": "audit chain integrity check failed"}, status_code=500
             )
         return JSONResponse(bundle)
+
+    async def _session_reset(self, request: Request) -> Response:
+        """POST /sessions/{session_id}/reset — operator-only session sensitivity reset."""
+        if self._session is None or self._audit_chain is None:
+            return JSONResponse(
+                {"error": "session management not configured"}, status_code=501
+            )
+        session_id: str = request.path_params["session_id"]
+        if session_id != self._session.session_id:
+            return JSONResponse(
+                {"error": f"session_id={session_id} not found"}, status_code=404
+            )
+        old_id, new_id = self._session.reset(
+            reason="operator reset via API",
+            authorized_by="api",
+        )
+        self._audit_chain.append(
+            "session_reset",
+            call_id=None,
+            tool_name=None,
+            policy_decision="n/a",
+            session_sensitivity_before=self._session.max_sensitivity,
+            session_sensitivity_after=self._session.max_sensitivity,
+        )
+        return JSONResponse({
+            "old_session_id": old_id,
+            "new_session_id": new_id,
+            "status": "reset",
+            "attestation_stale": False,
+        })
