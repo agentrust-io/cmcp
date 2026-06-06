@@ -192,3 +192,64 @@ async def test_proxy_result_contains_audit_entry_hash():
     proxy, _, chain = _make_proxy()
     result = await proxy.call_tool("c1", "test.tool", {})
     assert result.audit_entry_hash == chain.chain_tip
+
+
+# ── POLICY-004: Cedar context includes arguments ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cedar_context_includes_arguments():
+    """POLICY-004 — arguments must appear in the Cedar context so policies can inspect them."""
+    evaluator = _make_evaluator()
+    proxy, _, _ = _make_proxy(evaluator=evaluator)
+    args = {"patient_id": "p-123", "action": "read"}
+    await proxy.call_tool("c1", "test.tool", args)
+    ctx = evaluator.evaluate.call_args[0][0]
+    assert ctx["arguments"] == args
+
+
+# ── POLICY-005: request_payload_hash in all audit entries ────────────────────
+
+@pytest.mark.asyncio
+async def test_audit_payload_hash_present_on_allow():
+    """POLICY-005 — successful calls must record request_payload_hash in the audit entry."""
+    proxy, _, chain = _make_proxy()
+    await proxy.call_tool("c1", "test.tool", {"k": "v"})
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.request_payload_hash is not None
+    assert entry.request_payload_hash.startswith("sha256:")
+
+
+@pytest.mark.asyncio
+async def test_audit_payload_hash_present_on_catalog_deny():
+    """POLICY-005 — catalog-miss denials must record request_payload_hash."""
+    proxy, _, chain = _make_proxy()
+    await proxy.call_tool("c1", "ghost.tool", {"x": 1})
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.request_payload_hash is not None
+    assert entry.request_payload_hash.startswith("sha256:")
+
+
+@pytest.mark.asyncio
+async def test_audit_payload_hash_present_on_cedar_deny():
+    """POLICY-005 — Cedar policy denials must record request_payload_hash."""
+    evaluator = _make_evaluator(allow=False)
+    proxy, _, chain = _make_proxy(evaluator=evaluator)
+    await proxy.call_tool("c1", "test.tool", {"secret": "leak"})
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.request_payload_hash is not None
+    assert entry.request_payload_hash.startswith("sha256:")
+
+
+@pytest.mark.asyncio
+async def test_audit_payload_hash_is_canonical_sha256():
+    """POLICY-005 — payload hash must be sha256 of canonical JSON (sort_keys, no spaces)."""
+    import hashlib
+    import json
+
+    proxy, _, chain = _make_proxy()
+    args = {"b": 2, "a": 1}
+    await proxy.call_tool("c1", "test.tool", args)
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    expected_bytes = json.dumps(args, sort_keys=True, separators=(",", ":")).encode()
+    expected = f"sha256:{hashlib.sha256(expected_bytes).hexdigest()}"
+    assert entry.request_payload_hash == expected
