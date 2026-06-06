@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or SHA to run CI on"
+        required: false
+        default: ""
 
 jobs:
   test:
