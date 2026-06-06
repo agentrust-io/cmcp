@@ -192,10 +192,17 @@ def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
         if report.measurement.startswith(("sha256:", "sha384:"))
         else f"sha256:{report.measurement}"
     )
+    # CRYPTO-003: raise on malformed report_data instead of silently dropping the nonce.
+    # A missing nonce removes the binding between the attestation report and the session;
+    # a malformed report_data indicates a broken or compromised TEE shim.
     try:
         nonce = base64.urlsafe_b64encode(bytes.fromhex(report.report_data)).rstrip(b"=").decode()
-    except ValueError:
-        nonce = None
+    except ValueError as exc:
+        raise ValueError(
+            f"TEE attestation report contains malformed report_data: {exc!r}. "
+            "The nonce binding to the session cannot be established. "
+            "Check the TEE provider implementation."
+        ) from exc
 
     return RuntimeInfo(platform=platform, measurement=measurement, nonce=nonce)  # type: ignore[arg-type]
 
