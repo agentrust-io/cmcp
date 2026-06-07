@@ -17,5 +17,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cmcp-verify` standalone verifier for validating TRACE Claims offline
 - Audit chain with Ed25519 signing for tamper-evident log integrity
 
-[Unreleased]: https://github.com/agentic-ai-foundation/cmcp-agentrust/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/agentic-ai-foundation/cmcp-agentrust/releases/tag/v0.1.0
+[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/agentrust-io/cmcp/releases/tag/v0.1.0
