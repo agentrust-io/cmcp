@@ -22,6 +22,7 @@ EntryType = Literal[
     "suspicious_call_sequence",
     "attestation_stale",
     "catalog_drift",
+    "break_glass_used",
 ]
 
 PolicyDecision = Literal["allow", "deny", "redact", "advisory_deny", "fault", "n/a"]

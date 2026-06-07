@@ -24,6 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from cmcp_gateway.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
 from cmcp_gateway.mcp.proxy import CMCPProxy
 
 if TYPE_CHECKING:
@@ -128,6 +129,7 @@ class MCPServer:
                     self._session_reset,
                     methods=["POST"],
                 ),
+                Route("/catalog/exception", self._catalog_exception, methods=["POST"]),
             ],
             middleware=middleware,
             exception_handlers={Exception: _unhandled_error_handler},
@@ -363,6 +365,110 @@ class MCPServer:
                 {"error": "audit chain integrity check failed"}, status_code=500
             )
         return JSONResponse(bundle)
+
+    async def _catalog_exception(self, request: Request) -> Response:
+        """POST /catalog/exception — add a break-glass catalog exception at runtime.
+
+        The exception is visible in the TRACE Claim but does NOT modify catalog_hash.
+        Requires the same bearer token as all other operator endpoints.
+        """
+        try:
+            body = await request.body()
+            data = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JSONResponse(
+                {"error": "invalid JSON body", "error_code": "PARSE_ERROR"},
+                status_code=400,
+            )
+
+        reason: str | None = data.get("reason")
+        authorized_by: str | None = data.get("authorized_by")
+        tool_names: list[str] | None = data.get("tool_names")
+        server_identity_raw: dict[str, Any] | None = data.get("server_identity")
+
+        if not reason or not isinstance(reason, str):
+            return JSONResponse(
+                {"error": "'reason' is required", "error_code": "MISSING_FIELD"},
+                status_code=422,
+            )
+        if not authorized_by or not isinstance(authorized_by, str):
+            return JSONResponse(
+                {"error": "'authorized_by' is required", "error_code": "MISSING_FIELD"},
+                status_code=422,
+            )
+        if not tool_names or not isinstance(tool_names, list) or not all(isinstance(n, str) for n in tool_names):
+            return JSONResponse(
+                {"error": "'tool_names' must be a non-empty list of strings", "error_code": "MISSING_FIELD"},
+                status_code=422,
+            )
+        if not server_identity_raw or not isinstance(server_identity_raw, dict):
+            return JSONResponse(
+                {"error": "'server_identity' is required", "error_code": "MISSING_FIELD"},
+                status_code=422,
+            )
+
+        required_si_fields = ("display_name", "url", "tls_fingerprint")
+        missing = [f for f in required_si_fields if not server_identity_raw.get(f)]
+        if missing:
+            return JSONResponse(
+                {
+                    "error": f"server_identity missing fields: {missing}",
+                    "error_code": "MISSING_FIELD",
+                },
+                status_code=422,
+            )
+
+        try:
+            server = ServerIdentity(
+                display_name=server_identity_raw["display_name"],
+                url=server_identity_raw["url"],
+                tls_fingerprint=server_identity_raw["tls_fingerprint"],
+                spiffe_id=server_identity_raw.get("spiffe_id"),
+                transport=server_identity_raw.get("transport", "http-sse"),
+                rotation_mode=server_identity_raw.get("rotation_mode", "key-pinned"),
+            )
+        except (KeyError, TypeError) as exc:
+            return JSONResponse(
+                {"error": f"invalid server_identity: {exc}", "error_code": "INVALID_FIELD"},
+                status_code=422,
+            )
+
+        added: list[str] = []
+        for tool_name in tool_names:
+            entry = CatalogEntry(
+                tool_name=tool_name,
+                server=server,
+                approved_definition=ApprovedDefinition(
+                    description=f"Break-glass exception: {reason}",
+                    input_schema={},
+                    output_schema=None,
+                ),
+                definition_hash="sha256:" + "0" * 64,
+                compliance_domain="external",
+                requires_baa=False,
+                sensitivity_level="public",
+                added_at="",
+                approved_by=authorized_by,
+            )
+            self._proxy._catalog.add_exception(entry, reason=reason, authorized_by=authorized_by)
+            added.append(tool_name)
+
+        logger.warning(
+            "BREAK_GLASS_EXCEPTION_ADDED: tools=%s reason=%r authorized_by=%r",
+            added,
+            reason,
+            authorized_by,
+        )
+
+        return JSONResponse(
+            {
+                "status": "ok",
+                "added_tools": added,
+                "reason": reason,
+                "authorized_by": authorized_by,
+            },
+            status_code=201,
+        )
 
     async def _session_reset(self, request: Request) -> Response:
         """POST /sessions/{session_id}/reset — operator-only session sensitivity reset."""
