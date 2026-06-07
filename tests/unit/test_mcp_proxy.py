@@ -207,6 +207,46 @@ async def test_cedar_context_includes_arguments():
     assert ctx["arguments"] == args
 
 
+# ── POLICY-005 (issue #162): attestation_platform in Cedar context ────────────
+
+@pytest.mark.asyncio
+async def test_cedar_context_includes_attestation_platform():
+    """POLICY-005 (issue #162) — attestation_platform must be in Cedar context so
+    policies can restrict calls to hardware-attested callers only."""
+    from cmcp_gateway.mcp.proxy import CMCPProxy
+
+    evaluator = _make_evaluator()
+    cfg = Config()
+    cfg.attestation = AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING)
+    session = SessionState(session_id="sess-001")
+    chain = AuditChain("sess-001")
+
+    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
+         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+        proxy = CMCPProxy(
+            _make_catalog(), evaluator, session, chain, cfg,
+            attestation_platform="amd-sev-snp",
+        )
+        proxy._mcp_gateway = MagicMock()
+        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
+            sensitivity_tags=[], injection_detected=False
+        ))
+
+    await proxy.call_tool("c1", "test.tool", {})
+    ctx = evaluator.evaluate.call_args[0][0]
+    assert ctx["attestation_platform"] == "amd-sev-snp"
+
+
+@pytest.mark.asyncio
+async def test_cedar_context_attestation_platform_default_is_unknown():
+    """POLICY-005 — default attestation_platform is 'unknown' when not specified."""
+    evaluator = _make_evaluator()
+    proxy, _, _ = _make_proxy(evaluator=evaluator)
+    await proxy.call_tool("c1", "test.tool", {})
+    ctx = evaluator.evaluate.call_args[0][0]
+    assert ctx["attestation_platform"] == "unknown"
+
+
 # ── POLICY-005: request_payload_hash in all audit entries ────────────────────
 
 @pytest.mark.asyncio

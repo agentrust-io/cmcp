@@ -71,6 +71,7 @@ class CMCPProxy:
         attestation_generated_at: datetime | None = None,
         attestation_validity_seconds: int = 86400,
         catalog_hash: str | None = None,
+        attestation_platform: str = "unknown",
     ) -> None:
         self._catalog = catalog
         self._policy = policy_evaluator
@@ -82,6 +83,7 @@ class CMCPProxy:
         self._attestation_generated_at = attestation_generated_at
         self._attestation_validity_seconds = attestation_validity_seconds
         self._catalog_hash = catalog_hash or catalog.catalog_hash
+        self._attestation_platform = attestation_platform
 
         # Build AGT GovernancePolicy from cMCP catalog
         allowed_tools = list(catalog.entries.keys())
@@ -158,6 +160,7 @@ class CMCPProxy:
             "baa_covered": (not entry.requires_baa) if entry else False,
             "destination_class": "external",
             "session_max_sensitivity": self._session.max_sensitivity,
+            "attestation_platform": self._attestation_platform,
         }
         if workflow_id is not None:
             ctx["workflow_id"] = workflow_id
