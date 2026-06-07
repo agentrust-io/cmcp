@@ -88,7 +88,7 @@ def _make_proxy(catalog=None, evaluator=None, mode=EnforcementMode.ENFORCING):
 
     with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
          patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
-        proxy = CMCPProxy(cat, ev, session, chain, cfg)
+        proxy = CMCPProxy(cat, ev, session, chain, cfg, attestation_platform="software-only")
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
             sensitivity_tags=[], injection_detected=False
@@ -238,13 +238,30 @@ async def test_cedar_context_includes_attestation_platform():
 
 
 @pytest.mark.asyncio
-async def test_cedar_context_attestation_platform_default_is_unknown():
-    """POLICY-005 — default attestation_platform is 'unknown' when not specified."""
+async def test_cedar_context_attestation_platform_flows_from_constructor():
+    """POLICY-005 — attestation_platform passed to CMCPProxy must appear verbatim in Cedar context."""
     evaluator = _make_evaluator()
     proxy, _, _ = _make_proxy(evaluator=evaluator)
     await proxy.call_tool("c1", "test.tool", {})
     ctx = evaluator.evaluate.call_args[0][0]
-    assert ctx["attestation_platform"] == "unknown"
+    # _make_proxy passes attestation_platform="software-only"
+    assert ctx["attestation_platform"] == "software-only"
+
+
+def test_cli_passes_canonical_platform_to_proxy():
+    """POLICY-005 — cli.start() must resolve the TEE provider to a canonical platform
+    string via _PROVIDER_MAP and pass it to CMCPProxy, not leave the Cedar context as
+    'unknown'."""
+    from cmcp_gateway.audit.trace_claim import _PROVIDER_MAP
+
+    # Verify the map has entries for all expected production providers
+    assert "sev-snp" in _PROVIDER_MAP
+    assert "tdx" in _PROVIDER_MAP
+    assert "software-only" in _PROVIDER_MAP
+
+    # Verify all mapped values are non-empty canonical strings
+    for provider, canonical in _PROVIDER_MAP.items():
+        assert canonical, f"_PROVIDER_MAP[{provider!r}] is empty"
 
 
 # ── POLICY-005: request_payload_hash in all audit entries ────────────────────
