@@ -21,6 +21,7 @@ from cmcp_gateway.errors import (
 from cmcp_gateway.policy.bundle import PolicyBundle, load_policy_bundle
 from cmcp_gateway.tee.base import AttestationReport, TEEProvider
 from cmcp_gateway.tee.detect import detect_provider
+from cmcp_gateway.tee.spiffe import SpiffeClientResult, fetch_svid
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class GatewayContext:
     signing_key: SigningKey
     policy_bundle: PolicyBundle
     catalog: ToolCatalog
+    spiffe: SpiffeClientResult | None = None
 
 
 def _fatal(code: str, message: str, **fields: Any) -> None:
@@ -188,6 +190,21 @@ def run_startup(config_path: str) -> GatewayContext:
         catalog.catalog_hash,
     )
 
+    # Step 5b: SPIFFE/SPIRE SVID fetch (non-fatal — falls back to self-signed TLS)
+    # SVID issuance is conditioned on TEE attestation succeeding (handled by the
+    # SPIRE node attestation plugin on the SPIRE server side).
+    spiffe_result = fetch_svid()
+    if spiffe_result.has_svid:
+        logger.info(
+            "SPIFFE SVID obtained: spiffe_id=%s",
+            spiffe_result.svid.spiffe_id,  # type: ignore[union-attr]
+        )
+    else:
+        logger.warning(
+            "SPIFFE SVID not available (%s) — gateway will use self-signed TLS for mTLS",
+            spiffe_result.failure_reason,
+        )
+
     return GatewayContext(
         config=config,
         tee_provider=tee_provider,
@@ -195,4 +212,5 @@ def run_startup(config_path: str) -> GatewayContext:
         signing_key=signing_key,
         policy_bundle=policy_bundle,
         catalog=catalog,
+        spiffe=spiffe_result,
     )
