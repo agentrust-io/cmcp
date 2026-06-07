@@ -7,6 +7,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+_ALLOWED_PROVIDERS: frozenset[str] = frozenset({
+    "sev-snp",
+    "tdx",
+    "opaque",
+    "tpm",
+    "software-only",
+})
+
 
 @dataclass
 class AttestationReport:
@@ -19,6 +27,14 @@ class AttestationReport:
     attestation_generated_at: datetime
     attestation_validity_seconds: int
     measurement_note: str | None = None  # e.g. "sha1-bank-fallback"
+
+    def __post_init__(self) -> None:
+        if self.provider not in _ALLOWED_PROVIDERS:
+            raise ValueError(
+                f"AttestationReport.provider '{self.provider}' is not in the allowed set "
+                f"{sorted(_ALLOWED_PROVIDERS)}. "
+                "Custom TEE providers must use one of the allowed provider names."
+            )
 
 
 class TEEProvider(ABC):
