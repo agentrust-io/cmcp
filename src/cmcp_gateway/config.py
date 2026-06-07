@@ -48,11 +48,12 @@ class Config:
     catalog_path: str = "catalog.json"
     listen_addr: str = "0.0.0.0:8443"
     max_response_size_bytes: int = 2 * 1024 * 1024  # 2MB
+    policy_reload_interval_seconds: int = 0  # 0 = disabled (POLICY-001)
     dev_mode: bool = False
     bearer_token: str | None = None
 
 
-_KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes"}
+_KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes", "policy_reload_interval_seconds"}
 _KNOWN_ATTEST_KEYS = {"provider", "enforcement_mode", "validity_seconds", "staleness_policy"}
 
 
@@ -126,6 +127,10 @@ def load_config(path: str) -> Config:
     if not isinstance(max_bytes, int) or max_bytes <= 0:
         raise ConfigError("max_response_size_bytes must be a positive integer")
 
+    policy_reload_interval = raw.get("policy_reload_interval_seconds", 0)
+    if not isinstance(policy_reload_interval, int) or policy_reload_interval < 0:
+        raise ConfigError("policy_reload_interval_seconds must be a non-negative integer")
+
     dev_mode = os.environ.get("CMCP_DEV_MODE", "0") == "1"
     bearer_token = os.environ.get("CMCP_BEARER_TOKEN") or None
 
@@ -145,6 +150,7 @@ def load_config(path: str) -> Config:
         catalog_path=catalog_path,
         listen_addr=raw.get("listen_addr", "0.0.0.0:8443"),
         max_response_size_bytes=max_bytes,
+        policy_reload_interval_seconds=policy_reload_interval,
         dev_mode=dev_mode,
         bearer_token=bearer_token,
     )

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from cmcp_gateway.errors import ConfigError, PolicyHashMismatch
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -147,3 +152,56 @@ def load_policy_bundle(bundle_path: str, expected_hash: str | None = None) -> Po
         schema_content=schema_content,
         bundle_hash=f"sha256:{computed}",
     )
+
+
+class PolicyStore:
+    """Thread-safe holder for the active policy bundle with optional hot-reload.
+
+    When reload_interval_seconds > 0, calls to reload_if_stale() will re-read
+    the bundle from disk once the interval has elapsed and swap it in atomically
+    under a reentrant lock so that concurrent evaluate() calls never see a torn
+    state.  When reload_interval_seconds is 0 (the default), reloads are disabled
+    and the store behaves like a simple immutable wrapper.
+    """
+
+    def __init__(
+        self,
+        bundle: PolicyBundle,
+        bundle_path: str,
+        reload_interval_seconds: int = 0,
+        expected_hash: str | None = None,
+    ) -> None:
+        self._lock = threading.RLock()
+        self._bundle = bundle
+        self._bundle_path = bundle_path
+        self._reload_interval = reload_interval_seconds
+        self._expected_hash = expected_hash
+        self._last_reload_at = time.monotonic()
+
+    @property
+    def bundle(self) -> PolicyBundle:
+        with self._lock:
+            return self._bundle
+
+    def reload_if_stale(self) -> bool:
+        """Reload from disk if the configured interval has elapsed.
+
+        Returns True if a reload attempt was made (regardless of whether the
+        bundle hash changed).  Thread-safe; uses an RLock so nested calls from
+        the same thread are safe.
+        """
+        if self._reload_interval <= 0:
+            return False
+        with self._lock:
+            if time.monotonic() - self._last_reload_at < self._reload_interval:
+                return False
+            try:
+                new_bundle = load_policy_bundle(self._bundle_path, self._expected_hash)
+                if new_bundle.bundle_hash != self._bundle.bundle_hash:
+                    self._bundle = new_bundle
+                    logger.info("Policy bundle reloaded: hash=%s", new_bundle.bundle_hash)
+                self._last_reload_at = time.monotonic()
+                return True
+            except Exception as exc:
+                logger.warning("Policy bundle reload failed (keeping current): %s", exc)
+                return False

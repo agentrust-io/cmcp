@@ -129,3 +129,30 @@ def test_legitimate_absolute_path_accepted(config_file):
     cfg = load_config(path)
     assert cfg.policy_bundle_path == "/opt/cmcp/policy"
     assert cfg.catalog_path == "/opt/cmcp/catalog.json"
+
+
+# ── POLICY-001: policy_reload_interval_seconds ────────────────────────────────
+
+def test_policy_reload_interval_defaults_to_zero(config_file):
+    """POLICY-001: omitting policy_reload_interval_seconds must default to 0 (disabled)."""
+    path = config_file("")
+    cfg = load_config(path)
+    assert cfg.policy_reload_interval_seconds == 0
+
+
+def test_policy_reload_interval_parsed(config_file):
+    path = config_file("policy_reload_interval_seconds: 60\n")
+    cfg = load_config(path)
+    assert cfg.policy_reload_interval_seconds == 60
+
+
+def test_policy_reload_interval_negative_rejected(config_file):
+    path = config_file("policy_reload_interval_seconds: -1\n")
+    with pytest.raises(ConfigError, match="policy_reload_interval_seconds"):
+        load_config(path)
+
+
+def test_policy_reload_interval_non_integer_rejected(config_file):
+    path = config_file("policy_reload_interval_seconds: 30.5\n")
+    with pytest.raises(ConfigError, match="policy_reload_interval_seconds"):
+        load_config(path)
