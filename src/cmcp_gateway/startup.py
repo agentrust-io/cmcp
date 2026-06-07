@@ -18,7 +18,7 @@ from cmcp_gateway.errors import (
     ConfigError,
     PolicyHashMismatch,
 )
-from cmcp_gateway.policy.bundle import PolicyBundle, load_policy_bundle
+from cmcp_gateway.policy.bundle import PolicyBundle, PolicyStore, load_policy_bundle
 from cmcp_gateway.tee.base import AttestationReport, TEEProvider
 from cmcp_gateway.tee.detect import detect_provider
 from cmcp_gateway.tee.spiffe import SpiffeClientResult, fetch_svid
@@ -34,7 +34,7 @@ class GatewayContext:
     tee_provider: TEEProvider
     attestation_report: AttestationReport
     signing_key: SigningKey
-    policy_bundle: PolicyBundle
+    policy_bundle: PolicyStore
     catalog: ToolCatalog
     spiffe: SpiffeClientResult | None = None
 
@@ -150,6 +150,18 @@ def run_startup(config_path: str) -> GatewayContext:
 
     logger.info("Policy bundle loaded: hash=%s", policy_bundle.bundle_hash)
 
+    policy_store = PolicyStore(
+        bundle=policy_bundle,
+        bundle_path=config.policy_bundle_path,
+        reload_interval_seconds=config.policy_reload_interval_seconds,
+        expected_hash=policy_expected_hash,
+    )
+    if config.policy_reload_interval_seconds > 0:
+        logger.info(
+            "Policy hot-reload enabled: interval=%ds",
+            config.policy_reload_interval_seconds,
+        )
+
     # Step 5: catalog
     catalog_expected_hash = os.environ.get("CMCP_CATALOG_HASH")
     if catalog_expected_hash is None and not config.dev_mode:
@@ -210,7 +222,7 @@ def run_startup(config_path: str) -> GatewayContext:
         tee_provider=tee_provider,
         attestation_report=attestation_report,
         signing_key=signing_key,
-        policy_bundle=policy_bundle,
+        policy_bundle=policy_store,
         catalog=catalog,
         spiffe=spiffe_result,
     )

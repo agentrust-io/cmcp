@@ -8,7 +8,7 @@ import pytest
 
 from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
 from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.bundle import PolicyBundle, PolicyManifest
+from cmcp_gateway.policy.bundle import PolicyBundle, PolicyManifest, PolicyStore
 from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
 
 
@@ -173,3 +173,59 @@ def test_decision_conformance_policy_003():
     assert d.allowed is True
     assert d.would_have_denied is True
     assert d.enforcement_mode == EnforcementMode.ADVISORY
+
+
+# ── PolicyStore integration (POLICY-001 hot-reload) ───────────────────────────
+
+def _make_bundle_with_hash(hash_hex: str) -> PolicyBundle:
+    return PolicyBundle(
+        manifest=PolicyManifest(
+            version="1.0.0",
+            authored_at="2026-06-07T00:00:00Z",
+            author_identity="test",
+            commit_sha="abc",
+        ),
+        policy_files={"allow.cedar": "permit(principal, action, resource);"},
+        schema_content='{"cMCP": {}}',
+        bundle_hash=f"sha256:{hash_hex}",
+    )
+
+
+def test_evaluator_accepts_policy_store():
+    """PolicyEvaluator must accept a PolicyStore directly."""
+    with patch("cmcp_gateway.policy.evaluator.CedarBackend"):
+        store = PolicyStore(bundle=_make_bundle(), bundle_path="", reload_interval_seconds=0)
+        e = PolicyEvaluator(store, _make_config())
+    assert e.bundle_hash == "sha256:" + "0" * 64
+
+
+def test_evaluator_refreshes_backend_on_bundle_change():
+    """When the store's bundle hash changes, _maybe_reload rebuilds the CedarBackend."""
+    old_hash = "a" * 64
+    new_hash = "b" * 64
+    old_bundle = _make_bundle_with_hash(old_hash)
+    new_bundle = _make_bundle_with_hash(new_hash)
+
+    store = PolicyStore(bundle=old_bundle, bundle_path="", reload_interval_seconds=0)
+
+    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+        mock_backend = MagicMock()
+        mock_backend.evaluate.return_value = MagicMock(
+            allowed=True, reason=None, evaluation_ms=0.1
+        )
+        MockBackend.return_value = mock_backend
+
+        evaluator = PolicyEvaluator(store, _make_config())
+        # Backend was constructed once at init.
+        assert MockBackend.call_count == 1
+
+        # Swap the bundle in the store to simulate a hot-reload.
+        store._bundle = new_bundle
+
+        # evaluate() calls _maybe_reload() which detects the hash change and
+        # rebuilds the backend.
+        evaluator.evaluate(ALLOW_CONTEXT)
+
+    # Backend must have been re-created: call_count goes to 2.
+    assert MockBackend.call_count == 2
+    assert evaluator.bundle_hash == f"sha256:{new_hash}"

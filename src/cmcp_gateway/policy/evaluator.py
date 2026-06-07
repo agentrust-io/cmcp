@@ -16,7 +16,7 @@ from agent_os.policies.backends import CedarBackend
 
 from cmcp_gateway.config import Config, EnforcementMode
 from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.bundle import PolicyBundle
+from cmcp_gateway.policy.bundle import PolicyBundle, PolicyStore
 from cmcp_gateway.session.state import SENSITIVITY_ORDER
 
 if TYPE_CHECKING:
@@ -47,14 +47,26 @@ class PolicyEvaluator:
     so the measured hash covers exactly the bytes that will be evaluated.
     """
 
-    def __init__(self, bundle: PolicyBundle, config: Config) -> None:
+    def __init__(self, bundle: PolicyBundle | PolicyStore, config: Config) -> None:
         self._mode = config.attestation.enforcement_mode
-        self._bundle = bundle
+
+        # Normalise: always work with a PolicyStore internally.
+        if isinstance(bundle, PolicyStore):
+            self._store = bundle
+        else:
+            self._store = PolicyStore(
+                bundle=bundle,
+                bundle_path="",
+                reload_interval_seconds=0,
+            )
+
+        initial_bundle = self._store.bundle
+        self._current_hash = initial_bundle.bundle_hash
 
         # Concatenate all Cedar policy files into one string for CedarBackend.
         # Files are sorted by name to match the hash computation in bundle.py.
         combined_policy = "\n\n".join(
-            content for _, content in sorted(bundle.policy_files.items())
+            content for _, content in sorted(initial_bundle.policy_files.items())
         )
 
         self._backend = CedarBackend(
@@ -63,10 +75,22 @@ class PolicyEvaluator:
         )
         logger.info(
             "PolicyEvaluator ready: bundle_hash=%s enforcement=%s backend=%s",
-            bundle.bundle_hash,
+            initial_bundle.bundle_hash,
             self._mode.value,
             self._backend.__class__.__name__,
         )
+
+    def _maybe_reload(self) -> None:
+        """Check for a stale bundle and rebuild the CedarBackend if the hash changed."""
+        self._store.reload_if_stale()
+        bundle = self._store.bundle
+        if bundle.bundle_hash != self._current_hash:
+            combined_policy = "\n\n".join(
+                content for _, content in sorted(bundle.policy_files.items())
+            )
+            self._backend = CedarBackend(policy_content=combined_policy, mode="auto")
+            self._current_hash = bundle.bundle_hash
+            logger.info("PolicyEvaluator backend refreshed: new_hash=%s", self._current_hash)
 
     def evaluate(self, context: dict[str, Any]) -> PolicyDecision:
         """
@@ -81,6 +105,7 @@ class PolicyEvaluator:
         In ADVISORY mode, always returns allowed=True but sets would_have_denied.
         In SILENT mode, always returns allowed=True with no logging.
         """
+        self._maybe_reload()
         result = self._backend.evaluate(context)
         allowed_by_cedar = result.allowed
         evaluation_ms = result.evaluation_ms or 0.0
@@ -143,6 +168,7 @@ class PolicyEvaluator:
         Returns PolicyDecision(allowed=True/False, ...).  In ENFORCING mode a deny
         raises PolicyDeny; in ADVISORY/SILENT a deny is flagged via would_have_denied.
         """
+        self._maybe_reload()
         context: dict[str, Any] = {
             "tool_name": tool_name,
             "egress": True,
@@ -155,7 +181,7 @@ class PolicyEvaluator:
 
     @property
     def bundle_hash(self) -> str:
-        return self._bundle.bundle_hash
+        return self._store.bundle.bundle_hash
 
     @property
     def enforcement_mode(self) -> EnforcementMode:
