@@ -108,7 +108,7 @@ def test_detect_uses_first_available_provider(dev_config):
     """detect_provider picks the first provider whose detect() returns True."""
     mock_provider = SoftwareOnlyProvider()  # reuse as a stand-in
 
-    def _mock_get(name: str):
+    def _mock_get(name, config=None):
         if name == "sev-snp":
             return mock_provider
         return None
@@ -163,3 +163,131 @@ def test_attestation_report_known_providers_accepted():
             attestation_generated_at=datetime.now(tz=timezone.utc),
             attestation_validity_seconds=86400,
         )
+
+
+# ── HW-002: SEVSNPProvider expected_measurement validation ───────────────────
+
+def test_sevsnp_no_expected_measurement_skips_check():
+    """HW-002: when expected_measurement is None, attribute is None (check skipped)."""
+    from cmcp_gateway.tee.sev_snp import SEVSNPProvider
+    provider = SEVSNPProvider(expected_measurement=None)
+    assert provider._expected_measurement is None
+
+
+def test_sevsnp_stores_expected_measurement():
+    """HW-002: SEVSNPProvider stores the configured expected_measurement."""
+    from cmcp_gateway.tee.sev_snp import SEVSNPProvider
+    em = "sha384:" + "a" * 96
+    provider = SEVSNPProvider(expected_measurement=em)
+    assert provider._expected_measurement == em
+
+
+def test_sevsnp_rejects_mismatched_expected_measurement(monkeypatch):
+    """HW-002: measurement mismatch raises RuntimeError before returning the report."""
+    import hashlib
+    import struct
+    import sys
+    from unittest.mock import MagicMock
+
+    from cmcp_gateway.tee.sev_snp import (
+        SEVSNPProvider,
+        _SNP_MEASUREMENT_END,
+        _SNP_MEASUREMENT_OFFSET,
+        _SNP_REPORT_SIZE,
+        _SNP_RESP_HEADER_SIZE,
+    )
+
+    # Build a fake ioctl response with a known measurement
+    measurement_bytes = b"\xab" * (_SNP_MEASUREMENT_END - _SNP_MEASUREMENT_OFFSET)
+    raw_evidence = bytearray(_SNP_REPORT_SIZE)
+    raw_evidence[_SNP_MEASUREMENT_OFFSET:_SNP_MEASUREMENT_END] = measurement_bytes
+
+    resp_buf = bytearray(_SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE)
+    struct.pack_into("<I", resp_buf, 0, 0)  # status = 0
+    resp_buf[_SNP_RESP_HEADER_SIZE:] = raw_evidence
+
+    def fake_ioctl(fd, req, buf):
+        buf[:] = resp_buf
+
+    mock_fcntl = MagicMock()
+    mock_fcntl.ioctl.side_effect = fake_ioctl
+    monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
+    monkeypatch.setattr("cmcp_gateway.tee.sev_snp.sys.platform", "linux")
+
+    wrong_expected = "sha384:" + "0" * 96
+    provider = SEVSNPProvider(expected_measurement=wrong_expected)
+
+    with patch("builtins.open", MagicMock(
+        return_value=MagicMock(__enter__=lambda s: MagicMock(), __exit__=lambda s, *a: False)
+    )), pytest.raises(RuntimeError, match="measurement mismatch"):
+        provider.get_attestation_report(b"\x00" * 32)
+
+
+def test_sevsnp_accepts_matching_expected_measurement(monkeypatch):
+    """HW-002: when expected_measurement matches, report is returned without error."""
+    import hashlib
+    import struct
+    import sys
+    from unittest.mock import MagicMock
+
+    from cmcp_gateway.tee.sev_snp import (
+        SEVSNPProvider,
+        _SNP_MEASUREMENT_END,
+        _SNP_MEASUREMENT_OFFSET,
+        _SNP_REPORT_SIZE,
+        _SNP_RESP_HEADER_SIZE,
+    )
+
+    measurement_bytes = b"\xcd" * (_SNP_MEASUREMENT_END - _SNP_MEASUREMENT_OFFSET)
+    expected = "sha384:" + hashlib.sha384(measurement_bytes).hexdigest()
+
+    raw_evidence = bytearray(_SNP_REPORT_SIZE)
+    raw_evidence[_SNP_MEASUREMENT_OFFSET:_SNP_MEASUREMENT_END] = measurement_bytes
+
+    resp_buf = bytearray(_SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE)
+    struct.pack_into("<I", resp_buf, 0, 0)
+    resp_buf[_SNP_RESP_HEADER_SIZE:] = raw_evidence
+
+    def fake_ioctl(fd, req, buf):
+        buf[:] = resp_buf
+
+    mock_fcntl = MagicMock()
+    mock_fcntl.ioctl.side_effect = fake_ioctl
+    monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
+    monkeypatch.setattr("cmcp_gateway.tee.sev_snp.sys.platform", "linux")
+
+    provider = SEVSNPProvider(expected_measurement=expected)
+
+    with patch("builtins.open", MagicMock(
+        return_value=MagicMock(__enter__=lambda s: MagicMock(), __exit__=lambda s, *a: False)
+    )):
+        report = provider.get_attestation_report(b"\x00" * 32)
+
+    assert report.measurement == expected
+
+
+def test_detect_provider_passes_expected_measurement_to_snp(dev_config):
+    """HW-002: detect_provider threads attestation.expected_measurement into SEVSNPProvider."""
+    from cmcp_gateway.tee.sev_snp import SEVSNPProvider
+
+    dev_config.attestation.expected_measurement = "sha384:" + "f" * 96
+    dev_config.attestation.provider = TEEProviderEnum.SEV_SNP
+
+    created = []
+
+    original_get = __import__(
+        "cmcp_gateway.tee.detect", fromlist=["_get_provider_impl"]
+    )._get_provider_impl
+
+    def spy_get(name, config=None):
+        impl = original_get(name, config)
+        if isinstance(impl, SEVSNPProvider):
+            created.append(impl)
+        return impl
+
+    with patch("cmcp_gateway.tee.detect._get_provider_impl", side_effect=spy_get), \
+         patch.object(SEVSNPProvider, "detect", return_value=True):
+        detect_provider(dev_config)
+
+    assert created, "SEVSNPProvider was not instantiated"
+    assert created[0]._expected_measurement == "sha384:" + "f" * 96
