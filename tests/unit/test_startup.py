@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -161,4 +161,24 @@ def test_startup_fails_when_catalog_hash_unset_and_not_dev_mode(tmp_path, monkey
     env = {"CMCP_DEV_MODE": "0", "CMCP_POLICY_HASH": policy_hash}
     with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc_info:
         run_startup(str(config_path))
+    assert exc_info.value.code == 1
+
+
+def test_startup_fails_on_unknown_tee_provider_name(complete_setup):
+    """HW-001: a provider that returns an unknown platform string must cause exit 1.
+
+    The mock bypasses AttestationReport.__post_init__ by returning a plain
+    MagicMock, simulating a custom or misconfigured provider that injects an
+    arbitrary string before the startup boundary check can catch it.
+    """
+    fake_report = MagicMock()
+    fake_report.provider = "evil-custom-tee"
+    fake_report.measurement = "aabbcc" * 8
+
+    with patch(
+        "cmcp_gateway.tee.base.SoftwareOnlyProvider.get_attestation_report",
+        return_value=fake_report,
+    ), pytest.raises(SystemExit) as exc_info:
+        run_startup(complete_setup)
+
     assert exc_info.value.code == 1
