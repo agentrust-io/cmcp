@@ -316,3 +316,61 @@ async def test_cedar_exception_writes_fault_audit_entry():
     assert fault_entries[0].policy_decision == "fault"
     assert "RuntimeError" in (fault_entries[0].policy_rule_matched or "")
     assert fault_entries[0].request_payload_hash is not None
+
+
+# ── INJECT-003: injection detail included in audit entry ─────────────────────
+
+@pytest.mark.asyncio
+async def test_audit_entry_detail_includes_injection_scanner_and_pattern():
+    """INJECT-003 (closes #170) — when injection is detected, the audit entry detail must
+    include injection_scanner and matched_pattern so a verifier can reconstruct why
+    the request was denied."""
+    proxy, _, chain = _make_proxy()
+    proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
+        sensitivity_tags=[],
+        injection_detected=True,
+        injection_scanner="agt_mcp",
+        matched_pattern="test_pattern",
+        injection_pattern=None,
+    ))
+
+    await proxy.call_tool("c1", "test.tool", {"q": "hello"})
+
+    tool_entries = [e for e in chain.entries if e.entry_type == "tool_call"]
+    entry = tool_entries[-1]
+    assert entry.detail is not None, "detail must be set when injection is detected"
+    assert entry.detail["injection_scanner"] == "agt_mcp"
+    assert entry.detail["matched_pattern"] == "test_pattern"
+
+
+@pytest.mark.asyncio
+async def test_audit_entry_detail_is_none_when_no_injection():
+    """INJECT-003 — when no injection is detected, detail must not be set
+    (so clean calls do not carry spurious injection keys)."""
+    proxy, _, chain = _make_proxy()
+
+    await proxy.call_tool("c1", "test.tool", {"q": "safe"})
+
+    tool_entries = [e for e in chain.entries if e.entry_type == "tool_call"]
+    entry = tool_entries[-1]
+    assert entry.detail is None
+
+
+@pytest.mark.asyncio
+async def test_audit_entry_detail_falls_back_to_unknown_when_fields_absent():
+    """INJECT-003 — when injection_detected=True but scanner/pattern attrs are absent,
+    detail values must fall back to 'unknown' rather than crashing."""
+    proxy, _, chain = _make_proxy()
+    agt_mock = MagicMock(spec=[])  # no attributes beyond spec
+    agt_mock.sensitivity_tags = []
+    agt_mock.injection_detected = True
+    # injection_scanner and matched_pattern intentionally absent
+    proxy._mcp_gateway.call_tool = AsyncMock(return_value=agt_mock)
+
+    await proxy.call_tool("c1", "test.tool", {})
+
+    tool_entries = [e for e in chain.entries if e.entry_type == "tool_call"]
+    entry = tool_entries[-1]
+    assert entry.detail is not None
+    assert entry.detail["injection_scanner"] == "unknown"
+    assert entry.detail["matched_pattern"] == "unknown"
