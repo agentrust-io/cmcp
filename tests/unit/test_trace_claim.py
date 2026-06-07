@@ -250,3 +250,40 @@ def test_build_runtime_malformed_report_data_raises():
     )
     with pytest.raises(ValueError, match="malformed report_data"):
         _build_runtime(report)
+
+
+# ── AUDIT-003: unknown provider rejected ──────────────────────────────────────
+
+
+def test_build_runtime_unknown_provider_raises():
+    """AUDIT-003: unknown attestation provider must be rejected, not silently accepted."""
+    import pytest
+
+    from cmcp_gateway.audit.trace_claim import AttestationReportInfo, _build_runtime
+    report = AttestationReportInfo(
+        provider="unknown-cloud-magic",
+        measurement="sha256:" + "a" * 64,
+        report_data="aa" * 32,
+        attestation_generated_at="2026-06-06T00:00:00+00:00",
+        attestation_validity_seconds=86400,
+    )
+    with pytest.raises(ValueError, match="not in the allowed set"):
+        _build_runtime(report)
+
+
+def test_build_runtime_all_known_providers_accepted():
+    """AUDIT-003: every provider in the allowed set must succeed without raising."""
+    from cmcp_gateway.audit.trace_claim import (
+        AttestationReportInfo,
+        _PROVIDER_MAP,
+        _build_runtime,
+    )
+    for provider in _PROVIDER_MAP:
+        report = AttestationReportInfo(
+            provider=provider,
+            measurement="sha256:" + "a" * 64,
+            report_data="aa" * 32,
+            attestation_generated_at="2026-06-06T00:00:00+00:00",
+            attestation_validity_seconds=86400,
+        )
+        _build_runtime(report)  # must not raise
