@@ -127,38 +127,18 @@ def test_content_length_check_rejects_before_body_read():
 
 # ── NET-002: /health rate limit ───────────────────────────────────────────────
 
-def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> "MCPServer":
-    """Create a server with a very low rate limit for testing."""
-    from cmcp_gateway.mcp.server import _RateLimitMiddleware
-    from starlette.middleware import Middleware
-
+def _make_server_with_low_rate_limit(requests_per_second: int = 3) -> "MCPServer":
+    """Create a server with a very low per-second rate limit for testing."""
     proxy = MagicMock()
     proxy._catalog = MagicMock()
     proxy._catalog.entries = {}
     with patch("cmcp_gateway.mcp.server.StatelessKernel"):
-        server = MCPServer(proxy, bearer_token=None)
-
-    # Replace rate-limit middleware with a tighter one for this test
-    from starlette.applications import Starlette
-    from starlette.routing import Route
-
-    server.app = Starlette(
-        routes=server.app.routes,
-        middleware=[
-            Middleware(
-                _RateLimitMiddleware,
-                paths=frozenset({"/health"}),
-                requests_per_minute=requests_per_minute,
-            )
-        ],
-        exception_handlers={},
-    )
-    return server
+        return MCPServer(proxy, bearer_token=None, health_rate_limit_per_second=requests_per_second)
 
 
 def test_health_allows_requests_within_limit():
-    """NET-002: requests within rate limit return 200."""
-    server = _make_server_with_low_rate_limit(requests_per_minute=5)
+    """NET-002: requests within the per-second rate limit return 200."""
+    server = _make_server_with_low_rate_limit(requests_per_second=5)
     client = TestClient(server.app, raise_server_exceptions=False)
     for _ in range(3):
         resp = client.get("/health")
@@ -166,49 +146,40 @@ def test_health_allows_requests_within_limit():
 
 
 def test_health_rate_limit_returns_429_when_exceeded():
-    """NET-002: exceeding rate limit returns 429 with Retry-After header."""
-    server = _make_server_with_low_rate_limit(requests_per_minute=2)
+    """NET-002: exceeding the per-second rate limit returns 429 with Retry-After: 1."""
+    server = _make_server_with_low_rate_limit(requests_per_second=2)
     client = TestClient(server.app, raise_server_exceptions=False)
 
     # First two should pass
     assert client.get("/health").status_code == 200
     assert client.get("/health").status_code == 200
-    # Third exceeds limit
+    # Third exceeds limit within the 1-second window
     resp = client.get("/health")
     assert resp.status_code == 429
-    assert "Retry-After" in resp.headers
+    assert resp.headers.get("Retry-After") == "1"
     body = resp.json()
-    assert body["error_code"] == "RATE_LIMITED"
+    assert body["error_code"] == "HEALTH_RATE_LIMIT"
 
 
-def test_rate_limit_middleware_paths_only():
-    """NET-002: rate limit applies only to configured paths, not all endpoints."""
-    from cmcp_gateway.mcp.server import _RateLimitMiddleware
-    from starlette.middleware import Middleware
-    from starlette.applications import Starlette
+def test_health_rate_limit_non_health_endpoints_not_affected():
+    """NET-002: rate limit applies only to /health, not to other endpoints."""
+    from cmcp_gateway.mcp.server import _HealthRateLimitMiddleware
 
     proxy = MagicMock()
     proxy._catalog = MagicMock()
     proxy._catalog.entries = {}
     with patch("cmcp_gateway.mcp.server.StatelessKernel"):
-        server = MCPServer(proxy, bearer_token=None)
-
-    # Rate-limit ONLY /nonexistent (so /health is unaffected)
-    server.app = Starlette(
-        routes=server.app.routes,
-        middleware=[
-            Middleware(
-                _RateLimitMiddleware,
-                paths=frozenset({"/nonexistent"}),
-                requests_per_minute=1,
-            )
-        ],
-        exception_handlers={},
-    )
+        server = MCPServer(proxy, bearer_token=None, health_rate_limit_per_second=1)
     client = TestClient(server.app, raise_server_exceptions=False)
-    for _ in range(5):
-        resp = client.get("/health")
-        assert resp.status_code == 200
+
+    # Hit limit on /health
+    assert client.get("/health").status_code == 200
+    assert client.get("/health").status_code == 429
+
+    # /tools/list (requires auth, but returns 401 rather than 429 — proving
+    # the rate-limiter is not blocking it)
+    resp = client.get("/tools/list")
+    assert resp.status_code != 429
 
 
 # ── INJECT-002: sanitize method in error responses ────────────────────────────
