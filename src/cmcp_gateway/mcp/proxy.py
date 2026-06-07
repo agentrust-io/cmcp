@@ -409,6 +409,11 @@ class CMCPProxy:
         # AUTH-002: lock protects against race with concurrent session reset requests.
         response_sensitivity = getattr(agt_result, "sensitivity_tags", [])
         injection_detected = getattr(agt_result, "injection_detected", False)
+        # INJECT-003: capture scanner attribution and matched pattern for audit chain detail
+        injection_scanner = getattr(agt_result, "injection_scanner", None)
+        injection_pattern = getattr(agt_result, "matched_pattern", None) or getattr(
+            agt_result, "injection_pattern", None
+        )
         async with self._session.mutation_lock:
             self._session.update_from_inspection(
                 call_id=call_id,
@@ -462,6 +467,15 @@ class CMCPProxy:
         # Step 6: audit chain write
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
         latency_us = int((time.perf_counter() - t0) * 1_000_000)
+        # INJECT-003: include injection scanner and pattern in audit detail when detected
+        injection_detail: dict[str, str | int] | None = (
+            {
+                "injection_scanner": str(injection_scanner or "unknown")[:128],
+                "matched_pattern": str(injection_pattern or "unknown")[:256],
+            }
+            if injection_detected
+            else None
+        )
         self._audit.append(
             "tool_call",
             call_id=call_id,
@@ -474,6 +488,7 @@ class CMCPProxy:
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
             workflow_id=workflow_id,
+            detail=injection_detail,
         )
 
         # Step 6: call log record + suspicious-sequence check
