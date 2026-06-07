@@ -12,6 +12,7 @@ Falls back to the original regex-based detection if AGT is unavailable.
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import re
@@ -57,6 +58,8 @@ class StageResult:
     stripped_fields: list[str] | None = None
     sensitivity_tags: list[str] = field(default_factory=list)
     injection_pattern: str | None = None
+    injection_scanner: str | None = None  # INJECT-003: which scanner triggered the deny
+    injection_score: float | None = None  # INJECT-003: confidence score if available
 
 
 @dataclass
@@ -70,6 +73,9 @@ class InspectionResult:
     stage_results: dict[str, str]
     response_payload_hash: str | None
     modified_response: bytes | None  # None if not modified (allow as-is)
+    # INJECT-003: scanner attribution for audit chain context
+    injection_scanner: str | None = None  # which scanner detected: "agt_mcp", "agt_detector", "regex", "timeout"
+    injection_score: float | None = None  # confidence score (0.0–1.0) if available
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -187,12 +193,15 @@ def _stage4_injection_detection(
             result = _agt_detector.detect(response_text)
             if result.is_injection:
                 pattern_name = result.injection_type.value if hasattr(result.injection_type, "value") else str(result.injection_type)
+                score = float(result.confidence) if hasattr(result, "confidence") else None
                 # Log pattern name and bounded window, not full content
                 return StageResult(
                     stage="injection",
                     decision="deny",
                     reason=f"AGT injection detected: {pattern_name} (confidence={result.confidence:.2f})",
                     injection_pattern=f"agt:{pattern_name}",
+                    injection_scanner="agt_detector",
+                    injection_score=score,
                 )
             return StageResult(stage="injection", decision="allow")
         except Exception:  # nosec B110
@@ -211,6 +220,7 @@ def _stage4_injection_detection(
                 decision="deny",
                 reason=f"injection pattern '{name}' matched near {context_window}",
                 injection_pattern=name,
+                injection_scanner="regex",
             )
     return StageResult(stage="injection", decision="allow")
 
@@ -357,9 +367,11 @@ class InspectionPipeline:
         self,
         max_response_size_bytes: int = 2 * 1024 * 1024,
         custom_injection_patterns: list[tuple[re.Pattern[str], str]] | None = None,
+        scanner_timeout_seconds: float = 5.0,
     ) -> None:
         self._max_bytes = max_response_size_bytes
         self._injection_patterns = custom_injection_patterns
+        self._scanner_timeout = scanner_timeout_seconds
 
         # Instantiate AGT components once per pipeline instance
         self._agt_injection_detector: Any = None
@@ -450,32 +462,62 @@ class InspectionPipeline:
                 stage_results=stage_results,
                 response_payload_hash=response_payload_hash,
                 modified_response=None,
+                injection_scanner="utf8_guard",
             )
 
         agt_mcp_denied = False
+        injection_scanner: str | None = None
+        injection_score: float | None = None
 
         # AGT MCPResponseScanner catches MCP-specific threats (tool poisoning in responses)
+        # INJECT-002: bounded timeout so a slow/unresponsive AGT service cannot block
+        # worker slots indefinitely. Treat timeout as deny (fail-safe).
         if self._agt_response_scanner is not None:
+            scanner = self._agt_response_scanner
+            tool = catalog_entry.tool_name
             try:
-                agt_scan = self._agt_response_scanner.scan_response(
-                    response_text, tool_name=catalog_entry.tool_name
-                )
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(scanner.scan_response, response_text, tool)
+                    agt_scan = fut.result(timeout=self._scanner_timeout)
                 if not agt_scan.is_safe:
                     threat_name = str(agt_scan.threats[0]) if agt_scan.threats else "mcp_threat"
                     deny_reasons.append(f"AGT MCPResponseScanner: {threat_name}")
                     injection_pattern = f"agt_mcp:{threat_name}"
+                    injection_scanner = "agt_mcp"
                     # POLICY-006: record deny from AGT scanner before running regex stage;
                     # regex stage below must not overwrite a deny with allow.
                     stage_results["injection"] = "deny"
                     agt_mcp_denied = True
+            except concurrent.futures.TimeoutError:
+                # INJECT-002: scanner timed out — deny to prevent bypass via slow AGT
+                deny_reasons.append(f"AGT MCPResponseScanner timed out after {self._scanner_timeout}s")
+                injection_pattern = "scanner_timeout"
+                injection_scanner = "timeout"
+                stage_results["injection"] = "deny"
+                agt_mcp_denied = True
             except Exception:  # nosec B110
                 pass
 
-        s4 = _stage4_injection_detection(
-            response_text,
-            self._injection_patterns,
-            _agt_detector=self._agt_injection_detector,
-        )
+        # INJECT-002: wrap AGT PromptInjectionDetector with the same timeout bound.
+        def _run_s4() -> StageResult:
+            return _stage4_injection_detection(
+                response_text,
+                self._injection_patterns,
+                _agt_detector=self._agt_injection_detector,
+            )
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                s4 = ex.submit(_run_s4).result(timeout=self._scanner_timeout)
+        except concurrent.futures.TimeoutError:
+            s4 = StageResult(
+                stage="injection",
+                decision="deny",
+                reason=f"AGT PromptInjectionDetector timed out after {self._scanner_timeout}s",
+                injection_pattern="detector_timeout",
+                injection_scanner="timeout",
+            )
+
         # POLICY-006: only overwrite injection decision if regex/AGT detector found a new deny,
         # or if the stage had not yet been set to deny by the MCPResponseScanner above.
         if s4.decision == "deny" or not agt_mcp_denied:
@@ -483,6 +525,9 @@ class InspectionPipeline:
         if s4.decision == "deny":
             deny_reasons.append(s4.reason or "injection detected")
             injection_pattern = s4.injection_pattern
+            if not injection_scanner:
+                injection_scanner = s4.injection_scanner
+                injection_score = s4.injection_score
 
         final = "deny" if deny_reasons else "allow"
 
@@ -508,4 +553,6 @@ class InspectionPipeline:
             stage_results=stage_results,
             response_payload_hash=response_payload_hash,
             modified_response=modified_response,
+            injection_scanner=injection_scanner,
+            injection_score=injection_score,
         )
