@@ -25,6 +25,17 @@ from cmcp_gateway.tee.spiffe import SpiffeClientResult, fetch_svid
 
 logger = logging.getLogger(__name__)
 
+# HW-001: allowlist of canonical TEE provider names that may appear in
+# AttestationReport.provider.  Mirrors the keys of _PROVIDER_MAP in
+# audit/trace_claim.py — kept as a local constant to avoid a circular import.
+_VALID_PROVIDERS: frozenset[str] = frozenset({
+    "sev-snp",
+    "tdx",
+    "opaque",
+    "tpm",
+    "software-only",
+})
+
 
 @dataclass
 class GatewayContext:
@@ -109,6 +120,20 @@ def run_startup(config_path: str) -> GatewayContext:
         attestation_report.provider,
         attestation_report.measurement[:16],
     )
+
+    # HW-001: reject unknown provider strings before they can propagate into
+    # TRACE Claims or Cedar policy context.  A custom or misconfigured provider
+    # could set an arbitrary value in provider_name(); validate here at the
+    # boundary rather than relying on downstream consumers to handle it.
+    if attestation_report.provider not in _VALID_PROVIDERS:
+        _fatal(
+            "ATTESTATION_PROVIDER_INVALID",
+            f"TEE provider returned unknown platform string '{attestation_report.provider}'. "
+            f"Allowed values: {sorted(_VALID_PROVIDERS)}.",
+            provider=attestation_report.provider,
+            action="startup_aborted",
+        )
+        sys.exit(1)
 
     # AUTH-001 (CRITICAL): require a bearer token in production to authenticate
     # inbound MCP calls. Without it, any network client can invoke any tool.
