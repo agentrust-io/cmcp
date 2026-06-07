@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -53,6 +54,20 @@ class Config:
 
 _KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes"}
 _KNOWN_ATTEST_KEYS = {"provider", "enforcement_mode", "validity_seconds", "staleness_policy"}
+
+
+def _check_no_traversal(field_name: str, path_str: str) -> None:
+    """Reject paths that contain '..' components to prevent directory traversal (CONF-004)."""
+    for part in PurePosixPath(path_str).parts:
+        if part == "..":
+            raise ConfigError(
+                f"'{field_name}' must not contain '..' path components: {path_str!r}"
+            )
+    for part in PureWindowsPath(path_str).parts:
+        if part == "..":
+            raise ConfigError(
+                f"'{field_name}' must not contain '..' path components: {path_str!r}"
+            )
 
 
 def load_config(path: str) -> Config:
@@ -114,6 +129,11 @@ def load_config(path: str) -> Config:
     dev_mode = os.environ.get("CMCP_DEV_MODE", "0") == "1"
     bearer_token = os.environ.get("CMCP_BEARER_TOKEN") or None
 
+    policy_bundle_path = raw.get("policy_bundle_path", "policy/")
+    catalog_path = raw.get("catalog_path", "catalog.json")
+    _check_no_traversal("policy_bundle_path", policy_bundle_path)
+    _check_no_traversal("catalog_path", catalog_path)
+
     return Config(
         attestation=AttestationConfig(
             provider=provider,
@@ -121,8 +141,8 @@ def load_config(path: str) -> Config:
             validity_seconds=validity_seconds,
             staleness_policy=staleness_policy,
         ),
-        policy_bundle_path=raw.get("policy_bundle_path", "policy/"),
-        catalog_path=raw.get("catalog_path", "catalog.json"),
+        policy_bundle_path=policy_bundle_path,
+        catalog_path=catalog_path,
         listen_addr=raw.get("listen_addr", "0.0.0.0:8443"),
         max_response_size_bytes=max_bytes,
         dev_mode=dev_mode,

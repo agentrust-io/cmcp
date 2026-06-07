@@ -98,3 +98,34 @@ def test_non_mapping_config(config_file):
 def test_missing_file():
     with pytest.raises(ConfigError, match="Cannot read"):
         load_config("/nonexistent/path/config.yaml")
+
+
+# ── CONF-004: path traversal rejection ───────────────────────────────────────
+
+def test_policy_bundle_path_traversal_rejected(config_file):
+    """CONF-004: '..' components in policy_bundle_path must be rejected."""
+    path = config_file("policy_bundle_path: ../../etc/passwd\n")
+    with pytest.raises(ConfigError, match=r"\.\."):
+        load_config(path)
+
+
+def test_catalog_path_traversal_rejected(config_file):
+    """CONF-004: '..' components in catalog_path must be rejected."""
+    path = config_file("catalog_path: ../../../etc/shadow\n")
+    with pytest.raises(ConfigError, match=r"\.\."):
+        load_config(path)
+
+
+def test_embedded_traversal_in_policy_path_rejected(config_file):
+    """CONF-004: embedded '..' (e.g. /safe/../etc) must also be rejected."""
+    path = config_file("policy_bundle_path: /safe/../etc/passwd\n")
+    with pytest.raises(ConfigError, match=r"\.\."):
+        load_config(path)
+
+
+def test_legitimate_absolute_path_accepted(config_file):
+    """CONF-004: absolute paths without '..' remain valid."""
+    path = config_file("policy_bundle_path: /opt/cmcp/policy\ncatalog_path: /opt/cmcp/catalog.json\n")
+    cfg = load_config(path)
+    assert cfg.policy_bundle_path == "/opt/cmcp/policy"
+    assert cfg.catalog_path == "/opt/cmcp/catalog.json"
