@@ -22,6 +22,7 @@ def start(config: str) -> None:
     import uvicorn
 
     from cmcp_gateway.audit.chain import AuditChain
+    from cmcp_gateway.audit.trace_claim import _PROVIDER_MAP
     from cmcp_gateway.mcp.proxy import CMCPProxy
     from cmcp_gateway.mcp.server import MCPServer
     from cmcp_gateway.policy.evaluator import PolicyEvaluator
@@ -29,6 +30,12 @@ def start(config: str) -> None:
     from cmcp_gateway.startup import run_startup
 
     ctx = run_startup(config)
+
+    # Resolve provider string to canonical platform name for Cedar context.
+    # Falls back to the raw provider string if not in the map (e.g. future providers).
+    attestation_platform = _PROVIDER_MAP.get(
+        ctx.attestation_report.provider, ctx.attestation_report.provider
+    )
 
     session = SessionState(session_id=str(uuid4()))
     audit_chain = AuditChain(session_id=session.session_id)
@@ -39,6 +46,7 @@ def start(config: str) -> None:
         session=session,
         audit_chain=audit_chain,
         config=ctx.config,
+        attestation_platform=attestation_platform,
     )
     server = MCPServer(proxy=proxy)
 
