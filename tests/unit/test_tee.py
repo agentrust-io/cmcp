@@ -129,3 +129,37 @@ def test_detect_explicit_software_only_with_dev_mode(dev_config):
     dev_config.attestation.provider = TEEProviderEnum.SOFTWARE_ONLY
     provider = detect_provider(dev_config)
     assert isinstance(provider, SoftwareOnlyProvider)
+
+
+# ── HW-001: AttestationReport provider validation ────────────────────────────
+
+def test_attestation_report_unknown_provider_raises():
+    """HW-001: unknown provider string must be rejected at AttestationReport construction."""
+    from datetime import timezone
+
+    from cmcp_gateway.tee.base import AttestationReport
+    with pytest.raises(ValueError, match="not in the allowed set"):
+        AttestationReport(
+            provider="unknown-cloud-magic",
+            measurement="sha256:" + "a" * 64,
+            report_data="aa" * 32,
+            raw_evidence=None,
+            attestation_generated_at=datetime.now(tz=timezone.utc),
+            attestation_validity_seconds=86400,
+        )
+
+
+def test_attestation_report_known_providers_accepted():
+    """HW-001: all known providers must be accepted."""
+    from datetime import timezone
+
+    from cmcp_gateway.tee.base import AttestationReport, _ALLOWED_PROVIDERS
+    for provider in _ALLOWED_PROVIDERS:
+        AttestationReport(
+            provider=provider,
+            measurement="sha256:" + "a" * 64,
+            report_data="aa" * 32,
+            raw_evidence=None,
+            attestation_generated_at=datetime.now(tz=timezone.utc),
+            attestation_validity_seconds=86400,
+        )
