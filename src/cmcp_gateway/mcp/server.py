@@ -10,10 +10,13 @@ Phase 1 scope: HTTP/SSE transport only. stdio excluded (docs/spec/transport.md).
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
+import time
 import uuid
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from agent_os.stateless import StatelessKernel
@@ -51,6 +54,48 @@ async def _unhandled_error_handler(request: Request, exc: Exception) -> Response
         {"error": "Internal server error", "error_code": "INTERNAL_ERROR"},
         status_code=500,
     )
+
+
+class _RateLimitMiddleware(BaseHTTPMiddleware):
+    """NET-002: per-IP rate limit for unauthenticated endpoints (/health).
+
+    Uses a sliding-window counter: at most `requests_per_minute` requests
+    from a single IP address within any 60-second window.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        *,
+        paths: frozenset[str],
+        requests_per_minute: int = 60,
+    ) -> None:
+        super().__init__(app)
+        self._paths = paths
+        self._limit = requests_per_minute
+        self._window = 60.0
+        self._counts: dict[str, list[float]] = defaultdict(list)
+        self._lock = asyncio.Lock()
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        if request.url.path not in self._paths:
+            return await call_next(request)
+        ip = request.client[0] if request.client else "unknown"
+        now = time.monotonic()
+        async with self._lock:
+            cutoff = now - self._window
+            hits = self._counts[ip]
+            # Prune timestamps outside the window
+            while hits and hits[0] <= cutoff:
+                hits.pop(0)
+            if len(hits) >= self._limit:
+                return JSONResponse(
+                    {"error": "Too Many Requests", "error_code": "RATE_LIMITED"},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                )
+            hits.append(now)
+        return await call_next(request)
 
 
 class _BearerAuthMiddleware(BaseHTTPMiddleware):
@@ -108,7 +153,14 @@ class MCPServer:
         self._max_request_bytes = max_request_bytes
         self._audit = audit_chain
         self._kernel = StatelessKernel()
-        middleware = (
+        # NET-002: rate-limit unauthenticated /health before auth middleware runs.
+        # Starlette applies middleware outermost-first (first in list = first to run).
+        rate_limit = Middleware(
+            _RateLimitMiddleware,
+            paths=frozenset(_AUTH_EXEMPT_PATHS),
+            requests_per_minute=60,
+        )
+        middleware = [rate_limit] + (
             [Middleware(_BearerAuthMiddleware, bearer_token=bearer_token)]
             if bearer_token is not None
             else []

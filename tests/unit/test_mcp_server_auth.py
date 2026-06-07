@@ -125,6 +125,92 @@ def test_content_length_check_rejects_before_body_read():
     assert resp.status_code == 413
 
 
+# ── NET-002: /health rate limit ───────────────────────────────────────────────
+
+def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> "MCPServer":
+    """Create a server with a very low rate limit for testing."""
+    from cmcp_gateway.mcp.server import _RateLimitMiddleware
+    from starlette.middleware import Middleware
+
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {}
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy, bearer_token=None)
+
+    # Replace rate-limit middleware with a tighter one for this test
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    server.app = Starlette(
+        routes=server.app.routes,
+        middleware=[
+            Middleware(
+                _RateLimitMiddleware,
+                paths=frozenset({"/health"}),
+                requests_per_minute=requests_per_minute,
+            )
+        ],
+        exception_handlers={},
+    )
+    return server
+
+
+def test_health_allows_requests_within_limit():
+    """NET-002: requests within rate limit return 200."""
+    server = _make_server_with_low_rate_limit(requests_per_minute=5)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    for _ in range(3):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+
+def test_health_rate_limit_returns_429_when_exceeded():
+    """NET-002: exceeding rate limit returns 429 with Retry-After header."""
+    server = _make_server_with_low_rate_limit(requests_per_minute=2)
+    client = TestClient(server.app, raise_server_exceptions=False)
+
+    # First two should pass
+    assert client.get("/health").status_code == 200
+    assert client.get("/health").status_code == 200
+    # Third exceeds limit
+    resp = client.get("/health")
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+    body = resp.json()
+    assert body["error_code"] == "RATE_LIMITED"
+
+
+def test_rate_limit_middleware_paths_only():
+    """NET-002: rate limit applies only to configured paths, not all endpoints."""
+    from cmcp_gateway.mcp.server import _RateLimitMiddleware
+    from starlette.middleware import Middleware
+    from starlette.applications import Starlette
+
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {}
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy, bearer_token=None)
+
+    # Rate-limit ONLY /nonexistent (so /health is unaffected)
+    server.app = Starlette(
+        routes=server.app.routes,
+        middleware=[
+            Middleware(
+                _RateLimitMiddleware,
+                paths=frozenset({"/nonexistent"}),
+                requests_per_minute=1,
+            )
+        ],
+        exception_handlers={},
+    )
+    client = TestClient(server.app, raise_server_exceptions=False)
+    for _ in range(5):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+
 # ── INJECT-002: sanitize method in error responses ────────────────────────────
 
 def test_unknown_method_non_ascii_is_replaced():
