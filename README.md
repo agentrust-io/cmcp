@@ -59,7 +59,7 @@ Agent -> cMCP Gateway -> Cedar Policy Engine (TEE) -> Tool
 | `tpm` | TPM 2.0 / vTPM (any Azure/AWS/GCP VM with Trusted Launch) | Medium |
 | `sev-snp` | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High |
 | `tdx` | Intel TDX (Azure DCedsv5, GCP C3) | High |
-| `opaque` | Opaque Managed Runtime | Highest |
+| `opaque` | Opaque Managed Runtime | Highest | ⚠️ stub — `detect()` returns `False`, attestation not yet implemented |
 
 ## Status
 
