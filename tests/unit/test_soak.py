@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ── Reference server tests ─────────────────────────────────────────────────────
 
 
 def test_reference_server_initialize():
     from starlette.testclient import TestClient
+
     from tests.soak.reference_server import make_app
 
     client = TestClient(make_app(), raise_server_exceptions=False)
@@ -26,6 +23,7 @@ def test_reference_server_initialize():
 
 def test_reference_server_tools_list():
     from starlette.testclient import TestClient
+
     from tests.soak.reference_server import make_app
 
     client = TestClient(make_app(), raise_server_exceptions=False)
@@ -36,6 +34,7 @@ def test_reference_server_tools_list():
 
 def test_reference_server_echo():
     from starlette.testclient import TestClient
+
     from tests.soak.reference_server import make_app
 
     client = TestClient(make_app(), raise_server_exceptions=False)
@@ -49,6 +48,7 @@ def test_reference_server_echo():
 
 def test_reference_server_get_data():
     from starlette.testclient import TestClient
+
     from tests.soak.reference_server import make_app
 
     client = TestClient(make_app(), raise_server_exceptions=False)
@@ -64,6 +64,7 @@ def test_reference_server_get_data():
 
 def test_reference_server_unknown_tool():
     from starlette.testclient import TestClient
+
     from tests.soak.reference_server import make_app
 
     client = TestClient(make_app(), raise_server_exceptions=False)

@@ -127,10 +127,11 @@ def test_content_length_check_rejects_before_body_read():
 
 # ── NET-002: /health rate limit ───────────────────────────────────────────────
 
-def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> "MCPServer":
+def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> MCPServer:
     """Create a server with a very low rate limit for testing."""
-    from cmcp_gateway.mcp.server import _RateLimitMiddleware
     from starlette.middleware import Middleware
+
+    from cmcp_gateway.mcp.server import _RateLimitMiddleware
 
     proxy = MagicMock()
     proxy._catalog = MagicMock()
@@ -140,7 +141,6 @@ def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> "MCPServer
 
     # Replace rate-limit middleware with a tighter one for this test
     from starlette.applications import Starlette
-    from starlette.routing import Route
 
     server.app = Starlette(
         routes=server.app.routes,
@@ -183,9 +183,10 @@ def test_health_rate_limit_returns_429_when_exceeded():
 
 def test_rate_limit_middleware_paths_only():
     """NET-002: rate limit applies only to configured paths, not all endpoints."""
-    from cmcp_gateway.mcp.server import _RateLimitMiddleware
-    from starlette.middleware import Middleware
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+
+    from cmcp_gateway.mcp.server import _RateLimitMiddleware
 
     proxy = MagicMock()
     proxy._catalog = MagicMock()

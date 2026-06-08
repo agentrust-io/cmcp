@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -11,6 +10,7 @@ import pytest
 def test_benchmark_runs_smoke(tmp_path):
     """Smoke test: benchmark produces valid JSON output with all required keys."""
     import asyncio
+
     from cmcp_gateway.benchmarks import _run
 
     result = asyncio.run(_run(provider="software-only", calls=50, out_dir=None))
@@ -32,6 +32,7 @@ def test_benchmark_runs_smoke(tmp_path):
 def test_benchmark_writes_output_file(tmp_path):
     """Benchmark writes a timestamped JSON file to the output directory."""
     import asyncio
+
     from cmcp_gateway.benchmarks import _run
 
     asyncio.run(_run(provider="software-only", calls=20, out_dir=tmp_path))

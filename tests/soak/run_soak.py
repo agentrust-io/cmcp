@@ -22,10 +22,8 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 import time
-import tracemalloc
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -106,12 +104,6 @@ def _make_soak_gateway(
     import tempfile
 
     from cmcp_gateway.audit.chain import AuditChain
-    from cmcp_gateway.catalog.loader import (
-        ApprovedDefinition,
-        CatalogEntry,
-        ServerIdentity,
-        ToolCatalog,
-    )
     from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
     from cmcp_gateway.mcp.proxy import CMCPProxy
     from cmcp_gateway.mcp.server import MCPServer
@@ -147,8 +139,8 @@ def _make_soak_gateway(
         (p / "schema.cedarschema").write_text(_SCHEMA)
         bundle = load_policy_bundle(str(p))
 
-    import io
     import contextlib
+    import io
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         evaluator = PolicyEvaluator(bundle=bundle, config=config)
 
