@@ -12,7 +12,6 @@ from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.keys import SigningKey
 from cmcp_gateway.session.manager import SessionManager
 
-
 # ── AuditChain.set_tee_anchor ─────────────────────────────────────────────────
 
 

@@ -3,13 +3,16 @@ Conformance tests: audit chain entry format and SHA-256 hash chaining (issue #47
 Covers AUDIT-001 through AUDIT-005.
 """
 from __future__ import annotations
+
 import hashlib
 import json
 import logging
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from unittest.mock import patch
+
 import pytest
+
 from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.keys import SigningKey
 from cmcp_gateway.audit.trace_claim import (
@@ -20,7 +23,6 @@ from cmcp_gateway.audit.trace_claim import (
     ToolCatalogInfo,
     generate_trace_claim,
 )
-
 
 # ---- helpers ----------------------------------------------------------------
 
