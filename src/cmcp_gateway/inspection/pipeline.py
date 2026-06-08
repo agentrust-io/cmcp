@@ -15,6 +15,8 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
+import logging
+import pathlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +24,8 @@ from typing import Any
 import jsonschema
 
 from cmcp_gateway.catalog.loader import CatalogEntry
+
+_log = logging.getLogger(__name__)
 
 # ── AGT components (optional — fall back gracefully) ─────────────────────────
 try:
@@ -36,30 +40,30 @@ except ImportError:
 _INJECTION_THRESHOLDS: dict[str, float] = {"strict": 0.3, "balanced": 0.5, "permissive": 0.7}
 
 # ── Fallback injection patterns (used when AGT not available) ─────────────────
-# Starter set per docs/spec/response-inspection.md §Stage 4.
-_DEFAULT_INJECTION_PATTERNS: list[tuple[str, str]] = [
-    (r"<system>[\s\S]*?</system>", "xml-system-tag"),
-    (r"<instructions>[\s\S]*?</instructions>", "xml-instructions-tag"),
-    (r"<context>[\s\S]*?</context>", "xml-context-tag"),  # FP risk: legitimate XML data
-    (r"(?i)ignore (previous|all|above) instructions", "ignore-instructions"),
-    (r"(?i)disregard (your|the) (previous|system|initial) (prompt|instructions|context)", "disregard-instructions"),
-    (r"(?i)(you are now|from now on you are|act as) [A-Z][a-zA-Z]+", "persona-hijack"),  # FP risk: role descriptions
-    (r"(?i)(exfiltrate|send|forward|transmit) (the|all|this|user|customer) (data|information|context|message)", "exfiltrate"),
-    (r"SYSTEM OVERRIDE", "system-override"),
-    (r"---BEGIN SYSTEM---", "begin-system-marker"),
-    (r"\[INST\][\s\S]*?\[/INST\]", "llama-instruction-markers"),
-]
+# INJECT-006: loaded from patterns_v1.json so every change is auditable and
+# tied to a semantic version. The version string is included in every
+# InspectionResult so audit consumers know which pattern set made the decision.
+_PATTERNS_FILE = pathlib.Path(__file__).parent / "patterns_v1.json"
 
-_COMPILED_PATTERNS = [(re.compile(p, re.DOTALL), name) for p, name in _DEFAULT_INJECTION_PATTERNS]
 
-# INJECT-006: stable hash of the active regex pattern set — included in every InspectionResult
-# so audit consumers can tell which pattern version was active at decision time.
-_PATTERN_SET_HASH: str = (
-    "sha256:"
-    + hashlib.sha256(
-        "|".join(f"{p}:{n}" for p, n in _DEFAULT_INJECTION_PATTERNS).encode()
-    ).hexdigest()[:16]
-)
+def _load_patterns() -> tuple[list[tuple[str, str]], str]:
+    """Load injection patterns from the versioned config file.
+
+    Returns (raw_pairs, version) where raw_pairs is a list of (regex_str, name)
+    tuples ready for compilation, and version is the semantic version string from
+    the config (e.g. "1.0.0").
+    """
+    data = json.loads(_PATTERNS_FILE.read_text(encoding="utf-8"))
+    version: str = data["version"]
+    pairs: list[tuple[str, str]] = [
+        (entry["regex"], entry["name"]) for entry in data["patterns"]
+    ]
+    _log.info("injection patterns loaded: version=%s count=%d file=%s", version, len(pairs), _PATTERNS_FILE)
+    return pairs, version
+
+
+_DEFAULT_INJECTION_PATTERNS, _PATTERNS_VERSION = _load_patterns()
+_COMPILED_PATTERNS = [(re.compile(pat, re.DOTALL), name) for pat, name in _DEFAULT_INJECTION_PATTERNS]
 
 
 @dataclass
@@ -89,7 +93,7 @@ class InspectionResult:
     injection_scanner: str | None = None  # which scanner detected: "agt_mcp", "agt_detector", "regex", "timeout"
     injection_score: float | None = None  # confidence score (0.0–1.0) if available
     injection_threshold: float | None = None  # threshold in effect when the decision was made
-    injection_pattern_set_hash: str | None = None  # INJECT-006: hash of active regex pattern set
+    patterns_version: str | None = None  # INJECT-006: semantic version of the active regex pattern set
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -481,7 +485,7 @@ class InspectionPipeline:
                 modified_response=None,
                 injection_scanner="utf8_guard",
                 injection_threshold=self._injection_threshold,
-                injection_pattern_set_hash=_PATTERN_SET_HASH,
+                patterns_version=_PATTERNS_VERSION,
             )
 
         agt_mcp_denied = False
@@ -575,5 +579,5 @@ class InspectionPipeline:
             injection_scanner=injection_scanner,
             injection_score=injection_score,
             injection_threshold=self._injection_threshold,
-            injection_pattern_set_hash=_PATTERN_SET_HASH,
+            patterns_version=_PATTERNS_VERSION,
         )
