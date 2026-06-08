@@ -11,6 +11,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+# Module-level counter so sequence numbers are monotonic across all sessions
+# within a single gateway process lifetime.
+_CLAIM_SEQUENCE: int = 0
+
 from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.trace_claim import (
     AttestationReportInfo,
@@ -35,6 +39,7 @@ class SessionManager:
         self._ctx = ctx
         # Stores signed claim dicts keyed by session_id, populated on close.
         self._closed_claims: dict[str, dict[str, Any]] = {}
+        self._last_claim_hash: str | None = None
 
     def create_session(self) -> tuple[SessionState, AuditChain]:
         """Create a new session. Returns (state, chain)."""
@@ -159,6 +164,10 @@ class SessionManager:
                 suspicious_sequences_detected=state.suspicious_sequences,
             )
 
+        # AUDIT-005: increment the module-level counter to get a monotonic sequence number.
+        global _CLAIM_SEQUENCE
+        _CLAIM_SEQUENCE += 1
+
         claim = generate_trace_claim(
             session_id=session_id,
             signing_key=ctx.signing_key,
@@ -172,12 +181,21 @@ class SessionManager:
             attestation_stale=attestation_stale,
             catalog_exceptions=catalog_exceptions,
             call_log_summary=call_log_summary,
+            sequence_number=_CLAIM_SEQUENCE,
+            prev_claim_hash=self._last_claim_hash,
             do_sign=True,
         )
 
         claim_dict = claim.model_dump(exclude_none=True)
+        # Record canonical hash of this claim for the next claim's prev_claim_hash link.
+        self._last_claim_hash = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(claim_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+            ).hexdigest()
+        )
         self._closed_claims[session_id] = claim_dict
-        logger.info("Session closed: session_id=%s", session_id)
+        logger.info("Session closed: session_id=%s sequence_number=%d", session_id, _CLAIM_SEQUENCE)
         return claim_dict
 
     def get_trace_claim(self, session_id: str) -> dict[str, Any] | None:
