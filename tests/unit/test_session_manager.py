@@ -60,6 +60,9 @@ def _make_ctx(*, stale_attestation: bool = False) -> MagicMock:
     ctx.policy_bundle = policy_bundle
     ctx.catalog = catalog
     ctx.config = config
+    tee_provider = MagicMock()
+    tee_provider.get_attestation_report.return_value = MagicMock()
+    ctx.tee_provider = tee_provider
     return ctx
 
 
