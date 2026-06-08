@@ -205,3 +205,44 @@ def test_policy_store_keeps_current_on_reload_failure():
     # Should return False (failure path) and preserve the original bundle.
     assert result is False
     assert store.bundle.bundle_hash == bundle.bundle_hash
+
+
+# ── POLICY-007: agent_os_version pinning ─────────────────────────────────────
+
+def test_load_bundle_accepts_manifest_without_agent_os_version(bundle_dir):
+    """POLICY-007: agent_os_version is optional — bundles without it still load."""
+    bundle = load_policy_bundle(str(bundle_dir))
+    assert bundle.manifest.agent_os_version is None
+
+
+def test_load_bundle_records_pinned_agent_os_version(bundle_dir):
+    """POLICY-007: agent_os_version from manifest is stored in PolicyManifest."""
+    manifest_with_version = dict(MANIFEST)
+    manifest_with_version["agent_os_version"] = "3.7.0"
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest_with_version))
+    bundle = load_policy_bundle(str(bundle_dir))
+    assert bundle.manifest.agent_os_version == "3.7.0"
+
+
+def test_load_bundle_warns_on_agent_os_version_mismatch(bundle_dir, caplog):
+    """POLICY-007: version mismatch emits a WARNING but does not raise."""
+    import logging
+    manifest_with_old = dict(MANIFEST)
+    manifest_with_old["agent_os_version"] = "0.0.0-definitely-not-installed"
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest_with_old))
+    with caplog.at_level(logging.WARNING):
+        bundle = load_policy_bundle(str(bundle_dir))
+    assert bundle is not None
+    assert any("POLICY-007" in r.message for r in caplog.records)
+
+
+def test_load_bundle_no_warning_when_versions_match(bundle_dir, caplog):
+    """POLICY-007: no warning when pinned version matches installed version."""
+    import logging
+    from cmcp_gateway.policy.bundle import _AGENT_OS_VERSION
+    manifest_with_match = dict(MANIFEST)
+    manifest_with_match["agent_os_version"] = _AGENT_OS_VERSION
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest_with_match))
+    with caplog.at_level(logging.WARNING):
+        load_policy_bundle(str(bundle_dir))
+    assert not any("POLICY-007" in r.message for r in caplog.records)

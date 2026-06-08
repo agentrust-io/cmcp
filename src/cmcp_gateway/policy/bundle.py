@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import logging
 import threading
@@ -12,6 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from cmcp_gateway.errors import ConfigError, PolicyHashMismatch
+
+# POLICY-007: version of the Cedar evaluation library bundled in agent-os-kernel.
+# Pinned in manifest.json as agent_os_version; mismatch is logged as a warning.
+try:
+    _AGENT_OS_VERSION: str = importlib.metadata.version("agent-os-kernel")
+except importlib.metadata.PackageNotFoundError:
+    _AGENT_OS_VERSION = "unknown"
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +33,7 @@ class PolicyManifest:
     author_identity: str
     commit_sha: str
     approval_chain: list[dict[str, str]] = field(default_factory=list)
+    agent_os_version: str | None = None  # POLICY-007: expected agent-os-kernel version
 
 
 @dataclass
@@ -105,12 +114,25 @@ def load_policy_bundle(bundle_path: str, expected_hash: str | None = None) -> Po
     if missing:
         raise ConfigError(f"manifest.json missing required fields: {missing}")
 
+    pinned_agent_os = raw_manifest.get("agent_os_version")
+    if pinned_agent_os is not None and pinned_agent_os != _AGENT_OS_VERSION:
+        # POLICY-007: mismatch is a warning, not a hard failure, because the
+        # gateway cannot know in advance whether a newer agent_os is semantically
+        # compatible. Operators must review changelogs and re-pin after upgrade.
+        logger.warning(
+            "POLICY-007: agent_os_version mismatch — bundle pinned %s, installed %s. "
+            "Cedar policy semantics may have changed; review the agent-os-kernel changelog.",
+            pinned_agent_os,
+            _AGENT_OS_VERSION,
+        )
+
     manifest = PolicyManifest(
         version=raw_manifest["version"],
         authored_at=raw_manifest["authored_at"],
         author_identity=raw_manifest["author_identity"],
         commit_sha=raw_manifest["commit_sha"],
         approval_chain=raw_manifest.get("approval_chain", []),
+        agent_os_version=pinned_agent_os,
     )
 
     # Load Cedar policy files
