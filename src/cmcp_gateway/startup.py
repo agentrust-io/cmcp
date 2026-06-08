@@ -1,4 +1,4 @@
-"""Gateway startup sequence with fail-closed validation — implements issue #66."""
+﻿"""Gateway startup sequence with fail-closed validation — implements issue #66."""
 
 from __future__ import annotations
 
@@ -97,13 +97,16 @@ def run_startup(config_path: str) -> GatewayContext:
     signing_key = SigningKey()
     logger.info("Signing key generated: %s...", signing_key.public_key_hex[:16])
 
-    # CRYPTO-002: nonce must be session-unique. Use SHA-256(public_key || random_session_id)
-    # so two gateways with different random bytes produce different nonces even if they
-    # share the same keypair (e.g. during blue-green deploy).
+    # CRYPTO-001 + CRYPTO-002: the first 32 bytes of the nonce are SHA-256(public_key_bytes)
+    # so verifiers can re-derive the fingerprint from the public key in cnf.jwk and confirm
+    # it matches report_data[:32] -- binding the attestation report to this specific keypair.
+    # The remaining 32 bytes are a random salt so two gateways with different random bytes
+    # produce different nonces even if they share the same keypair (blue-green deploy).
     import hashlib
     import secrets
-    session_id = secrets.token_bytes(32)
-    nonce = hashlib.sha256(signing_key.public_key_bytes + session_id).digest()
+    key_fingerprint = hashlib.sha256(signing_key.public_key_bytes).digest()
+    random_salt = secrets.token_bytes(32)
+    nonce = key_fingerprint + random_salt
     try:
         attestation_report = tee_provider.get_attestation_report(nonce)
     except Exception as exc:

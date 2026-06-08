@@ -1,5 +1,5 @@
 """
-TRACE Claim verification — implements issue #59.
+TRACE Claim verification -- implements issue #59.
 
 Verifies a cMCP TRACE Claim without trusting the gateway operator.
 Provider-specific attestation verification (TPM, SEV-SNP) is dispatched
@@ -9,7 +9,9 @@ per-provider and added in issues #62, #67.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -20,6 +22,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from cmcp_gateway.audit.trace_claim import GatewayClaim
+
+logger = logging.getLogger(__name__)
 
 _SW_ONLY_FIRMWARE = "software-only-dev-mode"
 
@@ -119,6 +123,82 @@ def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
         return False, "Ed25519 signature verification failed"
 
 
+def _verify_key_binding(
+    claim: dict[str, Any],
+    *,
+    is_sw_only: bool,
+) -> tuple[bool | None, str | None]:
+    """
+    CRYPTO-001: verify that cnf.jwk public key fingerprint matches report_data[:32].
+
+    The gateway embeds SHA-256(public_key_bytes) as the first 32 bytes of the nonce
+    it submits to the TEE when requesting the attestation report.  The TEE hardware
+    commits that nonce into the signed report_data field.  The nonce is stored as
+    trace.runtime.nonce (base64url of the full 64-byte value).
+
+    Verifiers re-derive SHA-256(cnf.jwk.x public key bytes) and compare it against
+    nonce[:32].  A mismatch means the public key was substituted after attestation;
+    the claim must be rejected with PUBLIC_KEY_NOT_BOUND.
+
+    Returns:
+        (True,  None)          -- fingerprint matches; binding verified
+        (False, reason)        -- mismatch or missing data; binding rejected
+        (None,  warning_msg)   -- software-only / Level-0 mode; binding not applicable
+    """
+    if is_sw_only:
+        logger.warning(
+            "CRYPTO-001: software-only (dev) mode -- TEE key binding cannot be verified; "
+            "this claim provides no hardware provenance guarantee"
+        )
+        return None, "software-only mode -- TEE key binding not applicable"
+
+    # Extract the public key bytes from cnf.jwk.x
+    x_b64 = claim.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
+    if not x_b64:
+        return False, "trace.cnf.jwk.x is missing -- cannot verify key binding"
+
+    try:
+        padding = 4 - (len(x_b64) % 4)
+        padded = x_b64 + ("=" * padding if padding != 4 else "")
+        pub_key_bytes = base64.urlsafe_b64decode(padded)
+    except Exception as exc:
+        return False, f"cannot decode trace.cnf.jwk.x: {exc}"
+
+    # Compute SHA-256(public_key_bytes) -- the expected fingerprint
+    expected_fingerprint = hashlib.sha256(pub_key_bytes).digest()
+
+    # Extract the nonce from trace.runtime.nonce (base64url, first 32 bytes = fingerprint)
+    nonce_b64 = claim.get("trace", {}).get("runtime", {}).get("nonce", "")
+    if not nonce_b64:
+        return False, (
+            "trace.runtime.nonce is absent -- attestation report_data does not "
+            "bind this public key to TEE hardware"
+        )
+
+    try:
+        padding = 4 - (len(nonce_b64) % 4)
+        padded = nonce_b64 + ("=" * padding if padding != 4 else "")
+        nonce_bytes = base64.urlsafe_b64decode(padded)
+    except Exception as exc:
+        return False, f"cannot decode trace.runtime.nonce: {exc}"
+
+    if len(nonce_bytes) < 32:
+        return False, (
+            f"trace.runtime.nonce is too short ({len(nonce_bytes)} bytes); "
+            "expected at least 32 bytes for key fingerprint"
+        )
+
+    actual_fingerprint = nonce_bytes[:32]
+    if actual_fingerprint != expected_fingerprint:
+        return False, (
+            "cnf.jwk public key fingerprint does not match report_data[:32] -- "
+            "the public key was not bound to this TEE attestation report; "
+            "possible key substitution attack"
+        )
+
+    return True, None
+
+
 def _check_attestation_freshness(
     claim: dict[str, Any],
     max_age_seconds: int,
@@ -169,6 +249,8 @@ def verify_trace_claim(
     Steps:
     1. Pydantic schema validation (GatewayClaim)
     2. Ed25519 signature verification over canonical claim body
+    2b. CRYPTO-001: TEE key binding -- verify cnf.jwk fingerprint matches report_data[:32]
+    2c. Optional out-of-band trusted_public_key_hex cross-check
     3. trace.policy.bundle_hash check against approved.policy_bundle_hash
     4. gateway.catalog.hash check against approved.tool_catalog_hash
     5. Attestation freshness check
@@ -215,29 +297,43 @@ def verify_trace_claim(
         failure = VerificationError.SIGNATURE_INVALID
         details["signature_error"] = sig_err or "invalid signature"
 
-    # Step 2b: Public key binding — verify JWK x matches an externally-trusted key.
-    # Without this, a malicious gateway can sign with any key and embed it in the claim.
+    # Step 2b: CRYPTO-001 -- TEE key binding via report_data fingerprint.
+    # The nonce submitted to the TEE at attestation time encodes SHA-256(public_key_bytes)
+    # in its first 32 bytes.  Hardware commits this nonce into the signed report_data field.
+    # Verifiers re-derive the fingerprint from cnf.jwk.x and compare to nonce[:32].
+    # An attacker who substitutes their own keypair cannot forge the TEE-signed nonce,
+    # so verification fails even when the Ed25519 signature is self-consistent.
     _runtime = claim_json.get("trace", {}).get("runtime", {})
     _is_sw_only = (
         _runtime.get("platform") == "tpm2"
         and _runtime.get("firmware_version") == _SW_ONLY_FIRMWARE
     )
+
+    binding_result, binding_msg = _verify_key_binding(claim_json, is_sw_only=_is_sw_only)
+    if binding_result is True:
+        verified.append("public_key_binding")
+    elif binding_result is False:
+        unverified.append("public_key_binding")
+        # Key binding failure is a higher-priority security signal than a signature failure:
+        # a substituted key means the signing key itself cannot be trusted.
+        failure = VerificationError.PUBLIC_KEY_NOT_BOUND
+        details["public_key_binding"] = binding_msg or "TEE key binding verification failed"
+    # binding_result is None: software-only mode -- skip (no penalty, no credit)
+
+    # Step 2c: Optional out-of-band trusted_public_key_hex cross-check.
+    # Callers may supply an externally-pinned public key hex to add an additional
+    # cross-check independent of the in-claim nonce.  Recorded as "trusted_public_key"
+    # so consumers can distinguish the two mechanisms.
     _x_b64 = claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
     if trusted_public_key_hex:
         actual_hex = _jwk_x_to_hex(_x_b64) if _x_b64 else None
         normalized = trusted_public_key_hex.lower().removeprefix("0x")
         if actual_hex == normalized:
-            verified.append("public_key_binding")
+            verified.append("trusted_public_key")
         else:
-            unverified.append("public_key_binding")
+            unverified.append("trusted_public_key")
             failure = failure or VerificationError.PUBLIC_KEY_NOT_BOUND
-            details["public_key_binding"] = "trace.cnf.jwk.x does not match trusted_public_key_hex"
-    elif not _is_sw_only:
-        unverified.append("public_key_binding")
-        failure = failure or VerificationError.PUBLIC_KEY_NOT_BOUND
-        details["public_key_binding"] = (
-            "no trusted_public_key_hex provided — TEE key binding cannot be verified"
-        )
+            details["trusted_public_key"] = "trace.cnf.jwk.x does not match trusted_public_key_hex"
 
     # Step 3: Policy bundle hash
     claimed_policy = claim_json.get("trace", {}).get("policy", {}).get("bundle_hash", "")
