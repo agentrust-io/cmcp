@@ -384,35 +384,41 @@ class MCPServer:
         return JSONResponse({"status": "ok"})
 
     async def _readyz(self, request: Request) -> Response:
-        """GET /readyz — structured readiness probe (CONF-007).
+        """GET /readyz - structured readiness probe (CONF-007).
 
-        Returns 200 when all components are operational, 503 when degraded.
+        Returns 200 {"status": "ready", "checks": {...}} when all components are
+        operational; 503 {"status": "not_ready", "checks": {...}} when any check
+        fails.  Each check maps to "ok" or "failed: <reason>".
         Safe for unauthenticated Kubernetes readiness probes.
         """
         checks: dict[str, str] = {}
-        degraded = False
+        not_ready = False
 
-        # Catalog: must have at least one approved tool
-        catalog_size = len(self._proxy._catalog.entries)
-        checks["catalog"] = "ok" if catalog_size > 0 else "empty"
-        if catalog_size == 0:
-            degraded = True
+        # Cedar policy: evaluator must be present and loaded
+        if self._proxy._policy is not None:
+            checks["policy"] = "ok"
+        else:
+            checks["policy"] = "failed: Cedar policy engine not loaded"
+            not_ready = True
 
-        # Policy: evaluator must be present (always true after startup)
-        checks["policy"] = "ok" if self._proxy._policy is not None else "unavailable"
-        if self._proxy._policy is None:
-            degraded = True
-
-        # Attestation: check staleness via proxy health check
+        # TEE attestation: check provider availability and staleness
         attest_reason = self._proxy._check_health()
         if attest_reason is None:
             checks["attestation"] = "ok"
         else:
-            checks["attestation"] = attest_reason
-            degraded = True
+            checks["attestation"] = f"failed: {attest_reason}"
+            not_ready = True
 
-        status = "degraded" if degraded else "ready"
-        return JSONResponse({"status": status, "checks": checks}, status_code=503 if degraded else 200)
+        # AGT (agent_os kernel): verify the library is importable and responsive
+        try:
+            import agent_os  # noqa: F401
+            checks["agt"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            checks["agt"] = f"failed: agent_os unavailable ({exc})"
+            not_ready = True
+
+        status = "not_ready" if not_ready else "ready"
+        return JSONResponse({"status": status, "checks": checks}, status_code=503 if not_ready else 200)
 
     async def _get_trace_claim(self, request: Request) -> Response:
         """GET /sessions/{session_id}/trace-claim — returns signed TRACE Claim for a closed session."""

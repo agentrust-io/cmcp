@@ -1,4 +1,4 @@
-"""Tests for MCP server bearer-token authentication (AUTH-001)."""
+﻿"""Tests for MCP server bearer-token authentication (AUTH-001)."""
 
 from __future__ import annotations
 
@@ -211,13 +211,14 @@ def test_rate_limit_middleware_paths_only():
         assert resp.status_code == 200
 
 
-# ── CONF-007: /readyz structured readiness probe ──────────────────────────────
+# ── CONF-007: /readyz structured readiness probe ────────────────────────────────────
+
 
 def _make_ready_server() -> MCPServer:
     """Server where all readiness checks pass."""
     proxy = MagicMock()
     proxy._catalog = MagicMock()
-    proxy._catalog.entries = {"test.tool": MagicMock()}  # non-empty catalog
+    proxy._catalog.entries = {"test.tool": MagicMock()}
     proxy._policy = MagicMock()  # policy present
     proxy._check_health.return_value = None  # attestation healthy
     with patch("cmcp_gateway.mcp.server.StatelessKernel"):
@@ -232,17 +233,17 @@ def test_readyz_returns_200_when_healthy():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ready"
-    assert body["checks"]["catalog"] == "ok"
     assert body["checks"]["policy"] == "ok"
     assert body["checks"]["attestation"] == "ok"
+    assert body["checks"]["agt"] == "ok"
 
 
-def test_readyz_returns_503_when_catalog_empty():
-    """CONF-007: empty catalog makes gateway degraded."""
+def test_readyz_returns_503_when_policy_missing():
+    """CONF-007: missing Cedar policy engine returns 503 and not_ready."""
     proxy = MagicMock()
     proxy._catalog = MagicMock()
-    proxy._catalog.entries = {}
-    proxy._policy = MagicMock()
+    proxy._catalog.entries = {"test.tool": MagicMock()}
+    proxy._policy = None  # Cedar policy engine absent
     proxy._check_health.return_value = None
     with patch("cmcp_gateway.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)
@@ -250,12 +251,12 @@ def test_readyz_returns_503_when_catalog_empty():
     resp = client.get("/readyz")
     assert resp.status_code == 503
     body = resp.json()
-    assert body["status"] == "degraded"
-    assert body["checks"]["catalog"] == "empty"
+    assert body["status"] == "not_ready"
+    assert body["checks"]["policy"].startswith("failed:")
 
 
 def test_readyz_returns_503_when_attestation_stale():
-    """CONF-007: stale attestation makes gateway degraded."""
+    """CONF-007: stale attestation returns 503 and not_ready."""
     proxy = MagicMock()
     proxy._catalog = MagicMock()
     proxy._catalog.entries = {"test.tool": MagicMock()}
@@ -267,18 +268,44 @@ def test_readyz_returns_503_when_attestation_stale():
     resp = client.get("/readyz")
     assert resp.status_code == 503
     body = resp.json()
-    assert body["status"] == "degraded"
-    assert body["checks"]["attestation"] == "attestation_stale"
+    assert body["status"] == "not_ready"
+    assert body["checks"]["attestation"] == "failed: attestation_stale"
+
+
+def test_readyz_returns_503_when_agt_unavailable():
+    """CONF-007: unavailable agent_os returns 503 and not_ready."""
+    import sys
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {"test.tool": MagicMock()}
+    proxy._policy = MagicMock()
+    proxy._check_health.return_value = None
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    # Setting sys.modules["agent_os"] = None causes ImportError on "import agent_os"
+    saved = sys.modules.get("agent_os", object())
+    sys.modules["agent_os"] = None  # type: ignore[assignment]
+    try:
+        resp = client.get("/readyz")
+    finally:
+        if saved is object():
+            sys.modules.pop("agent_os", None)
+        else:
+            sys.modules["agent_os"] = saved
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "not_ready"
+    assert body["checks"]["agt"].startswith("failed:")
 
 
 def test_readyz_accessible_without_bearer_token():
     """CONF-007: /readyz must not require authentication (Kubernetes probe)."""
     server = _make_ready_server()
     client = TestClient(server.app, raise_server_exceptions=False)
-    # No Authorization header — should still return 200
+    # No Authorization header -- should still return 200
     resp = client.get("/readyz")
     assert resp.status_code == 200
-
 
 # ── INJECT-002: sanitize method in error responses ────────────────────────────
 
