@@ -1,14 +1,56 @@
-"""AMD SEV-SNP attestation verification — implements issue #67."""
+"""AMD SEV-SNP attestation verification -- implements issue #67."""
 from __future__ import annotations
 
+import ctypes
 import hashlib
-import struct
 from dataclasses import dataclass, field
 
-_SNP_REPORT_MIN_SIZE = 0x4A0
-_SNP_REPORT_DATA_OFFSET = 0x38
-_SNP_MEASUREMENT_OFFSET = 0x60
-_SNP_MEASUREMENT_SIZE = 48
+
+class _SnpAttestationReport(ctypes.LittleEndianStructure):
+    """Mirror of struct snp_attestation_report from the Linux kernel
+    (include/uapi/linux/sev-guest.h).  Matches the layout defined in
+    the gateway provider; kept in sync via the sizeof assertion below.
+
+    Total size: 0x4A0 (1184) bytes.
+    """
+
+    _pack_ = 1
+    _fields_ = [
+        ("version",             ctypes.c_uint32),
+        ("guest_svn",           ctypes.c_uint32),
+        ("policy",              ctypes.c_uint64),
+        ("family_id",           ctypes.c_uint8 * 16),
+        ("image_id",            ctypes.c_uint8 * 16),
+        ("vmpl",                ctypes.c_uint32),
+        ("sig_algo",            ctypes.c_uint32),
+        ("current_tcb",         ctypes.c_uint64),
+        ("plat_info",           ctypes.c_uint64),
+        ("author_key_en",       ctypes.c_uint32),
+        ("rsvd1",               ctypes.c_uint32),
+        ("report_data",         ctypes.c_uint8 * 64),
+        ("measurement",         ctypes.c_uint8 * 48),
+        ("host_data",           ctypes.c_uint8 * 32),
+        ("id_key_digest",       ctypes.c_uint8 * 48),
+        ("author_key_digest",   ctypes.c_uint8 * 48),
+        ("report_id",           ctypes.c_uint8 * 32),
+        ("report_id_ma",        ctypes.c_uint8 * 32),
+        ("reported_tcb",        ctypes.c_uint64),
+        ("rsvd2",               ctypes.c_uint8 * 24),
+        ("chip_id",             ctypes.c_uint8 * 64),
+        ("committed_svn",       ctypes.c_uint8 * 8),
+        ("committed_version",   ctypes.c_uint8 * 8),
+        ("launch_svn",          ctypes.c_uint8 * 8),
+        ("rsvd3",               ctypes.c_uint8 * 168),
+        ("signature",           ctypes.c_uint8 * 512),
+    ]
+
+
+assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0, (
+    f"_SnpAttestationReport size mismatch: "
+    f"got {ctypes.sizeof(_SnpAttestationReport):#x}, expected 0x4A0"
+)
+
+_SNP_REPORT_MIN_SIZE = ctypes.sizeof(_SnpAttestationReport)
 
 
 @dataclass
@@ -58,19 +100,21 @@ def verify_sev_snp_measurement(
     # Step 2: Parse raw_evidence if provided
     if raw_evidence is not None and len(raw_evidence) >= _SNP_REPORT_MIN_SIZE:
         try:
-            version = struct.unpack_from("<I", raw_evidence, 0x00)[0]
-            if version not in (2, 3):
+            # Parse via ctypes struct for named field access (HW-006)
+            report = _SnpAttestationReport.from_buffer_copy(raw_evidence[:_SNP_REPORT_MIN_SIZE])
+
+            if report.version not in (2, 3):
                 result.verified = False
                 result.failure_reason = "invalid_snp_report_version"
-                result.details["snp_report_version"] = str(version)
+                result.details["snp_report_version"] = str(report.version)
                 result.unverified_fields.append("vcek_cert_chain")
                 result.details["vcek_chain"] = "requires_amd_kds_lookup"
                 return result
 
-            result.details["snp_report_version"] = str(version)
+            result.details["snp_report_version"] = str(report.version)
 
-            # Verify measurement field
-            m_bytes = raw_evidence[_SNP_MEASUREMENT_OFFSET:_SNP_MEASUREMENT_OFFSET + _SNP_MEASUREMENT_SIZE]
+            # Verify measurement field using named struct access
+            m_bytes = bytes(report.measurement)
             computed = "sha384:" + hashlib.sha384(m_bytes).hexdigest()
             if computed == measurement:
                 result.verified_fields.append("measurement")
@@ -81,9 +125,9 @@ def verify_sev_snp_measurement(
                 result.details["vcek_chain"] = "requires_amd_kds_lookup"
                 return result
 
-            # Check report_data (nonce) — mismatch is not fatal
+            # Check report_data (nonce) using named struct access -- mismatch is not fatal
             if report_data_hex is not None:
-                extracted_rd = raw_evidence[_SNP_REPORT_DATA_OFFSET:_SNP_REPORT_DATA_OFFSET + 64]
+                extracted_rd = bytes(report.report_data)
                 expected_rd = bytes.fromhex(report_data_hex[:128])
                 # Pad expected to 64 bytes if shorter
                 if len(expected_rd) < 64:
@@ -99,14 +143,14 @@ def verify_sev_snp_measurement(
             return result
 
     elif raw_evidence is not None and len(raw_evidence) < _SNP_REPORT_MIN_SIZE:
-        # Truncated report — treat as parse error
+        # Truncated report -- treat as parse error
         result.verified = False
         result.failure_reason = "raw_evidence_parse_error"
         result.unverified_fields.append("vcek_cert_chain")
         result.details["vcek_chain"] = "requires_amd_kds_lookup"
         return result
 
-    # Step 3: VCEK/VLEK cert chain — always out of scope
+    # Step 3: VCEK/VLEK cert chain -- always out of scope
     result.unverified_fields.append("vcek_cert_chain")
     result.details["vcek_chain"] = "requires_amd_kds_lookup"
 

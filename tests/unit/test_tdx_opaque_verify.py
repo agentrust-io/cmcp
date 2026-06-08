@@ -1,18 +1,36 @@
 """Tests for TDX and Opaque attestation verification stubs (issue #70)."""
 from __future__ import annotations
 
+import ctypes
 import hashlib
 from unittest.mock import MagicMock, patch
 
 from cmcp_verify.opaque import verify_opaque_measurement
-from cmcp_verify.tdx import verify_tdx_measurement
+from cmcp_verify.tdx import _TdReport, verify_tdx_measurement
 
-# ── TDX tests ──────────────────────────────────────────────────────────────────
+_MRTD_OFFSET  = _TdReport.mrtd.offset
+_REPORT_SIZE  = ctypes.sizeof(_TdReport)
+
+
+def test_tdreport_struct_size() -> None:
+    assert ctypes.sizeof(_TdReport) == 1024
+
+
+def test_tdreport_mrtd_offset() -> None:
+    assert _TdReport.mrtd.offset == 0x90
+
+
+def test_tdreport_round_trip() -> None:
+    buf = bytearray(_REPORT_SIZE)
+    pattern = bytes(range(48))
+    buf[_MRTD_OFFSET : _MRTD_OFFSET + 48] = pattern
+    report = _TdReport.from_buffer_copy(buf)
+    assert bytes(report.mrtd) == pattern
+
 
 def _make_tdreport(mrtd_bytes: bytes) -> bytes:
-    """Build a minimal 1024-byte TDREPORT with MRTD at offset 0x90."""
-    buf = bytearray(1024)
-    buf[0x90:0x90 + len(mrtd_bytes)] = mrtd_bytes
+    buf = bytearray(_REPORT_SIZE)
+    buf[_MRTD_OFFSET : _MRTD_OFFSET + 48] = mrtd_bytes[:48]
     return bytes(buf)
 
 
@@ -73,8 +91,6 @@ def test_tdx_truncated_evidence(monkeypatch):
     assert not result.verified
     assert result.failure_reason == "raw_evidence_parse_error"
 
-
-# ── Opaque tests ───────────────────────────────────────────────────────────────
 
 def test_opaque_no_endpoint_configured(monkeypatch):
     monkeypatch.delenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", raising=False)

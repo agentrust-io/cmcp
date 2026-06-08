@@ -1,7 +1,8 @@
-"""AMD SEV-SNP TEE provider — implements issue #89."""
+"""AMD SEV-SNP TEE provider -- implements issue #89."""
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import hmac
 import struct
@@ -17,20 +18,66 @@ _SEV_GUEST_DEVICE = Path("/dev/sev-guest")
 # Derived from: _IOWR(0x11, 0x01, struct snp_report_req) where req is 0xA0 bytes.
 _SNP_GET_REPORT = 0xC0A01181
 
-# SNP attestation report is 0x4A0 (1184) bytes.
-_SNP_REPORT_SIZE = 0x4A0
-
 # Request structure: 96-byte user_data + 4-byte vmpl + 28-byte reserved = 128 bytes total
 _SNP_REQ_USER_DATA_SIZE = 96
 _SNP_REQ_SIZE = 128
 
 # Response structure: 4-byte status + 4-byte report_size + 24-byte reserved + report
 _SNP_RESP_HEADER_SIZE = 32
+
+
+class _SnpAttestationReport(ctypes.LittleEndianStructure):
+    """Mirror of struct snp_attestation_report from the Linux kernel
+    (include/uapi/linux/sev-guest.h).  Field offsets are computed by
+    ctypes so magic numeric offsets are never needed in application code.
+
+    Total size: 0x4A0 (1184) bytes.
+    """
+
+    _pack_ = 1
+    _fields_ = [
+        ("version",             ctypes.c_uint32),
+        ("guest_svn",           ctypes.c_uint32),
+        ("policy",              ctypes.c_uint64),
+        ("family_id",           ctypes.c_uint8 * 16),
+        ("image_id",            ctypes.c_uint8 * 16),
+        ("vmpl",                ctypes.c_uint32),
+        ("sig_algo",            ctypes.c_uint32),
+        ("current_tcb",         ctypes.c_uint64),
+        ("plat_info",           ctypes.c_uint64),
+        ("author_key_en",       ctypes.c_uint32),
+        ("rsvd1",               ctypes.c_uint32),
+        ("report_data",         ctypes.c_uint8 * 64),
+        ("measurement",         ctypes.c_uint8 * 48),
+        ("host_data",           ctypes.c_uint8 * 32),
+        ("id_key_digest",       ctypes.c_uint8 * 48),
+        ("author_key_digest",   ctypes.c_uint8 * 48),
+        ("report_id",           ctypes.c_uint8 * 32),
+        ("report_id_ma",        ctypes.c_uint8 * 32),
+        ("reported_tcb",        ctypes.c_uint64),
+        ("rsvd2",               ctypes.c_uint8 * 24),
+        ("chip_id",             ctypes.c_uint8 * 64),
+        ("committed_svn",       ctypes.c_uint8 * 8),
+        ("committed_version",   ctypes.c_uint8 * 8),
+        ("launch_svn",          ctypes.c_uint8 * 8),
+        ("rsvd3",               ctypes.c_uint8 * 168),
+        ("signature",           ctypes.c_uint8 * 512),
+    ]
+
+
+# Compile-time assertion: struct must be exactly 0x4A0 (1184) bytes.
+assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0, (
+    f"_SnpAttestationReport size mismatch: "
+    f"got {ctypes.sizeof(_SnpAttestationReport):#x}, expected 0x4A0"
+)
+
+_SNP_REPORT_SIZE = ctypes.sizeof(_SnpAttestationReport)
 _SNP_RESP_SIZE = _SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE
 
-# Measurement field offset and size in SNP report
-_SNP_MEASUREMENT_OFFSET = 0x60
-_SNP_MEASUREMENT_END = 0x90  # 48 bytes = SHA-384
+# Byte range of the measurement field within the raw SNP report blob.
+# Derived from the ctypes struct so they stay in sync with the field layout.
+_SNP_MEASUREMENT_OFFSET: int = _SnpAttestationReport.measurement.offset
+_SNP_MEASUREMENT_END: int = _SNP_MEASUREMENT_OFFSET + _SnpAttestationReport.measurement.size
 
 
 class SEVSNPProvider(TEEProvider):
@@ -69,10 +116,6 @@ class SEVSNPProvider(TEEProvider):
         # struct: 96s user_data, I vmpl, 28s reserved
         req = struct.pack("96sI28s", user_data, vmpl, b"\x00" * 28)
 
-        # Place request into response buffer (ioctl arg is a combined req/resp struct)
-        # The kernel driver takes a pointer to snp_guest_request_ioctl which contains
-        # pointers; however the simplified /dev/sev-guest interface accepts the request
-        # directly.  We use a single buffer of max(req, resp) size.
         buf = bytearray(max(len(req), _SNP_RESP_SIZE))
         buf[: len(req)] = req
 
@@ -90,12 +133,14 @@ class SEVSNPProvider(TEEProvider):
         # Report starts at offset _SNP_RESP_HEADER_SIZE
         raw_evidence = bytes(buf[_SNP_RESP_HEADER_SIZE : _SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE])
 
+        # Parse report via ctypes struct for named field access (HW-006)
+        report = _SnpAttestationReport.from_buffer_copy(raw_evidence)
+
         # Measurement = SHA-384 of the measurement field within the SNP report
-        measurement_bytes = raw_evidence[_SNP_MEASUREMENT_OFFSET:_SNP_MEASUREMENT_END]
+        measurement_bytes = bytes(report.measurement)
         measurement = "sha384:" + hashlib.sha384(measurement_bytes).hexdigest()
 
-        # HW-002: reject reports whose measurement doesn't match the expected binary hash.
-        # This prevents replay of a valid attestation report for a different binary.
+        # HW-002: reject reports whose measurement does not match the expected binary hash.
         if self._expected_measurement is not None and not hmac.compare_digest(measurement, self._expected_measurement):
             raise RuntimeError(
                 "SEV-SNP measurement mismatch: the report measurement does not match "
