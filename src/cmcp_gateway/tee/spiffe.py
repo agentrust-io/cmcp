@@ -60,7 +60,7 @@ class SpiffeClientResult:
 def _socket_exists(path: str) -> bool:
     """Return True if the SPIRE agent socket file exists."""
     try:
-        return os.path.exists(path) and _socket.AF_UNIX is not None
+        return os.path.exists(path) and _socket.AF_UNIX is not None  # type: ignore[attr-defined]
     except (AttributeError, OSError):
         return False
 
