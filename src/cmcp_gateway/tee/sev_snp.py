@@ -74,6 +74,11 @@ assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0, (
 _SNP_REPORT_SIZE = ctypes.sizeof(_SnpAttestationReport)
 _SNP_RESP_SIZE = _SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE
 
+# Byte range of the measurement field within the raw SNP report blob.
+# Derived from the ctypes struct so they stay in sync with the field layout.
+_SNP_MEASUREMENT_OFFSET: int = _SnpAttestationReport.measurement.offset
+_SNP_MEASUREMENT_END: int = _SNP_MEASUREMENT_OFFSET + _SnpAttestationReport.measurement.size
+
 
 class SEVSNPProvider(TEEProvider):
     """AMD SEV-SNP attestation provider using the /dev/sev-guest ioctl interface."""
