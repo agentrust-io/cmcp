@@ -1,7 +1,8 @@
-"""Intel TDX TEE provider — implements issue #93."""
+"""Intel TDX TEE provider -- implements issue #93."""
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import sys
 from datetime import UTC, datetime
@@ -15,15 +16,39 @@ _TDX_GUEST_DEVICE = Path("/dev/tdx_guest")
 # Derived from: _IOWR(0x40, 0x00, struct tdx_report_req) where req is 0x88 bytes.
 _TDX_CMD_GET_REPORT0 = 0xC0884000
 
-# TDREPORT size: 1024 bytes
-_TDREPORT_SIZE = 1024
-
-# REPORTDATA input: 64 bytes (placed at start of ioctl buffer)
-_REPORTDATA_SIZE = 64
-
 # MRTD field in TDREPORT: bytes 0x90..0xC0 (48 bytes)
 _MRTD_OFFSET = 0x90
 _MRTD_END = 0xC0
+
+
+class _TdxReportReq(ctypes.LittleEndianStructure):
+    """Mirror of struct tdx_report_req from the Linux kernel
+    (arch/x86/include/uapi/asm/tdx.h).  The ioctl buffer is exactly
+    this struct: a 64-byte REPORTDATA field followed by a 1024-byte
+    TDREPORT output field.  Using ctypes ensures the split point is
+    derived from the struct layout rather than a bare integer offset.
+
+    Total size: 0x440 (1088) bytes.
+    """
+
+    _pack_ = 1
+    _fields_ = [
+        # Input: 64-byte nonce written by the caller before the ioctl.
+        ("reportdata", ctypes.c_uint8 * 64),
+        # Output: 1024-byte TDREPORT filled by the kernel driver.
+        ("tdreport",   ctypes.c_uint8 * 1024),
+    ]
+
+
+# Compile-time assertion: struct must be exactly 0x440 (1088) bytes.
+assert ctypes.sizeof(_TdxReportReq) == 0x440, (
+    f"_TdxReportReq size mismatch: "
+    f"got {ctypes.sizeof(_TdxReportReq):#x}, expected 0x440"
+)
+
+_TDX_REQ_SIZE = ctypes.sizeof(_TdxReportReq)
+# Derived size -- never a hardcoded integer.
+_REPORTDATA_SIZE: int = _TdxReportReq.reportdata.size   # 64
 
 
 class TDXProvider(TEEProvider):
@@ -52,15 +77,15 @@ class TDXProvider(TEEProvider):
         except ImportError as exc:
             raise RuntimeError(f"TDX attestation failed: {exc}") from exc
 
-        # Buffer layout: 64-byte REPORTDATA followed by 1024-byte TDREPORT output
-        buf_size = _REPORTDATA_SIZE + _TDREPORT_SIZE
-        buf = bytearray(buf_size)
-
-        # Write nonce into REPORTDATA (truncate or pad to 64 bytes)
+        # Build the ioctl buffer via the ctypes struct (HW-007).
+        # Serialise to a bytearray via bytes(req) so the ioctl receives a mutable
+        # buffer of the correct size with the nonce already written in.
+        req = _TdxReportReq()
         report_data_bytes = (nonce[:_REPORTDATA_SIZE] + b"\x00" * _REPORTDATA_SIZE)[
             :_REPORTDATA_SIZE
         ]
-        buf[:_REPORTDATA_SIZE] = report_data_bytes
+        req.reportdata[:] = report_data_bytes
+        buf = bytearray(bytes(req))
 
         try:
             with open(_TDX_GUEST_DEVICE, "rb") as fd:
@@ -68,8 +93,9 @@ class TDXProvider(TEEProvider):
         except OSError as exc:
             raise RuntimeError(f"TDX attestation failed: {exc}") from exc
 
-        # TDREPORT is in the second half of the buffer
-        raw_evidence = bytes(buf[_REPORTDATA_SIZE : _REPORTDATA_SIZE + _TDREPORT_SIZE])
+        # Parse response back into struct for named field access
+        resp = _TdxReportReq.from_buffer_copy(buf)
+        raw_evidence = bytes(resp.tdreport)
 
         # MRTD field is the TD measurement equivalent
         mrtd_bytes = raw_evidence[_MRTD_OFFSET:_MRTD_END]

@@ -1,15 +1,38 @@
-"""Intel TDX attestation verification — implements issue #70."""
+"""Intel TDX attestation verification -- implements issue #70."""
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import urllib.request
 from dataclasses import dataclass, field
 
-_TDREPORT_MIN_SIZE = 1024
 
-# MRTD field in TDREPORT_STRUCT (TD measurement, 48 bytes)
-_MRTD_OFFSET = 0x90
-_MRTD_END = 0xC0
+class _TdReport(ctypes.LittleEndianStructure):
+    """Named-field representation of the raw TDREPORT buffer returned by the
+    TDX_CMD_GET_REPORT0 ioctl (1024 bytes).
+
+    This layout places ``mrtd`` at offset 0x90 (144 bytes), matching the
+    offset used by the Linux kernel TDX guest driver and Intel TDX Module
+    Spec for the MRTD field within TDREPORT_STRUCT.  All unused bytes are
+    grouped into padding arrays; ctypes computes every field offset so no
+    magic integers appear in application code.
+
+    Total size: 0x400 (1024) bytes.
+    """
+
+    _pack_ = 1
+    _fields_ = [
+        ("_pre_mrtd",   ctypes.c_uint8 * 0x90),            # 0x000 -- 144 bytes
+        ("mrtd",        ctypes.c_uint8 * 48),               # 0x090 -- 48 bytes (TD measurement)
+        ("_post_mrtd",  ctypes.c_uint8 * (1024 - 0x90 - 48)),  # 0x0C0 -- 832 bytes
+    ]
+
+
+assert ctypes.sizeof(_TdReport) == 1024, (
+    f"_TdReport size mismatch: got {ctypes.sizeof(_TdReport)}, expected 1024"
+)
+
+_TDREPORT_MIN_SIZE = ctypes.sizeof(_TdReport)
 
 # Intel DCAP QE identity endpoint (used to confirm DCAP service reachability)
 _DCAP_QE_IDENTITY_URL = (
@@ -78,7 +101,9 @@ def verify_tdx_measurement(
     # Step 2: Parse TDREPORT if provided
     if raw_evidence is not None and len(raw_evidence) >= _TDREPORT_MIN_SIZE:
         try:
-            mrtd_bytes = raw_evidence[_MRTD_OFFSET:_MRTD_END]
+            # Parse via ctypes struct for named field access (HW-007)
+            tdreport = _TdReport.from_buffer_copy(raw_evidence[:_TDREPORT_MIN_SIZE])
+            mrtd_bytes = bytes(tdreport.mrtd)
             computed = "sha384:" + hashlib.sha384(mrtd_bytes).hexdigest()
             if computed == measurement:
                 result.verified_fields.append("measurement")
@@ -91,11 +116,11 @@ def verify_tdx_measurement(
                 result.details["dcap_chain"] = "requires_intel_dcap_service"
                 return result
 
-            # Check report_data if provided (nonce — mismatch is not fatal)
+            # Check report_data if provided (nonce -- mismatch is not fatal)
+            # REPORTDATA is at offset 0x08 in REPORTMACSTRUCT (first 256 bytes)
+            # For a simple check: compare the first 64 bytes of REPORTDATA area
+            # The exact offset varies by TDREPORT version; use a best-effort check
             if report_data_hex is not None:
-                # REPORTDATA is at offset 0x08 in REPORTMACSTRUCT (first 256 bytes)
-                # For a simple check: compare the first 64 bytes of REPORTDATA area
-                # The exact offset varies by TDREPORT version; use a best-effort check
                 report_data_area = raw_evidence[0x08:0x08 + 64]
                 expected_rd = bytes.fromhex(report_data_hex[:128])
                 if len(expected_rd) < 64:
@@ -119,10 +144,10 @@ def verify_tdx_measurement(
         result.details["dcap_chain"] = "requires_intel_dcap_service"
         return result
 
-    # Step 3: DCAP collateral — network check
+    # Step 3: DCAP collateral -- network check
     if _check_dcap_reachable():
         result.details["dcap_qe_identity"] = "reachable"
-        # Full Quote verification requires dcap-provider library — mark unverified
+        # Full Quote verification requires dcap-provider library -- mark unverified
         result.unverified_fields.append("dcap_quote_signature")
         result.details["dcap_chain"] = "dcap_service_reachable_full_verification_not_implemented"
     else:
