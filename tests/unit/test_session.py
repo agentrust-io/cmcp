@@ -139,3 +139,42 @@ async def test_concurrent_update_and_reset_do_not_corrupt_state():
     tasks = [_update() for _ in range(5)] + [_reset() for _ in range(5)]
     await asyncio.gather(*tasks)
     assert state.max_sensitivity in SENSITIVITY_ORDER
+
+
+# ── AUTH-001: attestation upgrade rotates session token ───────────────────────
+
+def test_upgrade_attestation_rotates_session_id():
+    """AUTH-001: session token (session_id) must be rotated on attestation upgrade."""
+    state = SessionState(session_id="s1")
+    old_id, new_id = state.upgrade_attestation()
+    assert old_id == "s1"
+    assert new_id != "s1"
+    assert state.session_id == new_id
+
+
+def test_upgrade_attestation_clears_stale_flag():
+    state = SessionState(session_id="s1", attestation_stale=True)
+    state.upgrade_attestation()
+    assert state.attestation_stale is False
+
+
+def test_upgrade_attestation_preserves_sensitivity():
+    """Unlike reset(), upgrade_attestation() preserves accumulated session sensitivity."""
+    state = SessionState(session_id="s1")
+    state.update_from_inspection("c1", ["hipaa_phi"], False, True)
+    assert state.max_sensitivity == "hipaa_phi"
+    state.upgrade_attestation()
+    assert state.max_sensitivity == "hipaa_phi"
+
+
+def test_upgrade_attestation_preserves_injection_events():
+    state = SessionState(session_id="s1")
+    state.update_from_inspection("c1", [], injection_detected=True, response_allowed=False)
+    state.upgrade_attestation()
+    assert len(state.injection_events) == 1
+
+
+def test_upgrade_attestation_does_not_increment_reset_count():
+    state = SessionState(session_id="s1")
+    state.upgrade_attestation()
+    assert state.reset_count == 0
