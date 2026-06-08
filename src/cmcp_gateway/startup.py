@@ -21,6 +21,7 @@ from cmcp_gateway.errors import (
 from cmcp_gateway.policy.bundle import PolicyStore, load_policy_bundle
 from cmcp_gateway.tee.base import AttestationReport, TEEProvider
 from cmcp_gateway.tee.detect import detect_provider
+from cmcp_gateway.tee.nras import AppraisalResult, try_appraise
 from cmcp_gateway.tee.spiffe import SpiffeClientResult, fetch_svid
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class GatewayContext:
     policy_bundle: PolicyStore
     catalog: ToolCatalog
     spiffe: SpiffeClientResult | None = None
+    nras_appraisal: AppraisalResult | None = None
 
 
 def _fatal(code: str, message: str, **fields: Any) -> None:
@@ -246,6 +248,10 @@ def run_startup(config_path: str) -> GatewayContext:
             spiffe_result.failure_reason,
         )
 
+    # Step 5c: NRAS post-attestation appraisal (non-fatal, Phase 2 / v0.2 -- issue #125).
+    # CMCP_NRAS_API_KEY missing -> skip with warning; any NRAS error -> skip with warning.
+    nras_appraisal = try_appraise(attestation_report)
+
     return GatewayContext(
         config=config,
         tee_provider=tee_provider,
@@ -254,4 +260,5 @@ def run_startup(config_path: str) -> GatewayContext:
         policy_bundle=policy_store,
         catalog=catalog,
         spiffe=spiffe_result,
+        nras_appraisal=nras_appraisal,
     )
