@@ -40,8 +40,8 @@ def _make_ctx(*, stale_attestation: bool = False) -> MagicMock:
     signing_key = SigningKey()
 
     policy_bundle = MagicMock()
-    policy_bundle.bundle_hash = "sha256:" + "a" * 64
-    policy_bundle.manifest.version = "1.0.0"
+    policy_bundle.bundle.bundle_hash = "sha256:" + "a" * 64
+    policy_bundle.bundle.manifest.version = "1.0.0"
 
     catalog_entry = MagicMock()
     catalog_entry.compliance_domain = "external"
