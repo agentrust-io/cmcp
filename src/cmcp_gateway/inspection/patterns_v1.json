@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "description": "Fallback regex injection-detection patterns used when AGT PromptInjectionDetector is unavailable. Managed per INJECT-006.",
+  "patterns": [
+    {
+      "regex": "<system>[\\s\\S]*?</system>",
+      "name": "xml-system-tag"
+    },
+    {
+      "regex": "<instructions>[\\s\\S]*?</instructions>",
+      "name": "xml-instructions-tag"
+    },
+    {
+      "regex": "<context>[\\s\\S]*?</context>",
+      "name": "xml-context-tag"
+    },
+    {
+      "regex": "(?i)ignore (previous|all|above) instructions",
+      "name": "ignore-instructions"
+    },
+    {
+      "regex": "(?i)disregard (your|the) (previous|system|initial) (prompt|instructions|context)",
+      "name": "disregard-instructions"
+    },
+    {
+      "regex": "(?i)(you are now|from now on you are|act as) [A-Z][a-zA-Z]+",
+      "name": "persona-hijack"
+    },
+    {
+      "regex": "(?i)(exfiltrate|send|forward|transmit) (the|all|this|user|customer) (data|information|context|message)",
+      "name": "exfiltrate"
+    },
+    {
+      "regex": "SYSTEM OVERRIDE",
+      "name": "system-override"
+    },
+    {
+      "regex": "---BEGIN SYSTEM---",
+      "name": "begin-system-marker"
+    },
+    {
+      "regex": "\\[INST\\][\\s\\S]*?\\[/INST\\]",
+      "name": "llama-instruction-markers"
+    }
+  ]
+}
