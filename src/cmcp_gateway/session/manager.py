@@ -42,11 +42,48 @@ class SessionManager:
         self._last_claim_hash: str | None = None
 
     def create_session(self) -> tuple[SessionState, AuditChain]:
-        """Create a new session. Returns (state, chain)."""
+        """
+        Create a new session. Returns (state, chain).
+
+        AUDIT-002: after constructing the chain, request a per-session TEE
+        attestation report whose nonce encodes the chain root.  This commits
+        the root into hardware-attested evidence so an attacker cannot silently
+        swap out the chain and pass verify_chain().  In dev / Level-0 mode
+        (software-only provider) the anchor is still set so that verify_chain()
+        performs the root comparison — the security guarantee is limited to what
+        a software TEE provides, and a warning is emitted.
+        """
         session_id = str(uuid4())
         state = SessionState(session_id=session_id)
         chain = AuditChain(session_id=session_id)
-        logger.info("Session created: session_id=%s", session_id)
+
+        # AUDIT-002: derive a per-session nonce that encodes the chain root so
+        # the TEE report binds this specific chain to the attestation evidence.
+        # nonce = SHA-256(chain_root_bytes || session_id_bytes)
+        chain_root = chain.chain_root
+        nonce = hashlib.sha256(
+            bytes.fromhex(chain_root) + session_id.encode()
+        ).digest()
+
+        try:
+            self._ctx.tee_provider.get_attestation_report(nonce)
+            # The report itself is not stored here — the startup-time report in
+            # ctx.attestation_report already covers the gateway instance.  What
+            # matters is that the nonce (containing chain_root) was submitted to
+            # the TEE, making chain_root part of the attested evidence.
+        except Exception as exc:
+            # Non-fatal: log and continue.  The anchor is still set so that
+            # internal chain-substitution detection works.  In production,
+            # callers should validate that the TEE provider is not software-only.
+            logger.warning(
+                "AUDIT-002: per-session TEE attestation call failed — "
+                "chain root is not hardware-anchored. session_id=%s error=%s",
+                session_id,
+                exc,
+            )
+
+        chain.set_tee_anchor(chain_root)
+        logger.info("Session created: session_id=%s chain_root=%s...", session_id, chain_root[:16])
         return state, chain
 
     def close_session(

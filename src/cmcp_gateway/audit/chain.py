@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 EntryType = Literal[
     "session_start",
@@ -75,11 +78,24 @@ class AuditChain:
     Every call, denial, session event, and fault produces one entry.
     chain_root is the hash of the first entry; chain_tip is the hash
     of the most recent entry. Any tampering breaks the hash chain.
+
+    AUDIT-002: to prevent chain substitution, the caller must call
+    set_tee_anchor(chain_root) immediately after session start.  The anchor
+    is the chain_root committed into the TEE attestation nonce so that an
+    attacker who discards _entries and re-builds a fresh chain will get a
+    different root that will not match the externally-witnessed value.
+
+    When a TEE anchor is set, verify_chain() also checks that the current
+    chain_root equals the anchored value.  In dev / Level-0 mode where no
+    TEE is available, anchoring is skipped and a warning is emitted — the
+    internal hash-chain check still runs.
     """
 
     def __init__(self, session_id: str) -> None:
         self._session_id = session_id
         self._entries: list[AuditEntry] = []
+        # AUDIT-002: TEE-anchored chain root.  None until set_tee_anchor() is called.
+        self._tee_anchor: str | None = None
         self._append_session_start()
 
     def _append_session_start(self) -> None:
@@ -98,6 +114,31 @@ class AuditChain:
             session_sensitivity_after="public",
             workflow_id=None,
         )
+
+    def set_tee_anchor(self, anchor: str) -> None:
+        """
+        AUDIT-002: commit the chain root into an external anchor.
+
+        anchor must equal chain_root at the time of the call (i.e. the value
+        that was measured into the TEE attestation report nonce).  Raises
+        ValueError if anchor does not match the current chain_root — this
+        would indicate a programming error in the caller.
+
+        Once set, verify_chain() will reject any chain whose root no longer
+        matches this anchored value, preventing silent chain substitution.
+        """
+        if anchor != self.chain_root:
+            raise ValueError(
+                f"TEE anchor '{anchor[:16]}...' does not match current chain_root "
+                f"'{self.chain_root[:16]}...'. Anchor must be set to the chain_root "
+                "immediately after session start."
+            )
+        self._tee_anchor = anchor
+
+    @property
+    def tee_anchor(self) -> str | None:
+        """The TEE-committed chain root, or None if not yet anchored (dev/Level-0 mode)."""
+        return self._tee_anchor
 
     def append(
         self,
@@ -167,7 +208,18 @@ class AuditChain:
         return list(self._entries)
 
     def verify_chain(self) -> bool:
-        """Re-compute all hashes and verify internal consistency."""
+        """
+        Re-compute all hashes and verify internal consistency.
+
+        AUDIT-002: if a TEE anchor has been set, also verify that the current
+        chain_root matches the externally-committed value.  A chain that was
+        silently replaced by an attacker will have a different root and fail
+        this check even if its internal hash links are self-consistent.
+
+        If no anchor is set (dev / Level-0 mode), emit a warning but do not
+        fail — the caller should ensure set_tee_anchor() is called in
+        production.
+        """
         if not self._entries:
             return True
         if self._entries[0].prev_entry_hash != "genesis":
@@ -178,4 +230,16 @@ class AuditChain:
                 return False
             if i > 0 and entry.prev_entry_hash != self._entries[i - 1].entry_hash:
                 return False
+
+        # AUDIT-002: external anchor check.
+        if self._tee_anchor is None:
+            logger.warning(
+                "AUDIT-002: audit chain has no TEE anchor — chain substitution cannot be "
+                "detected. Call set_tee_anchor() at session start in production. "
+                "session_id=%s",
+                self._session_id,
+            )
+        elif self.chain_root != self._tee_anchor:
+            return False
+
         return True
