@@ -27,7 +27,7 @@ To be considered for maintainer status you must:
 - Have held reviewer status for at least 60 days
 - Have reviewed 10 or more pull requests
 - Be nominated by an existing maintainer
-- Be approved by a majority vote of the current maintainers
+- Be approved by a 2/3 vote of the current maintainers
 
 ## Emeritus
 
