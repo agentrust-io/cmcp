@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Endpoints exempt from bearer-token auth (Kubernetes liveness / readiness probes)
-_AUTH_EXEMPT_PATHS = {"/health"}
+_AUTH_EXEMPT_PATHS = {"/health", "/readyz"}
 
 
 async def _unhandled_error_handler(request: Request, exc: Exception) -> Response:
@@ -157,7 +157,7 @@ class MCPServer:
         # Starlette applies middleware outermost-first (first in list = first to run).
         rate_limit = Middleware(
             _RateLimitMiddleware,
-            paths=frozenset(_AUTH_EXEMPT_PATHS),
+            paths=frozenset({"/health", "/readyz"}),
             requests_per_minute=60,
         )
         middleware = [rate_limit] + (
@@ -169,6 +169,7 @@ class MCPServer:
             routes=[
                 Route("/mcp", self._handle_mcp, methods=["POST"]),
                 Route("/health", self._health, methods=["GET"]),
+                Route("/readyz", self._readyz, methods=["GET"]),
                 Route("/tools/list", self._list_tools, methods=["GET"]),
                 Route(
                     "/sessions/{session_id}/trace-claim",
@@ -375,6 +376,37 @@ class MCPServer:
 
     async def _health(self, request: Request) -> Response:
         return JSONResponse({"status": "ok"})
+
+    async def _readyz(self, request: Request) -> Response:
+        """GET /readyz — structured readiness probe (CONF-007).
+
+        Returns 200 when all components are operational, 503 when degraded.
+        Safe for unauthenticated Kubernetes readiness probes.
+        """
+        checks: dict[str, str] = {}
+        degraded = False
+
+        # Catalog: must have at least one approved tool
+        catalog_size = len(self._proxy._catalog.entries)
+        checks["catalog"] = "ok" if catalog_size > 0 else "empty"
+        if catalog_size == 0:
+            degraded = True
+
+        # Policy: evaluator must be present (always true after startup)
+        checks["policy"] = "ok" if self._proxy._policy is not None else "unavailable"
+        if self._proxy._policy is None:
+            degraded = True
+
+        # Attestation: check staleness via proxy health check
+        attest_reason = self._proxy._check_health()
+        if attest_reason is None:
+            checks["attestation"] = "ok"
+        else:
+            checks["attestation"] = attest_reason
+            degraded = True
+
+        status = "degraded" if degraded else "ready"
+        return JSONResponse({"status": status, "checks": checks}, status_code=503 if degraded else 200)
 
     async def _get_trace_claim(self, request: Request) -> Response:
         """GET /sessions/{session_id}/trace-claim — returns signed TRACE Claim for a closed session."""
