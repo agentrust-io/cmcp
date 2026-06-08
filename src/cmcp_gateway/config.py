@@ -12,6 +12,11 @@ import yaml
 
 from cmcp_gateway.errors import ConfigError
 
+# TEE-002: read exactly once at import time so the value is immutable for the
+# lifetime of the process. No code may call os.environ.get("CMCP_DEV_MODE")
+# after this point.
+DEV_MODE: bool = os.environ.get("CMCP_DEV_MODE", "0") == "1"
+
 
 class TEEProvider(StrEnum):
     TPM = "tpm"
@@ -136,7 +141,7 @@ def load_config(path: str) -> Config:
     if not isinstance(policy_reload_interval, int) or policy_reload_interval < 0:
         raise ConfigError("policy_reload_interval_seconds must be a non-negative integer")
 
-    dev_mode = os.environ.get("CMCP_DEV_MODE", "0") == "1"
+    dev_mode = DEV_MODE  # TEE-002: use the frozen constant, never re-read from env
     bearer_token = os.environ.get("CMCP_BEARER_TOKEN") or None
 
     policy_bundle_path = raw.get("policy_bundle_path", "policy/")
