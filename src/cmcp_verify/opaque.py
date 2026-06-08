@@ -89,7 +89,7 @@ def verify_opaque_measurement(
             method="POST",
             headers=request_headers,
         )
-        with urllib.request.urlopen(req, timeout=_OPAQUE_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(req, timeout=_OPAQUE_TIMEOUT_SECONDS) as resp:  # nosec B310 — req is a Request object with explicit HTTPS endpoint
             body = json.loads(resp.read().decode())
 
         if body.get("verified") is True:
