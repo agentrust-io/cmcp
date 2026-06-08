@@ -25,7 +25,7 @@ from cmcp_gateway.audit.trace_claim import (
     ToolCatalogInfo,
     generate_trace_claim,
 )
-from cmcp_gateway.session.call_log import CallLog
+from cmcp_gateway.session.call_log import CallLog, SessionCallLog
 from cmcp_gateway.session.state import SessionState
 from cmcp_gateway.startup import GatewayContext
 
@@ -55,6 +55,7 @@ class SessionManager:
         state: SessionState,
         chain: AuditChain,
         call_log: CallLog | None = None,
+        session_call_log: SessionCallLog | None = None,
     ) -> dict[str, Any]:
         """
         Close a session:
@@ -134,14 +135,27 @@ class SessionManager:
             {e.tool_name for e in tool_calls if e.tool_name is not None}
         )
 
-        # Identify compliance domains from catalog entries touched.
-        compliance_domains_touched = sorted(
-            {
-                catalog.entries[name].compliance_domain
-                for name in tools_invoked
-                if name in catalog.entries
-            }
-        )
+        # Build call graph summary: prefer SessionCallLog (richer, with adjacency
+        # tracking) and fall back to deriving domains from the audit chain entries.
+        if session_call_log is not None:
+            cg = session_call_log.get_call_graph_summary()
+            call_graph_summary = CallGraphSummary(
+                compliance_domains_touched=cg["compliance_domains_touched"],
+                cross_boundary_events=cg["cross_boundary_events"],
+                edges_represent=cg["edges_represent"],
+            )
+        else:
+            compliance_domains_touched = sorted(
+                {
+                    catalog.entries[name].compliance_domain
+                    for name in tools_invoked
+                    if name in catalog.entries
+                }
+            )
+            call_graph_summary = CallGraphSummary(
+                compliance_domains_touched=compliance_domains_touched,
+                cross_boundary_events=[],
+            )
 
         call_summary = CallSummary(
             tool_calls_total=tool_calls_total,
@@ -150,10 +164,7 @@ class SessionManager:
             tool_calls_faulted=tool_calls_faulted,
             tools_invoked=tools_invoked,
             session_max_sensitivity=state.max_sensitivity,
-            call_graph_summary=CallGraphSummary(
-                compliance_domains_touched=compliance_domains_touched,
-                cross_boundary_events=[],
-            ),
+            call_graph_summary=call_graph_summary,
         )
 
         call_log_summary: CallLogSummary | None = None
