@@ -55,7 +55,7 @@ cmcp = "cmcp_gateway.cli:main"
 [project.urls]
 Homepage = "https://github.com/agentrust-io/cmcp"
 Repository = "https://github.com/agentrust-io/cmcp"
-Documentation = "https://github.com/agentrust-io/cmcp#readme"
+Documentation = "https://github.com/agentrust-io/cmcp/tree/main/docs"
 "Bug Tracker" = "https://github.com/agentrust-io/cmcp/issues"
 
 [tool.hatch.build.targets.wheel]

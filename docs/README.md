@@ -50,13 +50,6 @@ Issues in this repo track spec decisions, not implementation bugs. Each issue co
 | docs/spec/phase2-server.md | Provider-side attestation, 5 unique properties, streaming proxy, multi-tenant | 2 | Draft v0.1 | #17, #28, #29, #32, #42 |
 | docs/testing/benchmarks.md | Latency targets and benchmark methodology | 1 | Draft v0.1 | #27 |
 | docs/testing/soak-test.md | 72-hour soak test plan | 1 | Draft v0.1 | #31 |
-| docs/research/rq1-interview-guide.md | MCP-specific payload leakage validation | — | Draft v0.1 | #10 |
-| docs/research/rq4-interview-guide.md | Escalation trigger research (what makes the proof gap blocking) | — | Draft v0.1 | #9 |
-| docs/research/rq6-interview-guide.md | Phase 2 demand validation (SaaS vendor questionnaires) | — | Draft v0.1 | #19 |
-| docs/research/qualifying-question-validation.md | Qualifying question test protocol | — | Draft v0.1 | #11 |
-| docs/gtm/regulated-buyer-playbook.md | Regulated buyer entry point script and objection handling | — | Draft v0.1 | #15 |
-| docs/gtm/launch-checklist.md | CC Summit launch checklist | — | Draft v0.1 | #16 |
-| docs/partners/design-partner-template.md | Design partner engagement template | — | Draft v0.1 | #12, #13, #14 |
 
 ---
 

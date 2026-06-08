@@ -12,6 +12,6 @@ Unacceptable behavior: sexualized language or imagery, trolling, insulting comme
 
 ## Enforcement
 
-Report instances of abusive behavior via [GitHub Security Advisories](https://github.com/agentrust-io/cmcp/security/advisories/new).
+Report instances of abusive behavior by opening a GitHub issue labeled `code of conduct`, or by posting in [GitHub Discussions](https://github.com/orgs/agentrust-io/discussions). Security vulnerabilities belong in SECURITY.md, not here.
 
 Adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 2.1.
