@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
@@ -34,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 class SessionManager:
     """Creates, tracks, and closes agent sessions."""
+
+    # AUTH-004: cleanup interval is configurable via env var (default 60s).
+    cleanup_interval_seconds: int = int(
+        os.environ.get("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
+    )
 
     def __init__(self, ctx: GatewayContext) -> None:
         self._ctx = ctx

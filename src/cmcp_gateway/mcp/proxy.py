@@ -414,6 +414,8 @@ class CMCPProxy:
         injection_pattern = getattr(agt_result, "matched_pattern", None) or getattr(
             agt_result, "injection_pattern", None
         )
+        # INJECT-007: capture threshold so audit consumers can replay the decision
+        injection_threshold = getattr(agt_result, "injection_threshold", None)
         async with self._session.mutation_lock:
             self._session.update_from_inspection(
                 call_id=call_id,
@@ -468,10 +470,12 @@ class CMCPProxy:
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
         latency_us = int((time.perf_counter() - t0) * 1_000_000)
         # INJECT-003: include injection scanner and pattern in audit detail when detected
-        injection_detail: dict[str, str | int] | None = (
+        injection_detail: dict[str, str | int | float] | None = (
             {
                 "injection_scanner": str(injection_scanner or "unknown")[:128],
                 "matched_pattern": str(injection_pattern or "unknown")[:256],
+                # INJECT-007: include threshold so the decision is replayable under config changes
+                **({"injection_threshold": float(injection_threshold)} if isinstance(injection_threshold, (int, float)) else {}),
             }
             if injection_detected
             else None

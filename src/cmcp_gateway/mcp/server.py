@@ -14,6 +14,7 @@ import asyncio
 import hmac
 import json
 import logging
+import os
 import time
 import uuid
 from collections import defaultdict
@@ -165,6 +166,11 @@ class MCPServer:
             if bearer_token is not None
             else []
         )
+        # AUTH-004: session cleanup interval configurable via env var (default 60s)
+        self._cleanup_interval_s: int = int(
+            os.environ.get("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
+        )
+
         self.app = Starlette(
             routes=[
                 Route("/mcp", self._handle_mcp, methods=["POST"]),
