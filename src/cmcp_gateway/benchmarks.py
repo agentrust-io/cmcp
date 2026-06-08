@@ -17,11 +17,11 @@ import asyncio
 import contextlib
 import io
 import json
-import os
 import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @contextlib.contextmanager
-def _quiet():
+def _quiet() -> Iterator[None]:
     """Suppress stdout/stderr during noisy backend warmup."""
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         yield
@@ -179,14 +179,14 @@ def _make_catalog() -> Any:
 
 def _make_proxy(bundle: Any, catalog: Any) -> tuple[Any, Any]:
     from cmcp_gateway.audit.chain import AuditChain
-    from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
+    from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode, TEEProvider
     from cmcp_gateway.mcp.proxy import CMCPProxy
     from cmcp_gateway.policy.evaluator import PolicyEvaluator
     from cmcp_gateway.session.state import SessionState
 
     config = Config(
         attestation=AttestationConfig(
-            provider="software-only",
+            provider=TEEProvider.SOFTWARE_ONLY,
             enforcement_mode=EnforcementMode.ENFORCING,
         )
     )

@@ -20,7 +20,6 @@ from cmcp_gateway.mcp.server import MCPServer
 from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_gateway.session.state import SessionState
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 

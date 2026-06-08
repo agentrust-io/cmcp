@@ -23,7 +23,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SOCKET = "/tmp/spire-agent/public/api.sock"
+_DEFAULT_SOCKET = "/tmp/spire-agent/public/api.sock"  # nosec B108 — SPIRE Workload API standard socket path, not a temp file
 _SPIRE_SOCKET_ENV = "CMCP_SPIRE_SOCKET"
 
 # Maximum time to wait for SPIRE agent to respond (seconds)
@@ -60,7 +60,7 @@ class SpiffeClientResult:
 def _socket_exists(path: str) -> bool:
     """Return True if the SPIRE agent socket file exists."""
     try:
-        return os.path.exists(path) and _socket.AF_UNIX is not None
+        return os.path.exists(path) and _socket.AF_UNIX is not None  # type: ignore[attr-defined]
     except (AttributeError, OSError):
         return False
 
@@ -69,7 +69,6 @@ def _try_pyspiffe(socket_path: str) -> SpiffeClientResult:
     """Attempt SVID fetch via pyspiffe library."""
     try:
         from pyspiffe.workloadapi.workload_api_client import WorkloadApiClient
-        from pyspiffe.svid.x509_svid import X509Svid
     except ImportError:
         return SpiffeClientResult(
             svid=None,
@@ -173,11 +172,12 @@ def make_self_signed_tls_context(signing_key_hex: str, session_id: str) -> Any:
     encodes the signing key hex prefix so the gateway identity is verifiable
     against the TRACE Claim's trace.cnf.jwk.x field.
     """
+    import datetime
+
     from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.x509.oid import NameOID
-    import datetime
 
     private_key = Ed25519PrivateKey.generate()
     subject = x509.Name([

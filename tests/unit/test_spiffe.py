@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cmcp_gateway.tee.spiffe import (
-    SVIDBundle,
     SpiffeClientResult,
+    SVIDBundle,
     _socket_exists,
     fetch_svid,
     make_self_signed_tls_context,
 )
-
 
 # ── _socket_exists ─────────────────────────────────────────────────────────────
 
@@ -172,10 +170,11 @@ def test_make_self_signed_tls_context_encodes_key_prefix():
 
 def test_gateway_context_has_spiffe_field():
     """GatewayContext.spiffe is None by default (backward compat)."""
+    from unittest.mock import MagicMock
+
     from cmcp_gateway.audit.keys import SigningKey
     from cmcp_gateway.catalog.loader import ToolCatalog
     from cmcp_gateway.startup import GatewayContext
-    from unittest.mock import MagicMock
 
     ctx = GatewayContext(
         config=MagicMock(),

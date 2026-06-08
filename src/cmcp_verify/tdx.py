@@ -35,7 +35,7 @@ def _check_dcap_reachable() -> bool:
             method="GET",
             headers={"Accept": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=_DCAP_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(req, timeout=_DCAP_TIMEOUT_SECONDS) as resp:  # nosec B310 — req is a Request object with explicit HTTPS DCAP URL
             return resp.status == 200
     except Exception:  # noqa: BLE001
         return False

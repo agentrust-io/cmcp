@@ -18,8 +18,7 @@ def _reload_config_with_env(monkeypatch, value: str | None) -> object:
 
     # Force a clean reimport so the module-level constant is re-evaluated.
     sys.modules.pop("cmcp_gateway.config", None)
-    mod = importlib.import_module("cmcp_gateway.config")
-    return mod
+    return importlib.import_module("cmcp_gateway.config")
 
 
 def test_dev_mode_constant_true_when_env_set_before_import(monkeypatch):

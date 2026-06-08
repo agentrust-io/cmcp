@@ -398,7 +398,8 @@ def test_patterns_version_stable_across_instances():
 
 def test_patterns_version_matches_config_file():
     """INJECT-006: patterns_version in audit result must match the version in patterns_v1.json."""
-    import json, pathlib
+    import json
+    import pathlib
     config_path = pathlib.Path(__file__).parents[2] / "src" / "cmcp_gateway" / "inspection" / "patterns_v1.json"
     expected_version = json.loads(config_path.read_text())["version"]
 

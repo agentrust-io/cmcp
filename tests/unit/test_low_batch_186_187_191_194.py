@@ -6,11 +6,8 @@ import importlib
 import logging
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from cmcp_gateway.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
 from cmcp_gateway.inspection.pipeline import InspectionPipeline
-
 
 # -- Shared fixture ---
 
@@ -191,9 +188,11 @@ def test_opaque_api_key_not_logged_on_failure(monkeypatch, caplog):
     monkeypatch.setenv("OPAQUE_API_KEY", "sk-supersecret-key-do-not-log")
     import cmcp_verify.opaque as opaque_mod
     importlib.reload(opaque_mod)
-    with patch.object(opaque_mod.urllib.request, "urlopen", side_effect=OSError("timeout")):
-        with caplog.at_level(logging.DEBUG, logger="cmcp_verify.opaque"):
-            opaque_mod.verify_opaque_measurement("sha384:" + "a" * 96, b"\x00" * 64)
+    with (
+        patch.object(opaque_mod.urllib.request, "urlopen", side_effect=OSError("timeout")),
+        caplog.at_level(logging.DEBUG, logger="cmcp_verify.opaque"),
+    ):
+        opaque_mod.verify_opaque_measurement("sha384:" + "a" * 96, b"\x00" * 64)
     assert "sk-supersecret-key-do-not-log" not in caplog.text, "API key leaked into log"
 
 

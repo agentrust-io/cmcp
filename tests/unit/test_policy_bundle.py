@@ -239,6 +239,7 @@ def test_load_bundle_warns_on_agent_os_version_mismatch(bundle_dir, caplog):
 def test_load_bundle_no_warning_when_versions_match(bundle_dir, caplog):
     """POLICY-007: no warning when pinned version matches installed version."""
     import logging
+
     from cmcp_gateway.policy.bundle import _AGENT_OS_VERSION
     manifest_with_match = dict(MANIFEST)
     manifest_with_match["agent_os_version"] = _AGENT_OS_VERSION

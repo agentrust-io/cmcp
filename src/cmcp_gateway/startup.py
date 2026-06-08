@@ -18,7 +18,7 @@ from cmcp_gateway.errors import (
     ConfigError,
     PolicyHashMismatch,
 )
-from cmcp_gateway.policy.bundle import PolicyBundle, PolicyStore, load_policy_bundle
+from cmcp_gateway.policy.bundle import PolicyStore, load_policy_bundle
 from cmcp_gateway.tee.base import AttestationReport, TEEProvider
 from cmcp_gateway.tee.detect import detect_provider
 from cmcp_gateway.tee.spiffe import SpiffeClientResult, fetch_svid

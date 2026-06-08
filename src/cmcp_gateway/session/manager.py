@@ -12,10 +12,6 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-# Module-level counter so sequence numbers are monotonic across all sessions
-# within a single gateway process lifetime.
-_CLAIM_SEQUENCE: int = 0
-
 from cmcp_gateway.audit.chain import AuditChain
 from cmcp_gateway.audit.trace_claim import (
     AttestationReportInfo,
@@ -31,6 +27,10 @@ from cmcp_gateway.session.state import SessionState
 from cmcp_gateway.startup import GatewayContext
 
 logger = logging.getLogger(__name__)
+
+# Module-level counter so sequence numbers are monotonic across all sessions
+# within a single gateway process lifetime.
+_CLAIM_SEQUENCE: int = 0
 
 
 class SessionManager:
@@ -140,9 +140,9 @@ class SessionManager:
 
         bundle = ctx.policy_bundle
         policy_info = PolicyBundleInfo(
-            hash=bundle.bundle_hash,
+            hash=bundle.bundle.bundle_hash,
             enforcement_mode=str(ctx.config.attestation.enforcement_mode),
-            policy_version=bundle.manifest.version,
+            policy_version=bundle.bundle.manifest.version,
         )
 
         catalog = ctx.catalog

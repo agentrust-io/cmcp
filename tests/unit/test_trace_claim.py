@@ -353,8 +353,8 @@ def test_build_runtime_unknown_provider_raises():
 def test_build_runtime_all_known_providers_accepted():
     """AUDIT-003: every provider in the allowed set must succeed without raising."""
     from cmcp_gateway.audit.trace_claim import (
-        AttestationReportInfo,
         _PROVIDER_MAP,
+        AttestationReportInfo,
         _build_runtime,
     )
     for provider in _PROVIDER_MAP:
