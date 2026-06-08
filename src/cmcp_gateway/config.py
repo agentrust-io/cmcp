@@ -39,6 +39,7 @@ class AttestationConfig:
     enforcement_mode: EnforcementMode = EnforcementMode.ENFORCING
     validity_seconds: int = 86400
     staleness_policy: StalenessPolicy = StalenessPolicy.FAIL_CLOSED
+    expected_measurement: str | None = None
 
 
 @dataclass
@@ -54,7 +55,7 @@ class Config:
 
 
 _KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes", "policy_reload_interval_seconds"}
-_KNOWN_ATTEST_KEYS = {"provider", "enforcement_mode", "validity_seconds", "staleness_policy"}
+_KNOWN_ATTEST_KEYS = {"provider", "enforcement_mode", "validity_seconds", "staleness_policy", "expected_measurement"}
 
 
 def _check_no_traversal(field_name: str, path_str: str) -> None:
@@ -123,6 +124,10 @@ def load_config(path: str) -> Config:
     if not isinstance(validity_seconds, int) or validity_seconds <= 0:
         raise ConfigError("attestation.validity_seconds must be a positive integer")
 
+    expected_measurement = attest_raw.get("expected_measurement", None)
+    if expected_measurement is not None and not isinstance(expected_measurement, str):
+        raise ConfigError("attestation.expected_measurement must be a string")
+
     max_bytes = raw.get("max_response_size_bytes", 2 * 1024 * 1024)
     if not isinstance(max_bytes, int) or max_bytes <= 0:
         raise ConfigError("max_response_size_bytes must be a positive integer")
@@ -145,6 +150,7 @@ def load_config(path: str) -> Config:
             enforcement_mode=enforcement_mode,
             validity_seconds=validity_seconds,
             staleness_policy=staleness_policy,
+            expected_measurement=expected_measurement,
         ),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,

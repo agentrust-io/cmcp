@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _PROBE_ORDER: list[str] = ["tpm", "sev-snp", "tdx", "opaque"]
 
 
-def _get_provider_impl(name: str) -> TEEProvider | None:
+def _get_provider_impl(name: str, config: Config | None = None) -> TEEProvider | None:
     """Import and return a provider implementation by name, or None if not found."""
     if name == "tpm":
         try:
@@ -26,7 +26,8 @@ def _get_provider_impl(name: str) -> TEEProvider | None:
     if name == "sev-snp":
         try:
             from cmcp_gateway.tee.sev_snp import SEVSNPProvider
-            return SEVSNPProvider()
+            expected = config.attestation.expected_measurement if config else None
+            return SEVSNPProvider(expected_measurement=expected)
         except ImportError:
             return None
     if name == "tdx":
@@ -72,7 +73,7 @@ def detect_provider(config: Config) -> TEEProvider:
                 "TRACE Claims produced here must not be used for compliance purposes."
             )
             return SoftwareOnlyProvider()
-        impl = _get_provider_impl(name)
+        impl = _get_provider_impl(name, config)
         if impl is None or not impl.detect():
             raise AttestationProviderUnsupported(
                 f"Requested provider '{name}' not available on this host",
@@ -83,7 +84,7 @@ def detect_provider(config: Config) -> TEEProvider:
 
     # Auto-detection
     for name in _PROBE_ORDER:
-        impl = _get_provider_impl(name)
+        impl = _get_provider_impl(name, config)
         if impl is not None and impl.detect():
             logger.info("TEE provider: %s (auto-detected)", name)
             return impl

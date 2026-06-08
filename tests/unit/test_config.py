@@ -156,3 +156,27 @@ def test_policy_reload_interval_non_integer_rejected(config_file):
     path = config_file("policy_reload_interval_seconds: 30.5\n")
     with pytest.raises(ConfigError, match="policy_reload_interval_seconds"):
         load_config(path)
+
+
+# ── HW-002: expected_measurement config field ─────────────────────────────────
+
+def test_expected_measurement_loaded_from_config(config_file):
+    """HW-002: attestation.expected_measurement is parsed and stored."""
+    em = "sha384:" + "a" * 96
+    path = config_file(f"attestation:\n  expected_measurement: {em}\n")
+    cfg = load_config(path)
+    assert cfg.attestation.expected_measurement == em
+
+
+def test_expected_measurement_defaults_to_none(config_file):
+    """HW-002: omitting expected_measurement leaves it as None."""
+    path = config_file("attestation:\n  provider: auto\n")
+    cfg = load_config(path)
+    assert cfg.attestation.expected_measurement is None
+
+
+def test_expected_measurement_non_string_rejected(config_file):
+    """HW-002: a non-string expected_measurement is a config error."""
+    path = config_file("attestation:\n  expected_measurement: 12345\n")
+    with pytest.raises(ConfigError, match="expected_measurement"):
+        load_config(path)

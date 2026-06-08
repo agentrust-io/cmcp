@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import struct
 import sys
 from datetime import UTC, datetime
@@ -34,6 +35,9 @@ _SNP_MEASUREMENT_END = 0x90  # 48 bytes = SHA-384
 
 class SEVSNPProvider(TEEProvider):
     """AMD SEV-SNP attestation provider using the /dev/sev-guest ioctl interface."""
+
+    def __init__(self, expected_measurement: str | None = None) -> None:
+        self._expected_measurement = expected_measurement
 
     def provider_name(self) -> str:
         return "sev-snp"
@@ -89,6 +93,16 @@ class SEVSNPProvider(TEEProvider):
         # Measurement = SHA-384 of the measurement field within the SNP report
         measurement_bytes = raw_evidence[_SNP_MEASUREMENT_OFFSET:_SNP_MEASUREMENT_END]
         measurement = "sha384:" + hashlib.sha384(measurement_bytes).hexdigest()
+
+        # HW-002: reject reports whose measurement doesn't match the expected binary hash.
+        # This prevents replay of a valid attestation report for a different binary.
+        if self._expected_measurement is not None:
+            if not hmac.compare_digest(measurement, self._expected_measurement):
+                raise RuntimeError(
+                    "SEV-SNP measurement mismatch: the report measurement does not match "
+                    "attestation.expected_measurement from config. "
+                    "This report may be replayed from a different binary or build."
+                )
 
         return AttestationReport(
             provider=self.provider_name(),
