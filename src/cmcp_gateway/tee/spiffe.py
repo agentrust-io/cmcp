@@ -23,7 +23,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SOCKET = "/tmp/spire-agent/public/api.sock"
+_DEFAULT_SOCKET = "/tmp/spire-agent/public/api.sock"  # nosec B108 — SPIRE Workload API standard socket path, not a temp file
 _SPIRE_SOCKET_ENV = "CMCP_SPIRE_SOCKET"
 
 # Maximum time to wait for SPIRE agent to respond (seconds)
