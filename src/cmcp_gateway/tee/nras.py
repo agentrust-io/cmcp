@@ -146,7 +146,7 @@ class NRASClient:
             raise NRASAppraisalError(response.status_code, response.text)
 
         try:
-            return response.json()  # type: ignore[no-any-return]
+            return response.json()
         except Exception as exc:
             raise NRASError(f"NRAS response is not valid JSON: {exc}") from exc
     @staticmethod
