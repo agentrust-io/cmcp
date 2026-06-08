@@ -143,7 +143,7 @@ def test_startup_fails_when_policy_hash_unset_and_not_dev_mode(tmp_path):
 
 
 def test_startup_fails_when_catalog_hash_unset_and_not_dev_mode(tmp_path, monkeypatch):
-    """POLICY-002 (CRITICAL): CMCP_CATALOG_HASH must be set outside dev mode."""
+    """POLICY-002 (CRITICAL, issue #137): CMCP_CATALOG_HASH must be set outside dev mode."""
     config_path = tmp_path / "cmcp-config.yaml"
     policy_dir = tmp_path / "policy"
     policy_dir.mkdir()
