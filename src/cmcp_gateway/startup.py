@@ -193,8 +193,9 @@ def run_startup(config_path: str) -> GatewayContext:
     # Step 5: catalog
     catalog_expected_hash = os.environ.get("CMCP_CATALOG_HASH")
     if catalog_expected_hash is None and not config.dev_mode:
-        # POLICY-002 (CRITICAL): without a pinned hash, a compromised catalog loads
-        # silently, allowing unauthorized tools. Require CMCP_CATALOG_HASH in production.
+        # POLICY-002 (CRITICAL, closes #137): without a pinned hash, a compromised catalog
+        # loads silently, allowing unauthorized tools or redirecting tool calls to attacker-
+        # controlled servers. Require CMCP_CATALOG_HASH in production; fail closed here.
         _fatal(
             "CATALOG_HASH_REQUIRED",
             "CMCP_CATALOG_HASH env var is not set. "
