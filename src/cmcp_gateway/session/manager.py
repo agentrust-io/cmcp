@@ -140,9 +140,9 @@ class SessionManager:
 
         bundle = ctx.policy_bundle
         policy_info = PolicyBundleInfo(
-            hash=bundle.bundle_hash,
+            hash=bundle.bundle.bundle_hash,
             enforcement_mode=str(ctx.config.attestation.enforcement_mode),
-            policy_version=bundle.manifest.version,
+            policy_version=bundle.bundle.manifest.version,
         )
 
         catalog = ctx.catalog
