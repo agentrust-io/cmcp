@@ -36,7 +36,9 @@ _SW_ONLY_FIRMWARE = "software-only-dev-mode"
 @dataclass
 class CallGraphSummary:
     compliance_domains_touched: list[str]
-    cross_boundary_events: list[dict[str, str]]
+    cross_boundary_events: list[dict[str, Any]]
+    #: Clarifies that edges are temporal adjacency, not data provenance (issue #94).
+    edges_represent: str | None = None
 
 
 @dataclass
@@ -81,7 +83,9 @@ class CallGraphOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     compliance_domains_touched: list[str]
-    cross_boundary_events: list[dict[str, str]]
+    cross_boundary_events: list[dict[str, Any]]
+    #: Clarifies that edges are temporal adjacency, not data provenance (issue #94).
+    edges_represent: str | None = None
 
 
 class CallSummaryOut(BaseModel):
@@ -316,6 +320,7 @@ def generate_trace_claim(
             call_graph_summary=CallGraphOut(
                 compliance_domains_touched=call_summary.call_graph_summary.compliance_domains_touched,
                 cross_boundary_events=call_summary.call_graph_summary.cross_boundary_events,
+                edges_represent=call_summary.call_graph_summary.edges_represent,
             ),
         ),
         catalog=CatalogSummary(

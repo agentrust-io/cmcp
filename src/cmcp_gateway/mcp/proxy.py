@@ -28,7 +28,7 @@ from cmcp_gateway.catalog.loader import ToolCatalog
 from cmcp_gateway.config import Config
 from cmcp_gateway.errors import PolicyDeny
 from cmcp_gateway.policy.evaluator import PolicyEvaluator
-from cmcp_gateway.session.call_log import CallLog, CallRecord
+from cmcp_gateway.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_gateway.session.state import SessionState
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,7 @@ class CMCPProxy:
         audit_chain: AuditChain,
         config: Config,
         call_log: CallLog | None = None,
+        session_call_log: SessionCallLog | None = None,
         attestation_generated_at: datetime | None = None,
         attestation_validity_seconds: int = 86400,
         catalog_hash: str | None = None,
@@ -80,6 +81,10 @@ class CMCPProxy:
         self._config = config
         self._enforcement = config.attestation.enforcement_mode
         self._call_log: CallLog = call_log if call_log is not None else CallLog(session_id=session.session_id)
+        self._session_call_log: SessionCallLog = (
+            session_call_log if session_call_log is not None
+            else SessionCallLog(session_id=session.session_id)
+        )
         self._attestation_generated_at = attestation_generated_at
         self._attestation_validity_seconds = attestation_validity_seconds
         self._catalog_hash = catalog_hash or catalog.catalog_hash
@@ -174,11 +179,18 @@ class CMCPProxy:
         allowed: bool,
         sensitivity_before: str,
         stage_results: dict[str, str],
+        *,
+        call_id: str | None = None,
+        catalog_entry: Any | None = None,
+        policy_decision: str = "n/a",
+        response_sensitivity_tags: list[str] | None = None,
     ) -> None:
         """
         Append a CallRecord to the session call log and check for suspicious
         sequences. On detection: write a suspicious_call_sequence audit entry
         and increment session.suspicious_sequences.
+
+        Also records to the SessionCallLog for TRACE Claim call_graph_summary.
         """
         sensitivity_raised = self._session.max_sensitivity != sensitivity_before
         self._call_log.record(
@@ -191,6 +203,14 @@ class CMCPProxy:
                 stage_results=stage_results,
             )
         )
+        # SessionCallLog: record with richer fields for call_graph_summary.
+        if call_id is not None:
+            self._session_call_log.record_call(
+                call_id=call_id,
+                catalog_entry=catalog_entry,
+                policy_decision=policy_decision,
+                response_sensitivity_tags=response_sensitivity_tags,
+            )
         if self._call_log.suspicious_sequence():
             consecutive = self._call_log.consecutive_count(tool_name)
             self._audit.append(
@@ -272,6 +292,9 @@ class CMCPProxy:
                 allowed=False,
                 sensitivity_before=sensitivity_before,
                 stage_results={"catalog": "deny"},
+                call_id=call_id,
+                catalog_entry=None,
+                policy_decision="deny",
             )
             return CallResult(
                 call_id=call_id,
@@ -331,6 +354,9 @@ class CMCPProxy:
                 allowed=False,
                 sensitivity_before=sensitivity_before,
                 stage_results={"policy": "deny"},
+                call_id=call_id,
+                catalog_entry=entry,
+                policy_decision="deny",
             )
             return CallResult(
                 call_id=call_id,
@@ -393,6 +419,9 @@ class CMCPProxy:
                 allowed=False,
                 sensitivity_before=sensitivity_before,
                 stage_results={"agt_gateway": "deny"},
+                call_id=call_id,
+                catalog_entry=entry,
+                policy_decision="deny",
             )
             return CallResult(
                 call_id=call_id,
@@ -500,6 +529,10 @@ class CMCPProxy:
             allowed=True,
             sensitivity_before=sensitivity_before,
             stage_results={"policy": str(policy_decision)},
+            call_id=call_id,
+            catalog_entry=entry,
+            policy_decision=str(policy_decision),
+            response_sensitivity_tags=list(response_sensitivity or []),
         )
 
         return CallResult(
