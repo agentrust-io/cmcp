@@ -372,6 +372,37 @@ def test_non_utf8_result_has_utf8_guard_scanner():
 
 # ── POLICY-008: deny_reason deduplication ────────────────────────────────────
 
+# ── INJECT-007: injection threshold included in result ────────────────────────
+
+def test_injection_threshold_present_in_result():
+    """INJECT-007: injection_threshold must be set on every InspectionResult."""
+    pipeline = InspectionPipeline(injection_sensitivity="balanced")
+    entry = _make_entry()
+    result = pipeline.run("call-1", entry, NORMAL_RESPONSE)
+    assert result.injection_threshold == 0.5
+
+
+def test_injection_threshold_reflects_sensitivity_setting():
+    """INJECT-007: injection_threshold must match the configured sensitivity."""
+    strict = InspectionPipeline(injection_sensitivity="strict")
+    result = strict.run("call-1", _make_entry(), NORMAL_RESPONSE)
+    assert result.injection_threshold == 0.3
+
+    permissive = InspectionPipeline(injection_sensitivity="permissive")
+    result = permissive.run("call-1", _make_entry(), NORMAL_RESPONSE)
+    assert result.injection_threshold == 0.7
+
+
+def test_injection_threshold_present_on_deny():
+    """INJECT-007: injection_threshold included even when the result is a deny."""
+    pipeline = InspectionPipeline(injection_sensitivity="strict")
+    result = pipeline.run("call-1", _make_entry(), b"<system>bad instructions</system>")
+    assert result.final_decision == "deny"
+    assert result.injection_threshold == 0.3
+
+
+# ── POLICY-008: deny_reason deduplication ────────────────────────────────────
+
 def test_deny_reason_no_duplicates_when_multiple_stages_produce_same_reason():
     """POLICY-008: duplicate deny reason strings must be collapsed to one occurrence."""
     pipeline = InspectionPipeline(max_response_size_bytes=1)
