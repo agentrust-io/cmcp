@@ -55,7 +55,7 @@ class AuditEntry:
     response_inspection_result: InspectionResult | None
     session_sensitivity_before: str | None
     session_sensitivity_after: str | None
-    detail: dict[str, str | int] | None  # optional structured detail (e.g. suspicious_call_sequence)
+    detail: dict[str, str | int | float] | None  # optional structured detail (e.g. suspicious_call_sequence)
     workflow_id: str | None
     prev_entry_hash: str  # "genesis" for first entry
     entry_hash: str = field(default="")  # computed after construction
@@ -155,7 +155,7 @@ class AuditChain:
         response_inspection_result: InspectionResult | None = None,
         session_sensitivity_before: str | None = None,
         session_sensitivity_after: str | None = None,
-        detail: dict[str, str | int] | None = None,
+        detail: dict[str, str | int | float] | None = None,
         workflow_id: str | None = None,
     ) -> AuditEntry:
         prev_hash = self._entries[-1].entry_hash if self._entries else "genesis"

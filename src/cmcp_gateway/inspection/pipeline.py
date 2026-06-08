@@ -552,6 +552,9 @@ class InspectionPipeline:
                 injection_scanner = s4.injection_scanner
                 injection_score = s4.injection_score
 
+        # POLICY-008: deduplicate deny_reasons so the audit record reflects distinct
+        # policy firings, not duplicated entries from multiple code paths.
+        deny_reasons = list(dict.fromkeys(deny_reasons))
         final = "deny" if deny_reasons else "allow"
 
         # Handoff to session state — happens even for denied responses
