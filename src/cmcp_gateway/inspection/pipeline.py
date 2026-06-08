@@ -52,6 +52,15 @@ _DEFAULT_INJECTION_PATTERNS: list[tuple[str, str]] = [
 
 _COMPILED_PATTERNS = [(re.compile(p, re.DOTALL), name) for p, name in _DEFAULT_INJECTION_PATTERNS]
 
+# INJECT-006: stable hash of the active regex pattern set — included in every InspectionResult
+# so audit consumers can tell which pattern version was active at decision time.
+_PATTERN_SET_HASH: str = (
+    "sha256:"
+    + hashlib.sha256(
+        "|".join(f"{p}:{n}" for p, n in _DEFAULT_INJECTION_PATTERNS).encode()
+    ).hexdigest()[:16]
+)
+
 
 @dataclass
 class StageResult:
@@ -80,6 +89,7 @@ class InspectionResult:
     injection_scanner: str | None = None  # which scanner detected: "agt_mcp", "agt_detector", "regex", "timeout"
     injection_score: float | None = None  # confidence score (0.0–1.0) if available
     injection_threshold: float | None = None  # threshold in effect when the decision was made
+    injection_pattern_set_hash: str | None = None  # INJECT-006: hash of active regex pattern set
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -471,6 +481,7 @@ class InspectionPipeline:
                 modified_response=None,
                 injection_scanner="utf8_guard",
                 injection_threshold=self._injection_threshold,
+                injection_pattern_set_hash=_PATTERN_SET_HASH,
             )
 
         agt_mcp_denied = False
@@ -564,4 +575,5 @@ class InspectionPipeline:
             injection_scanner=injection_scanner,
             injection_score=injection_score,
             injection_threshold=self._injection_threshold,
+            injection_pattern_set_hash=_PATTERN_SET_HASH,
         )

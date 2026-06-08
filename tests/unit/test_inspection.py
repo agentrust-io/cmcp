@@ -374,6 +374,32 @@ def test_non_utf8_result_has_utf8_guard_scanner():
 
 # ── INJECT-007: injection threshold included in result ────────────────────────
 
+# ── INJECT-006: pattern set hash in every result ──────────────────────────────
+
+def test_pattern_set_hash_present_on_allow():
+    """INJECT-006: injection_pattern_set_hash must be set on allow results."""
+    pipeline = InspectionPipeline()
+    result = pipeline.run("call-1", _make_entry(), NORMAL_RESPONSE)
+    assert result.injection_pattern_set_hash is not None
+    assert result.injection_pattern_set_hash.startswith("sha256:")
+
+
+def test_pattern_set_hash_present_on_deny():
+    """INJECT-006: injection_pattern_set_hash must be set on deny results."""
+    result = InspectionPipeline().run("call-1", _make_entry(), b"<system>bad</system>")
+    assert result.injection_pattern_set_hash is not None
+    assert result.injection_pattern_set_hash.startswith("sha256:")
+
+
+def test_pattern_set_hash_stable_across_instances():
+    """INJECT-006: hash must be the same for two pipelines using the same patterns."""
+    r1 = InspectionPipeline().run("c1", _make_entry(), NORMAL_RESPONSE)
+    r2 = InspectionPipeline().run("c2", _make_entry(), NORMAL_RESPONSE)
+    assert r1.injection_pattern_set_hash == r2.injection_pattern_set_hash
+
+
+# ── INJECT-007: injection threshold included in result ────────────────────────
+
 def test_injection_threshold_present_in_result():
     """INJECT-007: injection_threshold must be set on every InspectionResult."""
     pipeline = InspectionPipeline(injection_sensitivity="balanced")
