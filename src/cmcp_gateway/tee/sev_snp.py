@@ -136,13 +136,12 @@ class SEVSNPProvider(TEEProvider):
         measurement = "sha384:" + hashlib.sha384(measurement_bytes).hexdigest()
 
         # HW-002: reject reports whose measurement does not match the expected binary hash.
-        if self._expected_measurement is not None:
-            if not hmac.compare_digest(measurement, self._expected_measurement):
-                raise RuntimeError(
-                    "SEV-SNP measurement mismatch: the report measurement does not match "
-                    "attestation.expected_measurement from config. "
-                    "This report may be replayed from a different binary or build."
-                )
+        if self._expected_measurement is not None and not hmac.compare_digest(measurement, self._expected_measurement):
+            raise RuntimeError(
+                "SEV-SNP measurement mismatch: the report measurement does not match "
+                "attestation.expected_measurement from config. "
+                "This report may be replayed from a different binary or build."
+            )
 
         return AttestationReport(
             provider=self.provider_name(),
