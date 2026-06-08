@@ -211,6 +211,75 @@ def test_rate_limit_middleware_paths_only():
         assert resp.status_code == 200
 
 
+# ── CONF-007: /readyz structured readiness probe ──────────────────────────────
+
+def _make_ready_server() -> MCPServer:
+    """Server where all readiness checks pass."""
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {"test.tool": MagicMock()}  # non-empty catalog
+    proxy._policy = MagicMock()  # policy present
+    proxy._check_health.return_value = None  # attestation healthy
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        return MCPServer(proxy, bearer_token="secret")
+
+
+def test_readyz_returns_200_when_healthy():
+    """CONF-007: /readyz returns 200 when all components are operational."""
+    server = _make_ready_server()
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["checks"]["catalog"] == "ok"
+    assert body["checks"]["policy"] == "ok"
+    assert body["checks"]["attestation"] == "ok"
+
+
+def test_readyz_returns_503_when_catalog_empty():
+    """CONF-007: empty catalog makes gateway degraded."""
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {}
+    proxy._policy = MagicMock()
+    proxy._check_health.return_value = None
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.get("/readyz")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["catalog"] == "empty"
+
+
+def test_readyz_returns_503_when_attestation_stale():
+    """CONF-007: stale attestation makes gateway degraded."""
+    proxy = MagicMock()
+    proxy._catalog = MagicMock()
+    proxy._catalog.entries = {"test.tool": MagicMock()}
+    proxy._policy = MagicMock()
+    proxy._check_health.return_value = "attestation_stale"
+    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+        server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.get("/readyz")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["attestation"] == "attestation_stale"
+
+
+def test_readyz_accessible_without_bearer_token():
+    """CONF-007: /readyz must not require authentication (Kubernetes probe)."""
+    server = _make_ready_server()
+    client = TestClient(server.app, raise_server_exceptions=False)
+    # No Authorization header — should still return 200
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+
+
 # ── INJECT-002: sanitize method in error responses ────────────────────────────
 
 def test_unknown_method_non_ascii_is_replaced():

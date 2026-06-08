@@ -96,6 +96,77 @@ def test_generate_claim_version():
     assert claim.cmcp_version == "1.0"
 
 
+def test_generate_claim_gateway_version():
+    """CONF-006: gateway_version must appear in GatewayAddenda."""
+    claim = _make_claim()
+    assert isinstance(claim.gateway.gateway_version, str)
+    assert len(claim.gateway.gateway_version) > 0
+
+
+# ── AUDIT-005: sequence_number and prev_claim_hash ────────────────────────────
+
+
+def test_generate_claim_sequence_number_default():
+    """AUDIT-005: sequence_number defaults to 1."""
+    claim = _make_claim()
+    assert claim.gateway.sequence_number == 1
+
+
+def test_generate_claim_sequence_number_custom():
+    """AUDIT-005: sequence_number is included in the claim."""
+    key = SigningKey()
+    chain = AuditChain("sess-001")
+    claim = generate_trace_claim(
+        session_id="sess-001",
+        signing_key=key,
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64,
+            enforcement_mode="enforcing",
+            policy_version="1.0.0",
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        sequence_number=7,
+        do_sign=False,
+    )
+    assert claim.gateway.sequence_number == 7
+
+
+def test_generate_claim_prev_claim_hash_default_none():
+    """AUDIT-005: prev_claim_hash is None when not provided."""
+    claim = _make_claim()
+    assert claim.gateway.prev_claim_hash is None
+
+
+def test_generate_claim_prev_claim_hash_set():
+    """AUDIT-005: prev_claim_hash is included when provided."""
+    key = SigningKey()
+    chain = AuditChain("sess-001")
+    prev_hash = "sha256:" + "a" * 64
+    claim = generate_trace_claim(
+        session_id="sess-001",
+        signing_key=key,
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64,
+            enforcement_mode="enforcing",
+            policy_version="1.0.0",
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        prev_claim_hash=prev_hash,
+        do_sign=False,
+    )
+    assert claim.gateway.prev_claim_hash == prev_hash
+
+
 def test_generate_claim_session_id():
     claim = _make_claim()
     assert claim.gateway.session_id == "sess-001"

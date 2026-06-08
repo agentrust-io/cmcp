@@ -27,10 +27,13 @@ from cmcp_gateway.catalog.loader import CatalogEntry
 try:
     from agent_os.credential_redactor import CredentialRedactor
     from agent_os.mcp_response_scanner import MCPResponseScanner as AGTResponseScanner
-    from agent_os.prompt_injection import PromptInjectionDetector
+    from agent_os.prompt_injection import DetectionConfig, PromptInjectionDetector
     _AGT_AVAILABLE = True
 except ImportError:
     _AGT_AVAILABLE = False
+
+# Mirrors agent_os._SENSITIVITY_THRESHOLDS — update if the package changes.
+_INJECTION_THRESHOLDS: dict[str, float] = {"strict": 0.3, "balanced": 0.5, "permissive": 0.7}
 
 # ── Fallback injection patterns (used when AGT not available) ─────────────────
 # Starter set per docs/spec/response-inspection.md §Stage 4.
@@ -48,6 +51,15 @@ _DEFAULT_INJECTION_PATTERNS: list[tuple[str, str]] = [
 ]
 
 _COMPILED_PATTERNS = [(re.compile(p, re.DOTALL), name) for p, name in _DEFAULT_INJECTION_PATTERNS]
+
+# INJECT-006: stable hash of the active regex pattern set — included in every InspectionResult
+# so audit consumers can tell which pattern version was active at decision time.
+_PATTERN_SET_HASH: str = (
+    "sha256:"
+    + hashlib.sha256(
+        "|".join(f"{p}:{n}" for p, n in _DEFAULT_INJECTION_PATTERNS).encode()
+    ).hexdigest()[:16]
+)
 
 
 @dataclass
@@ -76,6 +88,8 @@ class InspectionResult:
     # INJECT-003: scanner attribution for audit chain context
     injection_scanner: str | None = None  # which scanner detected: "agt_mcp", "agt_detector", "regex", "timeout"
     injection_score: float | None = None  # confidence score (0.0–1.0) if available
+    injection_threshold: float | None = None  # threshold in effect when the decision was made
+    injection_pattern_set_hash: str | None = None  # INJECT-006: hash of active regex pattern set
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -368,10 +382,12 @@ class InspectionPipeline:
         max_response_size_bytes: int = 2 * 1024 * 1024,
         custom_injection_patterns: list[tuple[re.Pattern[str], str]] | None = None,
         scanner_timeout_seconds: float = 5.0,
+        injection_sensitivity: str = "balanced",
     ) -> None:
         self._max_bytes = max_response_size_bytes
         self._injection_patterns = custom_injection_patterns
         self._scanner_timeout = scanner_timeout_seconds
+        self._injection_threshold: float | None = _INJECTION_THRESHOLDS.get(injection_sensitivity)
 
         # Instantiate AGT components once per pipeline instance
         self._agt_injection_detector: Any = None
@@ -379,7 +395,8 @@ class InspectionPipeline:
         self._agt_response_scanner: Any = None
         if _AGT_AVAILABLE:
             try:
-                self._agt_injection_detector = PromptInjectionDetector()
+                _cfg = DetectionConfig(sensitivity=injection_sensitivity)
+                self._agt_injection_detector = PromptInjectionDetector(config=_cfg)
                 self._agt_redactor = CredentialRedactor()
                 self._agt_response_scanner = AGTResponseScanner()
             except Exception:  # nosec B110
@@ -455,7 +472,7 @@ class InspectionPipeline:
             return InspectionResult(
                 call_id=call_id,
                 final_decision="deny",
-                deny_reason="; ".join(deny_reasons),
+                deny_reason="; ".join(dict.fromkeys(deny_reasons)),
                 sensitivity_tags=sensitivity_tags,
                 stripped_fields=stripped_fields,
                 injection_pattern_matched=injection_pattern,
@@ -463,6 +480,8 @@ class InspectionPipeline:
                 response_payload_hash=response_payload_hash,
                 modified_response=None,
                 injection_scanner="utf8_guard",
+                injection_threshold=self._injection_threshold,
+                injection_pattern_set_hash=_PATTERN_SET_HASH,
             )
 
         agt_mcp_denied = False
@@ -546,7 +565,7 @@ class InspectionPipeline:
         return InspectionResult(
             call_id=call_id,
             final_decision=final,
-            deny_reason="; ".join(deny_reasons) if deny_reasons else None,
+            deny_reason="; ".join(dict.fromkeys(deny_reasons)) if deny_reasons else None,
             sensitivity_tags=sensitivity_tags,
             stripped_fields=stripped_fields,
             injection_pattern_matched=injection_pattern,
@@ -555,4 +574,6 @@ class InspectionPipeline:
             modified_response=modified_response,
             injection_scanner=injection_scanner,
             injection_score=injection_score,
+            injection_threshold=self._injection_threshold,
+            injection_pattern_set_hash=_PATTERN_SET_HASH,
         )

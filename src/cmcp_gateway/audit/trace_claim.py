@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.metadata
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,6 +11,11 @@ from typing import Annotated, Any, Literal
 
 from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo, ToolTranscript
 from pydantic import BaseModel, ConfigDict, Field
+
+try:
+    _GATEWAY_VERSION: str = importlib.metadata.version("cmcp-gateway")
+except importlib.metadata.PackageNotFoundError:
+    _GATEWAY_VERSION = "unknown"
 
 # ── Provider → canonical platform mapping ─────────────────────────────────────
 
@@ -136,6 +142,9 @@ class GatewayAddenda(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: str
+    gateway_version: str
+    sequence_number: int  # AUDIT-005: monotonically increasing across all claims from this instance
+    prev_claim_hash: str | None = None  # AUDIT-005: sha256 of previous claim's canonical JSON
     audit_chain: AuditChainSummary
     call_summary: CallSummaryOut
     catalog: CatalogSummary
@@ -257,6 +266,8 @@ def generate_trace_claim(
     attestation_stale: bool = False,
     catalog_exceptions: list[dict[str, str]] | None = None,
     call_log_summary: CallLogSummary | None = None,
+    sequence_number: int = 1,
+    prev_claim_hash: str | None = None,
     do_sign: bool = True,
 ) -> GatewayClaim:
     """Generate a GatewayClaim from session data, validate it via Pydantic, and optionally sign it.
@@ -287,6 +298,9 @@ def generate_trace_claim(
 
     gateway = GatewayAddenda(
         session_id=session_id,
+        gateway_version=_GATEWAY_VERSION,
+        sequence_number=sequence_number,
+        prev_claim_hash=prev_claim_hash,
         audit_chain=AuditChainSummary(
             root=audit_chain_root,
             tip=audit_chain_tip,
