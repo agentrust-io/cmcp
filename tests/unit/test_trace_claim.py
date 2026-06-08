@@ -96,6 +96,13 @@ def test_generate_claim_version():
     assert claim.cmcp_version == "1.0"
 
 
+def test_generate_claim_gateway_version():
+    """CONF-006: gateway_version must appear in GatewayAddenda."""
+    claim = _make_claim()
+    assert isinstance(claim.gateway.gateway_version, str)
+    assert len(claim.gateway.gateway_version) > 0
+
+
 def test_generate_claim_session_id():
     claim = _make_claim()
     assert claim.gateway.session_id == "sess-001"

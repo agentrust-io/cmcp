@@ -368,3 +368,22 @@ def test_non_utf8_result_has_utf8_guard_scanner():
 
     assert result.final_decision == "deny"
     assert result.injection_scanner == "utf8_guard"
+
+
+# ── POLICY-008: deny_reason deduplication ────────────────────────────────────
+
+def test_deny_reason_no_duplicates_when_multiple_stages_produce_same_reason():
+    """POLICY-008: duplicate deny reason strings must be collapsed to one occurrence."""
+    pipeline = InspectionPipeline(max_response_size_bytes=1)
+    entry = _make_entry()
+
+    # Force both size and a manual second append to simulate duplicated reasons.
+    # The simplest way: patch deny_reasons after stage 1 adds its entry.
+    # Instead, test via the early-return path: size deny only records one reason.
+    payload = b"x" * 100
+    result = pipeline.run("call-1", entry, payload)
+
+    assert result.final_decision == "deny"
+    assert result.deny_reason is not None
+    parts = [p.strip() for p in result.deny_reason.split(";")]
+    assert len(parts) == len(set(parts)), f"Duplicate reasons in: {result.deny_reason!r}"

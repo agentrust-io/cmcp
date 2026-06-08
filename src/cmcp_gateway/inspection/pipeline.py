@@ -455,7 +455,7 @@ class InspectionPipeline:
             return InspectionResult(
                 call_id=call_id,
                 final_decision="deny",
-                deny_reason="; ".join(deny_reasons),
+                deny_reason="; ".join(dict.fromkeys(deny_reasons)),
                 sensitivity_tags=sensitivity_tags,
                 stripped_fields=stripped_fields,
                 injection_pattern_matched=injection_pattern,
@@ -546,7 +546,7 @@ class InspectionPipeline:
         return InspectionResult(
             call_id=call_id,
             final_decision=final,
-            deny_reason="; ".join(deny_reasons) if deny_reasons else None,
+            deny_reason="; ".join(dict.fromkeys(deny_reasons)) if deny_reasons else None,
             sensitivity_tags=sensitivity_tags,
             stripped_fields=stripped_fields,
             injection_pattern_matched=injection_pattern,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.metadata
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,6 +11,11 @@ from typing import Annotated, Any, Literal
 
 from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo, ToolTranscript
 from pydantic import BaseModel, ConfigDict, Field
+
+try:
+    _GATEWAY_VERSION: str = importlib.metadata.version("cmcp-gateway")
+except importlib.metadata.PackageNotFoundError:
+    _GATEWAY_VERSION = "unknown"
 
 # ── Provider → canonical platform mapping ─────────────────────────────────────
 
@@ -136,6 +142,7 @@ class GatewayAddenda(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: str
+    gateway_version: str
     audit_chain: AuditChainSummary
     call_summary: CallSummaryOut
     catalog: CatalogSummary
@@ -287,6 +294,7 @@ def generate_trace_claim(
 
     gateway = GatewayAddenda(
         session_id=session_id,
+        gateway_version=_GATEWAY_VERSION,
         audit_chain=AuditChainSummary(
             root=audit_chain_root,
             tip=audit_chain_tip,
