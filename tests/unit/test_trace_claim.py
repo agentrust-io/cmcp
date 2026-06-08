@@ -103,6 +103,14 @@ def test_generate_claim_gateway_version():
     assert len(claim.gateway.gateway_version) > 0
 
 
+def test_generate_claim_gateway_version_is_string_or_unknown():
+    """CONF-006: gateway_version is a non-empty string; 'unknown' is the valid fallback."""
+    from cmcp_gateway.audit.trace_claim import _GATEWAY_VERSION
+    assert isinstance(_GATEWAY_VERSION, str)
+    assert len(_GATEWAY_VERSION) > 0
+
+
+
 # ── AUDIT-005: sequence_number and prev_claim_hash ────────────────────────────
 
 
