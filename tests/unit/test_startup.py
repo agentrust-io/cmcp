@@ -43,6 +43,10 @@ CATALOG_ENTRY = {
 def complete_setup(tmp_path: Path, monkeypatch):
     """Set up a complete valid config + policy + catalog for startup tests."""
     monkeypatch.setenv("CMCP_DEV_MODE", "1")
+    # TEE-002: DEV_MODE is frozen at import; patch the constant directly so
+    # load_config() sees True even though the module was already imported.
+    import cmcp_gateway.config as _cfg
+    monkeypatch.setattr(_cfg, "DEV_MODE", True)
 
     # Config
     config_path = tmp_path / "cmcp-config.yaml"
