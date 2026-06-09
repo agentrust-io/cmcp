@@ -10,13 +10,15 @@ from cmcp_gateway import __version__
 @click.group()
 @click.version_option(__version__, prog_name="cmcp")
 def main() -> None:
-    """cMCP Gateway — hardware-attested MCP gateway."""
+    """cMCP Runtime: hardware-attested MCP runtime."""
 
 
 @main.command()
 @click.option("--config", required=True, type=click.Path(exists=True), help="Path to cmcp-config.yaml")
-def start(config: str) -> None:
-    """Start the cMCP Gateway."""
+@click.option("--enforcement", type=click.Choice(["enforcing", "advisory", "silent"]), default=None,
+              help="Override attestation.enforcement_mode from config")
+def start(config: str, enforcement: str | None) -> None:
+    """Start the cMCP Runtime."""
     from uuid import uuid4
 
     import uvicorn
@@ -30,6 +32,11 @@ def start(config: str) -> None:
     from cmcp_gateway.startup import run_startup
 
     ctx = run_startup(config)
+
+    # Apply CLI override after loading config, before proxy is instantiated.
+    if enforcement is not None:
+        from cmcp_gateway.config import EnforcementMode
+        ctx.config.attestation.enforcement_mode = EnforcementMode(enforcement)
 
     # Resolve provider string to canonical platform name for Cedar context.
     # Falls back to the raw provider string if not in the map (e.g. future providers).
@@ -54,7 +61,7 @@ def start(config: str) -> None:
     port = int(port_str)
 
     click.echo(
-        f"cMCP Gateway starting — TEE: {ctx.attestation_report.provider},"
+        f"cMCP Runtime starting: TEE: {ctx.attestation_report.provider},"
         f" listen: {ctx.config.listen_addr}"
     )
     uvicorn.run(server.app, host=host, port=port)
@@ -63,7 +70,7 @@ def start(config: str) -> None:
 @main.command("validate-config")
 @click.option("--config", required=True, type=click.Path(exists=True), help="Path to cmcp-config.yaml")
 def validate_config(config: str) -> None:
-    """Validate cmcp-config.yaml without starting the gateway."""
+    """Validate cmcp-config.yaml without starting the runtime."""
     from cmcp_gateway.config import load_config
 
     try:
