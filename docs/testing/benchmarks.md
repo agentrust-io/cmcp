@@ -1,19 +1,19 @@
-# cMCP Gateway — Latency Targets and Benchmark Specification
+﻿# cMCP Runtime — Latency Targets and Benchmark Specification
 
 Closes #27.
 
 ## Overview
 
-This document defines latency targets and the benchmark methodology for the cMCP Gateway. Targets are split by phase:
+This document defines latency targets and the benchmark methodology for the cMCP Runtime. Targets are split by phase:
 
-- **Phase 1**: Gateway intercept path only (Cedar policy evaluation, audit entry creation, routing). No payload inspection.
+- **Phase 1**: Runtime intercept path only (Cedar policy evaluation, audit entry creation, routing). No payload inspection.
 - **Phase 2**: Full proxy path with payload inspection (pattern-based and model-based classification).
 
 ---
 
 ## Phase 1 Targets
 
-### Attestation Handshake (one-time, at gateway startup)
+### Attestation Handshake (one-time, at runtime startup)
 
 Attestation is a startup cost, not a per-call cost. It is not included in the per-call latency budget.
 
@@ -24,7 +24,7 @@ Attestation is a startup cost, not a per-call cost. It is not included in the pe
 | TDX             | < 100ms    | Azure DCedsv5, GCP C3                              |
 | Opaque Managed  | < 50ms     | Opaque Managed Runtime, highest assurance          |
 
-### Per-Call Gateway Overhead
+### Per-Call Runtime Overhead
 
 Covers Cedar policy evaluation + audit entry creation + routing. Excludes upstream tool execution time.
 
@@ -46,7 +46,7 @@ Expected breakdown for a 10-rule policy bundle:
 
 ## Phase 2 Targets
 
-Phase 2 adds payload inspection between gateway receive and upstream forward.
+Phase 2 adds payload inspection between runtime receive and upstream forward.
 
 | Path                                           | p50     | p95     | p99     |
 |------------------------------------------------|---------|---------|---------|
@@ -107,7 +107,7 @@ Collect the following per run, in microseconds unless noted:
 |---------------------------|-------|-------------------------------------------------------------------------------|
 | `cedar_eval_latency_us`   | µs    | Cedar policy evaluation time                                                  |
 | `audit_entry_latency_us`  | µs    | Time to hash and append audit chain entry                                     |
-| `routing_latency_us`      | µs    | Time from gateway receive to first byte sent to upstream                      |
+| `routing_latency_us`      | µs    | Time from runtime receive to first byte sent to upstream                      |
 | `end_to_end_latency_us`   | µs    | Time from agent request received to response returned (excludes upstream)     |
 | `attestation_handshake_ms`| ms    | Measured once at startup, not per-call                                        |
 

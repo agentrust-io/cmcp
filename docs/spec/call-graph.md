@@ -1,4 +1,4 @@
-# Call Graph Tracking
+﻿# Call Graph Tracking
 
 Status: Draft v0.1 | Closes #35 | Related: session-policy.md, cedar-policy.md
 
@@ -6,18 +6,18 @@ Status: Draft v0.1 | Closes #35 | Related: session-policy.md, cedar-policy.md
 
 Individual call authorization is insufficient for cross-system compliance boundary enforcement (P1.3). A session may issue a sequence of tool calls where each individual call is individually authorized, yet the combination crosses a compliance boundary. For example: call A retrieves PHI from an EHR tool (authorized for the principal), and call B posts to an external webhook (also authorized for the principal in isolation). Neither call is individually impermissible, but together they represent an unauthorized export of PHI across a regulatory boundary.
 
-The gateway tracks a per-session call log inside the enclave to detect and enforce against these cross-boundary patterns. This document specifies how that tracking works, what the gateway can and cannot observe, and what the resulting enforcement guarantees actually mean.
+The runtime tracks a per-session call log inside the enclave to detect and enforce against these cross-boundary patterns. This document specifies how that tracking works, what the runtime can and cannot observe, and what the resulting enforcement guarantees actually mean.
 
-## The Gateway's Observability Limit (Critical)
+## The Runtime's Observability Limit (Critical)
 
-The gateway sits at the MCP transport boundary. It can observe:
+The runtime sits at the MCP transport boundary. It can observe:
 
 - Which tool calls are made (tool name, server, arguments)
 - Which responses are returned to the agent runtime
 - The sequence and timing of calls and responses within a session
 - The compliance metadata attached to each tool in the catalog
 
-The gateway **cannot** observe:
+The runtime **cannot** observe:
 
 - Whether the agent included a specific response in its next context window
 - Whether the agent reformulated, summarized, or discarded a response before issuing a subsequent call
@@ -25,19 +25,19 @@ The gateway **cannot** observe:
 - The agent's internal reasoning about which data influenced which subsequent call
 - The contents of the agent's context window at any given moment
 
-This is not a gap that can be closed by the gateway alone. The gateway has no privileged access to the agent runtime, the model's context, or the orchestration layer's memory management. Agents may truncate context, use summarization, apply sliding windows, or selectively include only parts of prior responses. These are design choices of the agent system, not observable behaviors at the MCP transport layer.
+This is not a gap that can be closed by the runtime alone. The runtime has no privileged access to the agent process, the model's context, or the orchestration layer's memory management. Agents may truncate context, use summarization, apply sliding windows, or selectively include only parts of prior responses. These are design choices of the agent system, not observable behaviors at the MCP transport layer.
 
-This means the call graph the gateway maintains is an **approximation based on temporal adjacency**, not true data provenance. Any implementation claiming to track "which data from tool A flowed into tool B's request" is making an inference, not an observation. This distinction has material consequences for compliance claims: a TRACE Claim generated from gateway-observable data cannot assert true data lineage, only temporal co-occurrence within a session.
+This means the call graph the runtime maintains is an **approximation based on temporal adjacency**, not true data provenance. Any implementation claiming to track "which data from tool A flowed into tool B's request" is making an inference, not an observation. This distinction has material consequences for compliance claims: a TRACE Claim generated from runtime-observable data cannot assert true data lineage, only temporal co-occurrence within a session.
 
 ## Tag-Propagation Model (Phase 1)
 
-Instead of attempting to track data flow (which is not observable by the gateway), Phase 1 uses a **tag-propagation model**: sensitivity tags are associated with tool responses and accumulated conservatively at the session level based on observable events.
+Instead of attempting to track data flow (which is not observable by the runtime), Phase 1 uses a **tag-propagation model**: sensitivity tags are associated with tool responses and accumulated conservatively at the session level based on observable events.
 
-The governing principle is conservatism. The gateway cannot know whether a high-sensitivity response influenced a subsequent call, so it assumes that it did. This may produce false positives (blocking a call that would not actually use sensitive data), but it will not produce false negatives (allowing a call that does use sensitive data). For regulated data categories, false negatives are the unacceptable failure mode.
+The governing principle is conservatism. The runtime cannot know whether a high-sensitivity response influenced a subsequent call, so it assumes that it did. This may produce false positives (blocking a call that would not actually use sensitive data), but it will not produce false negatives (allowing a call that does use sensitive data). For regulated data categories, false negatives are the unacceptable failure mode.
 
 ### What Gets Tagged
 
-When the gateway receives a tool response, it classifies the response and assigns sensitivity tags based on three sources, evaluated in order:
+When the runtime receives a tool response, it classifies the response and assigns sensitivity tags based on three sources, evaluated in order:
 
 1. **The tool's catalog entry** (`compliance_domain`, `sensitivity_level`) — known at call time, before the response arrives
 2. **Cedar policy annotations on the tool** (for example, `"this tool always returns PHI"`) — known at call time
@@ -55,7 +55,7 @@ public < pii < confidential < trade_secret
 
 `hipaa_phi`, `mnpi`, and `trade_secret` are terminal high-sensitivity tags. Once any of these is present in `session_max_sensitivity`, that status persists for the session lifetime unless an explicit session reset is issued via the API.
 
-### What the Gateway Stores
+### What the Runtime Stores
 
 Per-session call log (maintained inside the enclave as in-memory working state; this is distinct from the immutable audit chain entry, which is written once per call at decision time):
 
@@ -115,7 +115,7 @@ The TRACE Claim metadata **must** document this distinction explicitly. See the 
 
 ## Cross-System Compliance Boundary Policy
 
-Cedar policy that enforces cross-boundary restrictions using `session_max_sensitivity` (which the gateway observes directly):
+Cedar policy that enforces cross-boundary restrictions using `session_max_sensitivity` (which the runtime observes directly):
 
 ```cedar
 forbid(principal, action == Action::"call_tool", resource)
@@ -128,7 +128,7 @@ when {
 
 This correctly expresses: "if any call in this session has received a PHI-tagged response, do not allow calls to external destinations that are not covered by a BAA."
 
-It does **not** express: "data from this specific PHI call flows to this specific external destination." That statement cannot be made from gateway-observable data. The Cedar policy is intentionally written around what the gateway knows.
+It does **not** express: "data from this specific PHI call flows to this specific external destination." That statement cannot be made from runtime-observable data. The Cedar policy is intentionally written around what the gateway knows.
 
 Additional cross-boundary policies follow the same pattern:
 
@@ -154,7 +154,7 @@ Add to the `call_summary` block of the TRACE Claim:
 ```json
 "call_graph_summary": {
   "tracking_model": "temporal_adjacency_v1",
-  "provenance_disclaimer": "Edges represent temporal adjacency within session, not observed data flow. Gateway cannot verify agent context window contents.",
+  "provenance_disclaimer": "Edges represent temporal adjacency within session, not observed data flow. Runtime cannot verify agent context window contents.",
   "session_max_sensitivity": "hipaa_phi",
   "compliance_domains_touched": ["hipaa_phi", "external"],
   "high_sensitivity_call_ids": ["uuid-of-phi-call"],
@@ -184,13 +184,13 @@ The `provenance_disclaimer` field is required in every TRACE Claim that includes
 
 Phase 1 conservatism is the correct starting point but may produce unacceptable false-positive rates in agents that routinely retrieve high-sensitivity data and interact with many downstream tools, where most downstream calls do not actually use the sensitive data.
 
-Phase 2 addresses this by adding agent-side SDK hooks that report context window contents at call time. With agent cooperation, the gateway could receive a manifest of which prior call IDs are represented in the current context window when a new call is issued. This would enable true data provenance edges rather than temporal adjacency approximations.
+Phase 2 addresses this by adding agent-side SDK hooks that report context window contents at call time. With agent cooperation, the runtime could receive a manifest of which prior call IDs are represented in the current context window when a new call is issued. This would enable true data provenance edges rather than temporal adjacency approximations.
 
 Phase 2 is out of scope for the current implementation. It requires:
 
 1. A defined SDK interface for agent runtimes to report context state
-2. An attestation model for the gateway to verify that context reports are not fabricated
-3. Revised Cedar policy semantics that distinguish "agent reports this response is in context" from "gateway inferred this response might be in context"
+2. An attestation model for the runtime to verify that context reports are not fabricated
+3. Revised Cedar policy semantics that distinguish "agent reports this response is in context" from "runtime inferred this response might be in context"
 
 Until Phase 2 is implemented, all call graph tracking is temporal adjacency. The TRACE Claim format defined above accommodates both models via the `tracking_model` field.
 

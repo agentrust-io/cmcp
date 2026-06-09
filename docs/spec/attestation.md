@@ -1,14 +1,14 @@
 ﻿# Attestation Specification
 
 **Document status:** Draft v0.1  
-**Applies to:** cMCP Gateway, all TEE providers  
+**Applies to:** cMCP Runtime, all TEE providers  
 **Related issues:** #5, #6, #23, #33, #38
 
 ---
 
 ## Overview
 
-The cMCP Gateway produces TRACE Claims: signed, hardware-attested proof artifacts that allow a verifier to confirm that a specific set of MCP tool calls was evaluated against a specific policy bundle inside a verified TEE, without trusting the operator. This document is the authoritative specification for how attestation evidence is collected, how the audit chain is constructed, how freshness is enforced, how keys are managed, and how tool catalog integrity is maintained.
+The cMCP Runtime produces TRACE Claims: signed, hardware-attested proof artifacts that allow a verifier to confirm that a specific set of MCP tool calls was evaluated against a specific policy bundle inside a verified TEE, without trusting the operator. This document is the authoritative specification for how attestation evidence is collected, how the audit chain is constructed, how freshness is enforced, how keys are managed, and how tool catalog integrity is maintained.
 
 ---
 
@@ -16,7 +16,7 @@ The cMCP Gateway produces TRACE Claims: signed, hardware-attested proof artifact
 
 ### 1.1 Auto-Detection Algorithm
 
-At gateway startup, the runtime probes for TEE providers in the following fixed order. The first provider whose conditions are satisfied is selected. Only one provider is active per gateway instance.
+At runtime startup, the process probes for TEE providers in the following fixed order. The first provider whose conditions are satisfied is selected. Only one provider is active per runtime instance.
 
 ```
 probe_order = ["tpm", "sev-snp", "tdx", "opaque"]
@@ -43,8 +43,8 @@ Production deployments must not start if no hardware TEE is available. The `DEVE
 #### TPM (Medium Assurance)
 
 Detection conditions (any of):
-- `/dev/tpm0` exists and is readable by the gateway process, OR
-- `/dev/tpmrm0` exists and is readable by the gateway process (resource manager interface), OR
+- `/dev/tpm0` exists and is readable by the runtime process, OR
+- `/dev/tpmrm0` exists and is readable by the runtime process (resource manager interface), OR
 - A vTPM device is detected via the TSS2 ESAPI device enumeration call `Esys_GetCapability(TPMS_CAPABILITY_DATA)` returning at least one TPM device handle.
 
 What goes in `attestation_report.measurement`:
@@ -53,14 +53,14 @@ What goes in `attestation_report.measurement`:
 measurement = SHA-256(PCR0 || PCR1 || PCR2 || PCR3 || PCR4 || PCR5 || PCR6 || PCR7)
 ```
 
-Each PCR value is the raw 32-byte SHA-256 digest read from the TPM. Concatenation is in bank index order (0 through 7), no separators. The result is a 32-byte SHA-256 digest encoded as lowercase hex. The PCR bank used is SHA-256. If the platform only offers a SHA-1 bank, the gateway logs a warning and uses SHA-1 PCR values zero-extended to 32 bytes before hashing; this is noted in `attestation_report.measurement_note: "sha1-bank-fallback"`.
+Each PCR value is the raw 32-byte SHA-256 digest read from the TPM. Concatenation is in bank index order (0 through 7), no separators. The result is a 32-byte SHA-256 digest encoded as lowercase hex. The PCR bank used is SHA-256. If the platform only offers a SHA-1 bank, the runtime logs a warning and uses SHA-1 PCR values zero-extended to 32 bytes before hashing; this is noted in `attestation_report.measurement_note: "sha1-bank-fallback"`.
 
 Quote generation: the gateway calls `TPM2_Quote` with the nonce set to `SHA-256(tee_public_key || session_id)` (see Section 3.3). The quote and its signature are stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use.
 
 #### SEV-SNP (High Assurance)
 
 Detection conditions (all of):
-- `/dev/sev-guest` exists and is readable by the gateway process, AND
+- `/dev/sev-guest` exists and is readable by the runtime process, AND
 - The processor vendor string (CPUID leaf 0) equals `"AuthenticAMD"`.
 
 What goes in `attestation_report.measurement`:
@@ -76,7 +76,7 @@ The full SNP report structure is stored in `attestation_report.raw_evidence` (ba
 #### TDX (High Assurance)
 
 Detection conditions (all of):
-- `/dev/tdx-guest` exists and is readable by the gateway process, AND
+- `/dev/tdx-guest` exists and is readable by the runtime process, AND
 - The processor vendor string (CPUID leaf 0) equals `"GenuineIntel"`.
 
 What goes in `attestation_report.measurement`:
@@ -102,7 +102,7 @@ Detection conditions:
 
 What goes in `attestation_report.measurement`:
 
-The Opaque Managed Runtime provides a dedicated attestation API. The gateway calls `GET $OPAQUE_RUNTIME_ENDPOINT/v1/attestation` with the nonce `SHA-256(tee_public_key || session_id)` as a query parameter. The response includes an Opaque-specific measurement blob and a signed attestation certificate chain rooted in Opaque's hardware root of trust. The measurement field is set to the `measurement` field from the Opaque attestation response (format defined by the Opaque Runtime SDK; currently a 32-byte SHA-256 encoded as lowercase hex). The full response is stored in `attestation_report.raw_evidence`.
+The Opaque Managed Runtime provides a dedicated attestation API. The runtime calls `GET $OPAQUE_RUNTIME_ENDPOINT/v1/attestation` with the nonce `SHA-256(tee_public_key || session_id)` as a query parameter. The response includes an Opaque-specific measurement blob and a signed attestation certificate chain rooted in Opaque's hardware root of trust. The measurement field is set to the `measurement` field from the Opaque attestation response (format defined by the Opaque Runtime SDK; currently a 32-byte SHA-256 encoded as lowercase hex). The full response is stored in `attestation_report.raw_evidence`.
 
 ### 1.3 Software-Only Development Fallback
 
@@ -121,7 +121,7 @@ When `CMCP_DEV_MODE=1` is set and no hardware TEE is detected:
 
 Rules:
 - TRACE Claims with `attestation_assurance: "none"` must not be used for compliance purposes.
-- The gateway logs a prominent warning at startup: `"WARNING: running in software-only mode. TRACE Claims have no hardware attestation and cannot be used for compliance."`.
+- The runtime logs a prominent warning at startup: `"WARNING: running in software-only mode. TRACE Claims have no hardware attestation and cannot be used for compliance."`.
 - Signing still occurs (the ephemeral Ed25519 key is generated in normal process memory), but the signature only proves the claim was not tampered with after issuance -- it provides no hardware-backed assurance of the enclave's integrity.
 
 ---
@@ -134,7 +134,7 @@ At enclave startup, before accepting any connections:
 
 1. Generate an ephemeral Ed25519 keypair inside the TEE using a CSPRNG seeded from the hardware entropy source (TPM `TPM2_GetRandom`, SEV-SNP `RDRAND` + kernel `/dev/urandom` mix-in, TDX equivalent, or Opaque runtime entropy API).
 2. The private key is held only in enclave memory (or equivalent protected region). It is never written to disk, never logged, never exported via any API.
-3. The public key is encoded as a 32-byte Ed25519 public key in base64url (no padding). This value is placed in the `tee_public_key` field of every TRACE Claim issued by this gateway instance.
+3. The public key is encoded as a 32-byte Ed25519 public key in base64url (no padding). This value is placed in the `tee_public_key` field of every TRACE Claim issued by this runtime instance.
 4. When the enclave exits (graceful shutdown or crash), the private key is zeroed from memory via a secure-erase routine before the memory region is released.
 
 The attestation report's `report_data` (nonce) is bound to this key, ensuring the hardware-attested report and the signing key are cryptographically linked (see Section 3.3).
@@ -183,7 +183,7 @@ Chain invariants:
 - `audit_chain_root` in the TRACE Claim = `entry_hash` of the first entry.
 - `audit_chain_tip` in the TRACE Claim = `entry_hash` of the most recent entry at the time the TRACE Claim is generated.
 - The chain is append-only. No entry may be modified or deleted after it is written.
-- The chain lives entirely inside the enclave's memory (or encrypted persistent storage for long-running gateways). No external process can append to or modify the chain.
+- The chain lives entirely inside the enclave's memory (or encrypted persistent storage for long-running runtime instances). No external process can append to or modify the chain.
 
 A verifier reconstructing the chain recomputes each `entry_hash` from the entry body and checks that each `prev_entry_hash` equals the `entry_hash` of the preceding entry, confirming append-only integrity across the full session.
 
@@ -191,10 +191,10 @@ A verifier reconstructing the chain recomputes each `entry_hash` from the entry 
 
 Audit logs are exported as a signed bundle to prevent selective disclosure:
 
-1. Verifier sends a signed API request to the gateway's export endpoint: `POST /v1/audit/export` with a body containing `{"session_id": "<uuid>", "verifier_nonce": "<base64url>"}`. The request must be signed with a verifier key whose public key is pre-configured in the gateway's policy bundle.
-2. The gateway assembles the full ordered array of all audit entries for the session.
-3. The gateway computes `bundle_hash = SHA-256(canonical_json(entries_array))`.
-4. The gateway signs `bundle_hash || verifier_nonce` with the enclave's Ed25519 private key.
+1. Verifier sends a signed API request to the runtime's export endpoint: `POST /v1/audit/export` with a body containing `{"session_id": "<uuid>", "verifier_nonce": "<base64url>"}`. The request must be signed with a verifier key whose public key is pre-configured in the runtime's policy bundle.
+2. The runtime assembles the full ordered array of all audit entries for the session.
+3. The runtime computes `bundle_hash = SHA-256(canonical_json(entries_array))`.
+4. The runtime signs `bundle_hash || verifier_nonce` with the enclave's Ed25519 private key.
 5. The response is:
 
 ```json
@@ -230,7 +230,7 @@ The TRACE Claim includes:
 }
 ```
 
-Default: `attestation_validity_seconds = 86400` (24 hours). Configurable via `gateway.yaml`:
+Default: `attestation_validity_seconds = 86400` (24 hours). Configurable via `cmcp-config.yaml`:
 
 ```yaml
 attestation:
@@ -250,7 +250,7 @@ If this check fails, the TRACE Claim is considered stale. Verifiers must reject 
 Attestation refresh without service interruption:
 
 1. While the enclave is running, call the TEE's attestation API again with a fresh timestamp and the same nonce (`SHA-256(tee_public_key || session_id)`).
-2. Replace `attestation_report` in the gateway's in-memory state with the new report.
+2. Replace `attestation_report` in the runtime's in-memory state with the new report.
 3. Update `attestation_generated_at` to the current UTC timestamp.
 4. All subsequent TRACE Claims use the new `attestation_report` and new `attestation_generated_at`.
 5. TRACE Claims already issued during the current session retain their original `attestation_generated_at`. They are valid for their own validity window and are not retroactively stale.
@@ -263,7 +263,7 @@ attestation:
   max_session_duration: 86400  # equals validity_seconds by default
 ```
 
-Sessions cannot outlive the attestation. If a session reaches `max_session_duration`, the gateway closes it and requires the agent to reconnect. On reconnect, the agent receives a TRACE Claim with a fresh attestation.
+Sessions cannot outlive the attestation. If a session reaches `max_session_duration`, the runtime closes it and requires the agent to reconnect. On reconnect, the agent receives a TRACE Claim with a fresh attestation.
 
 ### 3.3 Replay Prevention
 
@@ -293,7 +293,7 @@ A TRACE Claim replayed from a different session (different `session_id`) or from
 
 ### 4.1 Phase 1: Ephemeral Keys
 
-In Phase 1, the gateway uses a single ephemeral Ed25519 keypair per enclave instance. Properties:
+In Phase 1, the runtime uses a single ephemeral Ed25519 keypair per enclave instance. Properties:
 
 - Generated at enclave startup (see Section 2.1).
 - Exists only in enclave memory. Never exported, never persisted.
@@ -310,7 +310,7 @@ Because the public key is embedded in the claim and attested by the hardware rep
 
 ### 4.2 Phase 2: Persistent Keys (Future)
 
-For use cases requiring long-lived keys (e.g., participation in a key transparency log, or gateway restarts without breaking verifier trust):
+For use cases requiring long-lived keys (e.g., participation in a key transparency log, or runtime restarts without breaking verifier trust):
 
 - At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation; Opaque sealing via Opaque's key management API).
 - The sealed key blob is stored on disk. On restart, the enclave unseals the key. Unsealing succeeds only if the enclave's current measurement matches the measurement policy used when sealing.
@@ -336,7 +336,7 @@ There is no online revocation mechanism for Phase 1 keys. Revocation is handled 
 
 ### 5.1 Catalog Format
 
-The tool catalog is a JSON document versioned in the repository alongside the gateway configuration. It defines the set of approved tools and their expected definitions.
+The tool catalog is a JSON document versioned in the repository alongside the runtime configuration. It defines the set of approved tools and their expected definitions.
 
 Top-level structure:
 
@@ -391,7 +391,7 @@ catalog_hash = lowercase_hex(SHA-256(canonical_json(sorted_entries)))
 
 Only the `entries` array (sorted) is hashed, not the `catalog_version` or `updated_at` fields. This ensures the catalog hash is stable across metadata-only updates.
 
-At enclave startup, the gateway:
+At enclave startup, the runtime:
 1. Loads the catalog document from the configured path.
 2. Computes `catalog_hash` as above.
 3. Stores the hash in the enclave's immutable measurement context (or records it for inclusion in every TRACE Claim).
@@ -399,7 +399,7 @@ At enclave startup, the gateway:
 
 ### 5.3 Delta Detection
 
-When the gateway receives a `notifications/tools/list_changed` notification from an upstream MCP server:
+When the runtime receives a `notifications/tools/list_changed` notification from an upstream MCP server:
 
 ```
 procedure handle_tools_list_changed(server_identity):
@@ -446,7 +446,7 @@ The catalog does not support hot-reload in Phase 1. Updates require:
 2. Recompute `definition_hash` for any modified `approved_definition`.
 3. Commit the updated catalog to version control. This creates an auditable record of who approved the change and when.
 4. Compute the new `catalog_hash` locally and record it in the commit message or PR description for pre-deployment verification.
-5. Deploy the new gateway configuration. This requires an enclave restart.
+5. Deploy the new runtime configuration. This requires an enclave restart.
 6. On restart, the new enclave measures the new catalog hash. Subsequent TRACE Claims will contain the new `tool_catalog.hash`.
 7. Verify: after startup, call `GET /v1/status` which returns the active `catalog_hash`. Confirm it matches the expected value from step 4.
 

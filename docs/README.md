@@ -1,8 +1,8 @@
-# cMCP Spec
+﻿# cMCP Spec
 
-cMCP Gateway is a hardware-attested MCP (Model Context Protocol) gateway. Every MCP tool call an agent makes passes through a TEE-isolated gateway that evaluates it against a Cedar policy bundle and produces a TRACE Claim: a signed, hardware-attested proof artifact a verifier can check without trusting the operator.
+cMCP Runtime is a hardware-attested MCP (Model Context Protocol) runtime. Every MCP tool call an agent makes passes through a TEE-isolated gateway that evaluates it against a Cedar policy bundle and produces a TRACE Claim: a signed, hardware-attested proof artifact a verifier can check without trusting the operator.
 
-Phase 1 attests the agent-to-tool boundary on the consumer side (the gateway). Phase 2 attests it on the provider side (the server). Together they close the proof gap that software-only gateways leave open: "prove that the policy you describe in documents is the policy that actually ran on your traffic."
+Phase 1 attests the agent-to-tool boundary on the consumer side (the runtime). Phase 2 attests it on the provider side (the server). Together they close the proof gap that software-only runtimes leave open: "prove that the policy you describe in documents is the policy that actually ran on your traffic."
 
 This repository contains the product specification. Implementation lives in a separate repo.
 
@@ -13,11 +13,11 @@ This repository contains the product specification. Implementation lives in a se
 **Understanding the problem space:**
 Read SPEC.md. It defines the four problems (P1 data leakage, P2 unsanctioned tools, P3 provable governance, P4 supply chain), the 13 threat shapes, and the coverage matrix showing what Phase 1 closes vs. what Phase 2 closes.
 
-**Implementing the gateway (Phase 1):**
+**Implementing the runtime (Phase 1):**
 Read in this order:
 1. SPEC.md — problem context and scope
 2. docs/spec/component-model.md — what you are building and where trust boundaries are
-3. docs/spec/transport.md — how the gateway intercepts MCP traffic
+3. docs/spec/transport.md — how the runtime intercepts MCP traffic
 4. docs/spec/attestation.md — how TEE attestation works and how to produce TRACE Claims
 5. docs/spec/cedar-policy.md — the policy engine, bundle format, and enforcement modes
 6. docs/spec/failure-modes.md — what happens when things go wrong
@@ -38,11 +38,11 @@ Issues in this repo track spec decisions, not implementation bugs. Each issue co
 | docs/spec/attestation.md | TEE provider detection, audit chain, key management, catalog pinning | 1 | Draft v0.1 | #5, #6, #23, #33, #38 |
 | docs/spec/cedar-policy.md | Policy bundle format, Cedar examples, enforcement modes, provenance | 1 | Draft v0.1 | #4, #7, #26, #39, #41 |
 | docs/spec/tool-identity.md | Server identity binding, catalog schema, collision detection | 1 | Draft v0.1 | #40 |
-| docs/spec/failure-modes.md | Gateway failure scenarios, decision table, log formats | 1 | Draft v0.1 | #22 |
+| docs/spec/failure-modes.md | Runtime failure scenarios, decision table, log formats | 1 | Draft v0.1 | #22 |
 | docs/spec/call-graph.md | Tag-propagation model, observability limits, cross-boundary policy | 1 | Draft v0.1 | #35 |
 | docs/spec/session-policy.md | Session sensitivity state machine, egress policy, session reset | 1 | Draft v0.1 | #36 |
 | docs/spec/response-inspection.md | 4-stage response inspection pipeline, injection patterns | 1 | Draft v0.1 | #37 |
-| docs/spec/error-codes.md | Central error code registry for all gateway and verification errors | 1+2 | Draft v0.1 | — |
+| docs/spec/error-codes.md | Central error code registry for all runtime and verification errors | 1+2 | Draft v0.1 | — |
 | docs/spec/threat-model.md | Assets, adversaries, STRIDE analysis per component | 1 | Draft v0.1 | #18, #24 |
 | docs/spec/verification-library.md | cmcp-verify Python library interface and per-provider verification steps | 1 | Draft v0.1 | #25 |
 | docs/spec/mcp-spec-strategy.md | MCP spec monitoring and attestation extension contribution window | 1+2 | Draft v0.1 | #30 |
@@ -105,14 +105,14 @@ A conforming implementation passes all MUST-level tests. SHOULD-level tests indi
 
 | Term | Definition |
 |------|-----------|
-| TRACE Claim | The signed, hardware-attested proof artifact produced by the gateway per session |
+| TRACE Claim | The signed, hardware-attested proof artifact produced by the runtime per session |
 | TEE | Trusted Execution Environment (TPM, SEV-SNP, TDX, or Opaque Managed) |
 | SPIFFE SVID | Short-lived cryptographic identity issued by SPIRE after TEE attestation succeeds |
 | Cedar | The policy language used for tool call authorization |
-| Audit chain | The append-only hash-chained log of all gateway decisions, signed with a TEE-sealed key |
+| Audit chain | The append-only hash-chained log of all runtime decisions, signed with a TEE-sealed key |
 | Session sensitivity | The maximum sensitivity level seen in any tool response within the current session |
-| Tag-propagation | The gateway's mechanism for tracking sensitivity across calls based on observable events |
-| Catalog entry | The gateway's approved record for one tool: name, server identity, approved definition |
+| Tag-propagation | The runtime's mechanism for tracking sensitivity across calls based on observable events |
+| Catalog entry | The runtime's approved record for one tool: name, server identity, approved definition |
 | Attestation report | The hardware-produced evidence that a specific binary ran in a specific TEE at a specific time |
 | policy_bundle_hash | SHA-256 of the canonical Cedar policy bundle, measured into the TEE at startup |
 | tool_catalog_hash | SHA-256 of the canonical tool catalog, measured into the TEE at startup |

@@ -1,4 +1,4 @@
-# cmcp-verify: Verification Library Interface Spec
+﻿# cmcp-verify: Verification Library Interface Spec
 
 ---
 Status: Draft v0.1
@@ -71,7 +71,7 @@ def verify_trace_claim(
 2. Verify the EK certificate chains to a trusted manufacturer CA (TPM manufacturer CA roots are published by Microsoft, Amazon, Google for their vTPM implementations).
 3. Extract the TPM2B_ATTEST structure from attestation_report.raw_evidence.
 4. Verify the TPM2_Quote signature using the Attestation Key (AK) public key, which must be certified by the EK.
-5. Confirm the quote's qualifying_data matches SHA-256(tee_public_key || session_id) from the TRACE Claim -- this binds the quote to the specific gateway instance.
+5. Confirm the quote's qualifying_data matches SHA-256(tee_public_key || session_id) from the TRACE Claim -- this binds the quote to the specific runtime instance.
 6. Confirm the PCR values in the quote match attestation_report.measurement (compare byte-by-byte).
 7. If all checks pass: TEE identity is verified for TPM.
 
@@ -146,4 +146,4 @@ if not result.is_attestation_fresh:
 
 ## Relationship to Threat Model
 
-As noted in [threat-model.md](threat-model.md), T.1 (server swap / tool identity) is only closed if the agent or the agent's gateway runs `verify_trace_claim` before sending traffic. Attestation without verification is post-hoc evidence, not a runtime gate.
+As noted in [threat-model.md](threat-model.md), T.1 (server swap / tool identity) is only closed if the agent or the agent's runtime runs `verify_trace_claim` before sending traffic. Attestation without verification is post-hoc evidence, not a runtime gate.

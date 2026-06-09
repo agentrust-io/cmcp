@@ -1,4 +1,4 @@
-# Tool Identity and Catalog Specification
+﻿# Tool Identity and Catalog Specification
 
 ---
 Status: Draft v0.1
@@ -6,7 +6,7 @@ Last updated: 2026-06-04
 Stability: Unstable — expect breaking changes before v1.0
 ---
 
-This document specifies how the cMCP Gateway identifies upstream MCP servers, prevents tool name collisions, and routes tool calls. These mechanisms close the protocol-level gap in MCP (issue #40): MCP defines no signed manifest binding a tool name to a publisher. The gateway closes this by maintaining a catalog that binds each tool name to a specific upstream server identity.
+This document specifies how the cMCP Runtime identifies upstream MCP servers, prevents tool name collisions, and routes tool calls. These mechanisms close the protocol-level gap in MCP (issue #40): MCP defines no signed manifest binding a tool name to a publisher. The runtime closes this by maintaining a catalog that binds each tool name to a specific upstream server identity.
 
 ---
 
@@ -34,11 +34,11 @@ spiffe://<trust-domain>/<namespace>/<service-name>
 
 Example: `spiffe://corp.example/salesforce/mcp-server`
 
-SPIFFE SVIDs are issued by a SPIRE server shared between the gateway and the upstream servers. The gateway verifies the SVID against the SPIRE trust bundle at connection time. SPIFFE is the preferred identity anchor when the deployment includes a SPIRE server.
+SPIFFE SVIDs are issued by a SPIRE server shared between the runtime and the upstream servers. The runtime verifies the SVID against the SPIRE trust bundle at connection time. SPIFFE is the preferred identity anchor when the deployment includes a SPIRE server.
 
 ### Phase 1 Requirement
 
-In Phase 1, each catalog entry must include at least one identity anchor (`tls_fingerprint` or `spiffe_id`). Including both is preferred: the gateway verifies whichever anchors are present, and a mismatch on either is treated as an identity failure.
+In Phase 1, each catalog entry must include at least one identity anchor (`tls_fingerprint` or `spiffe_id`). Including both is preferred: the runtime verifies whichever anchors are present, and a mismatch on either is treated as an identity failure.
 
 ---
 
@@ -80,7 +80,7 @@ Each tool in the catalog has a full entry binding the tool name to its upstream 
 |-------|------|----------|-------------|
 | `tool_name` | string | yes | Unique tool name as it appears in MCP. Must be unique across the entire catalog. |
 | `server.display_name` | string | yes | Human-readable name for the upstream server. |
-| `server.url` | string | yes | URL the gateway routes calls to for this tool. |
+| `server.url` | string | yes | URL the runtime routes calls to for this tool. |
 | `server.tls_fingerprint` | string | at least one of `tls_fingerprint` or `spiffe_id` | SHA-256 fingerprint of the server's TLS public key. |
 | `server.spiffe_id` | string | at least one of `tls_fingerprint` or `spiffe_id` | SPIFFE SVID URI for the server. |
 | `server.rotation_mode` | string | no (default: `key-pinned`) | `key-pinned` or `cert-pinned`. Controls how cert renewal is handled. See [Cert Rotation Policy](#cert-rotation-policy). |
@@ -91,7 +91,7 @@ Each tool in the catalog has a full entry binding the tool name to its upstream 
 
 ### Definition Hash and Mutation Detection
 
-The `definition_hash` is computed at catalog approval time and included in the `tool_catalog.hash` measurement in the TRACE Claim. At runtime, the gateway fetches the live tool definition from the upstream server and compares it against `approved_definition`. If the live definition does not match:
+The `definition_hash` is computed at catalog approval time and included in the `tool_catalog.hash` measurement in the TRACE Claim. At runtime, the process fetches the live tool definition from the upstream server and compares it against `approved_definition`. If the live definition does not match:
 
 - The call is denied.
 - The audit log records the event as `definition_mismatch`.
@@ -105,7 +105,7 @@ This closes the rug-pull attack vector (P4.2): a compromised upstream server can
 
 Tool name uniqueness is enforced at catalog load time (enclave startup).
 
-**Rule**: each `tool_name` must map to exactly one upstream server. If two catalog entries share the same `tool_name`, the gateway refuses to start.
+**Rule**: each `tool_name` must map to exactly one upstream server. If two catalog entries share the same `tool_name`, the runtime refuses to start.
 
 **Error message**:
 
@@ -116,7 +116,7 @@ Duplicate tool name in catalog: "salesforce.query" is registered by two differen
 Each tool name must map to exactly one upstream server.
 ```
 
-The gateway does not attempt to resolve the collision. It fails closed: no tools are available until the collision is resolved.
+The runtime does not attempt to resolve the collision. It fails closed: no tools are available until the collision is resolved.
 
 **Resolution**: namespace the tool names. Example:
 
@@ -135,7 +135,7 @@ Silent collision resolution (e.g., last-write-wins or first-registered-wins) wou
 
 ## Section 4 -- Routing
 
-When the gateway receives a tool call for `tool_name`:
+When the runtime receives a tool call for `tool_name`:
 
 1. Look up `tool_name` in the catalog.
    - If not found: deny the call, log as `tool_not_in_catalog`.
@@ -154,7 +154,7 @@ When the gateway receives a tool call for `tool_name`:
 
 6. Forward the tool call to the upstream server.
 
-7. Return the response to the gateway's response inspection pipeline.
+7. Return the response to the runtime's response inspection pipeline.
 
 ### Identity Mismatch Handling
 
@@ -165,7 +165,7 @@ An `identity_mismatch` event indicates one of:
 - A man-in-the-middle or DNS hijack is in progress.
 - The server was replaced with a different instance (legitimate infrastructure change, requires catalog update).
 
-In all cases, the gateway denies the call and does not forward any data to the server until the catalog is updated and the enclave is restarted with the new measurement.
+In all cases, the runtime denies the call and does not forward any data to the server until the catalog is updated and the enclave is restarted with the new measurement.
 
 ---
 

@@ -1,4 +1,4 @@
-# Configuration Reference
+﻿# Configuration Reference
 
 `cmcp-config.yaml` controls the gateway's attestation provider, policy enforcement behavior, network settings, and file paths. Environment variables override specific fields and control secrets that must not appear in config files.
 
@@ -27,7 +27,7 @@ attestation:
   # warn_only: allow sessions to continue; marks TRACE Claims as stale.
   staleness_policy: fail_closed
 
-  # Optional. If set, the gateway verifies the TEE measurement matches
+  # Optional. If set, the runtime verifies the TEE measurement matches
   # this value at startup and refuses to start if it does not.
   # Format: provider-specific (e.g., hex PCR values for TPM,
   # AMD measurement register hex for SEV-SNP).
@@ -42,7 +42,7 @@ policy_bundle_path: policy/
 # Must not contain '..' components.
 catalog_path: catalog.json
 
-# Address and port the gateway listens on.
+# Address and port the runtime listens on.
 listen_addr: "0.0.0.0:8443"
 
 # Maximum size of a tool response payload in bytes. Responses larger than
@@ -52,7 +52,7 @@ max_response_size_bytes: 2097152
 
 # Interval in seconds between automatic policy bundle reloads.
 # 0 (default) disables automatic reload. Changing the policy bundle
-# without restarting the gateway invalidates the attestation measurement.
+# without restarting the runtime invalidates the attestation measurement.
 # This field exists for advisory/silent deployments only; do not use in
 # enforcing mode without a full enclave restart.
 policy_reload_interval_seconds: 0
@@ -68,7 +68,7 @@ policy_reload_interval_seconds: 0
 | `enforcement_mode` | string | `enforcing` | Policy enforcement mode. Valid values: `enforcing`, `advisory`, `silent`. |
 | `validity_seconds` | integer | `86400` | Attestation report validity period in seconds. Must be a positive integer. At expiry, behavior is controlled by `staleness_policy`. |
 | `staleness_policy` | string | `fail_closed` | Action when attestation validity expires. Valid values: `fail_closed` (terminate sessions), `warn_only` (allow sessions, mark claims as stale). |
-| `expected_measurement` | string | none | Optional. Expected TEE measurement value. If set, the gateway verifies the hardware measurement matches this string at startup and exits with a non-zero status if it does not. |
+| `expected_measurement` | string | none | Optional. Expected TEE measurement value. If set, the runtime verifies the hardware measurement matches this string at startup and exits with a non-zero status if it does not. |
 
 ### top-level fields
 
@@ -87,7 +87,7 @@ Environment variables control secrets and mode flags that must not appear in con
 | Variable | Description | Overrides |
 |----------|-------------|-----------|
 | `CMCP_DEV_MODE=1` | Enables software-only attestation. No hardware TEE required. TRACE Claims will show `partially_verified` status. Required when `provider` is `software-only`. | `attestation.provider` (forces software-only) |
-| `CMCP_BEARER_TOKEN` | Optional bearer token for gateway HTTP auth. If set, all requests to the gateway must include `Authorization: Bearer <token>`. If unset, no bearer auth is enforced. | none |
+| `CMCP_BEARER_TOKEN` | Optional bearer token for runtime HTTP auth. If set, all requests to the runtime must include `Authorization: Bearer <token>`. If unset, no bearer auth is enforced. | none |
 | `OPAQUE_ATTESTATION_URL` | Enables the Opaque Managed Runtime provider. Must be set to the Opaque attestation service URL. Required when `provider` is `opaque` or `auto` on Opaque infrastructure. | enables `opaque` provider detection |
 | `CMCP_CATALOG_HASH` | SHA-256 hash of the approved `catalog.json`. Required in non-dev mode. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (additional startup check) |
 
@@ -95,8 +95,8 @@ Environment variables control secrets and mode flags that must not appear in con
 
 | Mode | Behavior | Use case |
 |------|----------|----------|
-| `enforcing` | Policy denies block the tool call. The gateway returns HTTP 403 and a structured error to the agent. The call is not forwarded to the upstream server. | Production. Default for new deployments. |
-| `advisory` | Policy denies are logged in the audit chain but the call is forwarded. The TRACE Claim records the deny. No tool call is blocked. | Policy testing, migration from existing gateway. Safe for first run with an untuned policy. |
+| `enforcing` | Policy denies block the tool call. The runtime returns HTTP 403 and a structured error to the agent. The call is not forwarded to the upstream server. | Production. Default for new deployments. |
+| `advisory` | Policy denies are logged in the audit chain but the call is forwarded. The TRACE Claim records the deny. No tool call is blocked. | Policy testing, migration from existing runtime. Safe for first run with an untuned policy. |
 | `silent` | Policy is evaluated but the result is not acted on and denies are not logged. Observability-only mode. | Measuring policy impact before rollout. Not suitable for any compliance scenario. |
 
 ## Minimal working config

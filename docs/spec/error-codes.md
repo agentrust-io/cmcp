@@ -1,8 +1,8 @@
-# Error Code Registry
+﻿# Error Code Registry
 
-This is the normative registry for all error codes used across the cMCP Gateway. Every error code MUST be registered here before it is referenced in code, configuration, or other spec documents. Implementations MUST NOT emit error codes that do not appear in this registry.
+This is the normative registry for all error codes used across the cMCP Runtime. Every error code MUST be registered here before it is referenced in code, configuration, or other spec documents. Implementations MUST NOT emit error codes that do not appear in this registry.
 
-## Gateway Errors
+## Runtime Errors
 
 | error_code | HTTP status | log level | description | spec reference |
 |---|---|---|---|---|
@@ -39,4 +39,4 @@ The following error codes are defined and documented in [verification-library.md
 | `CHAIN_BROKEN` |
 | `CLAIM_MALFORMED` |
 
-> Note: `POLICY_HASH_MISMATCH`, `CATALOG_HASH_MISMATCH`, and `ATTESTATION_STALE` appear in both tables. The Gateway emits them during startup or request handling; the verification library emits them during offline or client-side verification. The semantics are consistent across both contexts.
+> Note: `POLICY_HASH_MISMATCH`, `CATALOG_HASH_MISMATCH`, and `ATTESTATION_STALE` appear in both tables. The Runtime emits them during startup or request handling; the verification library emits them during offline or client-side verification. The semantics are consistent across both contexts.

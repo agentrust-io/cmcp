@@ -1,4 +1,4 @@
-# Cedar Policy Specification
+﻿# Cedar Policy Specification
 
 ---
 Status: Draft v0.1
@@ -6,7 +6,7 @@ Last updated: 2026-06-04
 Stability: Unstable — expect breaking changes before v1.0
 ---
 
-This document specifies the Cedar policy bundle format, policy expression examples, enforcement modes, evaluation decision flow, and related governance features for the cMCP Gateway.
+This document specifies the Cedar policy bundle format, policy expression examples, enforcement modes, evaluation decision flow, and related governance features for the cMCP Runtime.
 
 ---
 
@@ -170,9 +170,9 @@ Enforcement mode is set in the deployment configuration, bound into the attestat
 
 | Mode | Cedar deny behavior | Audit entry |
 |------|--------------------|-|
-| `enforcing` | Gateway rejects the call, returns a structured error to the agent | Logged with `decision=deny` |
-| `advisory` | Gateway allows the call, forwards to upstream | Logged with `decision=deny_advisory` (would have been denied in enforcing mode) |
-| `silent` | Gateway allows the call, forwards to upstream | Only a basic call log; no audit decision entry |
+| `enforcing` | Runtime rejects the call, returns a structured error to the agent | Logged with `decision=deny` |
+| `advisory` | Runtime allows the call, forwards to upstream | Logged with `decision=deny_advisory` (would have been denied in enforcing mode) |
+| `silent` | Runtime allows the call, forwards to upstream | Only a basic call log; no audit decision entry |
 
 **Structured error (enforcing mode):**
 
@@ -182,7 +182,7 @@ Enforcement mode is set in the deployment configuration, bound into the attestat
   "tool_name": "<tool>",
   "call_id": "<uuid>",
   "policy_bundle_version": "<semver>",
-  "message": "Tool call denied by gateway policy."
+  "message": "Tool call denied by runtime policy."
 }
 ```
 
@@ -232,7 +232,7 @@ The error does not include the matched rule name or policy text, to avoid leakin
 11. Return (possibly redacted) response to agent
 ```
 
-Latency budget: Cedar evaluation target is under 1 ms for bundles up to 500 policy rules. The gateway measures and logs `latency_us` for each evaluation to support SLA monitoring.
+Latency budget: Cedar evaluation target is under 1 ms for bundles up to 500 policy rules. The runtime measures and logs `latency_us` for each evaluation to support SLA monitoring.
 
 ---
 
@@ -269,7 +269,7 @@ Workflow identity is established via session metadata. The agent includes a `wor
 - HTTP transport: `X-MCP-Workflow-ID` header
 - Session configuration: `workflow_id` field in the session init payload
 
-If `workflow_id` is absent, the gateway defaults to `workflow_id = "default"`. The default workflow policy should be restrictive (allowlist only widely-approved tools).
+If `workflow_id` is absent, the runtime defaults to `workflow_id = "default"`. The default workflow policy should be restrictive (allowlist only widely-approved tools).
 
 ### Evaluation Order
 
@@ -298,15 +298,15 @@ This allows Cedar policies to reference `context.workflow_allowed_tools` as deri
 | Phase | Behavior |
 |-------|----------|
 | Phase 1 | Static workflow policies committed in the Cedar bundle. The `workflow_id` is trusted as declared by the agent. |
-| Phase 2 | Dynamic workflow attestation: the agent cryptographically declares its current workflow; the gateway verifies the declaration before evaluating workflow-scoped policies. |
+| Phase 2 | Dynamic workflow attestation: the agent cryptographically declares its current workflow; the runtime verifies the declaration before evaluating workflow-scoped policies. |
 
 ---
 
-## Section 7 — Gateway as Sole MCP Endpoint (closes #39)
+## Section 7 — Runtime as Sole MCP Endpoint (closes #39)
 
 ### Agent Host Configuration
 
-The agent's MCP client is configured with exactly one MCP server URL: the gateway's URL. All upstream servers are invisible to the agent; the gateway handles routing internally.
+The agent's MCP client is configured with exactly one MCP server URL: the runtime's URL. All upstream servers are invisible to the agent; the runtime handles routing internally.
 
 Example `claude_desktop_config.json`:
 
@@ -321,11 +321,11 @@ Example `claude_desktop_config.json`:
 }
 ```
 
-The agent never learns the upstream server URLs. From the agent's perspective, there is one MCP server. This prevents agents from bypassing the gateway by connecting directly to upstream servers.
+The agent never learns the upstream server URLs. From the agent's perspective, there is one MCP server. This prevents agents from bypassing the runtime by connecting directly to upstream servers.
 
 ### Adding a New Upstream Server
 
-To add an upstream MCP server to the gateway catalog:
+To add an upstream MCP server to the runtime catalog:
 
 1. Add a catalog entry to `catalog.json` in version control (see `tool-identity.md` for schema).
 2. Recompute the policy bundle hash (the catalog hash is a separate field in the TRACE Claim: `tool_catalog.hash`).
@@ -336,7 +336,7 @@ The new server is not reachable until the enclave restarts with the updated cata
 
 ### Emergency Access (Break-Glass)
 
-If an unauthorized server must be accessed urgently without an enclave restart, the gateway supports a break-glass mode. Break-glass adds the server to a temporary exception list for the current enclave session.
+If an unauthorized server must be accessed urgently without an enclave restart, the runtime supports a break-glass mode. Break-glass adds the server to a temporary exception list for the current enclave session.
 
 Break-glass use is visible in the TRACE Claim:
 
