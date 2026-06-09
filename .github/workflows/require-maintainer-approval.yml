@@ -1,0 +1,39 @@
+name: Require maintainer approval
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for maintainer approval
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const MAINTAINERS = ['imran-siddique'];
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const association = context.payload.pull_request.author_association;
+            if (association === 'MEMBER' || association === 'OWNER') {
+              core.info(`Author is ${association} — skipping gate`);
+              return;
+            }
+            const approved = reviews.some(
+              r => r.state === 'APPROVED' &&
+                   r.user.type === 'User' &&
+                   MAINTAINERS.includes(r.user.login)
+            );
+            if (!approved) {
+              core.setFailed('Waiting for maintainer approval before merging.');
+            }
