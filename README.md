@@ -22,7 +22,7 @@
   </strong>
 </p>
 
-[![CI](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/cmcp-gateway)](https://pypi.org/project/cmcp-gateway/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/agentrust-io/cmcp/badge)](https://scorecard.dev/viewer/?uri=github.com/agentrust-io/cmcp)
+[![CI](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/cmcp-runtime)](https://pypi.org/project/cmcp-runtime/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/agentrust-io/cmcp/badge)](https://scorecard.dev/viewer/?uri=github.com/agentrust-io/cmcp)
 
 > **Developer Preview** - launching at Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0.
 
