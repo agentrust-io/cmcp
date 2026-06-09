@@ -1,5 +1,5 @@
 """
-Conformance test suite for the cMCP gateway — 22-case GTC Berlin demo spec.
+Conformance test suite for the cMCP runtime — 22-case GTC Berlin demo spec.
 
 Uses starlette.testclient.TestClient (synchronous) against an in-process
 MCPServer so no asyncio/anyio machinery is needed in test code.
@@ -13,16 +13,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from starlette.testclient import TestClient
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.mcp.proxy import CallResult
-from cmcp_gateway.mcp.server import MCPServer
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.mcp.proxy import CallResult
+from cmcp_runtime.mcp.server import MCPServer
+from cmcp_runtime.session.state import SessionState
 
 # ---------------------------------------------------------------------------
 # Helpers

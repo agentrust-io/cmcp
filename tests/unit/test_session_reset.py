@@ -13,17 +13,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from starlette.testclient import TestClient
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-from cmcp_gateway.mcp.server import MCPServer
-from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+from cmcp_runtime.mcp.server import MCPServer
+from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
+from cmcp_runtime.session.state import SessionState
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ def _make_evaluator() -> PolicyEvaluator:
 
 
 def _make_server(session_id: str = "sess-reset-001"):
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = Config()
     cfg.attestation = AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING)
@@ -79,8 +79,8 @@ def _make_server(session_id: str = "sess-reset-001"):
     session = SessionState(session_id=session_id)
     chain = AuditChain(session_id)
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(cat, ev, session, chain, cfg)
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
@@ -208,7 +208,7 @@ def test_reset_audit_chain_remains_valid():
 
 def test_reset_without_session_configured_returns_501():
     """MCPServer without session/audit_chain returns 501."""
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = Config()
     cfg.attestation = AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING)
@@ -217,8 +217,8 @@ def test_reset_without_session_configured_returns_501():
     session = SessionState(session_id="bare-sess")
     chain = AuditChain("bare-sess")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(cat, ev, session, chain, cfg)
         proxy._mcp_gateway = MagicMock()
 

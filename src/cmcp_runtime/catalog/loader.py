@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import jsonschema
 
-from cmcp_gateway.errors import (
+from cmcp_runtime.errors import (
     CatalogHashMismatch,
     CatalogToolNameCollision,
     ConfigError,

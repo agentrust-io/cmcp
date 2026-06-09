@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from cmcp_gateway.errors import ConfigError, PolicyHashMismatch
-from cmcp_gateway.policy.bundle import PolicyBundle, PolicyManifest, PolicyStore, load_policy_bundle
+from cmcp_runtime.errors import ConfigError, PolicyHashMismatch
+from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest, PolicyStore, load_policy_bundle
 
 MANIFEST = {
     "version": "1.0.0",
@@ -159,7 +159,7 @@ def test_policy_store_reloads_after_interval(bundle_dir):
     # Simulate time advancing past the interval by patching monotonic so that
     # the elapsed check passes on the next call.
     start = store._last_reload_at
-    with patch("cmcp_gateway.policy.bundle.time") as mock_time:
+    with patch("cmcp_runtime.policy.bundle.time") as mock_time:
         # First call returns a value past the interval; subsequent calls (inside
         # reload_if_stale to update _last_reload_at) return the same advanced value.
         mock_time.monotonic.return_value = start + 31
@@ -181,7 +181,7 @@ def test_policy_store_bundle_swap_on_hash_change(bundle_dir):
     (bundle_dir / "allow-all.cedar").write_text("forbid(principal, action, resource);")
 
     start = store._last_reload_at
-    with patch("cmcp_gateway.policy.bundle.time") as mock_time:
+    with patch("cmcp_runtime.policy.bundle.time") as mock_time:
         mock_time.monotonic.return_value = start + 2
         store.reload_if_stale()
 
@@ -198,7 +198,7 @@ def test_policy_store_keeps_current_on_reload_failure():
     )
 
     start = store._last_reload_at
-    with patch("cmcp_gateway.policy.bundle.time") as mock_time:
+    with patch("cmcp_runtime.policy.bundle.time") as mock_time:
         mock_time.monotonic.return_value = start + 2
         result = store.reload_if_stale()
 
@@ -240,7 +240,7 @@ def test_load_bundle_no_warning_when_versions_match(bundle_dir, caplog):
     """POLICY-007: no warning when pinned version matches installed version."""
     import logging
 
-    from cmcp_gateway.policy.bundle import _AGENT_OS_VERSION
+    from cmcp_runtime.policy.bundle import _AGENT_OS_VERSION
     manifest_with_match = dict(MANIFEST)
     manifest_with_match["agent_os_version"] = _AGENT_OS_VERSION
     (bundle_dir / "manifest.json").write_text(json.dumps(manifest_with_match))

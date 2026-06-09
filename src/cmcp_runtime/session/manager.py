@@ -12,8 +12,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.audit.trace_claim import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.trace_claim import (
     AttestationReportInfo,
     CallGraphSummary,
     CallLogSummary,
@@ -22,9 +22,9 @@ from cmcp_gateway.audit.trace_claim import (
     ToolCatalogInfo,
     generate_trace_claim,
 )
-from cmcp_gateway.session.call_log import CallLog, SessionCallLog
-from cmcp_gateway.session.state import SessionState
-from cmcp_gateway.startup import GatewayContext
+from cmcp_runtime.session.call_log import CallLog, SessionCallLog
+from cmcp_runtime.session.state import SessionState
+from cmcp_runtime.startup import RuntimeContext
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class SessionManager:
         os.environ.get("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
     )
 
-    def __init__(self, ctx: GatewayContext) -> None:
+    def __init__(self, ctx: RuntimeContext) -> None:
         self._ctx = ctx
         # Stores signed claim dicts keyed by session_id, populated on close.
         self._closed_claims: dict[str, dict[str, Any]] = {}
@@ -103,7 +103,7 @@ class SessionManager:
         """
         Close a session:
         1. Append a session_end audit entry to the chain.
-        2. Build the GatewayClaim from chain + state + ctx.
+        2. Build the RuntimeClaim from chain + state + ctx.
         3. Sign it with ctx.signing_key.
         4. Store the signed claim JSON, keyed by session_id.
         5. Return the signed claim dict.

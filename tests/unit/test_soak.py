@@ -112,7 +112,7 @@ def test_soak_memory_growth_check_single_sample():
 
 
 def test_check_signing_key_stable(tmp_path):
-    from cmcp_gateway.audit.chain import AuditChain
+    from cmcp_runtime.audit.chain import AuditChain
     from tests.soak.run_soak import SoakState, _check_signing_key
 
     chain = AuditChain(session_id="test-session")
@@ -125,7 +125,7 @@ def test_check_signing_key_stable(tmp_path):
 
 
 def test_check_signing_key_detects_change():
-    from cmcp_gateway.audit.chain import AuditChain
+    from cmcp_runtime.audit.chain import AuditChain
     from tests.soak.run_soak import SoakState, _check_signing_key
 
     chain1 = AuditChain(session_id="session-1")
@@ -146,7 +146,7 @@ def test_check_signing_key_detects_change():
 
 
 def test_sample_memory():
-    from cmcp_gateway.audit.chain import AuditChain
+    from cmcp_runtime.audit.chain import AuditChain
     from tests.soak.run_soak import SoakState, _sample_memory
 
     chain = AuditChain(session_id="test")
@@ -173,7 +173,7 @@ async def test_soak_smoke_run(tmp_path):
     result = await _run_soak(
         duration_hours=0.001,  # ~3.6 seconds
         provider="software-only",
-        gateway_url=None,
+        runtime_url=None,
         nginx_url=None,
         bearer_token="test-token",
         out_dir=tmp_path,

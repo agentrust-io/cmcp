@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.bundle import PolicyBundle, PolicyManifest, PolicyStore
-from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest, PolicyStore
+from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 
 
 def _make_bundle(policy_content: str = 'permit(principal, action, resource);') -> PolicyBundle:
@@ -42,7 +42,7 @@ ALLOW_CONTEXT = {
 # ── Enforcing mode ────────────────────────────────────────────────────────────
 
 def test_enforcing_allow():
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=True, reason="permit rule", evaluation_ms=0.5
@@ -57,7 +57,7 @@ def test_enforcing_allow():
 
 
 def test_enforcing_deny_raises():
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=False, reason="forbid rule", evaluation_ms=0.3
@@ -73,7 +73,7 @@ def test_enforcing_deny_raises():
 
 def test_advisory_deny_allows_through():
     """In advisory mode, Cedar denials are allowed but flagged."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=False, reason="forbid rule", evaluation_ms=0.2
@@ -88,7 +88,7 @@ def test_advisory_deny_allows_through():
 
 
 def test_advisory_allow_does_not_flag():
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=True, reason=None, evaluation_ms=0.1
@@ -105,7 +105,7 @@ def test_advisory_allow_does_not_flag():
 # ── Silent mode ───────────────────────────────────────────────────────────────
 
 def test_silent_deny_allows_through_no_log(caplog):
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=False, reason="forbid", evaluation_ms=0.1
@@ -124,7 +124,7 @@ def test_silent_deny_allows_through_no_log(caplog):
 
 def test_cedar_backend_receives_sorted_policy_content():
     """CedarBackend gets sorted policy file contents concatenated."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(allowed=True, reason=None, evaluation_ms=0.0)
         MockBackend.return_value = mock
@@ -145,13 +145,13 @@ def test_cedar_backend_receives_sorted_policy_content():
 # ── Properties ────────────────────────────────────────────────────────────────
 
 def test_evaluator_exposes_bundle_hash():
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend"):
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend"):
         e = PolicyEvaluator(_make_bundle(), _make_config())
     assert e.bundle_hash == "sha256:" + "0" * 64
 
 
 def test_evaluator_exposes_enforcement_mode():
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend"):
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend"):
         e = PolicyEvaluator(_make_bundle(), _make_config(EnforcementMode.ADVISORY))
     assert e.enforcement_mode == EnforcementMode.ADVISORY
 
@@ -160,7 +160,7 @@ def test_evaluator_exposes_enforcement_mode():
 
 def test_decision_conformance_policy_003():
     """POLICY-003: advisory mode logs would_have_denied=True."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=False, reason="test forbid", evaluation_ms=0.0
@@ -193,7 +193,7 @@ def _make_bundle_with_hash(hash_hex: str) -> PolicyBundle:
 
 def test_evaluator_accepts_policy_store():
     """PolicyEvaluator must accept a PolicyStore directly."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend"):
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend"):
         store = PolicyStore(bundle=_make_bundle(), bundle_path="", reload_interval_seconds=0)
         e = PolicyEvaluator(store, _make_config())
     assert e.bundle_hash == "sha256:" + "0" * 64
@@ -208,7 +208,7 @@ def test_evaluator_refreshes_backend_on_bundle_change():
 
     store = PolicyStore(bundle=old_bundle, bundle_path="", reload_interval_seconds=0)
 
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock_backend = MagicMock()
         mock_backend.evaluate.return_value = MagicMock(
             allowed=True, reason=None, evaluation_ms=0.1

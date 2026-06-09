@@ -6,16 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
+from cmcp_runtime.session.state import SessionState
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ def _make_evaluator() -> PolicyEvaluator:
 
 
 def _make_proxy(evaluator=None):
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = Config()
     cfg.attestation = AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING)
@@ -76,8 +76,8 @@ def _make_proxy(evaluator=None):
     session = SessionState(session_id="sess-wf-001")
     chain = AuditChain("sess-wf-001")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(cat, ev, session, chain, cfg)
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
@@ -149,7 +149,7 @@ async def test_server_extracts_workflow_id_from_cmcp_params():
     """MCPServer passes workflow_id from request _cmcp field to call_tool."""
     from starlette.testclient import TestClient
 
-    from cmcp_gateway.mcp.server import MCPServer
+    from cmcp_runtime.mcp.server import MCPServer
 
     proxy, _, chain = _make_proxy()
     # Wrap call_tool so we can inspect arguments
@@ -184,7 +184,7 @@ async def test_server_response_includes_workflow_id_when_provided():
     """MCPServer echoes workflow_id in the response _cmcp block."""
     from starlette.testclient import TestClient
 
-    from cmcp_gateway.mcp.server import MCPServer
+    from cmcp_runtime.mcp.server import MCPServer
 
     proxy, _, _ = _make_proxy()
     server = MCPServer(proxy)
@@ -210,7 +210,7 @@ async def test_server_response_omits_workflow_id_when_not_provided():
     """MCPServer does not include workflow_id in _cmcp if not in request."""
     from starlette.testclient import TestClient
 
-    from cmcp_gateway.mcp.server import MCPServer
+    from cmcp_runtime.mcp.server import MCPServer
 
     proxy, _, _ = _make_proxy()
     server = MCPServer(proxy)

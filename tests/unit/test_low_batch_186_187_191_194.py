@@ -1,4 +1,4 @@
-﻿"""Tests for the four low-severity fixes: #186, #187, #191, #194."""
+"""Tests for the four low-severity fixes: #186, #187, #191, #194."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import importlib
 import logging
 from unittest.mock import MagicMock, patch
 
-from cmcp_gateway.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
-from cmcp_gateway.inspection.pipeline import InspectionPipeline
+from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
+from cmcp_runtime.inspection.pipeline import InspectionPipeline
 
 # -- Shared fixture ---
 
@@ -78,7 +78,7 @@ def test_deny_reasons_dedup_preserves_distinct():
 
 def test_session_manager_cleanup_interval_default():
     """AUTH-004: default cleanup interval is 60 seconds."""
-    import cmcp_gateway.session.manager as mgr_module
+    import cmcp_runtime.session.manager as mgr_module
     importlib.reload(mgr_module)
     assert mgr_module.SessionManager.cleanup_interval_seconds == 60
 
@@ -86,7 +86,7 @@ def test_session_manager_cleanup_interval_default():
 def test_session_manager_cleanup_interval_from_env(monkeypatch):
     """AUTH-004: CMCP_SESSION_CLEANUP_INTERVAL_SECONDS overrides default."""
     monkeypatch.setenv("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", "30")
-    import cmcp_gateway.session.manager as mgr_module
+    import cmcp_runtime.session.manager as mgr_module
     importlib.reload(mgr_module)
     assert mgr_module.SessionManager.cleanup_interval_seconds == 30
     monkeypatch.delenv("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", raising=False)
@@ -96,7 +96,7 @@ def test_session_manager_cleanup_interval_from_env(monkeypatch):
 def test_mcp_server_cleanup_interval_from_env(monkeypatch):
     """AUTH-004: MCPServer._cleanup_interval_s reads from env var."""
     monkeypatch.setenv("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", "120")
-    import cmcp_gateway.mcp.server as server_mod
+    import cmcp_runtime.mcp.server as server_mod
     importlib.reload(server_mod)
     with patch.object(server_mod, "StatelessKernel", MagicMock()):
         mock_proxy = MagicMock()

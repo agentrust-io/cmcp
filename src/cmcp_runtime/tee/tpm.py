@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from cmcp_gateway.tee.base import AttestationReport, TEEProvider
+from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 
 if TYPE_CHECKING:
     pass

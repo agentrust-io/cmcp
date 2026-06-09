@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from cmcp_gateway.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
-from cmcp_gateway.inspection.pipeline import InspectionPipeline, _stage2_schema_validation
+from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
+from cmcp_runtime.inspection.pipeline import InspectionPipeline, _stage2_schema_validation
 
 
 def _make_entry(

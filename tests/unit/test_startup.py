@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.startup import GatewayContext, run_startup
+from cmcp_runtime.startup import RuntimeContext, run_startup
 
 MANIFEST = {
     "version": "1.0.0",
@@ -45,7 +45,7 @@ def complete_setup(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CMCP_DEV_MODE", "1")
     # TEE-002: DEV_MODE is frozen at import; patch the constant directly so
     # load_config() sees True even though the module was already imported.
-    import cmcp_gateway.config as _cfg
+    import cmcp_runtime.config as _cfg
     monkeypatch.setattr(_cfg, "DEV_MODE", True)
 
     # Config
@@ -67,7 +67,7 @@ def complete_setup(tmp_path: Path, monkeypatch):
 
 def test_startup_succeeds_in_dev_mode(complete_setup):
     ctx = run_startup(complete_setup)
-    assert isinstance(ctx, GatewayContext)
+    assert isinstance(ctx, RuntimeContext)
     assert ctx.config.dev_mode is True
     assert ctx.signing_key is not None
     assert ctx.policy_bundle is not None
@@ -101,7 +101,7 @@ def test_startup_fails_on_no_tee_no_dev_mode(tmp_path):
     catalog_path.write_text("[]")
 
     # No CMCP_DEV_MODE, no hardware TEE → should exit 1
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None), \
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", return_value=None), \
          patch.dict(os.environ, {}, clear=True), \
          pytest.raises(SystemExit) as exc_info:
         run_startup(str(config_path))
@@ -156,7 +156,7 @@ def test_startup_fails_when_catalog_hash_unset_and_not_dev_mode(tmp_path, monkey
 
     import json as _json
 
-    from cmcp_gateway.policy.bundle import _canonical_bundle_hash
+    from cmcp_runtime.policy.bundle import _canonical_bundle_hash
     manifest_raw = _json.loads((policy_dir / "manifest.json").read_text())
     policy_files = {"allow.cedar": CEDAR_POLICY}
     computed = _canonical_bundle_hash(manifest_raw, policy_files, SCHEMA)
@@ -180,7 +180,7 @@ def test_startup_fails_on_unknown_tee_provider_name(complete_setup):
     fake_report.measurement = "aabbcc" * 8
 
     with patch(
-        "cmcp_gateway.tee.base.SoftwareOnlyProvider.get_attestation_report",
+        "cmcp_runtime.tee.base.SoftwareOnlyProvider.get_attestation_report",
         return_value=fake_report,
     ), pytest.raises(SystemExit) as exc_info:
         run_startup(complete_setup)

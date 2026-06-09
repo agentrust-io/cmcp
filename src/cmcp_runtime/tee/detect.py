@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from cmcp_gateway.config import Config
-from cmcp_gateway.config import TEEProvider as TEEProviderEnum
-from cmcp_gateway.errors import AttestationProviderUnsupported
-from cmcp_gateway.tee.base import SoftwareOnlyProvider, TEEProvider
+from cmcp_runtime.config import Config
+from cmcp_runtime.config import TEEProvider as TEEProviderEnum
+from cmcp_runtime.errors import AttestationProviderUnsupported
+from cmcp_runtime.tee.base import SoftwareOnlyProvider, TEEProvider
 
 logger = logging.getLogger(__name__)
 
@@ -19,26 +19,26 @@ def _get_provider_impl(name: str, config: Config | None = None) -> TEEProvider |
     """Import and return a provider implementation by name, or None if not found."""
     if name == "tpm":
         try:
-            from cmcp_gateway.tee.tpm import TPMProvider
+            from cmcp_runtime.tee.tpm import TPMProvider
             return TPMProvider()
         except ImportError:
             return None
     if name == "sev-snp":
         try:
-            from cmcp_gateway.tee.sev_snp import SEVSNPProvider
+            from cmcp_runtime.tee.sev_snp import SEVSNPProvider
             expected = config.attestation.expected_measurement if config else None
             return SEVSNPProvider(expected_measurement=expected)
         except ImportError:
             return None
     if name == "tdx":
         try:
-            from cmcp_gateway.tee.tdx import TDXProvider
+            from cmcp_runtime.tee.tdx import TDXProvider
             return TDXProvider()
         except ImportError:
             return None
     if name == "opaque":
         try:
-            from cmcp_gateway.tee.opaque import OpaqueProvider
+            from cmcp_runtime.tee.opaque import OpaqueProvider
             return OpaqueProvider()
         except ImportError:
             return None

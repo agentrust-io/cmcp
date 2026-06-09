@@ -8,7 +8,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cmcp_gateway.tee.base import AttestationReport, TEEProvider
+from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 
 _TDX_GUEST_DEVICE = Path("/dev/tdx_guest")
 

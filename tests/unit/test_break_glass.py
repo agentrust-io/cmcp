@@ -7,18 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     CatalogException,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-from cmcp_gateway.mcp.server import MCPServer
-from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+from cmcp_runtime.mcp.server import MCPServer
+from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
+from cmcp_runtime.session.state import SessionState
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ def _make_server(catalog: ToolCatalog | None = None, bearer_token: str | None = 
     if catalog is None:
         catalog = _make_catalog()
     proxy = _make_proxy(catalog)
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         return MCPServer(proxy, bearer_token=bearer_token)
 
 
@@ -294,7 +294,7 @@ def test_catalog_exception_endpoint_bad_json():
 
 def _make_real_proxy_for_break_glass():
     """Build a minimal CMCPProxy with one exception entry to test audit logging."""
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     catalog = _make_catalog()
     exc_entry = CatalogEntry(
@@ -335,8 +335,8 @@ def _make_real_proxy_for_break_glass():
 
     mock_agt_result = MagicMock(sensitivity_tags=[], injection_detected=False, modified_response=b"ok")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(
             catalog=catalog,
             policy_evaluator=evaluator,
@@ -366,7 +366,7 @@ async def test_break_glass_call_logs_warning(caplog):
     import logging
     proxy, _ = _make_real_proxy_for_break_glass()
 
-    with caplog.at_level(logging.WARNING, logger="cmcp_gateway.mcp.proxy"):
+    with caplog.at_level(logging.WARNING, logger="cmcp_runtime.mcp.proxy"):
         await proxy.call_tool("call-1", "emergency.tool", {})
 
     assert any("BREAK_GLASS_ACTIVE" in r.message for r in caplog.records)

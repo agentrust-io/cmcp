@@ -1,4 +1,4 @@
-"""TRACE Claim (cmcp profile) — GatewayClaim envelope wrapping canonical TRACE fields."""
+"""TRACE Claim (cmcp profile) — RuntimeClaim envelope wrapping canonical TRACE fields."""
 
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo
 from pydantic import BaseModel, ConfigDict, Field
 
 try:
-    _GATEWAY_VERSION: str = importlib.metadata.version("cmcp-gateway")
+    _RUNTIME_VERSION: str = importlib.metadata.version("cmcp-runtime")  # was cmcp-gateway
 except importlib.metadata.PackageNotFoundError:
-    _GATEWAY_VERSION = "unknown"
+    _RUNTIME_VERSION = "unknown"
 
 # ── Provider → canonical platform mapping ─────────────────────────────────────
 
@@ -116,7 +116,7 @@ class CatalogSummary(BaseModel):
 
 
 class GatewayTrace(BaseModel):
-    """Phase 1 TRACE fields applicable to the cmcp gateway context."""
+    """Phase 1 TRACE fields applicable to the cmcp runtime context."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -159,7 +159,7 @@ class GatewayAddenda(BaseModel):
     call_log_summary: CallLogSummary | None = None
 
 
-class GatewayClaim(BaseModel):
+class RuntimeClaim(BaseModel):
     """cmcp TRACE profile — canonical trust fields nested inside a gateway envelope."""
 
     model_config = ConfigDict(extra="forbid")
@@ -173,7 +173,7 @@ class GatewayClaim(BaseModel):
 # ── Serialization and signing ──────────────────────────────────────────────────
 
 
-def _to_dict(claim: GatewayClaim) -> dict[str, Any]:
+def _to_dict(claim: RuntimeClaim) -> dict[str, Any]:
     return claim.model_dump(exclude_none=True)
 
 
@@ -186,8 +186,8 @@ def canonical_json(claim_dict: dict[str, Any]) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
-def sign_trace_claim(claim: GatewayClaim, signing_key: Any) -> str:
-    """Sign the GatewayClaim with the TEE-sealed Ed25519 private key.
+def sign_trace_claim(claim: RuntimeClaim, signing_key: Any) -> str:
+    """Sign the RuntimeClaim with the TEE-sealed Ed25519 private key.
 
     Returns base64url-encoded signature (no padding).
     """
@@ -273,8 +273,8 @@ def generate_trace_claim(
     sequence_number: int = 1,
     prev_claim_hash: str | None = None,
     do_sign: bool = True,
-) -> GatewayClaim:
-    """Generate a GatewayClaim from session data, validate it via Pydantic, and optionally sign it.
+) -> RuntimeClaim:
+    """Generate a RuntimeClaim from session data, validate it via Pydantic, and optionally sign it.
 
     signing_key must be a SigningKey instance (audit/keys.py) — it is always required
     to build the JWK confirmation key in trace.cnf.  Set do_sign=False to produce an
@@ -302,7 +302,7 @@ def generate_trace_claim(
 
     gateway = GatewayAddenda(
         session_id=session_id,
-        gateway_version=_GATEWAY_VERSION,
+        gateway_version=_RUNTIME_VERSION,
         sequence_number=sequence_number,
         prev_claim_hash=prev_claim_hash,
         audit_chain=AuditChainSummary(
@@ -334,7 +334,7 @@ def generate_trace_claim(
         call_log_summary=call_log_summary,
     )
 
-    claim = GatewayClaim(trace=trace, gateway=gateway)
+    claim = RuntimeClaim(trace=trace, gateway=gateway)
 
     if do_sign:
         claim.signature = sign_trace_claim(claim, signing_key)

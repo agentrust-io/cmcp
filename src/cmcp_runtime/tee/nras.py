@@ -3,11 +3,11 @@
 Implements issue #125: post-attestation appraisal via the NRAS REST API.
 After get_attestation_report() completes, callers may optionally submit
 the raw evidence to NRAS for hardware-level appraisal. The result is stored
-in GatewayContext.nras_appraisal and written into the TRACE Trust Record
+in RuntimeContext.nras_appraisal and written into the TRACE Trust Record
 appraisal field.
 
 Integration is opt-in: if CMCP_NRAS_API_KEY is absent the step is skipped
-with a WARNING log and GatewayContext.nras_appraisal is None.
+with a WARNING log and RuntimeContext.nras_appraisal is None.
 
 Phase 2 / v0.2 -- target: Q3 2026 (Berlin demo).
 """
@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from cmcp_gateway.tee.base import AttestationReport
+from cmcp_runtime.tee.base import AttestationReport
 
 logger = logging.getLogger(__name__)
 

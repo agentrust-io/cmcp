@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 
-class GatewayError(Exception):
-    """Base class for all cmcp-gateway errors."""
+class CMCPError(Exception):
+    """Base class for all cmcp-runtime errors."""
 
     code: str
     http_status: int
@@ -14,93 +14,93 @@ class GatewayError(Exception):
         self.detail = detail
 
 
-class AttestationProviderUnsupported(GatewayError):
+class AttestationProviderUnsupported(CMCPError):
     code = "ATTESTATION_PROVIDER_UNSUPPORTED"
     http_status = 500
 
 
-class PolicyHashMismatch(GatewayError):
+class PolicyHashMismatch(CMCPError):
     code = "POLICY_HASH_MISMATCH"
     http_status = 500
 
 
-class CatalogHashMismatch(GatewayError):
+class CatalogHashMismatch(CMCPError):
     code = "CATALOG_HASH_MISMATCH"
     http_status = 500
 
 
-class ToolNotInCatalog(GatewayError):
+class ToolNotInCatalog(CMCPError):
     code = "TOOL_NOT_IN_CATALOG"
     http_status = 403
 
 
-class PolicyDeny(GatewayError):
+class PolicyDeny(CMCPError):
     code = "POLICY_DENY"
     http_status = 403
 
 
-class CatalogToolNameCollision(GatewayError):
+class CatalogToolNameCollision(CMCPError):
     code = "CATALOG_TOOL_NAME_COLLISION"
     http_status = 500
 
 
-class CatalogDriftDetected(GatewayError):
+class CatalogDriftDetected(CMCPError):
     code = "CATALOG_DRIFT_DETECTED"
     http_status = 409
 
 
-class McpParseFailure(GatewayError):
+class McpParseFailure(CMCPError):
     code = "MCP_PARSE_FAILURE"
     http_status = 400
 
 
-class ResponseSizeExceeded(GatewayError):
+class ResponseSizeExceeded(CMCPError):
     code = "RESPONSE_SIZE_EXCEEDED"
     http_status = 413
 
 
-class ResponseInjectionDetected(GatewayError):
+class ResponseInjectionDetected(CMCPError):
     code = "RESPONSE_INJECTION_DETECTED"
     http_status = 403
 
 
-class ResponseSchemaViolationStrict(GatewayError):
+class ResponseSchemaViolationStrict(CMCPError):
     code = "RESPONSE_SCHEMA_VIOLATION_STRICT"
     http_status = 409
 
 
-class SessionSensitivityPolicyDeny(GatewayError):
+class SessionSensitivityPolicyDeny(CMCPError):
     code = "SESSION_SENSITIVITY_POLICY_DENY"
     http_status = 403
 
 
-class SessionResetRequired(GatewayError):
+class SessionResetRequired(CMCPError):
     code = "SESSION_RESET_REQUIRED"
     http_status = 428
 
 
-class TeeFault(GatewayError):
+class TeeFault(CMCPError):
     code = "TEE_FAULT"
     http_status = 500
 
 
-class AttestationStale(GatewayError):
+class AttestationStale(CMCPError):
     code = "ATTESTATION_STALE"
     http_status = 412
 
 
-class BreakGlassActive(GatewayError):
+class BreakGlassActive(CMCPError):
     """Not an error — signals that a break-glass exception is in use."""
 
     code = "BREAK_GLASS_ACTIVE"
     http_status = 200
 
 
-class ConfigError(GatewayError):
+class ConfigError(CMCPError):
     code = "CONFIG_ERROR"
     http_status = 500
 
 
-class ClaimValidationError(GatewayError):
+class ClaimValidationError(CMCPError):
     code = "CLAIM_VALIDATION_ERROR"
     http_status = 500

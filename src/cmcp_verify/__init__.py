@@ -1,4 +1,4 @@
-"""cmcp-verify — verify cMCP Gateway TRACE Claims without trusting the operator."""
+"""cmcp-verify — verify cMCP Runtime TRACE Claims without trusting the operator."""
 
 from cmcp_verify.verify import (
     ApprovedHashes,

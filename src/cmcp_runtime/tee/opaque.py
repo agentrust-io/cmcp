@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cmcp_gateway.tee.base import AttestationReport, TEEProvider
+from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 
 
 class OpaqueProvider(TEEProvider):

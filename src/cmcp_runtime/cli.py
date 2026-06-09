@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from cmcp_gateway import __version__
+from cmcp_runtime import __version__
 
 
 @click.group()
@@ -23,19 +23,19 @@ def start(config: str, enforcement: str | None) -> None:
 
     import uvicorn
 
-    from cmcp_gateway.audit.chain import AuditChain
-    from cmcp_gateway.audit.trace_claim import _PROVIDER_MAP
-    from cmcp_gateway.mcp.proxy import CMCPProxy
-    from cmcp_gateway.mcp.server import MCPServer
-    from cmcp_gateway.policy.evaluator import PolicyEvaluator
-    from cmcp_gateway.session.state import SessionState
-    from cmcp_gateway.startup import run_startup
+    from cmcp_runtime.audit.chain import AuditChain
+    from cmcp_runtime.audit.trace_claim import _PROVIDER_MAP
+    from cmcp_runtime.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.server import MCPServer
+    from cmcp_runtime.policy.evaluator import PolicyEvaluator
+    from cmcp_runtime.session.state import SessionState
+    from cmcp_runtime.startup import run_startup
 
     ctx = run_startup(config)
 
     # Apply CLI override after loading config, before proxy is instantiated.
     if enforcement is not None:
-        from cmcp_gateway.config import EnforcementMode
+        from cmcp_runtime.config import EnforcementMode
         ctx.config.attestation.enforcement_mode = EnforcementMode(enforcement)
 
     # Resolve provider string to canonical platform name for Cedar context.
@@ -71,7 +71,7 @@ def start(config: str, enforcement: str | None) -> None:
 @click.option("--config", required=True, type=click.Path(exists=True), help="Path to cmcp-config.yaml")
 def validate_config(config: str) -> None:
     """Validate cmcp-config.yaml without starting the runtime."""
-    from cmcp_gateway.config import load_config
+    from cmcp_runtime.config import load_config
 
     try:
         load_config(config)
@@ -86,7 +86,7 @@ def validate_config(config: str) -> None:
 @click.option("--expected-hash", required=True, help="Expected SHA-256 hash (sha256:<hex>)")
 def validate_bundle(bundle_path: str, expected_hash: str) -> None:
     """Validate a Cedar policy bundle hash before deployment."""
-    from cmcp_gateway.policy.bundle import load_policy_bundle
+    from cmcp_runtime.policy.bundle import load_policy_bundle
 
     try:
         bundle = load_policy_bundle(bundle_path)
