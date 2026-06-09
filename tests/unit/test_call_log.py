@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from cmcp_gateway.session.call_log import CallLog, CallRecord
+from cmcp_runtime.session.call_log import CallLog, CallRecord
 
 
 def _rec(tool: str) -> CallRecord:

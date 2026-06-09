@@ -6,17 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
+from cmcp_runtime.session.state import SessionState
 
 
 def _make_entry(tool_name: str = "test.tool") -> CatalogEntry:
@@ -77,7 +77,7 @@ def _make_evaluator(allow: bool = True, would_deny: bool = False) -> PolicyEvalu
 
 
 def _make_proxy(catalog=None, evaluator=None, mode=EnforcementMode.ENFORCING):
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = Config()
     cfg.attestation = AttestationConfig(enforcement_mode=mode)
@@ -86,8 +86,8 @@ def _make_proxy(catalog=None, evaluator=None, mode=EnforcementMode.ENFORCING):
     session = SessionState(session_id="sess-001")
     chain = AuditChain("sess-001")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(cat, ev, session, chain, cfg, attestation_platform="software-only")
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
@@ -213,7 +213,7 @@ async def test_cedar_context_includes_arguments():
 async def test_cedar_context_includes_attestation_platform():
     """POLICY-005 (issue #162) — attestation_platform must be in Cedar context so
     policies can restrict calls to hardware-attested callers only."""
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     evaluator = _make_evaluator()
     cfg = Config()
@@ -221,8 +221,8 @@ async def test_cedar_context_includes_attestation_platform():
     session = SessionState(session_id="sess-001")
     chain = AuditChain("sess-001")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(
             _make_catalog(), evaluator, session, chain, cfg,
             attestation_platform="amd-sev-snp",
@@ -252,7 +252,7 @@ def test_cli_passes_canonical_platform_to_proxy():
     """POLICY-005 — cli.start() must resolve the TEE provider to a canonical platform
     string via _PROVIDER_MAP and pass it to CMCPProxy, not leave the Cedar context as
     'unknown'."""
-    from cmcp_gateway.audit.trace_claim import _PROVIDER_MAP
+    from cmcp_runtime.audit.trace_claim import _PROVIDER_MAP
 
     # Verify the map has entries for all expected production providers
     assert "sev-snp" in _PROVIDER_MAP

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.audit.keys import SigningKey
-from cmcp_gateway.session.manager import SessionManager
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.session.manager import SessionManager
 
 # ── AuditChain.set_tee_anchor ─────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ def test_verify_chain_warns_when_no_anchor(caplog):
     """Happy internal-only chain: passes but logs a warning about missing anchor."""
     chain = AuditChain("sess-anchor-005")
     chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
-    with caplog.at_level(logging.WARNING, logger="cmcp_gateway.audit.chain"):
+    with caplog.at_level(logging.WARNING, logger="cmcp_runtime.audit.chain"):
         result = chain.verify_chain()
     assert result is True
     assert "AUDIT-002" in caplog.text
@@ -98,7 +98,7 @@ def _make_tee_provider_mock() -> MagicMock:
 
 
 def _make_ctx_with_tee() -> MagicMock:
-    """Return a mock GatewayContext that includes a trackable tee_provider."""
+    """Return a mock RuntimeContext that includes a trackable tee_provider."""
     signing_key = SigningKey()
 
     policy_bundle = MagicMock()
@@ -211,7 +211,7 @@ def test_tee_provider_failure_still_sets_anchor(caplog):
     ctx.tee_provider.get_attestation_report.side_effect = RuntimeError("TEE unavailable")
 
     mgr = SessionManager(ctx)
-    with caplog.at_level(logging.WARNING, logger="cmcp_gateway.session.manager"):
+    with caplog.at_level(logging.WARNING, logger="cmcp_runtime.session.manager"):
         _, chain = mgr.create_session()
 
     assert chain.tee_anchor is not None

@@ -23,13 +23,13 @@ from typing import Any
 from agent_os.mcp_gateway import GovernancePolicy, MCPGateway  # type: ignore[attr-defined]
 from agent_os.mcp_response_scanner import MCPResponseScanner
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import ToolCatalog
-from cmcp_gateway.config import Config
-from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.evaluator import PolicyEvaluator
-from cmcp_gateway.session.call_log import CallLog, CallRecord, SessionCallLog
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import ToolCatalog
+from cmcp_runtime.config import Config
+from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.policy.evaluator import PolicyEvaluator
+from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
+from cmcp_runtime.session.state import SessionState
 
 logger = logging.getLogger(__name__)
 

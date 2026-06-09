@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from cmcp_gateway.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
-from cmcp_gateway.inspection.pipeline import (
+from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
+from cmcp_runtime.inspection.pipeline import (
     InspectionPipeline,
     _stage1_size_check,
     _stage4_injection_detection,
@@ -400,7 +400,7 @@ def test_patterns_version_matches_config_file():
     """INJECT-006: patterns_version in audit result must match the version in patterns_v1.json."""
     import json
     import pathlib
-    config_path = pathlib.Path(__file__).parents[2] / "src" / "cmcp_gateway" / "inspection" / "patterns_v1.json"
+    config_path = pathlib.Path(__file__).parents[2] / "src" / "cmcp_runtime" / "inspection" / "patterns_v1.json"
     expected_version = json.loads(config_path.read_text())["version"]
 
     result = InspectionPipeline().run("call-1", _make_entry(), NORMAL_RESPONSE)

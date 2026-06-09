@@ -23,7 +23,7 @@ from typing import Any
 
 import jsonschema
 
-from cmcp_gateway.catalog.loader import CatalogEntry
+from cmcp_runtime.catalog.loader import CatalogEntry
 
 _log = logging.getLogger(__name__)
 

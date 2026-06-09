@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from cmcp_gateway.errors import ConfigError, PolicyHashMismatch
+from cmcp_runtime.errors import ConfigError, PolicyHashMismatch
 
 # POLICY-007: version of the Cedar evaluation library bundled in agent-os-kernel.
 # Pinned in manifest.json as agent_os_version; mismatch is logged as a warning.

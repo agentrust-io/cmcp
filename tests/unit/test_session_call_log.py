@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from cmcp_gateway.session.call_log import SessionCallLog
+from cmcp_runtime.session.call_log import SessionCallLog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -257,10 +257,10 @@ def test_trace_claim_call_graph_summary_from_session_call_log():
     """Integration: close_session with a SessionCallLog uses its call_graph_summary."""
     from unittest.mock import MagicMock
 
-    from cmcp_gateway.audit.keys import SigningKey
-    from cmcp_gateway.session.manager import SessionManager
+    from cmcp_runtime.audit.keys import SigningKey
+    from cmcp_runtime.session.manager import SessionManager
 
-    # Build a minimal GatewayContext mock
+    # Build a minimal RuntimeContext mock
     key = SigningKey()
     policy_bundle = MagicMock()
     policy_bundle.bundle.bundle_hash = "sha256:" + "a" * 64

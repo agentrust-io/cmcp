@@ -21,7 +21,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
-from cmcp_gateway.audit.trace_claim import GatewayClaim
+from cmcp_runtime.audit.trace_claim import RuntimeClaim
 
 logger = logging.getLogger(__name__)
 
@@ -228,9 +228,9 @@ def _check_audit_chain(claim: dict[str, Any]) -> tuple[bool, str | None]:
 
 
 def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None]:
-    """Validate claim structure using the GatewayClaim Pydantic model."""
+    """Validate claim structure using the RuntimeClaim Pydantic model."""
     try:
-        GatewayClaim.model_validate(claim)
+        RuntimeClaim.model_validate(claim)
         return True, None
     except ValidationError as exc:
         return False, str(exc)
@@ -247,7 +247,7 @@ def verify_trace_claim(
     Verify a TRACE Claim without trusting the operator.
 
     Steps:
-    1. Pydantic schema validation (GatewayClaim)
+    1. Pydantic schema validation (RuntimeClaim)
     2. Ed25519 signature verification over canonical claim body
     2b. CRYPTO-001: TEE key binding -- verify cnf.jwk fingerprint matches report_data[:32]
     2c. Optional out-of-band trusted_public_key_hex cross-check

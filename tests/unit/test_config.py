@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from cmcp_gateway.config import Config, EnforcementMode, TEEProvider, load_config
-from cmcp_gateway.errors import ConfigError
+from cmcp_runtime.config import Config, EnforcementMode, TEEProvider, load_config
+from cmcp_runtime.errors import ConfigError
 
 
 @pytest.fixture

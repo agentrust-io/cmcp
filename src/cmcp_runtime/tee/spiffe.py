@@ -181,8 +181,8 @@ def make_self_signed_tls_context(signing_key_hex: str, session_id: str) -> Any:
 
     private_key = Ed25519PrivateKey.generate()
     subject = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, f"cmcp-gateway-{signing_key_hex[:16]}"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "cmcp-gateway"),
+        x509.NameAttribute(NameOID.COMMON_NAME, f"cmcp-runtime-{signing_key_hex[:16]}"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "cmcp-runtime"),
         x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, f"session:{session_id[:8]}"),
     ])
     now = datetime.datetime.now(datetime.UTC)

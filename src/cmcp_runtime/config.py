@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from cmcp_gateway.errors import ConfigError
+from cmcp_runtime.errors import ConfigError
 
 # TEE-002: read exactly once at import time so the value is immutable for the
 # lifetime of the process. No code may call os.environ.get("CMCP_DEV_MODE")

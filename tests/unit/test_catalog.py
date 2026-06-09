@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from cmcp_gateway.catalog.loader import ToolCatalog, load_catalog
-from cmcp_gateway.errors import (
+from cmcp_runtime.catalog.loader import ToolCatalog, load_catalog
+from cmcp_runtime.errors import (
     CatalogHashMismatch,
     CatalogToolNameCollision,
     ConfigError,

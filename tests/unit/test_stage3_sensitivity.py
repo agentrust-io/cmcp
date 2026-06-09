@@ -4,12 +4,12 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
 )
-from cmcp_gateway.inspection.pipeline import SensitivityClassificationStage
+from cmcp_runtime.inspection.pipeline import SensitivityClassificationStage
 
 
 def _make_entry(
@@ -112,7 +112,7 @@ def test_no_output_schema_no_field_tags():
     # Field-level tags only fire when a property has x-sensitivity; without a schema, none fire.
     # Use non-PII content so source-3 pattern matching also produces no tags.
     stage = SensitivityClassificationStage()
-    with patch("cmcp_gateway.inspection.pipeline._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", False):
         result = stage.run({"ssn": "not-a-real-ssn"}, _make_entry(output_schema=None))
     assert result.sensitivity_tags == []
 
@@ -121,28 +121,28 @@ def test_no_output_schema_no_field_tags():
 
 def test_ssn_pattern_detected_no_agt():
     stage = SensitivityClassificationStage()
-    with patch("cmcp_gateway.inspection.pipeline._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", False):
         result = stage.run({"data": "SSN is 123-45-6789"}, _make_entry())
     assert "pii" in result.sensitivity_tags
 
 
 def test_email_pattern_detected_no_agt():
     stage = SensitivityClassificationStage()
-    with patch("cmcp_gateway.inspection.pipeline._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", False):
         result = stage.run({"contact": "user@example.com"}, _make_entry())
     assert "pii" in result.sensitivity_tags
 
 
 def test_phi_pattern_detected_no_agt():
     stage = SensitivityClassificationStage()
-    with patch("cmcp_gateway.inspection.pipeline._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", False):
         result = stage.run({"note": "patient mrn: ABC12345"}, _make_entry())
     assert "hipaa_phi" in result.sensitivity_tags
 
 
 def test_no_pii_no_tag_no_agt():
     stage = SensitivityClassificationStage()
-    with patch("cmcp_gateway.inspection.pipeline._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", False):
         result = stage.run({"message": "hello world"}, _make_entry())
     assert result.sensitivity_tags == []
 
@@ -157,6 +157,6 @@ def test_no_duplicate_pii_from_catalog_and_field():
         },
     }
     stage = SensitivityClassificationStage()
-    with patch("cmcp_gateway.inspection.pipeline._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", False):
         result = stage.run({"ssn": "123-45-6789"}, _make_entry("pii", output_schema=schema))
     assert result.sensitivity_tags.count("pii") == 1

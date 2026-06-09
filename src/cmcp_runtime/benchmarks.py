@@ -1,11 +1,11 @@
 """
-cMCP gateway latency benchmark suite — implements issue #78.
+cMCP runtime latency benchmark suite — implements issue #78.
 
 Measures: cedar_eval_latency_us, audit_entry_latency_us, end_to_end_latency_us (p50/p95/p99)
 
 Usage:
-    python -m cmcp_gateway.benchmarks --provider software-only --calls 10000
-    python -m cmcp_gateway.benchmarks --provider sev-snp --calls 10000 --out benchmarks/
+    python -m cmcp_runtime.benchmarks --provider software-only --calls 10000
+    python -m cmcp_runtime.benchmarks --provider sev-snp --calls 10000 --out benchmarks/
 
 Exits 1 if software-only p99 end_to_end_us > 5000 (5ms CI gate).
 """
@@ -136,7 +136,7 @@ def _stats(samples: list[float]) -> dict[str, int]:
 
 
 def _make_bundle(bundle_dir: Path) -> Any:
-    from cmcp_gateway.policy.bundle import load_policy_bundle
+    from cmcp_runtime.policy.bundle import load_policy_bundle
 
     (bundle_dir / "manifest.json").write_text(json.dumps(_MANIFEST))
     (bundle_dir / "benchmark.cedar").write_text(_CEDAR_POLICIES)
@@ -145,7 +145,7 @@ def _make_bundle(bundle_dir: Path) -> Any:
 
 
 def _make_catalog() -> Any:
-    from cmcp_gateway.catalog.loader import (
+    from cmcp_runtime.catalog.loader import (
         ApprovedDefinition,
         CatalogEntry,
         ServerIdentity,
@@ -178,11 +178,11 @@ def _make_catalog() -> Any:
 
 
 def _make_proxy(bundle: Any, catalog: Any) -> tuple[Any, Any]:
-    from cmcp_gateway.audit.chain import AuditChain
-    from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode, TEEProvider
-    from cmcp_gateway.mcp.proxy import CMCPProxy
-    from cmcp_gateway.policy.evaluator import PolicyEvaluator
-    from cmcp_gateway.session.state import SessionState
+    from cmcp_runtime.audit.chain import AuditChain
+    from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode, TEEProvider
+    from cmcp_runtime.mcp.proxy import CMCPProxy
+    from cmcp_runtime.policy.evaluator import PolicyEvaluator
+    from cmcp_runtime.session.state import SessionState
 
     config = Config(
         attestation=AttestationConfig(
@@ -200,8 +200,8 @@ def _make_proxy(bundle: Any, catalog: Any) -> tuple[Any, Any]:
         modified_response=b'{"result": "benchmark-ok"}',
     )
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(
             catalog=catalog,
             policy_evaluator=evaluator,
@@ -293,7 +293,7 @@ async def _run(provider: str, calls: int, out_dir: Path | None) -> dict[str, Any
         await _bench_end_to_end(proxy, warmup)
 
     # Reset chain to avoid noise from warmup in audit timing
-    from cmcp_gateway.audit.chain import AuditChain
+    from cmcp_runtime.audit.chain import AuditChain
     fresh_chain = AuditChain(session_id=str(uuid.uuid4()))
     proxy._audit = fresh_chain
 
@@ -325,12 +325,12 @@ async def _run(provider: str, calls: int, out_dir: Path | None) -> dict[str, Any
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="cMCP gateway latency benchmark (issue #78)",
+        description="cMCP runtime latency benchmark (issue #78)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m cmcp_gateway.benchmarks --provider software-only
-  python -m cmcp_gateway.benchmarks --provider sev-snp --calls 10000 --out benchmarks/
+  python -m cmcp_runtime.benchmarks --provider software-only
+  python -m cmcp_runtime.benchmarks --provider sev-snp --calls 10000 --out benchmarks/
         """,
     )
     parser.add_argument(

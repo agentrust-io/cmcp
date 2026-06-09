@@ -8,11 +8,11 @@ from unittest.mock import patch
 
 import pytest
 
-from cmcp_gateway.config import Config
-from cmcp_gateway.config import TEEProvider as TEEProviderEnum
-from cmcp_gateway.errors import AttestationProviderUnsupported
-from cmcp_gateway.tee.base import SoftwareOnlyProvider, make_nonce
-from cmcp_gateway.tee.detect import detect_provider
+from cmcp_runtime.config import Config
+from cmcp_runtime.config import TEEProvider as TEEProviderEnum
+from cmcp_runtime.errors import AttestationProviderUnsupported
+from cmcp_runtime.tee.base import SoftwareOnlyProvider, make_nonce
+from cmcp_runtime.tee.detect import detect_provider
 
 
 @pytest.fixture
@@ -85,13 +85,13 @@ def test_make_nonce_different_inputs():
 # ── detect_provider ───────────────────────────────────────────────────────────
 
 def test_detect_returns_software_only_in_dev_mode(dev_config):
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None):
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", return_value=None):
         provider = detect_provider(dev_config)
     assert isinstance(provider, SoftwareOnlyProvider)
 
 
 def test_detect_raises_when_no_hardware_and_no_dev_mode(no_dev_config):
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None), \
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", return_value=None), \
          pytest.raises(AttestationProviderUnsupported):
         detect_provider(no_dev_config)
 
@@ -99,7 +99,7 @@ def test_detect_raises_when_no_hardware_and_no_dev_mode(no_dev_config):
 def test_detect_env_var_alone_does_not_bypass_config(no_dev_config, monkeypatch):
     """CONF-002 — CMCP_DEV_MODE in env after config load must not enable software-only."""
     monkeypatch.setenv("CMCP_DEV_MODE", "1")
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", return_value=None), \
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", return_value=None), \
          pytest.raises(AttestationProviderUnsupported):
         detect_provider(no_dev_config)
 
@@ -113,7 +113,7 @@ def test_detect_uses_first_available_provider(dev_config):
             return mock_provider
         return None
 
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", side_effect=_mock_get), \
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", side_effect=_mock_get), \
          patch.object(mock_provider, "detect", return_value=True):
         provider = detect_provider(dev_config)
     assert provider is mock_provider
@@ -136,7 +136,7 @@ def test_detect_explicit_software_only_with_dev_mode(dev_config):
 def test_attestation_report_unknown_provider_raises():
     """HW-001: unknown provider string must be rejected at AttestationReport construction."""
 
-    from cmcp_gateway.tee.base import AttestationReport
+    from cmcp_runtime.tee.base import AttestationReport
     with pytest.raises(ValueError, match="not in the allowed set"):
         AttestationReport(
             provider="unknown-cloud-magic",
@@ -151,7 +151,7 @@ def test_attestation_report_unknown_provider_raises():
 def test_attestation_report_known_providers_accepted():
     """HW-001: all known providers must be accepted."""
 
-    from cmcp_gateway.tee.base import _ALLOWED_PROVIDERS, AttestationReport
+    from cmcp_runtime.tee.base import _ALLOWED_PROVIDERS, AttestationReport
     for provider in _ALLOWED_PROVIDERS:
         AttestationReport(
             provider=provider,
@@ -167,14 +167,14 @@ def test_attestation_report_known_providers_accepted():
 
 def test_sevsnp_no_expected_measurement_skips_check():
     """HW-002: when expected_measurement is None, attribute is None (check skipped)."""
-    from cmcp_gateway.tee.sev_snp import SEVSNPProvider
+    from cmcp_runtime.tee.sev_snp import SEVSNPProvider
     provider = SEVSNPProvider(expected_measurement=None)
     assert provider._expected_measurement is None
 
 
 def test_sevsnp_stores_expected_measurement():
     """HW-002: SEVSNPProvider stores the configured expected_measurement."""
-    from cmcp_gateway.tee.sev_snp import SEVSNPProvider
+    from cmcp_runtime.tee.sev_snp import SEVSNPProvider
     em = "sha384:" + "a" * 96
     provider = SEVSNPProvider(expected_measurement=em)
     assert provider._expected_measurement == em
@@ -186,7 +186,7 @@ def test_sevsnp_rejects_mismatched_expected_measurement(monkeypatch):
     import sys
     from unittest.mock import MagicMock
 
-    from cmcp_gateway.tee.sev_snp import (
+    from cmcp_runtime.tee.sev_snp import (
         _SNP_MEASUREMENT_END,
         _SNP_MEASUREMENT_OFFSET,
         _SNP_REPORT_SIZE,
@@ -209,7 +209,7 @@ def test_sevsnp_rejects_mismatched_expected_measurement(monkeypatch):
     mock_fcntl = MagicMock()
     mock_fcntl.ioctl.side_effect = fake_ioctl
     monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
-    monkeypatch.setattr("cmcp_gateway.tee.sev_snp.sys.platform", "linux")
+    monkeypatch.setattr("cmcp_runtime.tee.sev_snp.sys.platform", "linux")
 
     wrong_expected = "sha384:" + "0" * 96
     provider = SEVSNPProvider(expected_measurement=wrong_expected)
@@ -227,7 +227,7 @@ def test_sevsnp_accepts_matching_expected_measurement(monkeypatch):
     import sys
     from unittest.mock import MagicMock
 
-    from cmcp_gateway.tee.sev_snp import (
+    from cmcp_runtime.tee.sev_snp import (
         _SNP_MEASUREMENT_END,
         _SNP_MEASUREMENT_OFFSET,
         _SNP_REPORT_SIZE,
@@ -251,7 +251,7 @@ def test_sevsnp_accepts_matching_expected_measurement(monkeypatch):
     mock_fcntl = MagicMock()
     mock_fcntl.ioctl.side_effect = fake_ioctl
     monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
-    monkeypatch.setattr("cmcp_gateway.tee.sev_snp.sys.platform", "linux")
+    monkeypatch.setattr("cmcp_runtime.tee.sev_snp.sys.platform", "linux")
 
     provider = SEVSNPProvider(expected_measurement=expected)
 
@@ -265,7 +265,7 @@ def test_sevsnp_accepts_matching_expected_measurement(monkeypatch):
 
 def test_detect_provider_passes_expected_measurement_to_snp(dev_config):
     """HW-002: detect_provider threads attestation.expected_measurement into SEVSNPProvider."""
-    from cmcp_gateway.tee.sev_snp import SEVSNPProvider
+    from cmcp_runtime.tee.sev_snp import SEVSNPProvider
 
     dev_config.attestation.expected_measurement = "sha384:" + "f" * 96
     dev_config.attestation.provider = TEEProviderEnum.SEV_SNP
@@ -273,7 +273,7 @@ def test_detect_provider_passes_expected_measurement_to_snp(dev_config):
     created = []
 
     original_get = __import__(
-        "cmcp_gateway.tee.detect", fromlist=["_get_provider_impl"]
+        "cmcp_runtime.tee.detect", fromlist=["_get_provider_impl"]
     )._get_provider_impl
 
     def spy_get(name, config=None):
@@ -282,7 +282,7 @@ def test_detect_provider_passes_expected_measurement_to_snp(dev_config):
             created.append(impl)
         return impl
 
-    with patch("cmcp_gateway.tee.detect._get_provider_impl", side_effect=spy_get), \
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", side_effect=spy_get), \
          patch.object(SEVSNPProvider, "detect", return_value=True):
         detect_provider(dev_config)
 

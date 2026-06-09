@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.audit.keys import SigningKey
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.keys import SigningKey
 
 # ── SigningKey ────────────────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ def test_timestamp_clamped_when_clock_steps_backward():
 
     # Simulate a clock that returns a time 5 seconds in the past on the next call
     backward = first_ts - timedelta(seconds=5)
-    with patch("cmcp_gateway.audit.chain.datetime") as mock_dt:
+    with patch("cmcp_runtime.audit.chain.datetime") as mock_dt:
         mock_dt.now.return_value = backward
         mock_dt.fromisoformat = datetime.fromisoformat
         entry = chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
@@ -150,7 +150,7 @@ def test_timestamp_not_clamped_when_clock_moves_forward():
     first_ts = datetime.fromisoformat(chain.entries[0].timestamp_utc)
 
     forward = first_ts + timedelta(seconds=10)
-    with patch("cmcp_gateway.audit.chain.datetime") as mock_dt:
+    with patch("cmcp_runtime.audit.chain.datetime") as mock_dt:
         mock_dt.now.return_value = forward
         mock_dt.fromisoformat = datetime.fromisoformat
         entry = chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")

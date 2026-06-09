@@ -8,9 +8,9 @@ import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.audit.keys import SigningKey
-from cmcp_gateway.audit.trace_claim import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.audit.trace_claim import (
     AttestationReportInfo,
     CallGraphSummary,
     CallSummary,

@@ -11,10 +11,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.tee.opaque import OpaqueProvider
-from cmcp_gateway.tee.sev_snp import SEVSNPProvider, _SnpAttestationReport
-from cmcp_gateway.tee.tdx import TDXProvider, _TdxReportReq
-from cmcp_gateway.tee.tpm import TPMProvider
+from cmcp_runtime.tee.opaque import OpaqueProvider
+from cmcp_runtime.tee.sev_snp import SEVSNPProvider, _SnpAttestationReport
+from cmcp_runtime.tee.tdx import TDXProvider, _TdxReportReq
+from cmcp_runtime.tee.tpm import TPMProvider
 
 # ── OpaqueProvider ─────────────────────────────────────────────────────────────
 
@@ -189,7 +189,7 @@ def test_tpm_provider_name() -> None:
 
 
 def test_tpm_get_report_raises_when_no_tss2(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cmcp_gateway.tee.tpm._TSS2_AVAILABLE", False)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
 
     failed_result = MagicMock(spec=subprocess.CompletedProcess)
     failed_result.returncode = 1

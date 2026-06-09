@@ -6,18 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.bundle import PolicyBundle, PolicyManifest
-from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest
+from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
+from cmcp_runtime.session.state import SessionState
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ def _make_proxy_with_egress(egress_allow: bool, ingress_allow: bool = True):
     Build a CMCPProxy where the evaluator returns different decisions for
     ingress vs. egress calls.  Egress calls carry egress=True in their context.
     """
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = _make_config(EnforcementMode.ENFORCING)
     catalog = _make_catalog()
@@ -114,8 +114,8 @@ def _make_proxy_with_egress(egress_allow: bool, ingress_allow: bool = True):
     evaluator.bundle_hash = "sha256:" + "0" * 64
     evaluator.enforcement_mode = EnforcementMode.ENFORCING
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(catalog, evaluator, session, chain, cfg)
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
@@ -129,7 +129,7 @@ def _make_proxy_with_egress(egress_allow: bool, ingress_allow: bool = True):
 
 def test_authorize_egress_default_policy_allows():
     """Default permit-all policy allows every egress response."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=True, reason=None, evaluation_ms=0.1
@@ -146,7 +146,7 @@ def test_authorize_egress_default_policy_allows():
 
 def test_authorize_egress_passes_sensitivity_level_in_context():
     """authorize_egress translates session.max_sensitivity to an int in context."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=True, reason=None, evaluation_ms=0.1
@@ -165,7 +165,7 @@ def test_authorize_egress_passes_sensitivity_level_in_context():
 
 def test_authorize_egress_passes_injection_and_reset_counts():
     """injection_events count and reset_count are forwarded to Cedar context."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=True, reason=None, evaluation_ms=0.1
@@ -187,7 +187,7 @@ def test_authorize_egress_passes_injection_and_reset_counts():
 
 def test_authorize_egress_deny_enforcing_raises():
     """In ENFORCING mode a Cedar deny on egress raises PolicyDeny."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=False, reason="egress-forbid", evaluation_ms=0.2
@@ -203,7 +203,7 @@ def test_authorize_egress_deny_enforcing_raises():
 
 def test_authorize_egress_deny_advisory_flags_would_have_denied():
     """In ADVISORY mode a Cedar deny on egress sets would_have_denied=True."""
-    with patch("cmcp_gateway.policy.evaluator.CedarBackend") as MockBackend:
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
         mock = MagicMock()
         mock.evaluate.return_value = MagicMock(
             allowed=False, reason="egress-forbid", evaluation_ms=0.2
@@ -258,7 +258,7 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     A session whose max_sensitivity is 'hipaa_phi' (level 3) is blocked by an
     egress policy that checks sensitivity_level, while a public session is allowed.
     """
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = _make_config(EnforcementMode.ENFORCING)
     catalog = _make_catalog()
@@ -289,8 +289,8 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     high_chain = AuditChain("high")
     high_ev = _make_evaluator_for("hipaa_phi")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         high_proxy = CMCPProxy(catalog, high_ev, high_session, high_chain, cfg)
         high_proxy._mcp_gateway = MagicMock()
         high_proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
@@ -305,8 +305,8 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     low_chain = AuditChain("low")
     low_ev = _make_evaluator_for("public")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         low_proxy = CMCPProxy(catalog, low_ev, low_session, low_chain, cfg)
         low_proxy._mcp_gateway = MagicMock()
         low_proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
@@ -323,7 +323,7 @@ async def test_proxy_after_session_reset_egress_allowed_again():
     After a session reset that clears sensitivity back to 'public', a tool that
     was previously blocked by the high-sensitivity egress policy is allowed again.
     """
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = _make_config(EnforcementMode.ENFORCING)
     catalog = _make_catalog()
@@ -349,8 +349,8 @@ async def test_proxy_after_session_reset_egress_allowed_again():
     evaluator.bundle_hash = "sha256:" + "0" * 64
     evaluator.enforcement_mode = EnforcementMode.ENFORCING
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(catalog, evaluator, session, chain, cfg)
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(

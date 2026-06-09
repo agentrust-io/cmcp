@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.tee.spiffe import (
+from cmcp_runtime.tee.spiffe import (
     SpiffeClientResult,
     SVIDBundle,
     _socket_exists,
@@ -35,7 +35,7 @@ def test_socket_exists_regular_file(tmp_path):
 def test_fetch_svid_no_socket_returns_not_available(monkeypatch):
     """No socket → not available, no crash."""
     monkeypatch.delenv("CMCP_SPIRE_SOCKET", raising=False)
-    with patch("cmcp_gateway.tee.spiffe._socket_exists", return_value=False):
+    with patch("cmcp_runtime.tee.spiffe._socket_exists", return_value=False):
         result = fetch_svid("/nonexistent/socket")
 
     assert result.available is False
@@ -46,8 +46,8 @@ def test_fetch_svid_no_socket_returns_not_available(monkeypatch):
 
 def test_fetch_svid_socket_present_no_pyspiffe(monkeypatch):
     """Socket exists but pyspiffe not installed → not available with explanation."""
-    with patch("cmcp_gateway.tee.spiffe._socket_exists", return_value=True), \
-         patch("cmcp_gateway.tee.spiffe._try_pyspiffe") as mock_try:
+    with patch("cmcp_runtime.tee.spiffe._socket_exists", return_value=True), \
+         patch("cmcp_runtime.tee.spiffe._try_pyspiffe") as mock_try:
         mock_try.return_value = SpiffeClientResult(
             svid=None,
             available=False,
@@ -67,8 +67,8 @@ def test_fetch_svid_socket_present_spire_succeeds():
         private_key_pem=b"-----BEGIN PRIVATE KEY-----\nMOCK\n-----END PRIVATE KEY-----\n",
         bundle_pem=b"-----BEGIN CERTIFICATE-----\nBUNDLE\n-----END CERTIFICATE-----\n",
     )
-    with patch("cmcp_gateway.tee.spiffe._socket_exists", return_value=True), \
-         patch("cmcp_gateway.tee.spiffe._try_pyspiffe") as mock_try:
+    with patch("cmcp_runtime.tee.spiffe._socket_exists", return_value=True), \
+         patch("cmcp_runtime.tee.spiffe._try_pyspiffe") as mock_try:
         mock_try.return_value = SpiffeClientResult(svid=fake_svid, available=True)
         result = fetch_svid("/fake/socket")
 
@@ -79,8 +79,8 @@ def test_fetch_svid_socket_present_spire_succeeds():
 
 def test_fetch_svid_spire_fetch_error():
     """SPIRE reachable but SVID fetch fails → available=True, no SVID."""
-    with patch("cmcp_gateway.tee.spiffe._socket_exists", return_value=True), \
-         patch("cmcp_gateway.tee.spiffe._try_pyspiffe") as mock_try:
+    with patch("cmcp_runtime.tee.spiffe._socket_exists", return_value=True), \
+         patch("cmcp_runtime.tee.spiffe._try_pyspiffe") as mock_try:
         mock_try.return_value = SpiffeClientResult(
             svid=None,
             available=True,
@@ -96,7 +96,7 @@ def test_fetch_svid_spire_fetch_error():
 def test_fetch_svid_uses_env_socket(monkeypatch):
     """CMCP_SPIRE_SOCKET env var overrides default socket path."""
     monkeypatch.setenv("CMCP_SPIRE_SOCKET", "/env/socket/path")
-    with patch("cmcp_gateway.tee.spiffe._socket_exists", return_value=False) as mock_exists:
+    with patch("cmcp_runtime.tee.spiffe._socket_exists", return_value=False) as mock_exists:
         fetch_svid()
     mock_exists.assert_called_with("/env/socket/path")
 
@@ -104,7 +104,7 @@ def test_fetch_svid_uses_env_socket(monkeypatch):
 def test_fetch_svid_arg_overrides_env(monkeypatch):
     """Explicit socket_path arg overrides env var."""
     monkeypatch.setenv("CMCP_SPIRE_SOCKET", "/env/socket")
-    with patch("cmcp_gateway.tee.spiffe._socket_exists", return_value=False) as mock_exists:
+    with patch("cmcp_runtime.tee.spiffe._socket_exists", return_value=False) as mock_exists:
         fetch_svid("/explicit/socket")
     mock_exists.assert_called_with("/explicit/socket")
 
@@ -165,18 +165,18 @@ def test_make_self_signed_tls_context_encodes_key_prefix():
     assert "abcdef01" in cn  # first 8 chars of signing key hex in CN
 
 
-# ── startup integration: GatewayContext.spiffe field ──────────────────────────
+# ── startup integration: RuntimeContext.spiffe field ──────────────────────────
 
 
 def test_gateway_context_has_spiffe_field():
-    """GatewayContext.spiffe is None by default (backward compat)."""
+    """RuntimeContext.spiffe is None by default (backward compat)."""
     from unittest.mock import MagicMock
 
-    from cmcp_gateway.audit.keys import SigningKey
-    from cmcp_gateway.catalog.loader import ToolCatalog
-    from cmcp_gateway.startup import GatewayContext
+    from cmcp_runtime.audit.keys import SigningKey
+    from cmcp_runtime.catalog.loader import ToolCatalog
+    from cmcp_runtime.startup import RuntimeContext
 
-    ctx = GatewayContext(
+    ctx = RuntimeContext(
         config=MagicMock(),
         tee_provider=MagicMock(),
         attestation_report=MagicMock(),
@@ -189,10 +189,10 @@ def test_gateway_context_has_spiffe_field():
 
 
 def test_gateway_context_stores_spiffe_result():
-    from cmcp_gateway.startup import GatewayContext
+    from cmcp_runtime.startup import RuntimeContext
 
     fake_result = SpiffeClientResult(svid=None, available=False, failure_reason="no socket")
-    ctx = GatewayContext(
+    ctx = RuntimeContext(
         config=MagicMock(),
         tee_provider=MagicMock(),
         attestation_report=MagicMock(),

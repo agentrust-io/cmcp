@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING, Any
 
 from agent_os.policies.backends import CedarBackend
 
-from cmcp_gateway.config import Config, EnforcementMode
-from cmcp_gateway.errors import PolicyDeny
-from cmcp_gateway.policy.bundle import PolicyBundle, PolicyStore
-from cmcp_gateway.session.state import SENSITIVITY_ORDER
+from cmcp_runtime.config import Config, EnforcementMode
+from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.policy.bundle import PolicyBundle, PolicyStore
+from cmcp_runtime.session.state import SENSITIVITY_ORDER
 
 if TYPE_CHECKING:
-    from cmcp_gateway.session.state import SessionState
+    from cmcp_runtime.session.state import SessionState
 
 logger = logging.getLogger(__name__)
 

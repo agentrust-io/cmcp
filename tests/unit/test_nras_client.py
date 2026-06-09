@@ -7,8 +7,8 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from cmcp_gateway.tee.base import AttestationReport
-from cmcp_gateway.tee.nras import (
+from cmcp_runtime.tee.base import AttestationReport
+from cmcp_runtime.tee.nras import (
     NRAS_ENDPOINT,
     AppraisalResult,
     NRASAppraisalError,
@@ -241,7 +241,7 @@ def test_try_appraise_returns_result_on_success(sw_report, monkeypatch):
     ear = _make_ear("affirming")
     mock_instance = NRASClient(api_key="valid-key", http_client=_mock_client(200, ear))
 
-    with patch("cmcp_gateway.tee.nras.NRASClient", return_value=mock_instance):
+    with patch("cmcp_runtime.tee.nras.NRASClient", return_value=mock_instance):
         result = try_appraise(sw_report)
 
     assert result is not None
@@ -255,7 +255,7 @@ def test_try_appraise_returns_none_on_auth_failure(sw_report, monkeypatch):
         http_client=_mock_text_client(401, "Unauthorized"),
     )
 
-    with patch("cmcp_gateway.tee.nras.NRASClient", return_value=mock_instance):
+    with patch("cmcp_runtime.tee.nras.NRASClient", return_value=mock_instance):
         result = try_appraise(sw_report)
 
     assert result is None
@@ -268,7 +268,7 @@ def test_try_appraise_returns_none_on_appraisal_rejection(sw_report, monkeypatch
         http_client=_mock_text_client(422, "bad evidence"),
     )
 
-    with patch("cmcp_gateway.tee.nras.NRASClient", return_value=mock_instance):
+    with patch("cmcp_runtime.tee.nras.NRASClient", return_value=mock_instance):
         result = try_appraise(sw_report)
 
     assert result is None
@@ -283,7 +283,7 @@ def test_try_appraise_returns_none_on_timeout(sw_report, monkeypatch):
     http = httpx.Client(transport=httpx.MockTransport(timeout_handler))
     mock_instance = NRASClient(api_key="k", http_client=http)
 
-    with patch("cmcp_gateway.tee.nras.NRASClient", return_value=mock_instance):
+    with patch("cmcp_runtime.tee.nras.NRASClient", return_value=mock_instance):
         result = try_appraise(sw_report)
 
     assert result is None
@@ -292,16 +292,16 @@ def test_try_appraise_returns_none_on_timeout(sw_report, monkeypatch):
 def test_try_appraise_logs_warning_when_no_key(sw_report, monkeypatch, caplog):
     import logging
     monkeypatch.delenv("CMCP_NRAS_API_KEY", raising=False)
-    with caplog.at_level(logging.WARNING, logger="cmcp_gateway.tee.nras"):
+    with caplog.at_level(logging.WARNING, logger="cmcp_runtime.tee.nras"):
         try_appraise(sw_report)
     assert any("CMCP_NRAS_API_KEY" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
-# GatewayContext: nras_appraisal field
+# RuntimeContext: nras_appraisal field
 # ---------------------------------------------------------------------------
 
 
 def test_gateway_context_nras_appraisal_defaults_none():
-    from cmcp_gateway.startup import GatewayContext
-    assert GatewayContext.__dataclass_fields__["nras_appraisal"].default is None
+    from cmcp_runtime.startup import RuntimeContext
+    assert RuntimeContext.__dataclass_fields__["nras_appraisal"].default is None

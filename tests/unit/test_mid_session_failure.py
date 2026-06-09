@@ -14,16 +14,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-from cmcp_gateway.policy.evaluator import PolicyDecision, PolicyEvaluator
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
+from cmcp_runtime.session.state import SessionState
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,7 +78,7 @@ def _make_proxy(
     catalog_hash: str | None = None,
     catalog: ToolCatalog | None = None,
 ):
-    from cmcp_gateway.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.proxy import CMCPProxy
 
     cfg = Config()
     cfg.attestation = AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING)
@@ -87,8 +87,8 @@ def _make_proxy(
     session = SessionState(session_id="sess-health-001")
     chain = AuditChain("sess-health-001")
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(
             cat, ev, session, chain, cfg,
             attestation_generated_at=attestation_generated_at,

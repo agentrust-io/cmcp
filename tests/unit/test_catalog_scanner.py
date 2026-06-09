@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from cmcp_gateway.catalog.loader import (
+from cmcp_runtime.catalog.loader import (
     ApprovedDefinition,
     CatalogEntry,
     ServerIdentity,
     ToolCatalog,
 )
-from cmcp_gateway.catalog.scanner import CatalogScanner, CatalogScanResult, DriftResult
+from cmcp_runtime.catalog.scanner import CatalogScanner, CatalogScanResult, DriftResult
 
 
 def _make_entry(tool_name: str, description: str = "test tool") -> CatalogEntry:
@@ -46,8 +46,8 @@ def _make_catalog(*tools: str) -> ToolCatalog:
 # ── When AGT is available ─────────────────────────────────────────────────────
 
 def test_scan_catalog_safe_returns_clean_result():
-    with patch("cmcp_gateway.catalog.scanner._AGT_AVAILABLE", True), \
-         patch("cmcp_gateway.catalog.scanner.MCPSecurityScanner") as MockScanner:
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", True), \
+         patch("cmcp_runtime.catalog.scanner.MCPSecurityScanner") as MockScanner:
             mock_instance = MagicMock()
             mock_instance.scan_tool.return_value = []  # no threats
             mock_instance.register_tool.return_value = MagicMock()
@@ -69,8 +69,8 @@ def test_scan_catalog_flags_threat():
     mock_threat.severity.value = "high"
     mock_threat.description = "hidden instruction in description"
 
-    with patch("cmcp_gateway.catalog.scanner._AGT_AVAILABLE", True), \
-         patch("cmcp_gateway.catalog.scanner.MCPSecurityScanner") as MockScanner:
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", True), \
+         patch("cmcp_runtime.catalog.scanner.MCPSecurityScanner") as MockScanner:
             mock_instance = MagicMock()
             mock_instance.scan_tool.return_value = [mock_threat]
             mock_instance.register_tool.return_value = MagicMock()
@@ -87,8 +87,8 @@ def test_scan_catalog_flags_threat():
 
 
 def test_scan_catalog_registers_all_tools():
-    with patch("cmcp_gateway.catalog.scanner._AGT_AVAILABLE", True), \
-         patch("cmcp_gateway.catalog.scanner.MCPSecurityScanner") as MockScanner:
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", True), \
+         patch("cmcp_runtime.catalog.scanner.MCPSecurityScanner") as MockScanner:
             mock_instance = MagicMock()
             mock_instance.scan_tool.return_value = []
             mock_instance.register_tool.return_value = MagicMock()
@@ -101,8 +101,8 @@ def test_scan_catalog_registers_all_tools():
 
 
 def test_check_drift_returns_clean_when_no_changes():
-    with patch("cmcp_gateway.catalog.scanner._AGT_AVAILABLE", True), \
-         patch("cmcp_gateway.catalog.scanner.MCPSecurityScanner") as MockScanner:
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", True), \
+         patch("cmcp_runtime.catalog.scanner.MCPSecurityScanner") as MockScanner:
             mock_instance = MagicMock()
             mock_instance.check_rug_pull.return_value = []
             MockScanner.return_value = mock_instance
@@ -120,8 +120,8 @@ def test_check_drift_detects_rug_pull():
     mock_threat.threat_type.value = "rug_pull"
     mock_threat.description = "description changed after approval"
 
-    with patch("cmcp_gateway.catalog.scanner._AGT_AVAILABLE", True), \
-         patch("cmcp_gateway.catalog.scanner.MCPSecurityScanner") as MockScanner:
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", True), \
+         patch("cmcp_runtime.catalog.scanner.MCPSecurityScanner") as MockScanner:
             mock_instance = MagicMock()
             mock_instance.check_rug_pull.return_value = [mock_threat]
             MockScanner.return_value = mock_instance
@@ -136,7 +136,7 @@ def test_check_drift_detects_rug_pull():
 # ── When AGT is not available (graceful fallback) ─────────────────────────────
 
 def test_scan_catalog_safe_without_agt():
-    with patch("cmcp_gateway.catalog.scanner._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", False):
         scanner = CatalogScanner()
         result = scanner.scan_catalog(_make_catalog("crm.query"))
 
@@ -146,7 +146,7 @@ def test_scan_catalog_safe_without_agt():
 
 
 def test_check_drift_returns_clean_without_agt():
-    with patch("cmcp_gateway.catalog.scanner._AGT_AVAILABLE", False):
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", False):
         scanner = CatalogScanner()
         result = scanner.check_drift("crm.query", "CRM", {})
 

@@ -1,4 +1,4 @@
-﻿"""Tests for MCP server bearer-token authentication (AUTH-001)."""
+"""Tests for MCP server bearer-token authentication (AUTH-001)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from starlette.testclient import TestClient
 
-from cmcp_gateway.mcp.server import MCPServer
+from cmcp_runtime.mcp.server import MCPServer
 
 
 def _make_server(bearer_token: str | None = None) -> MCPServer:
@@ -18,7 +18,7 @@ def _make_server(bearer_token: str | None = None) -> MCPServer:
         audit_entry_hash="sha256:" + "0" * 64,
         would_have_denied=False, latency_us=100,
     ))
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         return MCPServer(proxy, bearer_token=bearer_token)
 
 
@@ -99,7 +99,7 @@ def test_audit_export_requires_auth():
 
 def test_oversized_body_returns_413():
     """DOS-001 — request body exceeding max_request_bytes is rejected before parsing."""
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         proxy = MagicMock()
         proxy._catalog = MagicMock()
         proxy._catalog.entries = {}
@@ -111,7 +111,7 @@ def test_oversized_body_returns_413():
 
 def test_content_length_check_rejects_before_body_read():
     """DOS-001 — Content-Length check rejects before reading body."""
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         proxy = MagicMock()
         proxy._catalog = MagicMock()
         proxy._catalog.entries = {}
@@ -131,12 +131,12 @@ def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> MCPServer:
     """Create a server with a very low rate limit for testing."""
     from starlette.middleware import Middleware
 
-    from cmcp_gateway.mcp.server import _RateLimitMiddleware
+    from cmcp_runtime.mcp.server import _RateLimitMiddleware
 
     proxy = MagicMock()
     proxy._catalog = MagicMock()
     proxy._catalog.entries = {}
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy, bearer_token=None)
 
     # Replace rate-limit middleware with a tighter one for this test
@@ -186,12 +186,12 @@ def test_rate_limit_middleware_paths_only():
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
 
-    from cmcp_gateway.mcp.server import _RateLimitMiddleware
+    from cmcp_runtime.mcp.server import _RateLimitMiddleware
 
     proxy = MagicMock()
     proxy._catalog = MagicMock()
     proxy._catalog.entries = {}
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy, bearer_token=None)
 
     # Rate-limit ONLY /nonexistent (so /health is unaffected)
@@ -222,7 +222,7 @@ def _make_ready_server() -> MCPServer:
     proxy._catalog.entries = {"test.tool": MagicMock()}
     proxy._policy = MagicMock()  # policy present
     proxy._check_health.return_value = None  # attestation healthy
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         return MCPServer(proxy, bearer_token="secret")
 
 
@@ -246,7 +246,7 @@ def test_readyz_returns_503_when_policy_missing():
     proxy._catalog.entries = {"test.tool": MagicMock()}
     proxy._policy = None  # Cedar policy engine absent
     proxy._check_health.return_value = None
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.get("/readyz")
@@ -263,7 +263,7 @@ def test_readyz_returns_503_when_attestation_stale():
     proxy._catalog.entries = {"test.tool": MagicMock()}
     proxy._policy = MagicMock()
     proxy._check_health.return_value = "attestation_stale"
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.get("/readyz")
@@ -281,7 +281,7 @@ def test_readyz_returns_503_when_agt_unavailable():
     proxy._catalog.entries = {"test.tool": MagicMock()}
     proxy._policy = MagicMock()
     proxy._check_health.return_value = None
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)
     client = TestClient(server.app, raise_server_exceptions=False)
     # Setting sys.modules["agent_os"] = None causes ImportError on "import agent_os"
@@ -350,7 +350,7 @@ def test_unhandled_exception_returns_generic_500():
     proxy = MagicMock()
     proxy._catalog = MagicMock()
     proxy._catalog.entries.items.side_effect = RuntimeError("secret internal detail")
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.get("/tools/list")
@@ -379,7 +379,7 @@ def test_tool_name_is_lowercased_at_ingress():
     proxy._catalog = MagicMock()
     proxy._catalog.entries = {}
     proxy.call_tool = _capture
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)
     client = TestClient(server.app, raise_server_exceptions=False)
     client.post(
@@ -401,7 +401,7 @@ def test_deny_response_does_not_include_internal_reason():
         would_have_denied=False,
         latency_us=0,
     ))
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.post(

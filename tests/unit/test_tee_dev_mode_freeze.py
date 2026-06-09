@@ -8,7 +8,7 @@ import sys
 
 def _reload_config_with_env(monkeypatch, value: str | None) -> object:
     """
-    Reload cmcp_gateway.config with CMCP_DEV_MODE set to *value* (or absent if None),
+    Reload cmcp_runtime.config with CMCP_DEV_MODE set to *value* (or absent if None),
     and return the fresh module so we can inspect its DEV_MODE constant.
     """
     if value is None:
@@ -17,8 +17,8 @@ def _reload_config_with_env(monkeypatch, value: str | None) -> object:
         monkeypatch.setenv("CMCP_DEV_MODE", value)
 
     # Force a clean reimport so the module-level constant is re-evaluated.
-    sys.modules.pop("cmcp_gateway.config", None)
-    return importlib.import_module("cmcp_gateway.config")
+    sys.modules.pop("cmcp_runtime.config", None)
+    return importlib.import_module("cmcp_runtime.config")
 
 
 def test_dev_mode_constant_true_when_env_set_before_import(monkeypatch):

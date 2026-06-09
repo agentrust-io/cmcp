@@ -28,13 +28,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from cmcp_gateway.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
-from cmcp_gateway.mcp.proxy import CMCPProxy
+from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
+from cmcp_runtime.mcp.proxy import CMCPProxy
 
 if TYPE_CHECKING:
-    from cmcp_gateway.audit.chain import AuditChain
-    from cmcp_gateway.session.manager import SessionManager
-    from cmcp_gateway.session.state import SessionState
+    from cmcp_runtime.audit.chain import AuditChain
+    from cmcp_runtime.session.manager import SessionManager
+    from cmcp_runtime.session.state import SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 {"error": "unauthorized", "error_code": "MISSING_BEARER_TOKEN"},
                 status_code=401,
-                headers={"WWW-Authenticate": "Bearer realm=\"cmcp-gateway\""},
+                headers={"WWW-Authenticate": "Bearer realm=\"cmcp-runtime\""},
             )
         provided = auth[len(prefix):]
         # Constant-time compare to prevent timing oracle on the token
@@ -124,7 +124,7 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 {"error": "unauthorized", "error_code": "INVALID_BEARER_TOKEN"},
                 status_code=401,
-                headers={"WWW-Authenticate": "Bearer realm=\"cmcp-gateway\""},
+                headers={"WWW-Authenticate": "Bearer realm=\"cmcp-runtime\""},
             )
         return await call_next(request)
 
@@ -256,7 +256,7 @@ class MCPServer:
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "cmcp-gateway", "version": "0.1.0"},
+                    "serverInfo": {"name": "cmcp-runtime", "version": "0.1.0"},
                 },
             })
         # INJECT-002: sanitize method before reflecting it in the error response

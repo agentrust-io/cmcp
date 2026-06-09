@@ -1,5 +1,5 @@
 """
-cMCP Gateway 72-hour soak test — implements issue #82.
+cMCP Runtime 72-hour soak test — implements issue #82.
 
 Runs a sustained load against a software-only or hardware-TEE gateway and validates
 all 6 edge cases from docs/testing/soak-test.md.
@@ -52,7 +52,7 @@ _P99_IDLE_LATENCY_MULTIPLIER = 2.0
 
 def _make_soak_catalog() -> Any:
     """Build a catalog with the three reference server tools."""
-    from cmcp_gateway.catalog.loader import (
+    from cmcp_runtime.catalog.loader import (
         ApprovedDefinition,
         CatalogEntry,
         ServerIdentity,
@@ -103,13 +103,13 @@ def _make_soak_gateway(
     """
     import tempfile
 
-    from cmcp_gateway.audit.chain import AuditChain
-    from cmcp_gateway.config import AttestationConfig, Config, EnforcementMode
-    from cmcp_gateway.mcp.proxy import CMCPProxy
-    from cmcp_gateway.mcp.server import MCPServer
-    from cmcp_gateway.policy.bundle import load_policy_bundle
-    from cmcp_gateway.policy.evaluator import PolicyEvaluator
-    from cmcp_gateway.session.state import SessionState
+    from cmcp_runtime.audit.chain import AuditChain
+    from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+    from cmcp_runtime.mcp.proxy import CMCPProxy
+    from cmcp_runtime.mcp.server import MCPServer
+    from cmcp_runtime.policy.bundle import load_policy_bundle
+    from cmcp_runtime.policy.evaluator import PolicyEvaluator
+    from cmcp_runtime.session.state import SessionState
 
     catalog = _make_soak_catalog()
     session_id = str(uuid.uuid4())
@@ -149,8 +149,8 @@ def _make_soak_gateway(
         modified_response=b'{"result": "soak-ok"}',
     )
 
-    with patch("cmcp_gateway.mcp.proxy.MCPGateway"), \
-         patch("cmcp_gateway.mcp.proxy.MCPResponseScanner"):
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(
             catalog=catalog,
             policy_evaluator=evaluator,
@@ -163,7 +163,7 @@ def _make_soak_gateway(
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.call_tool = AsyncMock(return_value=agt_result)
 
-    with patch("cmcp_gateway.mcp.server.StatelessKernel"):
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy, session=session, audit_chain=chain, bearer_token=bearer_token)
 
     return server, proxy, session, chain
@@ -199,7 +199,7 @@ class SoakState:
 
 async def _make_call(
     client: httpx.AsyncClient,
-    gateway_url: str,
+    runtime_url: str,
     bearer_token: str,
     tool_name: str = "echo",
     arguments: dict[str, Any] | None = None,
@@ -208,7 +208,7 @@ async def _make_call(
     t0 = time.perf_counter()
     try:
         resp = await client.post(
-            f"{gateway_url}/mcp",
+            f"{runtime_url}/mcp",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -228,7 +228,7 @@ async def _make_call(
 
 async def _run_active_period(
     client: httpx.AsyncClient,
-    gateway_url: str,
+    runtime_url: str,
     bearer_token: str,
     calls: int,
     period_seconds: float,
@@ -237,7 +237,7 @@ async def _run_active_period(
     """Run `calls` tool calls spread evenly over `period_seconds`."""
     interval = period_seconds / max(calls, 1)
     for i in range(calls):
-        ok, latency = await _make_call(client, gateway_url, bearer_token)
+        ok, latency = await _make_call(client, runtime_url, bearer_token)
         state.total_calls += 1
         if not ok:
             state.call_errors += 1
@@ -281,12 +281,12 @@ def _check_memory_growth(state: SoakState) -> bool:
 
 async def _check_idle_transition(
     client: httpx.AsyncClient,
-    gateway_url: str,
+    runtime_url: str,
     bearer_token: str,
     state: SoakState,
 ) -> None:
     """First call after idle period must succeed within 2x baseline latency."""
-    ok, latency = await _make_call(client, gateway_url, bearer_token)
+    ok, latency = await _make_call(client, runtime_url, bearer_token)
     if not ok:
         state.idle_transition_within_2x = False
         logger.error("First call after idle failed")
@@ -318,7 +318,7 @@ def _check_signing_key(state: SoakState, chain: Any) -> None:
 
 async def _check_sse_stability(
     nginx_url: str | None,
-    gateway_url: str,
+    runtime_url: str,
     bearer_token: str,
     state: SoakState,
 ) -> None:
@@ -350,7 +350,7 @@ async def _check_sse_stability(
 async def _run_soak(
     duration_hours: float,
     provider: str,
-    gateway_url: str | None,
+    runtime_url: str | None,
     nginx_url: str | None,
     bearer_token: str,
     out_dir: Path,
@@ -362,13 +362,13 @@ async def _run_soak(
     _server = None
     _chain = None
     _session = None
-    if gateway_url is None:
+    if runtime_url is None:
         logger.info("Starting in-process software-only gateway")
         _server, _proxy, _session, _chain = _make_soak_gateway(bearer_token=bearer_token)
         # Use starlette.testclient for in-process calls
         from starlette.testclient import TestClient
         _tc = TestClient(_server.app, raise_server_exceptions=False)
-        gateway_url = "http://testserver"
+        runtime_url = "http://testserver"
 
         # Patch httpx to route through TestClient
         _orig_post = None
@@ -386,7 +386,7 @@ async def _run_soak(
     else:
         _chain = None
         _session = None
-        logger.info("Connecting to external gateway at %s", gateway_url)
+        logger.info("Connecting to external gateway at %s", runtime_url)
 
     # Sample memory at T0
     if _chain is not None:
@@ -420,7 +420,7 @@ async def _run_soak(
             )
             try:
                 await _run_active_period(
-                    client, gateway_url, bearer_token,
+                    client, runtime_url, bearer_token,
                     calls_per_period, remaining, state,
                 )
             except Exception as exc:
@@ -455,14 +455,14 @@ async def _run_soak(
 
                 # Post-idle transition check
                 if time.monotonic() < run_end:
-                    await _check_idle_transition(client, gateway_url, bearer_token, state)
+                    await _check_idle_transition(client, runtime_url, bearer_token, state)
 
     # Final memory sample
     if _chain is not None:
         _sample_memory(state, _chain)
 
     # SSE edge case
-    await _check_sse_stability(nginx_url, gateway_url, bearer_token, state)
+    await _check_sse_stability(nginx_url, runtime_url, bearer_token, state)
 
     # Memory growth check
     memory_bounded = _check_memory_growth(state)
@@ -539,13 +539,13 @@ Examples:
 
     logger.info(
         "cMCP soak test: duration=%.1fh provider=%s gateway=%s nginx=%s",
-        args.duration_hours, args.provider, args.gateway_url or "in-process", args.nginx_url or "none",
+        args.duration_hours, args.provider, args.runtime_url or "in-process", args.nginx_url or "none",
     )
 
     result = asyncio.run(_run_soak(
         duration_hours=args.duration_hours,
         provider=args.provider,
-        gateway_url=args.gateway_url,
+        runtime_url=args.runtime_url,
         nginx_url=args.nginx_url,
         bearer_token=args.bearer_token,
         out_dir=args.out,

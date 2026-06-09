@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.audit.keys import SigningKey
-from cmcp_gateway.session.manager import SessionManager
-from cmcp_gateway.session.state import SessionState
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.session.manager import SessionManager
+from cmcp_runtime.session.state import SessionState
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ def _make_attestation_report(*, stale: bool = False) -> MagicMock:
 
 
 def _make_ctx(*, stale_attestation: bool = False) -> MagicMock:
-    """Return a fully-wired mock GatewayContext."""
+    """Return a fully-wired mock RuntimeContext."""
     signing_key = SigningKey()
 
     policy_bundle = MagicMock()
@@ -156,7 +156,7 @@ def test_close_session_signature_verifiable() -> None:
     """Signature on the claim must verify against the embedded JWK public key."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    from cmcp_gateway.audit.trace_claim import GatewayClaim, _to_dict, canonical_json
+    from cmcp_runtime.audit.trace_claim import RuntimeClaim, _to_dict, canonical_json
 
     ctx = _make_ctx()
     mgr = SessionManager(ctx)
@@ -164,7 +164,7 @@ def test_close_session_signature_verifiable() -> None:
     claim_dict = mgr.close_session(state.session_id, state, chain)
 
     # Re-validate through pydantic to get the proper model
-    claim = GatewayClaim.model_validate(claim_dict)
+    claim = RuntimeClaim.model_validate(claim_dict)
     body = canonical_json(_to_dict(claim))
     sig_bytes = base64.urlsafe_b64decode(claim.signature + "==")
 

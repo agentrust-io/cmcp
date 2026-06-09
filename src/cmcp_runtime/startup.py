@@ -1,4 +1,4 @@
-﻿"""Gateway startup sequence with fail-closed validation — implements issue #66."""
+"""Gateway startup sequence with fail-closed validation — implements issue #66."""
 
 from __future__ import annotations
 
@@ -8,21 +8,21 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from cmcp_gateway.audit.keys import SigningKey
-from cmcp_gateway.catalog.loader import ToolCatalog, load_catalog
-from cmcp_gateway.config import Config, load_config
-from cmcp_gateway.errors import (
+from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.catalog.loader import ToolCatalog, load_catalog
+from cmcp_runtime.config import Config, load_config
+from cmcp_runtime.errors import (
     AttestationProviderUnsupported,
     CatalogHashMismatch,
     CatalogToolNameCollision,
     ConfigError,
     PolicyHashMismatch,
 )
-from cmcp_gateway.policy.bundle import PolicyStore, load_policy_bundle
-from cmcp_gateway.tee.base import AttestationReport, TEEProvider
-from cmcp_gateway.tee.detect import detect_provider
-from cmcp_gateway.tee.nras import AppraisalResult, try_appraise
-from cmcp_gateway.tee.spiffe import SpiffeClientResult, fetch_svid
+from cmcp_runtime.policy.bundle import PolicyStore, load_policy_bundle
+from cmcp_runtime.tee.base import AttestationReport, TEEProvider
+from cmcp_runtime.tee.detect import detect_provider
+from cmcp_runtime.tee.nras import AppraisalResult, try_appraise
+from cmcp_runtime.tee.spiffe import SpiffeClientResult, fetch_svid
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ _VALID_PROVIDERS: frozenset[str] = frozenset({
 
 
 @dataclass
-class GatewayContext:
+class RuntimeContext:
     """All validated components ready for the gateway to use."""
 
     config: Config
@@ -63,7 +63,7 @@ def _fatal(code: str, message: str, **fields: Any) -> None:
     logger.critical("%s", entry)
 
 
-def run_startup(config_path: str) -> GatewayContext:
+def run_startup(config_path: str) -> RuntimeContext:
     """
     Execute the ordered startup sequence. Any failure before step 6 (network bind)
     is fatal — the gateway exits with code 1.
@@ -252,7 +252,7 @@ def run_startup(config_path: str) -> GatewayContext:
     # CMCP_NRAS_API_KEY missing -> skip with warning; any NRAS error -> skip with warning.
     nras_appraisal = try_appraise(attestation_report)
 
-    return GatewayContext(
+    return RuntimeContext(
         config=config,
         tee_provider=tee_provider,
         attestation_report=attestation_report,

@@ -13,9 +13,9 @@ from unittest.mock import patch
 
 import pytest
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.audit.keys import SigningKey
-from cmcp_gateway.audit.trace_claim import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.audit.trace_claim import (
     AttestationReportInfo,
     CallGraphSummary,
     CallSummary,
@@ -87,7 +87,7 @@ class TestAudit001MonotonicTimestamps:
         chain = AuditChain("sess-a001-a")
         first_ts = datetime.fromisoformat(chain.entries[0].timestamp_utc)
         backward = first_ts - timedelta(seconds=5)
-        with patch("cmcp_gateway.audit.chain.datetime") as m:
+        with patch("cmcp_runtime.audit.chain.datetime") as m:
             m.now.return_value = backward
             m.fromisoformat = datetime.fromisoformat
             entry = chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
@@ -97,7 +97,7 @@ class TestAudit001MonotonicTimestamps:
         chain = AuditChain("sess-a001-b")
         first_ts = datetime.fromisoformat(chain.entries[0].timestamp_utc)
         forward = first_ts + timedelta(seconds=10)
-        with patch("cmcp_gateway.audit.chain.datetime") as m:
+        with patch("cmcp_runtime.audit.chain.datetime") as m:
             m.now.return_value = forward
             m.fromisoformat = datetime.fromisoformat
             entry = chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
@@ -155,7 +155,7 @@ class TestAudit002TeeAnchor:
     def test_verify_warns_when_no_anchor(self, caplog):
         chain = AuditChain("sess-a002-f")
         chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
-        with caplog.at_level(logging.WARNING, logger="cmcp_gateway.audit.chain"):
+        with caplog.at_level(logging.WARNING, logger="cmcp_runtime.audit.chain"):
             result = chain.verify_chain()
         assert result is True
         assert "AUDIT-002" in caplog.text

@@ -5,14 +5,14 @@ from __future__ import annotations
 import base64
 import json
 
-from cmcp_gateway.audit.chain import AuditChain
-from cmcp_gateway.audit.keys import SigningKey
-from cmcp_gateway.audit.trace_claim import (
+from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.audit.trace_claim import (
     AttestationReportInfo,
     CallGraphSummary,
     CallSummary,
-    GatewayClaim,
     PolicyBundleInfo,
+    RuntimeClaim,
     ToolCatalogInfo,
     _to_dict,
     canonical_json,
@@ -45,7 +45,7 @@ def _make_call_summary() -> CallSummary:
     )
 
 
-def _make_claim(signing_key: SigningKey | None = None) -> GatewayClaim:
+def _make_claim(signing_key: SigningKey | None = None) -> RuntimeClaim:
     key = signing_key or SigningKey()
     sign = signing_key is not None
     chain = AuditChain("sess-001")
@@ -96,18 +96,18 @@ def test_generate_claim_version():
     assert claim.cmcp_version == "1.0"
 
 
-def test_generate_claim_gateway_version():
+def test_generate_claim_RUNTIME_VERSION():
     """CONF-006: gateway_version must appear in GatewayAddenda."""
     claim = _make_claim()
     assert isinstance(claim.gateway.gateway_version, str)
     assert len(claim.gateway.gateway_version) > 0
 
 
-def test_generate_claim_gateway_version_is_string_or_unknown():
+def test_generate_claim_RUNTIME_VERSION_is_string_or_unknown():
     """CONF-006: gateway_version is a non-empty string; 'unknown' is the valid fallback."""
-    from cmcp_gateway.audit.trace_claim import _GATEWAY_VERSION
-    assert isinstance(_GATEWAY_VERSION, str)
-    assert len(_GATEWAY_VERSION) > 0
+    from cmcp_runtime.audit.trace_claim import _RUNTIME_VERSION
+    assert isinstance(_RUNTIME_VERSION, str)
+    assert len(_RUNTIME_VERSION) > 0
 
 
 
@@ -280,14 +280,14 @@ def test_generate_claim_software_only_platform():
     assert claim.trace.runtime.firmware_version == "software-only-dev-mode"
 
 
-# ── GatewayClaim Pydantic validation ─────────────────────────────────────────
+# ── RuntimeClaim Pydantic validation ─────────────────────────────────────────
 
 
 def test_gateway_claim_roundtrips_through_dict():
-    """GatewayClaim serializes and re-validates cleanly."""
+    """RuntimeClaim serializes and re-validates cleanly."""
     claim = _make_claim()
     d = _to_dict(claim)
-    GatewayClaim.model_validate(d)
+    RuntimeClaim.model_validate(d)
 
 
 def test_to_dict_includes_signature_field():
@@ -303,7 +303,7 @@ def test_to_dict_includes_signature_field():
 
 def test_build_runtime_valid_report_data_produces_nonce():
     """CRYPTO-003: valid hex report_data must produce a nonce in RuntimeInfo."""
-    from cmcp_gateway.audit.trace_claim import AttestationReportInfo, _build_runtime
+    from cmcp_runtime.audit.trace_claim import AttestationReportInfo, _build_runtime
     report = AttestationReportInfo(
         provider="sev-snp",
         measurement="sha256:" + "a" * 64,
@@ -319,7 +319,7 @@ def test_build_runtime_malformed_report_data_raises():
     """CRYPTO-003: malformed report_data must raise ValueError, not set nonce=None."""
     import pytest
 
-    from cmcp_gateway.audit.trace_claim import AttestationReportInfo, _build_runtime
+    from cmcp_runtime.audit.trace_claim import AttestationReportInfo, _build_runtime
     report = AttestationReportInfo(
         provider="sev-snp",
         measurement="sha256:" + "a" * 64,
@@ -338,7 +338,7 @@ def test_build_runtime_unknown_provider_raises():
     """AUDIT-003: unknown attestation provider must be rejected, not silently accepted."""
     import pytest
 
-    from cmcp_gateway.audit.trace_claim import AttestationReportInfo, _build_runtime
+    from cmcp_runtime.audit.trace_claim import AttestationReportInfo, _build_runtime
     report = AttestationReportInfo(
         provider="unknown-cloud-magic",
         measurement="sha256:" + "a" * 64,
@@ -352,7 +352,7 @@ def test_build_runtime_unknown_provider_raises():
 
 def test_build_runtime_all_known_providers_accepted():
     """AUDIT-003: every provider in the allowed set must succeed without raising."""
-    from cmcp_gateway.audit.trace_claim import (
+    from cmcp_runtime.audit.trace_claim import (
         _PROVIDER_MAP,
         AttestationReportInfo,
         _build_runtime,
