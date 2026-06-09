@@ -2,7 +2,7 @@
   <img src="docs/assets/icon.svg" width="96" height="96" alt="cMCP"/>
 </p>
 
-# cMCP
+# cMCP: Confidential MCP Runtime
 
 ### Enforce MCP tool policy where it cannot be tampered with
 
@@ -26,6 +26,8 @@
 
 > **Developer Preview** - launching at Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0.
 
+Your agent calls Snowflake, Salesforce, a dozen APIs. What stops it from leaking a customer's data on one of those calls? If a regulator asks, could you prove it didn't?
+
 ---
 
 ## The problem
@@ -39,6 +41,10 @@ None of that proves the policy engine itself was not compromised. Software-only 
 - The audit log reflects what actually happened. Any party holding the software signing key can reconstruct a valid audit chain after the fact.
 
 The control plane that governs tool calls must run where it cannot be reached by the process it governs.
+
+Hardware-attested policy enforcement for MCP tool calls. Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine running inside a Trusted Execution Environment (TEE). The policy bundle hash is measured into the hardware attestation report before any code runs.
+
+Unlike tunnel-based connectivity solutions, the cMCP Runtime processes tool-call payloads inside the TEE. The connectivity provider sees ciphertext, not plaintext. The only thing that leaves the enclave is the signed TRACE claim.
 
 ---
 
@@ -84,7 +90,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full walkthrough: Cedar pol
 4. At the end of the session the gateway produces a TRACE Claim: a signed, hardware-attested artifact that records which tools ran, which policy decided each call, and the full audit chain. A verifier checks this without trusting the operator.
 
 ```
-Agent -> cMCP Gateway -> Cedar Policy Engine (TEE) -> Tool
+Agent -> cMCP Runtime -> Cedar Policy Engine (TEE) -> Tool
                      |
                GatewayClaim (TRACE Profile)
                +-- trace.eat_profile
@@ -105,7 +111,7 @@ Agent -> cMCP Gateway -> Cedar Policy Engine (TEE) -> Tool
 | `sev-snp` | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High | AMD KDS |
 | `tdx` | Intel TDX (Azure DCedsv5, GCP C3) | High | Intel PCS |
 | `gpu-cc` _(v0.2)_ | NVIDIA H100/H200/Blackwell (CC mode) | High | NVIDIA Remote Attestation Service (NRAS) |
-| `opaque` _(explicit opt-in)_ | Opaque Managed Runtime | High | Set `OPAQUE_ATTESTATION_URL`; not in auto-detect chain |
+| `opaque` _(explicit opt-in)_ | OPAQUE Confidential Runtime | High | Set `OPAQUE_ATTESTATION_URL`; not in auto-detect chain (stub: detect() returns False, not yet implemented) |
 
 Provider auto-detects: `SEV-SNP -> TDX -> TPM -> software`. `opaque` is explicit opt-in via `OPAQUE_ATTESTATION_URL` and is never selected automatically.
 
