@@ -16,9 +16,9 @@ Closes #20, #21.
 
 | Transport | Phase 1 Status | Reason |
 |-----------|---------------|--------|
-| HTTP/SSE | **In scope** | MCP server runs as a network-addressable process. The gateway terminates the connection at the TEE boundary, inspects each call, and forwards to the upstream server over a separate internal connection. No subprocess spawning required. |
+| HTTP/SSE | **In scope** | MCP server runs as a network-addressable process. The runtime terminates the connection at the TEE boundary, inspects each call, and forwards to the upstream server over a separate internal connection. No subprocess spawning required. |
 | stdio | **Out of Phase 1 scope** | The stdio transport requires the agent (or MCP client) to spawn the MCP server as a child subprocess. A subprocess cannot cross the TEE boundary: the agent process lives outside the enclave and cannot fork a child that executes inside isolated TEE memory. The memory isolation guarantee of SEV-SNP, TDX, and TPM Trusted Launch is per-VM or per-enclave, not per-process-tree. Bridging stdio into the TEE would require a new component (see options below), deferred to Phase 2 or a future extension. |
-| WebSocket | **TBD** | WebSocket provides bidirectional framing over HTTP/1.1 or HTTP/2. The gateway can terminate WebSocket connections in principle; evaluation is deferred pending the MCP specification WebSocket profile stabilizing. |
+| WebSocket | **TBD** | WebSocket provides bidirectional framing over HTTP/1.1 or HTTP/2. The runtime can terminate WebSocket connections in principle; evaluation is deferred pending the MCP specification WebSocket profile stabilizing. |
 
 ---
 
@@ -32,7 +32,7 @@ Agent process
         └── communicates over stdin/stdout (JSON-RPC 2.0 framing)
 ```
 
-For the gateway to intercept this traffic, it would need to run inside the same process tree as the agent, which contradicts TEE isolation. TEE isolation works at the VM boundary (SEV-SNP, TDX) or at the TPM-measured boot boundary. A process inside the TEE cannot be a child of a process outside the TEE. Allowing it would defeat the hardware attestation guarantee: the enclave measurement would no longer cover the full execution context.
+For the runtime to intercept this traffic, it would need to run inside the same process tree as the agent, which contradicts TEE isolation. TEE isolation works at the VM boundary (SEV-SNP, TDX) or at the TPM-measured boot boundary. A process inside the TEE cannot be a child of a process outside the TEE. Allowing it would defeat the hardware attestation guarantee: the enclave measurement would no longer cover the full execution context.
 
 ---
 
@@ -40,7 +40,7 @@ For the gateway to intercept this traffic, it would need to run inside the same 
 
 ### Option A: stdio-to-HTTP Bridge (new component at TEE boundary)
 
-A new sidecar component runs outside the TEE and translates stdio JSON-RPC to HTTP/SSE. The gateway (inside the TEE) connects to the sidecar over localhost HTTP.
+A new sidecar component runs outside the TEE and translates stdio JSON-RPC to HTTP/SSE. The runtime (inside the TEE) connects to the sidecar over localhost HTTP.
 
 ```
 Agent
@@ -53,14 +53,14 @@ Agent
 | Dimension | Assessment |
 |-----------|-----------|
 | Agent changes required | Minimal: configure MCP client to use stdio-bridge binary instead of MCP server binary directly |
-| Attack surface | Increased. The stdio-bridge runs outside the TEE and can be tampered with. An attacker who compromises the bridge can inject or suppress tool calls before they reach the gateway. |
-| Attestation coverage | The bridge is not inside the TEE. Its behavior is not covered by the hardware attestation report. TRACE Claims reflect gateway decisions, not bridge fidelity. |
+| Attack surface | Increased. The stdio-bridge runs outside the TEE and can be tampered with. An attacker who compromises the bridge can inject or suppress tool calls before they reach the runtime. |
+| Attestation coverage | The bridge is not inside the TEE. Its behavior is not covered by the hardware attestation report. TRACE Claims reflect runtime decisions, not bridge fidelity. |
 | Complexity | New component to build, deploy, and maintain. |
 | Recommended for Phase 1 | No. The untrusted bridge segment weakens the security model. |
 
 ### Option B: Agent-side stdio Proxy (agent wraps stdio server, exposes HTTP/SSE)
 
-The agent developer wraps the stdio MCP server in a thin HTTP adapter that speaks HTTP/SSE externally. The gateway connects to the adapter endpoint as if it were a native HTTP/SSE MCP server.
+The agent developer wraps the stdio MCP server in a thin HTTP adapter that speaks HTTP/SSE externally. The runtime connects to the adapter endpoint as if it were a native HTTP/SSE MCP server.
 
 ```
 Agent
@@ -99,33 +99,33 @@ The "zero code changes" claim applies only to the following configuration:
 - The MCP server is containerized (Docker or OCI image).
 - The MCP server already supports HTTP/SSE transport (not stdio-only).
 - The MCP server does not depend on host-level resources: local filesystem mounts, host network interfaces, or host-specific library versions (e.g., a specific glibc ABI not present in the TEE base image).
-- The agent MCP client is configured to point to the gateway endpoint rather than the MCP server directly.
+- The agent MCP client is configured to point to the runtime endpoint rather than the MCP server directly.
 
-If any of these conditions are not met, code or configuration changes are required before the gateway can be used.
+If any of these conditions are not met, code or configuration changes are required before the runtime can be used.
 
 ---
 
 ## Concrete Agent-Side Configuration
 
-The gateway is the sole MCP endpoint the agent host is configured to reach. All MCP servers are registered with the gateway, not with the agent directly.
+The runtime is the sole MCP endpoint the agent host is configured to reach. All MCP servers are registered with the runtime, not with the agent directly.
 
 ### YAML example
 
 ```yaml
 # agent-config.yaml
 mcp:
-  # The agent host connects only to the cMCP Gateway.
+  # The agent host connects only to the cMCP Runtime.
   # No direct connections to individual MCP servers.
-  gateway_endpoint: "https://cmcp-gateway.internal:4433"
+  gateway_endpoint: "https://cmcp-runtime.internal:4433"
   tls:
-    ca_cert: "/etc/cmcp/gateway-ca.pem"
+    ca_cert: "/etc/cmcp/runtime-ca.pem"
     # SPIFFE SVID for mutual TLS (issued only after TEE attestation succeeds)
     client_cert: "/var/run/spire/svids/agent.pem"
     client_key:  "/var/run/spire/svids/agent.key"
 
   # The agent does not list individual MCP servers here.
-  # The gateway tool catalog is the authoritative list of available tools.
-  # servers: []  # empty -- gateway handles routing
+  # The runtime tool catalog is the authoritative list of available tools.
+  # servers: []  # empty -- runtime handles routing
 ```
 
 ### JSON example (alternative)
@@ -133,9 +133,9 @@ mcp:
 ```json
 {
   "mcp": {
-    "gateway_endpoint": "https://cmcp-gateway.internal:4433",
+    "gateway_endpoint": "https://cmcp-runtime.internal:4433",
     "tls": {
-      "ca_cert": "/etc/cmcp/gateway-ca.pem",
+      "ca_cert": "/etc/cmcp/runtime-ca.pem",
       "client_cert": "/var/run/spire/svids/agent.pem",
       "client_key": "/var/run/spire/svids/agent.key"
     }
@@ -143,7 +143,7 @@ mcp:
 }
 ```
 
-The agent host must not have direct network routes to any MCP server. Network policy (Kubernetes NetworkPolicy, security group, or firewall rule) enforces this. The gateway is the only reachable MCP endpoint from the agent network namespace.
+The agent host must not have direct network routes to any MCP server. Network policy (Kubernetes NetworkPolicy, security group, or firewall rule) enforces this. The runtime is the only reachable MCP endpoint from the agent network namespace.
 
 ---
 
@@ -151,7 +151,7 @@ The agent host must not have direct network routes to any MCP server. Network po
 
 ### Problem Statement
 
-SPIFFE SVID issuance must be conditioned on successful TEE attestation. If a SVID can be issued without attestation, any process -- attested or not -- can claim a gateway identity. The binding is the critical-path item for Phase 1: without it, the chain of trust has a gap between hardware measurement and workload identity.
+SPIFFE SVID issuance must be conditioned on successful TEE attestation. If a SVID can be issued without attestation, any process -- attested or not -- can claim a runtime identity. The binding is the critical-path item for Phase 1: without it, the chain of trust has a gap between hardware measurement and workload identity.
 
 ### Standards Basis
 
@@ -184,8 +184,8 @@ TEE boots
 **Goal**: Confirm that a SPIFFE SVID can be issued if and only if TEE attestation succeeds, using at least one provider (TPM recommended for accessibility).
 
 **Pass conditions**:
-1. SPIRE issues an SVID to the gateway workload only after the TEE attestation plugin returns a successful result.
-2. If the TPM PCR values are tampered with (e.g., by modifying the boot sequence in a test VM), SPIRE refuses to issue the SVID and the gateway does not start.
+1. SPIRE issues an SVID to the runtime workload only after the TEE attestation plugin returns a successful result.
+2. If the TPM PCR values are tampered with (e.g., by modifying the boot sequence in a test VM), SPIRE refuses to issue the SVID and the runtime does not start.
 3. The SVID contains a SPIFFE ID that encodes the TEE provider and measurement (or a reference to it).
 
 **Fail conditions**:

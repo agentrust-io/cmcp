@@ -1,4 +1,4 @@
-# cMCP Gateway - Product Specification
+﻿# cMCP Runtime - Product Specification
 
 Status: Draft | Target: CC Summit June 23, 2026
 Primary opportunity: Enterprises cannot prove to regulators, auditors, or customers how their data was handled during AI processing.
@@ -79,9 +79,9 @@ The gateway and the server are now primary control surfaces -- the only enforcem
 
 ---
 
-## 3. Solution: cMCP Gateway
+## 3. Solution: cMCP Runtime
 
-The cMCP Gateway intercepts every MCP tool call, evaluates it against a Cedar policy bundle, and enforces the result from inside a TEE. The policy bundle hash is measured into the hardware attestation report before any code runs. The audit chain is signed with a key that is hardware-sealed inside the enclave.
+The cMCP Runtime intercepts every MCP tool call, evaluates it against a Cedar policy bundle, and enforces the result from inside a TEE. The policy bundle hash is measured into the hardware attestation report before any code runs. The audit chain is signed with a key that is hardware-sealed inside the enclave.
 
 The output is a TRACE Claim: a signed, hardware-attested artifact the enterprise hands to an auditor, regulator, or customer instead of a written response. The verifier does not need to trust the operator.
 
@@ -93,7 +93,7 @@ The output is a TRACE Claim: a signed, hardware-attested artifact the enterprise
 Agent
   |
   v
-cMCP Gateway (TEE boundary) -- the sole MCP endpoint the agent host sees
+cMCP Runtime (TEE boundary) -- the sole MCP endpoint the agent host sees
   +-- MCP Protocol Interceptor
   |     receives every tool call before it reaches the tool
   |
@@ -308,7 +308,7 @@ GTM note: For production-bound regulated buyers, the entry point is the proof ga
 
 ## 14. Success Metric
 
-Three enterprise design partners signed on cMCP Gateway by July 15, 2026.
+Three enterprise design partners signed on cMCP Runtime by July 15, 2026.
 
 ---
 

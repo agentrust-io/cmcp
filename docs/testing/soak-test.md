@@ -1,4 +1,4 @@
-# cMCP Gateway — 72-Hour Soak Test Plan
+﻿# cMCP Runtime — 72-Hour Soak Test Plan
 
 Closes #31.
 
@@ -20,7 +20,7 @@ Surface stability failures that only emerge under sustained load and time. Short
 |---------------------|-----------------------------------------------------------------------|
 | Duration            | 72 hours continuous                                                   |
 | Load pattern        | Alternating blocks: 1 hour active (100 calls/hour), 1 hour idle (0 calls). Repeat 36 times. |
-| HTTP proxy          | nginx as reverse proxy between test client and gateway (simulates corporate firewall) |
+| HTTP proxy          | nginx as reverse proxy between test client and runtime (simulates corporate firewall) |
 | TEE providers       | TPM (mandatory); one of SEV-SNP or TDX (mandatory if available in CI) |
 | Cedar policy        | 10-rule allowlist, enforcing mode                                     |
 | Session type        | Long-running: session_id persists for 4 hours, then a new session starts |
@@ -45,7 +45,7 @@ Each edge case must be explicitly tested and logged. A soak run does not pass if
 
 **Setup:** Set `attestation_validity_seconds = 14400` (4 hours). Sessions are 4 hours long, so expiration coincides with session boundary.
 
-**What to check:** When attestation expires, the gateway must either:
+**What to check:** When attestation expires, the runtime must either:
 - Re-attest without service interruption, or
 - Terminate the session with a clean error and issue a new attestation for the next session.
 
@@ -87,7 +87,7 @@ Absolute threshold: enclave memory at T=72h must be less than:
 **Setup:** During the 1-hour idle periods, confirm that MCP connections are properly handled. Cloud networking rules may close idle TCP connections after 10 minutes.
 
 **What to check:**
-- Does the gateway maintain idle upstream connections?
+- Does the runtime maintain idle upstream connections?
 - Does it detect and re-establish connections after a cloud NAT timeout?
 
 **Success:** After a 1-hour idle period, the first active-period call succeeds within 2x normal p99 latency (to account for connection re-establishment).
@@ -110,7 +110,7 @@ Absolute threshold: enclave memory at T=72h must be less than:
 
 All items must pass for the soak run to be marked successful.
 
-- [ ] 0 gateway crashes over 72 hours
+- [ ] 0 runtime crashes over 72 hours
 - [ ] 0 TRACE Claims with attestation gaps (every call in the active period appears in the audit chain)
 - [ ] Memory growth bounded (within the threshold defined above)
 - [ ] All 10 SSE streaming calls complete without silent disconnection

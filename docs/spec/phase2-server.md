@@ -1,4 +1,4 @@
-# Phase 2 cMCP Server Specification
+﻿# Phase 2 cMCP Server Specification
 
 ---
 Status: Draft v0.1
@@ -8,9 +8,9 @@ Stability: Unstable — expect breaking changes before v1.0
 
 ## Section 1 — Phase 2 Architecture Overview
 
-Phase 2 targets a different buyer than Phase 1. The Phase 1 buyer is an agent developer who deploys a gateway in front of their own agents. The Phase 2 buyer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Their enterprise customers — Phase 1 buyers — eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.
+Phase 2 targets a different buyer than Phase 1. The Phase 1 buyer is an agent developer who deploys a runtime in front of their own agents. The Phase 2 buyer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Their enterprise customers — Phase 1 buyers — eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.
 
-Phase 1 closes from the agent side: the gateway attests what the agent sent and what policy was applied. Phase 2 closes from the server side: the MCP server binary, its tool surface, and its egress behavior are all measured inside a TEE and published as a second TRACE Claim that any enterprise verifier can check without trusting the SaaS operator.
+Phase 1 closes from the agent side: the runtime attests what the agent sent and what policy was applied. Phase 2 closes from the server side: the MCP server binary, its tool surface, and its egress behavior are all measured inside a TEE and published as a second TRACE Claim that any enterprise verifier can check without trusting the SaaS operator.
 
 Phase 2 also closes two Phase 1 residuals:
 
@@ -42,7 +42,7 @@ SaaS / Platform Provider
   (DB / APIs / customer data)
 ```
 
-The combined trust artifact delivered to the verifier is a pair of TRACE Claims: the Phase 1 gateway claim (proves gateway policy ran) and the Phase 2 server claim (proves server binary and tool surface are attested). Neither claim requires trusting the other party's operator.
+The combined trust artifact delivered to the verifier is a pair of TRACE Claims: the Phase 1 runtime claim (proves runtime policy ran) and the Phase 2 server claim (proves server binary and tool surface are attested). Neither claim requires trusting the other party's operator.
 
 **Sequencing note.** Phase 2 is the natural pull from Phase 1 adoption. It is not the current build focus. Revisit after Phase 1 GA and first design partner cohort feedback.
 
@@ -56,7 +56,7 @@ Each property below is something a TEE measurement can prove that a software-onl
 
 **Definition.** The binary running right now is the binary attested — not just signed at some earlier moment.
 
-**What is measured.** At TEE startup, the container image digest of the MCP server binary is measured into the attestation report. This is the same mechanism Phase 1 uses for the gateway, now applied to the server.
+**What is measured.** At TEE startup, the container image digest of the MCP server binary is measured into the attestation report. This is the same mechanism Phase 1 uses for the runtime, now applied to the server.
 
 **Attestation field.** `server_attestation.container_image_digest`
 
@@ -90,7 +90,7 @@ Each property below is something a TEE measurement can prove that a software-onl
 
 **Verification.** The verifier checks the egress policy hash against the approved policy on record. An enterprise can verify that the MCP server cannot call an unapproved upstream service (for example, an external model API that was not in scope when the server was approved) because any deviation from the measured egress policy is detectable.
 
-**What this closes.** P1.4 transitive trust. Phase 1 attests that the gateway ran the approved policy against the agent's call. Phase 1 cannot attest what the server did next. Phase 2 closes this: the server's own upstream dependencies are part of the attested measurement, and a verifier can confirm the server's transitive call graph was bounded at startup.
+**What this closes.** P1.4 transitive trust. Phase 1 attests that the runtime ran the approved policy against the agent's call. Phase 1 cannot attest what the server did next. Phase 2 closes this: the server's own upstream dependencies are part of the attested measurement, and a verifier can confirm the server's transitive call graph was bounded at startup.
 
 ---
 
@@ -120,7 +120,7 @@ Software-only isolation (`shared_tee_sw_only`) must be labeled explicitly. Verif
 
 **Definition.** Party A (an agent from enterprise A) can verify party B's (a SaaS vendor's) MCP server directly — without a shared operator in the chain and without trusting either party's infrastructure claims.
 
-**Implementation.** The Phase 1 gateway TRACE Claim includes a `server_trace_claim_ref` field pointing to the server's Phase 2 TRACE Claim. The agent (or its gateway) performs two independent verifications:
+**Implementation.** The Phase 1 runtime TRACE Claim includes a `server_trace_claim_ref` field pointing to the server's Phase 2 TRACE Claim. The agent (or its runtime) performs two independent verifications:
 
 1. Phase 1 gateway TRACE Claim — proves the gateway's Cedar policy ran and was hardware-attested.
 2. Phase 2 server TRACE Claim — proves the server binary and tool surface are attested.
@@ -131,7 +131,7 @@ Neither verification requires trusting the other party's operator. Both claims a
 
 ```json
 {
-  "phase1_gateway_claim": "<Phase 1 TRACE Claim>",
+  "phase1_runtime_claim": "<Phase 1 TRACE Claim>",
   "phase2_server_claim_url": "https://attestation.vendor.com/claims/<session-id>",
   "phase2_server_claim": "<Phase 2 TRACE Claim>"
 }
@@ -149,9 +149,9 @@ The Phase 2 proxy adds payload inspection — content classification and per-fie
 
 Three placement options:
 
-**Inline (synchronous).** The gateway buffers the entire response before classifying. Latency penalty: `response_size / classification_throughput`. Not viable for streaming — buffering defeats the purpose of streaming and introduces unbounded latency for large payloads.
+**Inline (synchronous).** The runtime buffers the entire response before classifying. Latency penalty: `response_size / classification_throughput`. Not viable for streaming — buffering defeats the purpose of streaming and introduces unbounded latency for large payloads.
 
-**Async (default).** The gateway begins streaming the response to the agent immediately. Classification runs concurrently on the streamed chunks. If classification detects a violation partway through:
+**Async (default).** The runtime begins streaming the response to the agent immediately. Classification runs concurrently on the streamed chunks. If classification detects a violation partway through:
 
 1. Send a control message to the agent signaling that the in-progress response is being terminated.
 2. Close the streaming connection to the agent.
@@ -207,7 +207,7 @@ These targets apply to the proxy classification path under nominal load with a r
 
 ### Phase 1 Stance
 
-Phase 1 is single-tenant by design. One gateway instance = one policy bundle = one audit chain = one customer or business unit. If multiple business units deploy the same gateway binary with different policy bundles, each instance is treated as a separate single-tenant deployment. Multi-tenancy is out of Phase 1 scope.
+Phase 1 is single-tenant by design. One runtime instance = one policy bundle = one audit chain = one customer or business unit. If multiple business units deploy the same runtime binary with different policy bundles, each instance is treated as a separate single-tenant deployment. Multi-tenancy is out of Phase 1 scope.
 
 ### Phase 2 Options for Multi-Tenant MCP Servers
 

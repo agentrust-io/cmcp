@@ -1,10 +1,10 @@
-# Response Inspection
+﻿# Response Inspection
 
 Status: Draft v0.1 | Closes #37 | Related: [session-policy.md](session-policy.md) (state handoff), [call-graph.md](call-graph.md) (tagging)
 
 ## Overview
 
-Response inspection runs **after** the MCP tool call returns, before the gateway passes the response payload to the agent. This is a deliberate architectural choice: Cedar pre-call policy evaluates context that is known before the call (principal identity, tool catalog entry, session state, request arguments). It cannot inspect a response that does not yet exist. Post-call inspection therefore runs in gateway code, not in Cedar, and produces two outputs: (1) an allow/deny decision that gates whether the response reaches the agent, and (2) updated session state that gates future calls in the same session.
+Response inspection runs **after** the MCP tool call returns, before the runtime passes the response payload to the agent. This is a deliberate architectural choice: Cedar pre-call policy evaluates context that is known before the call (principal identity, tool catalog entry, session state, request arguments). It cannot inspect a response that does not yet exist. Post-call inspection therefore runs in runtime code, not in Cedar, and produces two outputs: (1) an allow/deny decision that gates whether the response reaches the agent, and (2) updated session state that gates future calls in the same session.
 
 This separation is explicit. Cedar owns pre-call authorization. The inspection pipeline owns post-call classification and session state mutation. Session state then feeds back into Cedar on the next call.
 
@@ -14,7 +14,7 @@ The pipeline runs sequentially on every tool response before it is passed to the
 
 ### Stage 1: Size Check
 
-If `Content-Length` (or, where absent, the measured response size) exceeds `max_response_size_bytes` (default: 2 097 152 bytes / 2 MB, configurable per deployment), the response is denied immediately. The size limit exists to prevent memory exhaustion in the gateway and to bound the cost of downstream pattern matching.
+If `Content-Length` (or, where absent, the measured response size) exceeds `max_response_size_bytes` (default: 2 097 152 bytes / 2 MB, configurable per deployment), the response is denied immediately. The size limit exists to prevent memory exhaustion in the runtime and to bound the cost of downstream pattern matching.
 
 Return shape on denial:
 
@@ -26,7 +26,7 @@ All remaining stages are still recorded as `"skip"` in the audit entry so the en
 
 ### Stage 2: Schema Validation
 
-If the tool has an approved `output_schema` in the catalog, the gateway validates the response JSON against it using JSON Schema draft-07.
+If the tool has an approved `output_schema` in the catalog, the runtime validates the response JSON against it using JSON Schema draft-07.
 
 - **Surplus fields** — fields present in the response but absent from the approved schema — are collected as `surplus_fields`.
 - **Missing required fields** — fields required by the schema but absent from the response — are a tool implementation error, not a policy violation. They are logged and the response passes through.
@@ -39,13 +39,13 @@ The handling mode for surplus fields comes from the catalog entry (overridable b
 | `strict` | Deny the response if any surplus fields are present. |
 | `log` | Pass through unchanged; record surplus fields in audit entry. |
 
-**Canonical JSON for surplus stripping (redact mode):** The gateway reconstructs the response by walking the approved schema and copying only the fields named there from the raw response. The result is re-serialized as compact JSON (no extra whitespace, keys in schema-definition order). This canonical form is what gets hashed for `response_payload_hash` in the audit entry. If the original response was not valid JSON (e.g., plain text or binary), the entire response is treated as a single opaque value; schema validation is skipped and the mode is recorded as `"skip_non_json"`.
+**Canonical JSON for surplus stripping (redact mode):** The runtime reconstructs the response by walking the approved schema and copying only the fields named there from the raw response. The result is re-serialized as compact JSON (no extra whitespace, keys in schema-definition order). This canonical form is what gets hashed for `response_payload_hash` in the audit entry. If the original response was not valid JSON (e.g., plain text or binary), the entire response is treated as a single opaque value; schema validation is skipped and the mode is recorded as `"skip_non_json"`.
 
 If no approved `output_schema` exists in the catalog, this stage result is `"skip"`.
 
 ### Stage 3: Sensitivity Classification
 
-Cedar does not run post-call. Sensitivity classification in Phase 1 is rule-based in gateway code. Three sources are combined in priority order:
+Cedar does not run post-call. Sensitivity classification in Phase 1 is rule-based in runtime code. Three sources are combined in priority order:
 
 1. **Catalog-level `sensitivity_level` annotation** — always applied. If the tool is annotated `"hipaa_phi"`, every response from it carries that tag regardless of content.
 2. **Field-level annotations in `approved_definition.output_schema`** — fields tagged with sensitivity labels (e.g., `"ssn"` tagged `"pii"`, `"diagnosis"` tagged `"hipaa_phi"`) contribute their tags to the response if those fields are present and non-null in the response.
@@ -55,7 +55,7 @@ Output: a set of sensitivity tags applied to this response, for example `["pii",
 
 ### Stage 4: Indirect Injection Detection
 
-The gateway scans response content for patterns that resemble injected instructions the LLM would treat as system context. A match causes a denial. The pattern list is configurable per deployment — the set below is the Phase 1 default, maintained as a config file, not hardcoded.
+The runtime scans response content for patterns that resemble injected instructions the LLM would treat as system context. A match causes a denial. The pattern list is configurable per deployment — the set below is the Phase 1 default, maintained as a config file, not hardcoded.
 
 ```python
 INJECTION_PATTERNS = [

@@ -1,4 +1,4 @@
-# Quickstart — cMCP Gateway
+﻿# Quickstart — cMCP Runtime
 
 From zero to first TRACE Claim in under 30 minutes. Uses `CMCP_DEV_MODE=1` so no hardware TEE is required.
 
@@ -6,7 +6,7 @@ From zero to first TRACE Claim in under 30 minutes. Uses `CMCP_DEV_MODE=1` so no
 
 ## What you'll build
 
-You'll run a cMCP Gateway that intercepts tool calls from a demo agent, enforces a Cedar policy bundle, and produces a signed TRACE Claim at the end of the session. The demo scenario uses a mock `salesforce.contacts` tool. The TRACE Claim records which tools were called, what data classes they touched, and that the policy bundle hash matches what was measured at startup.
+You'll run a cMCP Runtime that intercepts tool calls from a demo agent, enforces a Cedar policy bundle, and produces a signed TRACE Claim at the end of the session. The demo scenario uses a mock `salesforce.contacts` tool. The TRACE Claim records which tools were called, what data classes they touched, and that the policy bundle hash matches what was measured at startup.
 
 ---
 
@@ -186,17 +186,17 @@ print('sha256:' + hashlib.sha256(s.encode()).hexdigest())
 "
 ```
 
-If you change any field in `approved_definition`, rerun the command and update `definition_hash`. The gateway rejects catalog entries where the hash does not match.
+If you change any field in `approved_definition`, rerun the command and update `definition_hash`. The runtime rejects catalog entries where the hash does not match.
 
 ---
 
-## Start the gateway
+## Start the runtime
 
 ```bash
 CMCP_DEV_MODE=1 cmcp start --config cmcp-config.yaml
 ```
 
-In dev mode the gateway uses a software-only TEE provider (no hardware required). The startup log prints:
+In dev mode the runtime uses a software-only TEE provider (no hardware required). The startup log prints:
 
 ```
 [cmcp] provider=software-only enforcement_mode=advisory
@@ -231,7 +231,7 @@ curl -X POST http://localhost:8443/mcp \
   }'
 ```
 
-The gateway intercepts the call, evaluates the Cedar policy (rule 1 matches because `workflow_id == "demo-agent"`), records an audit entry, and forwards to the upstream mock server.
+The runtime intercepts the call, evaluates the Cedar policy (rule 1 matches because `workflow_id == "demo-agent"`), records an audit entry, and forwards to the upstream mock server.
 
 ---
 
@@ -312,7 +312,7 @@ The response is a signed `GatewayClaim`. It looks like:
 
 ## Verify
 
-Use the `cmcp_verify` library to verify the claim without trusting the gateway operator. Replace the hash values with those printed at gateway startup:
+Use the `cmcp_verify` library to verify the claim without trusting the runtime operator. Replace the hash values with those printed at gateway startup:
 
 ```python
 # verify.py

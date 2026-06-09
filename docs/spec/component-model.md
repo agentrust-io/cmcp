@@ -23,9 +23,9 @@ Closes #43.
 **Trust level**: Software-rooted. The agent host identity is established by TLS certificates or SPIFFE SVIDs provisioned at deploy time, not by hardware measurement. Its behavior is not isolated from the underlying OS.
 
 **Responsibilities**:
-- Provisions MCP client(s) with the gateway endpoint.
-- Holds the SPIFFE SVID (issued by SPIRE, conditioned on gateway attestation -- see transport spec).
-- Does not connect directly to any MCP server. All MCP traffic goes through the gateway.
+- Provisions MCP client(s) with the runtime endpoint.
+- Holds the SPIFFE SVID (issued by SPIRE, conditioned on runtime attestation -- see transport spec).
+- Does not connect directly to any MCP server. All MCP traffic goes through the runtime.
 
 ---
 
@@ -35,7 +35,7 @@ Closes #43.
 
 **Owned by**: Model provider (for hosted models) or enterprise (for self-hosted models).
 
-**Trust level**: Untrusted from the gateway perspective. Tool choices and payloads are outputs of a probabilistic model, not deterministic code. The gateway assumes the agent may produce any tool call at any time, including calls that violate policy. The gateway enforces policy on every call regardless of agent intent.
+**Trust level**: Untrusted from the runtime's perspective. Tool choices and payloads are outputs of a probabilistic model, not deterministic code. The runtime assumes the agent may produce any tool call at any time, including calls that violate policy. The runtime enforces policy on every call regardless of agent intent.
 
 **Note**: The agent being "untrusted" does not mean it is assumed to be malicious. It means the gateway does not rely on the agent good behavior as a security control.
 
@@ -49,17 +49,17 @@ Closes #43.
 
 **Trust level**: Software-rooted. The client is a library in the agent host process; it has the same trust level as the agent host.
 
-**Phase 1 configuration**: The MCP client is configured with a single endpoint -- the cMCP Gateway. It does not maintain connections to individual MCP servers. The gateway presents itself as a single MCP server to the client; internally it routes calls to the appropriate upstream MCP server.
+**Phase 1 configuration**: The MCP client is configured with a single endpoint -- the cMCP Runtime. It does not maintain connections to individual MCP servers. The runtime presents itself as a single MCP server to the client; internally it routes calls to the appropriate upstream MCP server.
 
 ---
 
-### cMCP Gateway
+### cMCP Runtime
 
-**Definition**: The governance proxy. Every MCP tool call from the agent passes through the gateway. The gateway evaluates each call against a Cedar policy bundle, produces a TRACE Claim, and forwards allowed calls to the upstream MCP server.
+**Definition**: The governance proxy. Every MCP tool call from the agent passes through the runtime. The runtime evaluates each call against a Cedar policy bundle, produces a TRACE Claim, and forwards allowed calls to the upstream MCP server.
 
 **Owned by**: Enterprise deployer (Phase 1) or SaaS vendor (Phase 2, provider-side).
 
-**Trust level**: Hardware-rooted. The gateway runs inside a TEE (TPM, SEV-SNP, TDX, or Opaque). Its identity is a SPIFFE SVID issued only after TEE attestation succeeds. Its signing key is sealed to the TEE and never exported. Its behavior is covered by the hardware measurement.
+**Trust level**: Hardware-rooted. The runtime runs inside a TEE (TPM, SEV-SNP, TDX, or Opaque). Its identity is a SPIFFE SVID issued only after TEE attestation succeeds. Its signing key is sealed to the TEE and never exported. Its behavior is covered by the hardware measurement.
 
 **Responsibilities**:
 - Terminates mTLS connections from agent hosts (verifying SPIFFE SVIDs).
@@ -78,7 +78,7 @@ Closes #43.
 
 **Trust level**:
 - **Phase 1**: Software-rooted. The MCP server runs outside the TEE. Its responses are received by the gateway but are not hardware-attested. The gateway trusts that the server returns what it claims to return, but this is not verifiable beyond TLS.
-- **Phase 2**: Hardware-rooted. The SaaS vendor runs the MCP server inside its own TEE. The gateway can verify the server attestation report before routing calls to it. Both ends of the call are hardware-attested.
+- **Phase 2**: Hardware-rooted. The SaaS vendor runs the MCP server inside its own TEE. The runtime can verify the server attestation report before routing calls to it. Both ends of the call are hardware-attested.
 
 ---
 
@@ -94,7 +94,7 @@ Closes #43.
 
 ## Trust Boundary Diagrams
 
-### Phase 1: Gateway Inside TEE
+### Phase 1: Runtime Inside TEE
 
 ```
 +-------------------------------------------------------------+
@@ -112,7 +112,7 @@ Closes #43.
                           #  TEE BOUNDARY (Phase 1)         #
                           #                                 #
                           #  +-----------------------+      #
-                          #  |  cMCP Gateway         |      #
+                          #  |  cMCP Runtime         |      #
                           #  |  [hardware-rooted]    |      #
                           #  |                       |      #
                           #  |  Cedar policy engine  |      #
@@ -133,7 +133,7 @@ Closes #43.
                           +---------------------------------+
 
 Verification points:
-  [A] Agent-side: SPIFFE SVID confirms gateway identity before sending any call
+  [A] Agent-side: SPIFFE SVID confirms runtime identity before sending any call
   [B] External auditor: verifies TRACE Claim signature against TEE public key
                         and checks attestation report against known-good measurement
 ```
@@ -147,8 +147,8 @@ Verification points:
 +----------------------------------------------+--------------+
                                                |
                       #========================+================#
-                      #  TEE BOUNDARY -- Gateway               #
-                      #  cMCP Gateway [hardware-rooted]        #
+                      #  TEE BOUNDARY -- Runtime               #
+                      #  cMCP Runtime [hardware-rooted]        #
                       #========================+================#
                                                | mTLS (mutual SPIFFE SVIDs)
                       #========================+================#
@@ -173,7 +173,7 @@ The TRACE Claim can include the server attestation measurement.
 | Agent Host | Software-rooted | Software-rooted |
 | Agent (LLM + loop) | Untrusted | Untrusted |
 | MCP Client | Software-rooted | Software-rooted |
-| cMCP Gateway | **Hardware-rooted** (inside TEE) | **Hardware-rooted** (inside TEE) |
+| cMCP Runtime | **Hardware-rooted** (inside TEE) | **Hardware-rooted** (inside TEE) |
 | MCP Server (first-party) | Software-rooted | **Hardware-rooted** (inside TEE) |
 | MCP Server (third-party SaaS) | Software-rooted | **Hardware-rooted** (vendor TEE) |
 | MCP Server (local/stdio) | Out of scope | Out of scope |
@@ -186,22 +186,22 @@ The TRACE Claim can include the server attestation measurement.
 | Caller | Callee | Protocol | Authentication Method |
 |--------|--------|----------|-----------------------|
 | Agent | MCP Client | In-process API | N/A (same process) |
-| MCP Client | cMCP Gateway | JSON-RPC 2.0 over HTTP/SSE | mTLS with SPIFFE SVID |
-| cMCP Gateway | MCP Server | JSON-RPC 2.0 over HTTP/SSE | mTLS with TLS client cert (Phase 1); mTLS with SPIFFE SVID (Phase 2) |
+| MCP Client | cMCP Runtime | JSON-RPC 2.0 over HTTP/SSE | mTLS with SPIFFE SVID |
+| cMCP Runtime | MCP Server | JSON-RPC 2.0 over HTTP/SSE | mTLS with TLS client cert (Phase 1); mTLS with SPIFFE SVID (Phase 2) |
 | MCP Server | Backend System | REST, SQL, gRPC, or other | Backend-native credentials (API key, IAM role, DB password) |
-| External Auditor | TRACE Claim | Offline verification | TEE public key (from attestation report); no live connection to gateway required |
-| SPIRE | cMCP Gateway | SPIFFE workload API | TEE attestation (node attestation plugin) |
+| External Auditor | TRACE Claim | Offline verification | TEE public key (from attestation report); no live connection to runtime required |
+| SPIRE | cMCP Runtime | SPIFFE workload API | TEE attestation (node attestation plugin) |
 
 ---
 
 ## Verification Points
 
-**Agent-side verification**: Before routing any tool call, the agent MCP client verifies the gateway TLS certificate against the expected SPIFFE SVID. This confirms the agent is talking to an attested gateway, not an impersonator. The SPIFFE SVID is the agent-side trust anchor.
+**Agent-side verification**: Before routing any tool call, the agent MCP client verifies the runtime TLS certificate against the expected SPIFFE SVID. This confirms the agent is talking to an attested runtime, not an impersonator. The SPIFFE SVID is the agent-side trust anchor.
 
 **External auditor verification**: The auditor receives TRACE Claims (out-of-band, from a log store or delivered by the enterprise). The auditor verifies:
 1. The TRACE Claim signature against the TEE public key embedded in the claim.
 2. The TEE public key against the attestation report (the key is bound to the TEE measurement).
-3. The attestation report against the known-good measurement for the gateway version (obtained from the build pipeline or a public transparency log).
+3. The attestation report against the known-good measurement for the runtime version (obtained from the build pipeline or a public transparency log).
 4. The policy bundle hash against the expected hash for the declared policy version.
 
-This verification requires no live connection to the gateway. It can be done weeks or months after the fact, satisfying P3.1 (regulatory proof requests) and P3.2 (customer pre-renewal questionnaires).
+This verification requires no live connection to the runtime. It can be done weeks or months after the fact, satisfying P3.1 (regulatory proof requests) and P3.2 (customer pre-renewal questionnaires).
