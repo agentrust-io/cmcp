@@ -34,7 +34,7 @@ dependencies = [
     "starlette>=0.37",
     "uvicorn>=0.29",
     "click>=8.1",
-    "agent-os-kernel>=3.7",
+    "agent-governance-toolkit-core>=4.0",
 ]
 
 [project.optional-dependencies]
