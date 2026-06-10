@@ -3,7 +3,7 @@
 ---
 Status: Draft v0.1
 Last updated: 2026-06-04
-Stability: Unstable — expect breaking changes before v1.0
+Stability: Unstable , expect breaking changes before v1.0
 ---
 
 This document defines the fuzzing definition of done (DoD) for the Phase 2 proxy parser. No Phase 2 release ships without satisfying every item below.
