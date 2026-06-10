@@ -3,14 +3,14 @@
 ---
 Status: Draft v0.1
 Last updated: 2026-06-04
-Stability: Unstable — expect breaking changes before v1.0
+Stability: Unstable , expect breaking changes before v1.0
 ---
 
 This document specifies the Cedar policy bundle format, policy expression examples, enforcement modes, evaluation decision flow, and related governance features for the cMCP Runtime.
 
 ---
 
-## Section 1 — Policy Bundle Format
+## Section 1 : Policy Bundle Format
 
 A policy bundle is a directory (or tarball) with the following structure:
 
@@ -62,7 +62,7 @@ This hash is what gets measured into the attestation report (see `policy_bundle.
 
 ---
 
-## Section 2 — Cedar Policy Expression Examples
+## Section 2 : Cedar Policy Expression Examples
 
 The following examples show working Cedar policies for common enterprise use cases. All policies operate on the action `Action::"call_tool"`.
 
@@ -164,7 +164,7 @@ This ensures that even if the policy bundle is empty or all permits are removed,
 
 ---
 
-## Section 3 — Enforcement Modes
+## Section 3 : Enforcement Modes
 
 Enforcement mode is set in the deployment configuration, bound into the attestation report, and cannot change without an enclave restart. This makes the active mode tamper-evident.
 
@@ -190,7 +190,7 @@ The error does not include the matched rule name or policy text, to avoid leakin
 
 ---
 
-## Section 4 — Policy Evaluation Decision Flow
+## Section 4 : Policy Evaluation Decision Flow
 
 ```
 1.  Receive MCP tool call request
@@ -236,7 +236,7 @@ Latency budget: Cedar evaluation target is under 1 ms for bundles up to 500 poli
 
 ---
 
-## Section 5 — Policy Provenance (closes #26)
+## Section 5 : Policy Provenance (closes #26)
 
 The `manifest.json` provenance metadata is included in the bundle hash measurement (see Section 1). This means:
 
@@ -260,7 +260,7 @@ If any step fails, the verifier rejects the TRACE Claim. This process requires n
 
 ---
 
-## Section 6 — Per-Workflow Cedar Policy Scope (closes #41)
+## Section 6 : Per-Workflow Cedar Policy Scope (closes #41)
 
 ### Workflow Identity
 
@@ -302,7 +302,7 @@ This allows Cedar policies to reference `context.workflow_allowed_tools` as deri
 
 ---
 
-## Section 7 — Runtime as Sole MCP Endpoint (closes #39)
+## Section 7 : Runtime as Sole MCP Endpoint (closes #39)
 
 ### Agent Host Configuration
 
