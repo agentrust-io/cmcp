@@ -50,7 +50,7 @@ Status: Draft v0.1 | Covers: Phase 1 cMCP Runtime
 
 | STRIDE | Threat | Mitigated by | Residual risk |
 |--------|--------|-------------|---------------|
-| Spoofing | Attacker impersonates the gateway | SPIFFE SVID issued only after TEE attestation; TRACE Claim signed with TEE-sealed key | If SPIRE is compromised, SVID issuance can be faked — SPIRE integrity is out of scope |
+| Spoofing | Attacker impersonates the gateway | SPIFFE SVID issued only after TEE attestation; TRACE Claim signed with TEE-sealed key | If SPIRE is compromised, SVID issuance can be faked - SPIRE integrity is out of scope |
 | Tampering | A1 modifies Cedar policy on disk | Policy bundle hash measured at TEE startup; tampered bundle produces measurement mismatch | Runtime config injection (env vars, mounted secrets) not covered by measurement |
 | Repudiation | A1 rewrites audit log after breach | Audit chain signing key is TEE-sealed; new valid signatures are computationally infeasible without the key | If the TEE is breached (physical attack, firmware vulnerability), key extraction is theoretically possible |
 | Information Disclosure | A1 reads tool call payloads from host memory | SEV-SNP/TDX encrypts enclave memory; host hypervisor cannot read plaintext | Side-channel attacks (Spectre, cache timing) on the TEE boundary; TEE firmware vulnerabilities |
@@ -89,7 +89,7 @@ The SPEC claims structural protection against APM payload capture. The protectio
 
 Verifiers must confirm that the egress policy hash excludes APM and telemetry endpoints. A TRACE Claim with an egress policy that permits APM endpoints does not provide this protection and the verifier should flag it.
 
-### Server Swap / Tool Identity — T.1 (status: requires agent-side verification)
+### Server Swap / Tool Identity : T.1 (status: requires agent-side verification)
 
 The SPEC states T.1 is closed by the runtime producing an attestation report. T.1 is only closed if the agent (or the agent's runtime) verifies the attestation report before sending traffic. Without verification, the attestation exists as post-hoc evidence but provides no runtime protection against server swap at the moment of the call.
 
@@ -97,7 +97,7 @@ The verification library (`cmcp-verify`, see [verification-library.md](verificat
 
 ### P4.1 Supply Chain (status: binary-level only)
 
-Hardware measurement at launch time proves the binary is what it should be. Runtime configuration injection — environment variables, mounted secrets, configuration files loaded after startup — happens after the measurement. A supply chain attack that operates via runtime configuration changes server behavior without changing the binary measurement.
+Hardware measurement at launch time proves the binary is what it should be. Runtime configuration injection - environment variables, mounted secrets, configuration files loaded after startup - happens after the measurement. A supply chain attack that operates via runtime configuration changes server behavior without changing the binary measurement.
 
 The binary-level protection is real and valuable. The runtime config gap must be stated explicitly in any compliance claim referencing this control. This is reflected in the Tampering row for the Runtime STRIDE table above (residual risk: runtime config injection not covered by measurement).
 
