@@ -10,7 +10,7 @@ This separation is explicit. Cedar owns pre-call authorization. The inspection p
 
 ## Inspection Pipeline
 
-The pipeline runs sequentially on every tool response before it is passed to the agent. All stages run even if an earlier stage would deny — this produces a complete inspection record for the audit entry rather than stopping at first failure.
+The pipeline runs sequentially on every tool response before it is passed to the agent. All stages run even if an earlier stage would deny - this produces a complete inspection record for the audit entry rather than stopping at first failure.
 
 ### Stage 1: Size Check
 
@@ -28,8 +28,8 @@ All remaining stages are still recorded as `"skip"` in the audit entry so the en
 
 If the tool has an approved `output_schema` in the catalog, the runtime validates the response JSON against it using JSON Schema draft-07.
 
-- **Surplus fields** — fields present in the response but absent from the approved schema — are collected as `surplus_fields`.
-- **Missing required fields** — fields required by the schema but absent from the response — are a tool implementation error, not a policy violation. They are logged and the response passes through.
+- **Surplus fields**: fields present in the response but absent from the approved schema: are collected as `surplus_fields`.
+- **Missing required fields**: fields required by the schema but absent from the response: are a tool implementation error, not a policy violation. They are logged and the response passes through.
 
 The handling mode for surplus fields comes from the catalog entry (overridable by Cedar policy):
 
@@ -47,15 +47,15 @@ If no approved `output_schema` exists in the catalog, this stage result is `"ski
 
 Cedar does not run post-call. Sensitivity classification in Phase 1 is rule-based in runtime code. Three sources are combined in priority order:
 
-1. **Catalog-level `sensitivity_level` annotation** — always applied. If the tool is annotated `"hipaa_phi"`, every response from it carries that tag regardless of content.
-2. **Field-level annotations in `approved_definition.output_schema`** — fields tagged with sensitivity labels (e.g., `"ssn"` tagged `"pii"`, `"diagnosis"` tagged `"hipaa_phi"`) contribute their tags to the response if those fields are present and non-null in the response.
-3. **Pattern matching on response content** — the configurable pattern list below is applied to the full response body (as a UTF-8 string). Matches contribute their associated sensitivity tags.
+1. **Catalog-level `sensitivity_level` annotation** : always applied. If the tool is annotated `"hipaa_phi"`, every response from it carries that tag regardless of content.
+2. **Field-level annotations in `approved_definition.output_schema`** : fields tagged with sensitivity labels (e.g., `"ssn"` tagged `"pii"`, `"diagnosis"` tagged `"hipaa_phi"`) contribute their tags to the response if those fields are present and non-null in the response.
+3. **Pattern matching on response content** : the configurable pattern list below is applied to the full response body (as a UTF-8 string). Matches contribute their associated sensitivity tags.
 
 Output: a set of sensitivity tags applied to this response, for example `["pii", "hipaa_phi"]`. An empty set means `"public"`. These tags are passed to session state in the handoff call described below.
 
 ### Stage 4: Indirect Injection Detection
 
-The runtime scans response content for patterns that resemble injected instructions the LLM would treat as system context. A match causes a denial. The pattern list is configurable per deployment — the set below is the Phase 1 default, maintained as a config file, not hardcoded.
+The runtime scans response content for patterns that resemble injected instructions the LLM would treat as system context. A match causes a denial. The pattern list is configurable per deployment - the set below is the Phase 1 default, maintained as a config file, not hardcoded.
 
 ```python
 INJECTION_PATTERNS = [
@@ -92,7 +92,7 @@ A response denied at any stage still proceeds through remaining stages (to popul
 
 ### Handoff to Session Policy
 
-After inspection completes — regardless of the final decision — the gateway calls:
+After inspection completes - regardless of the final decision - the gateway calls:
 
 ```python
 session_state.update_from_inspection(
