@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -17,6 +17,7 @@ from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
 from cmcp_runtime.errors import PolicyDeny
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
+from tests.unit.conftest import wire_mock_gateway
 
 
 def _make_entry(tool_name: str = "test.tool") -> CatalogEntry:
@@ -89,10 +90,7 @@ def _make_proxy(catalog=None, evaluator=None, mode=EnforcementMode.ENFORCING):
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(cat, ev, session, chain, cfg, attestation_platform="software-only")
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False
-        ))
+        wire_mock_gateway(proxy)
     return proxy, session, chain
 
 
@@ -151,10 +149,6 @@ async def test_proxy_updates_session_state_on_allow():
     entry.sensitivity_level = "pii"
     catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
     proxy, session, _ = _make_proxy(catalog=catalog)
-
-    proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-        sensitivity_tags=["pii"], injection_detected=False
-    ))
 
     assert session.max_sensitivity == "public"
     await proxy.call_tool("c1", "test.tool", {})
@@ -227,10 +221,7 @@ async def test_cedar_context_includes_attestation_platform():
             _make_catalog(), evaluator, session, chain, cfg,
             attestation_platform="amd-sev-snp",
         )
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False
-        ))
+        wire_mock_gateway(proxy)
 
     await proxy.call_tool("c1", "test.tool", {})
     ctx = evaluator.evaluate.call_args[0][0]
@@ -343,21 +334,22 @@ async def test_audit_entry_detail_includes_injection_scanner_and_pattern():
     include injection_scanner and matched_pattern so a verifier can reconstruct why
     the request was denied."""
     proxy, _, chain = _make_proxy()
-    proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-        sensitivity_tags=[],
-        injection_detected=True,
-        injection_scanner="agt_mcp",
-        matched_pattern="test_pattern",
-        injection_pattern=None,
-    ))
+    # Allowed-but-detected path: scanner reports threats but does not block.
+    wire_mock_gateway(
+        proxy,
+        scan_allowed=True,
+        threats=[{"category": "prompt_injection", "description": "x"}],
+    )
 
     await proxy.call_tool("c1", "test.tool", {"q": "hello"})
 
     tool_entries = [e for e in chain.entries if e.entry_type == "tool_call"]
     entry = tool_entries[-1]
     assert entry.detail is not None, "detail must be set when injection is detected"
-    assert entry.detail["injection_scanner"] == "agt_mcp"
-    assert entry.detail["matched_pattern"] == "test_pattern"
+    assert entry.detail["injection_scanner"] == "agt_response_scanner"
+    assert entry.detail["matched_pattern"] == "prompt_injection"
+    # INJECT-007 threshold no longer applies to the AGT response scanner
+    assert "injection_threshold" not in entry.detail
 
 
 @pytest.mark.asyncio
@@ -375,19 +367,16 @@ async def test_audit_entry_detail_is_none_when_no_injection():
 
 @pytest.mark.asyncio
 async def test_audit_entry_detail_falls_back_to_unknown_when_fields_absent():
-    """INJECT-003 — when injection_detected=True but scanner/pattern attrs are absent,
-    detail values must fall back to 'unknown' rather than crashing."""
+    """INJECT-003 — when a scanner threat dict is missing its 'category' key, the
+    matched_pattern must fall back to 'unknown' rather than crashing."""
     proxy, _, chain = _make_proxy()
-    agt_mock = MagicMock(spec=[])  # no attributes beyond spec
-    agt_mock.sensitivity_tags = []
-    agt_mock.injection_detected = True
-    # injection_scanner and matched_pattern intentionally absent
-    proxy._mcp_gateway.call_tool = AsyncMock(return_value=agt_mock)
+    # Threat dict intentionally missing the "category" key
+    wire_mock_gateway(proxy, scan_allowed=True, threats=[{"description": "x"}])
 
     await proxy.call_tool("c1", "test.tool", {})
 
     tool_entries = [e for e in chain.entries if e.entry_type == "tool_call"]
     entry = tool_entries[-1]
     assert entry.detail is not None
-    assert entry.detail["injection_scanner"] == "unknown"
+    assert entry.detail["injection_scanner"] == "agt_response_scanner"
     assert entry.detail["matched_pattern"] == "unknown"

@@ -96,6 +96,16 @@ class TeeFault(CMCPError):
     http_status = 500
 
 
+class UpstreamUnavailable(CMCPError):
+    code = "UPSTREAM_UNAVAILABLE"
+    http_status = 502
+
+
+class UpstreamToolError(CMCPError):
+    code = "UPSTREAM_TOOL_ERROR"
+    http_status = 502
+
+
 class AttestationStale(CMCPError):
     code = "ATTESTATION_STALE"
     http_status = 412
