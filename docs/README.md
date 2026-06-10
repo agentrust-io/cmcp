@@ -15,13 +15,13 @@ Read SPEC.md. It defines the four problems (P1 data leakage, P2 unsanctioned too
 
 **Implementing the runtime (Phase 1):**
 Read in this order:
-1. SPEC.md — problem context and scope
-2. docs/spec/component-model.md — what you are building and where trust boundaries are
-3. docs/spec/transport.md — how the runtime intercepts MCP traffic
-4. docs/spec/attestation.md — how TEE attestation works and how to produce TRACE Claims
-5. docs/spec/cedar-policy.md — the policy engine, bundle format, and enforcement modes
-6. docs/spec/failure-modes.md — what happens when things go wrong
-7. schemas/ — machine-readable schemas to validate your outputs against
+1. SPEC.md : problem context and scope
+2. docs/spec/component-model.md : what you are building and where trust boundaries are
+3. docs/spec/transport.md : how the runtime intercepts MCP traffic
+4. docs/spec/attestation.md : how TEE attestation works and how to produce TRACE Claims
+5. docs/spec/cedar-policy.md : the policy engine, bundle format, and enforcement modes
+6. docs/spec/failure-modes.md : what happens when things go wrong
+7. schemas/ : machine-readable schemas to validate your outputs against
 
 **Contributing to the spec:**
 Issues in this repo track spec decisions, not implementation bugs. Each issue corresponds to a specific design question. When a spec file resolves an issue, the issue is closed with a reference to the relevant file. To propose a change, open an issue describing the problem with the current spec, then submit a PR.
@@ -32,7 +32,7 @@ Issues in this repo track spec decisions, not implementation bugs. Each issue co
 
 | File | Covers | Phase | Status | Issues |
 |------|--------|-------|--------|--------|
-| docs/SPEC.md | Problem taxonomy, coverage matrix, target customer, success metric | 1+2 | Draft v0.1 | — |
+| docs/SPEC.md | Problem taxonomy, coverage matrix, target customer, success metric | 1+2 | Draft v0.1 | - |
 | docs/spec/component-model.md | All MCP components, trust levels, hardware vs. software boundaries | 1+2 | Draft v0.1 | #43 |
 | docs/spec/transport.md | HTTP/SSE scope, stdio gap, SPIFFE-to-TEE binding spike | 1 | Draft v0.1 | #20, #21 |
 | docs/spec/attestation.md | TEE provider detection, audit chain, key management, catalog pinning | 1 | Draft v0.1 | #5, #6, #23, #33, #38 |
@@ -42,7 +42,7 @@ Issues in this repo track spec decisions, not implementation bugs. Each issue co
 | docs/spec/call-graph.md | Tag-propagation model, observability limits, cross-boundary policy | 1 | Draft v0.1 | #35 |
 | docs/spec/session-policy.md | Session sensitivity state machine, egress policy, session reset | 1 | Draft v0.1 | #36 |
 | docs/spec/response-inspection.md | 4-stage response inspection pipeline, injection patterns | 1 | Draft v0.1 | #37 |
-| docs/spec/error-codes.md | Central error code registry for all runtime and verification errors | 1+2 | Draft v0.1 | — |
+| docs/spec/error-codes.md | Central error code registry for all runtime and verification errors | 1+2 | Draft v0.1 | - |
 | docs/spec/threat-model.md | Assets, adversaries, STRIDE analysis per component | 1 | Draft v0.1 | #18, #24 |
 | docs/spec/verification-library.md | cmcp-verify Python library interface and per-provider verification steps | 1 | Draft v0.1 | #25 |
 | docs/spec/mcp-spec-strategy.md | MCP spec monitoring and attestation extension contribution window | 1+2 | Draft v0.1 | #30 |
@@ -93,7 +93,7 @@ A conforming implementation passes all MUST-level tests. SHOULD-level tests indi
 
 **Process:**
 1. Open an issue describing the spec gap or design question
-2. Discuss in the issue — the issue body captures the decision context
+2. Discuss in the issue : the issue body captures the decision context
 3. Submit a PR with the spec change, referencing the issue
 4. PR is merged when the spec change is accepted
 
