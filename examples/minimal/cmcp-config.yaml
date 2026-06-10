@@ -3,3 +3,4 @@ attestation:
   enforcement_mode: advisory
 policy_bundle_path: ./policies/
 catalog_path: ./catalog.json
+audit_db_path: ./audit.db

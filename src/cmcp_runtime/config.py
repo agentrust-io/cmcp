@@ -55,11 +55,12 @@ class Config:
     listen_addr: str = "0.0.0.0:8443"
     max_response_size_bytes: int = 2 * 1024 * 1024  # 2MB
     policy_reload_interval_seconds: int = 0  # 0 = disabled (POLICY-001)
+    audit_db_path: str = "audit.db"  # AUDIT-001: durable audit chain storage
     dev_mode: bool = False
     bearer_token: str | None = None
 
 
-_KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes", "policy_reload_interval_seconds"}
+_KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes", "policy_reload_interval_seconds", "audit_db_path"}
 _KNOWN_ATTEST_KEYS = {"provider", "enforcement_mode", "validity_seconds", "staleness_policy", "expected_measurement"}
 
 
@@ -146,8 +147,10 @@ def load_config(path: str) -> Config:
 
     policy_bundle_path = raw.get("policy_bundle_path", "policy/")
     catalog_path = raw.get("catalog_path", "catalog.json")
+    audit_db_path = raw.get("audit_db_path", "audit.db")
     _check_no_traversal("policy_bundle_path", policy_bundle_path)
     _check_no_traversal("catalog_path", catalog_path)
+    _check_no_traversal("audit_db_path", audit_db_path)
 
     return Config(
         attestation=AttestationConfig(
@@ -162,6 +165,7 @@ def load_config(path: str) -> Config:
         listen_addr=raw.get("listen_addr", "0.0.0.0:8443"),
         max_response_size_bytes=max_bytes,
         policy_reload_interval_seconds=policy_reload_interval,
+        audit_db_path=audit_db_path,
         dev_mode=dev_mode,
         bearer_token=bearer_token,
     )

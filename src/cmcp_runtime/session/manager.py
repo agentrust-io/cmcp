@@ -61,7 +61,7 @@ class SessionManager:
         """
         session_id = str(uuid4())
         state = SessionState(session_id=session_id)
-        chain = AuditChain(session_id=session_id)
+        chain = AuditChain(session_id=session_id, store=self._ctx.audit_store)
 
         # AUDIT-002: derive a per-session nonce that encodes the chain root so
         # the TEE report binds this specific chain to the attestation evidence.

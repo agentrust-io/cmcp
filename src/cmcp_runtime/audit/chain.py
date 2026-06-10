@@ -7,8 +7,11 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from cmcp_runtime.audit.store import SqliteAuditStore
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +94,10 @@ class AuditChain:
     internal hash-chain check still runs.
     """
 
-    def __init__(self, session_id: str) -> None:
+    def __init__(self, session_id: str, store: SqliteAuditStore | None = None) -> None:
         self._session_id = session_id
         self._entries: list[AuditEntry] = []
+        self._store = store
         # AUDIT-002: TEE-anchored chain root.  None until set_tee_anchor() is called.
         self._tee_anchor: str | None = None
         self._append_session_start()
@@ -186,6 +190,8 @@ class AuditChain:
             prev_entry_hash=prev_hash,
         )
         entry.entry_hash = entry.compute_hash()
+        if self._store is not None:
+            self._store.append(entry)
         self._entries.append(entry)
         return entry
 
