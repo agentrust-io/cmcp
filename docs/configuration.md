@@ -5,7 +5,7 @@
 ## Full example
 
 ```yaml
-# cmcp-config.yaml — annotated full example
+# cmcp-config.yaml : annotated full example
 
 attestation:
   # TEE provider. auto detects in order: tpm -> sev-snp -> tdx.
