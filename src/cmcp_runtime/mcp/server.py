@@ -327,16 +327,22 @@ class MCPServer:
                 "POLICY_DENY: call_id=%s error_code=%s reason=%s",
                 call_id, error_code, result.deny_reason,
             )
+            error_data: dict[str, Any] = {
+                "error_code": error_code,
+                "call_id": call_id,
+            }
+            # Advice annotations come from the hash-pinned policy bundle
+            # (operator-authored, not caller input), so reflecting them does
+            # not violate INJECT-003. They carry e.g. HITL escalation payloads.
+            if result.advice:
+                error_data["advice"] = result.advice
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
                     "error": {
                         "code": -32000,
                         "message": "Request denied by policy",
-                        "data": {
-                            "error_code": error_code,
-                            "call_id": call_id,
-                        },
+                        "data": error_data,
                     },
                     "id": rpc_id,
                 },
@@ -349,6 +355,8 @@ class MCPServer:
             "would_have_denied": result.would_have_denied,
             "latency_us": result.latency_us,
         }
+        if result.would_have_denied and result.advice:
+            cmcp_meta["advice"] = result.advice
         if workflow_id is not None:
             cmcp_meta["workflow_id"] = workflow_id
         return JSONResponse({

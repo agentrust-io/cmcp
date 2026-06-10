@@ -16,6 +16,7 @@ from agent_os.policies.backends import CedarBackend
 
 from cmcp_runtime.config import Config, EnforcementMode
 from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.policy.annotations import parse_policy_annotations
 from cmcp_runtime.policy.bundle import PolicyBundle, PolicyStore
 from cmcp_runtime.session.state import SENSITIVITY_ORDER
 
@@ -73,6 +74,8 @@ class PolicyEvaluator:
             policy_content=combined_policy,
             mode="auto",  # cedarpy > cli > builtin
         )
+        self._combined_policy = combined_policy
+        self._annotations = parse_policy_annotations(combined_policy)
         logger.info(
             "PolicyEvaluator ready: bundle_hash=%s enforcement=%s backend=%s",
             initial_bundle.bundle_hash,
@@ -89,8 +92,44 @@ class PolicyEvaluator:
                 content for _, content in sorted(bundle.policy_files.items())
             )
             self._backend = CedarBackend(policy_content=combined_policy, mode="auto")
+            self._combined_policy = combined_policy
+            self._annotations = parse_policy_annotations(combined_policy)
             self._current_hash = bundle.bundle_hash
             logger.info("PolicyEvaluator backend refreshed: new_hash=%s", self._current_hash)
+
+    def _advice_for_deny(self, context: dict[str, Any]) -> dict[str, str]:
+        """
+        Best-effort: recover the annotations of the forbid policies that caused
+        a deny, to return as structured advice (e.g. HITL escalation payloads).
+
+        AGT's CedarBackend does not expose cedarpy's diagnostics.reasons, so
+        this re-evaluates the same request directly with cedarpy purely for
+        diagnostics — the authorization decision itself is never taken from
+        here. Runs only on the deny path; returns {} on any failure.
+        """
+        if not self._annotations:
+            return {}
+        try:
+            import cedarpy
+
+            request = self._backend._build_cedar_request(context)
+            response = cedarpy.is_authorized(
+                request={
+                    "principal": request["principal"],
+                    "action": request["action"],
+                    "resource": request["resource"],
+                    "context": request.get("context", {}),
+                },
+                policies=self._combined_policy,
+                entities=getattr(self._backend, "_entities", []),
+            )
+            advice: dict[str, str] = {}
+            for policy_id in response.diagnostics.reasons:
+                advice.update(self._annotations.get(policy_id, {}))
+            return advice
+        except Exception:
+            logger.debug("Advice extraction failed", exc_info=True)
+            return {}
 
     def evaluate(self, context: dict[str, Any]) -> PolicyDecision:
         """
@@ -121,11 +160,15 @@ class PolicyEvaluator:
                 evaluation_ms=evaluation_ms,
             )
 
-        # Cedar denied — apply enforcement mode
+        # Cedar denied — recover advice annotations from the matched policies,
+        # then apply enforcement mode.
+        advice = self._advice_for_deny(context)
+
         if self._mode == EnforcementMode.ENFORCING:
             raise PolicyDeny(
                 f"Policy denied tool call: {context.get('tool_name', '?')}",
                 detail=f"rule={rule} eval_ms={evaluation_ms:.2f}",
+                advice=advice,
             )
 
         if self._mode == EnforcementMode.ADVISORY:
@@ -137,7 +180,7 @@ class PolicyEvaluator:
                 allowed=True,
                 enforcement_mode=self._mode,
                 rule_matched=rule,
-                advice={},
+                advice=advice,
                 evaluation_ms=evaluation_ms,
                 would_have_denied=True,
             )
@@ -147,7 +190,7 @@ class PolicyEvaluator:
             allowed=True,
             enforcement_mode=self._mode,
             rule_matched=rule,
-            advice={},
+            advice=advice,
             evaluation_ms=evaluation_ms,
             would_have_denied=True,
         )

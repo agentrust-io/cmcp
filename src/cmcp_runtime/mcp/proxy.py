@@ -46,6 +46,9 @@ class CallResult:
     deny_reason: str | None
     latency_us: int
     audit_entry_hash: str
+    # Annotations from the forbid policies that matched (deny or advisory).
+    # Sourced from the hash-pinned policy bundle, safe to reflect to callers.
+    advice: dict[str, str] | None = None
 
 
 class CMCPProxy:
@@ -329,10 +332,12 @@ class CMCPProxy:
         # Step 2: Cedar policy evaluation
         cedar_context = self._build_cedar_context(tool_name, arguments, workflow_id)
         policy_rule: str | None = None
+        ingress_advice: dict[str, str] = {}
         try:
             decision = self._policy.evaluate(cedar_context)
             policy_rule = decision.rule_matched
             would_have_denied = decision.would_have_denied
+            ingress_advice = decision.advice
         except PolicyDeny as exc:
             self._audit.append(
                 "tool_call",
@@ -367,6 +372,7 @@ class CMCPProxy:
                 deny_reason=str(exc),
                 latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
+                advice=exc.advice or None,
             )
         except Exception as exc:
             # POLICY-003: Cedar backend raised an unexpected exception (e.g. malformed
@@ -468,6 +474,7 @@ class CMCPProxy:
                 tool_name, response_bytes, self._session
             )
             egress_would_deny = egress_decision.would_have_denied
+            egress_advice = egress_decision.advice
         except PolicyDeny as exc:
             egress_deny_reason = str(exc)
             self._audit.append(
@@ -490,10 +497,12 @@ class CMCPProxy:
                 deny_reason=egress_deny_reason,
                 latency_us=int((time.perf_counter() - t0) * 1_000_000),
                 audit_entry_hash=self._audit.chain_tip,
+                advice=exc.advice or None,
             )
 
         # Merge egress advisory flag into the overall would_have_denied
         would_have_denied = would_have_denied or egress_would_deny
+        advisory_advice = {**ingress_advice, **egress_advice}
 
         # Step 6: audit chain write
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
@@ -548,4 +557,5 @@ class CMCPProxy:
             deny_reason=None,
             latency_us=latency_us,
             audit_entry_hash=self._audit.chain_tip,
+            advice=advisory_advice or None,
         )
