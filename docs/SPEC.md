@@ -11,7 +11,7 @@ Architectural conviction: in the agent era, the agent-to-tool boundary is a prim
 
 Enterprise AI teams deploying agents through MCP face four governance problems without complete answers.
 
-### Problem 1 — Data exposure through tool calls
+### Problem 1 : Data exposure through tool calls
 
 Agents send prompts containing PII, IP, internal records, and customer data to MCP servers that may persist, log, or forward them. Enterprises have no systematic way to inspect, scrub, or block this traffic.
 
@@ -29,7 +29,7 @@ Five shapes:
 
 OWASP: MCP10 (primary) - MCP01, MCP02, MCP05 (adjacent)
 
-### Problem 2 — Unsanctioned tool use and tool poisoning
+### Problem 2 : Unsanctioned tool use and tool poisoning
 
 Agents are non-deterministic by construction. A model can choose to call any tool in the MCP catalog. Adversaries register tools under legitimate names or modify tool descriptions to embed hidden instructions.
 
@@ -45,7 +45,7 @@ Four shapes:
 
 OWASP: MCP02 (primary) - MCP03, MCP07, MCP09 (adjacent)
 
-### Problem 3 — Lack of provable governance
+### Problem 3 : Lack of provable governance
 
 Even when policies exist, enterprises cannot prove to auditors, regulators, or customers that those policies were actually enforced on every request. Software-only enforcement is opaque to outside parties. Audit logs live in operator-controlled storage and ultimately rest on the operator's word.
 
@@ -57,7 +57,7 @@ Two shapes:
 
 OWASP: MCP08
 
-### Problem 4 — Identity and supply-chain risk on the server side
+### Problem 4 : Identity and supply-chain risk on the server side
 
 When an agent calls a third-party MCP endpoint, it has no cryptographic basis for trusting that the endpoint is what it claims to be, runs the code it claims to run, or behaves as advertised -- and no way to detect when that changes.
 
