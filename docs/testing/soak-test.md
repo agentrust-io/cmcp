@@ -1,4 +1,4 @@
-﻿# cMCP Runtime — 72-Hour Soak Test Plan
+﻿# cMCP Runtime - 72-Hour Soak Test Plan
 
 Closes #31.
 
