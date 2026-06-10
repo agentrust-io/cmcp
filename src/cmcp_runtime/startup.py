@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.audit.store import SqliteAuditStore
 from cmcp_runtime.catalog.loader import ToolCatalog, load_catalog
 from cmcp_runtime.config import Config, load_config
 from cmcp_runtime.errors import (
@@ -48,6 +49,7 @@ class RuntimeContext:
     signing_key: SigningKey
     policy_bundle: PolicyStore
     catalog: ToolCatalog
+    audit_store: SqliteAuditStore | None = None
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
 
@@ -252,6 +254,26 @@ def run_startup(config_path: str) -> RuntimeContext:
     # CMCP_NRAS_API_KEY missing -> skip with warning; any NRAS error -> skip with warning.
     nras_appraisal = try_appraise(attestation_report)
 
+    # Step 5d: open durable audit store and warn on orphaned sessions (AUDIT-001).
+    try:
+        from pathlib import Path as _Path
+        audit_store = SqliteAuditStore(_Path(config.audit_db_path))
+        orphaned = audit_store.find_orphaned_sessions()
+        if orphaned:
+            logger.warning(
+                "AUDIT-001: %d session(s) have no session_end entry in the audit DB — "
+                "gateway may have restarted mid-session. Orphaned session IDs: %s",
+                len(orphaned),
+                orphaned,
+            )
+    except Exception as exc:
+        _fatal(
+            "AUDIT_STORE_UNAVAILABLE",
+            f"Cannot open audit store at '{config.audit_db_path}': {exc}",
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
     return RuntimeContext(
         config=config,
         tee_provider=tee_provider,
@@ -259,6 +281,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         signing_key=signing_key,
         policy_bundle=policy_store,
         catalog=catalog,
+        audit_store=audit_store,
         spiffe=spiffe_result,
         nras_appraisal=nras_appraisal,
     )
