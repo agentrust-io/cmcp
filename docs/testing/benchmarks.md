@@ -1,4 +1,4 @@
-﻿# cMCP Runtime — Latency Targets and Benchmark Specification
+﻿# cMCP Runtime - Latency Targets and Benchmark Specification
 
 Closes #27.
 
