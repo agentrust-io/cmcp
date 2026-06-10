@@ -110,6 +110,18 @@ class CMCPProxy:
         # proxy construction stays sync and tests need no event loop.
         self._http: httpx.AsyncClient | None = None
 
+    def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
+        """
+        Point the proxy at a fresh session after the previous one was closed.
+
+        Call logs are recreated for the new session id; catalog, policy
+        evaluator, and gateway are unchanged.
+        """
+        self._session = session
+        self._audit = audit_chain
+        self._call_log = CallLog(session_id=session.session_id)
+        self._session_call_log = SessionCallLog(session_id=session.session_id)
+
     async def _forward_to_upstream(
         self,
         call_id: str,
