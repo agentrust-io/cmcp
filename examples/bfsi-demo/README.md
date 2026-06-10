@@ -1,12 +1,12 @@
-# BFSI Demo — cMCP Gateway
+# BFSI Demo : cMCP Gateway
 
 Demonstrates the CC Summit demo scenario: an agent calls financial tools, the gateway enforces Cedar policies, and produces a TRACE Claim an auditor can verify.
 
 ## Scenario
 
 An agent calls two tools:
-1. `crm.query` — queries PII-tagged customer records
-2. `kyc.verify` — runs KYC verification (confidential sensitivity)
+1. `crm.query` : queries PII-tagged customer records
+2. `kyc.verify` : runs KYC verification (confidential sensitivity)
 
 Three Cedar policies enforce:
 1. All approved catalog tools are allowed by default
