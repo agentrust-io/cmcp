@@ -4,9 +4,9 @@ Status: Draft v0.1 | Closes #36 | Related: [response-inspection.md](response-ins
 
 ## Overview
 
-Individual call policy — Cedar evaluated before each tool call — is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.
+Individual call policy - Cedar evaluated before each tool call - is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.
 
-Phase 1.5 introduces session sensitivity tracking to close this gap. Once a session has handled data at a given sensitivity level, outbound calls to destinations that are not approved for that sensitivity level are denied — even if each individual call would pass pre-call Cedar policy in isolation. The session sensitivity state is monotonically increasing within a session: it can only go up, never down, short of an explicit operator-authorized reset.
+Phase 1.5 introduces session sensitivity tracking to close this gap. Once a session has handled data at a given sensitivity level, outbound calls to destinations that are not approved for that sensitivity level are denied - even if each individual call would pass pre-call Cedar policy in isolation. The session sensitivity state is monotonically increasing within a session: it can only go up, never down, short of an explicit operator-authorized reset.
 
 ## Session Sensitivity State Machine
 
@@ -56,7 +56,7 @@ def update_from_inspection(
         })
 ```
 
-Note that `response_allowed` is recorded in injection events but does not affect state transition logic. A denied response that carried high-sensitivity tags still raises `max_sensitivity` — the agent is aware the call was attempted.
+Note that `response_allowed` is recorded in injection events but does not affect state transition logic. A denied response that carried high-sensitivity tags still raises `max_sensitivity` - the agent is aware the call was attempted.
 
 ## Cedar Egress Policy Using Session State
 
@@ -111,7 +111,7 @@ In Policy 3, `sensitivity_level_int` is a derived integer attribute on the sessi
 
 **Endpoint:** `POST /session/reset`
 
-**Credential required:** Operator credential. Agent credentials are not accepted. This is intentional — see below.
+**Credential required:** Operator credential. Agent credentials are not accepted. This is intentional - see below.
 
 **Effect:**
 - `max_sensitivity` is reset to `"public"`
@@ -137,11 +137,11 @@ If an operator reset is not available (e.g., the runtime is processing automated
 
 ## Session Lifetime and Attestation Validity
 
-A session's maximum duration is bounded by the attestation validity period of the agent's TRACE token. When the TRACE token expires, the session must end — the gateway cannot continue to enforce session-level policy for an agent whose identity and configuration are no longer attested.
+A session's maximum duration is bounded by the attestation validity period of the agent's TRACE token. When the TRACE token expires, the session must end - the gateway cannot continue to enforce session-level policy for an agent whose identity and configuration are no longer attested.
 
 In practice: session `max_duration_seconds` is set to `min(configured_session_max, trace_token_ttl_remaining)` at session creation. A session that is still active when its TRACE token would expire is terminated by the runtime with an audit entry of type `"session_expired"`.
 
-This means a long-running agent that handles high-sensitivity data early in its session will face increasingly tight call restrictions as the session progresses — both because `max_sensitivity` is monotonically increasing and because the TRACE token TTL is monotonically decreasing. Deployments should size TRACE token lifetimes to match expected task durations.
+This means a long-running agent that handles high-sensitivity data early in its session will face increasingly tight call restrictions as the session progresses - both because `max_sensitivity` is monotonically increasing and because the TRACE token TTL is monotonically decreasing. Deployments should size TRACE token lifetimes to match expected task durations.
 
 ## TRACE Claim Fields from Session State
 
