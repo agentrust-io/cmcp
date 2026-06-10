@@ -3,7 +3,7 @@
 ---
 Status: Draft v0.1
 Last updated: 2026-06-04
-Stability: Unstable — expect breaking changes before v1.0
+Stability: Unstable , expect breaking changes before v1.0
 ---
 
 Covers: Phase 1 transport scope, stdio gap analysis, SPIFFE-to-TEE attestation binding.
