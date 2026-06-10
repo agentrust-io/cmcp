@@ -3,7 +3,7 @@
 ---
 Status: Draft v0.1
 Last updated: 2026-06-04
-Stability: Unstable — expect breaking changes before v1.0
+Stability: Unstable , expect breaking changes before v1.0
 ---
 
 This document specifies how the cMCP Runtime identifies upstream MCP servers, prevents tool name collisions, and routes tool calls. These mechanisms close the protocol-level gap in MCP (issue #40): MCP defines no signed manifest binding a tool name to a publisher. The runtime closes this by maintaining a catalog that binds each tool name to a specific upstream server identity.
