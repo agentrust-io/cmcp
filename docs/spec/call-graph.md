@@ -39,9 +39,9 @@ The governing principle is conservatism. The runtime cannot know whether a high-
 
 When the runtime receives a tool response, it classifies the response and assigns sensitivity tags based on three sources, evaluated in order:
 
-1. **The tool's catalog entry** (`compliance_domain`, `sensitivity_level`) — known at call time, before the response arrives
-2. **Cedar policy annotations on the tool** (for example, `"this tool always returns PHI"`) — known at call time
-3. **Response inspection results** (pattern matching against the response content body) — known only after the response is received
+1. **The tool's catalog entry** (`compliance_domain`, `sensitivity_level`) : known at call time, before the response arrives
+2. **Cedar policy annotations on the tool** (for example, `"this tool always returns PHI"`) : known at call time
+3. **Response inspection results** (pattern matching against the response content body) : known only after the response is received
 
 Catalog-based and policy-based classification is performed pre-response and establishes a baseline sensitivity floor for any response from that tool. Response inspection can raise sensitivity further but cannot lower it below the catalog floor.
 
