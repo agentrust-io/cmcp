@@ -1,4 +1,4 @@
-﻿# Quickstart — cMCP Runtime
+﻿# Quickstart - cMCP Runtime
 
 From zero to first TRACE Claim in under 30 minutes. Uses `CMCP_DEV_MODE=1` so no hardware TEE is required.
 
@@ -32,8 +32,8 @@ pip install cmcp-gateway
 ```
 
 This installs:
-- `cmcp` — the gateway CLI
-- `cmcp_verify` — the Python library for verifying TRACE Claims (no separate CLI install needed)
+- `cmcp` - the gateway CLI
+- `cmcp_verify` - the Python library for verifying TRACE Claims (no separate CLI install needed)
 
 ---
 
@@ -345,10 +345,10 @@ Expected output in dev mode:
 Status:          partially_verified
 Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain']
 Attestation age: 12s
-Details:         {'hardware_attestation': 'software-only mode — not hardware-backed'}
+Details:         {'hardware_attestation': 'software-only mode - not hardware-backed'}
 ```
 
-`partially_verified` is expected in dev mode — hardware attestation is not present. All cryptographic fields (`signature`, `policy_bundle.hash`, `tool_catalog.hash`, `audit_chain`) are verified. On a real TEE host the status becomes `verified`.
+`partially_verified` is expected in dev mode - hardware attestation is not present. All cryptographic fields (`signature`, `policy_bundle.hash`, `tool_catalog.hash`, `audit_chain`) are verified. On a real TEE host the status becomes `verified`.
 
 ---
 
@@ -357,23 +357,23 @@ Details:         {'hardware_attestation': 'software-only mode — not hardware-b
 | Field | What it proves |
 |---|---|
 | `trace.runtime.platform` | Which TEE hardware produced the attestation report (`tpm2`, `amd-sev-snp`, etc.) |
-| `trace.runtime.measurement` | PCR/measurement recorded by hardware at enclave boot — all zeros in dev mode |
-| `trace.policy.bundle_hash` | SHA-256 of the Cedar policy bundle loaded at startup — changing any policy file changes this hash |
+| `trace.runtime.measurement` | PCR/measurement recorded by hardware at enclave boot - all zeros in dev mode |
+| `trace.policy.bundle_hash` | SHA-256 of the Cedar policy bundle loaded at startup - changing any policy file changes this hash |
 | `trace.policy.enforcement_mode` | Whether policy denies are hard (`enforcing`) or logged-only (`advisory`) |
 | `trace.data_class` | Highest sensitivity level touched in the session (`pii` in this demo) |
-| `trace.tool_transcript.hash` | SHA-256 of the audit chain tip — binds the call log to this Trust Record |
+| `trace.tool_transcript.hash` | SHA-256 of the audit chain tip - binds the call log to this Trust Record |
 | `trace.tool_transcript.call_count` | Number of tool calls in the session |
-| `trace.cnf.jwk` | Ed25519 public key used to sign this claim — bound to the TEE signing key |
-| `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip — verifiable without replaying individual entries |
+| `trace.cnf.jwk` | Ed25519 public key used to sign this claim - bound to the TEE signing key |
+| `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip - verifiable without replaying individual entries |
 | `gateway.call_summary` | Per-session statistics: total, allowed, denied, faulted calls and tools invoked |
-| `gateway.catalog.drift_detected` | `true` if any tool definition changed after catalog load — signals a rug-pull attempt |
+| `gateway.catalog.drift_detected` | `true` if any tool definition changed after catalog load - signals a rug-pull attempt |
 | `signature` | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`) |
 
 ---
 
 ## Next steps
 
-- **Full financial-services scenario** — see `examples/bfsi-demo/` for a multi-tool scenario with MNPI and PHI policies, cross-boundary events, and a KYC workflow.
-- **Spec reference** — see `docs/SPEC.md` for the full product specification and `docs/spec/` for individual component specs.
-- **Switch to enforcing mode** — set `enforcement_mode: enforcing` in `cmcp-config.yaml`. Policy denies will return HTTP 403 and the call will not be forwarded.
-- **Hardware TEE** — remove `CMCP_DEV_MODE=1` on an Azure DCasv5 (SEV-SNP) or DCedsv5 (TDX) VM. The `trace.runtime.measurement` will reflect real hardware values and verification status becomes `verified`.
+- **Full financial-services scenario**: see `examples/bfsi-demo/` for a multi-tool scenario with MNPI and PHI policies, cross-boundary events, and a KYC workflow.
+- **Spec reference**: see `docs/SPEC.md` for the full product specification and `docs/spec/` for individual component specs.
+- **Switch to enforcing mode**: set `enforcement_mode: enforcing` in `cmcp-config.yaml`. Policy denies will return HTTP 403 and the call will not be forwarded.
+- **Hardware TEE**: remove `CMCP_DEV_MODE=1` on an Azure DCasv5 (SEV-SNP) or DCedsv5 (TDX) VM. The `trace.runtime.measurement` will reflect real hardware values and verification status becomes `verified`.
