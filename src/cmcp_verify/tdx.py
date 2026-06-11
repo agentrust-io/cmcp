@@ -98,8 +98,19 @@ def verify_tdx_measurement(
         result.details["dcap_chain"] = "requires_intel_dcap_service"
         return result
 
-    # Step 2: Parse TDREPORT if provided
-    if raw_evidence is not None and len(raw_evidence) >= _TDREPORT_MIN_SIZE:
+    # Step 2: raw evidence is mandatory — a claim asserting a hardware
+    # platform with no evidence to check must fail closed, not pass on
+    # string-format checks alone.
+    if raw_evidence is None:
+        result.verified = False
+        result.failure_reason = "no_raw_evidence"
+        result.unverified_fields.extend(
+            ["measurement", "dcap_quote_signature", "tcb_status"]
+        )
+        result.details["raw_evidence"] = "not provided; TDREPORT cannot be checked"
+        return result
+
+    if len(raw_evidence) >= _TDREPORT_MIN_SIZE:
         try:
             # Parse via ctypes struct for named field access (HW-007)
             tdreport = _TdReport.from_buffer_copy(raw_evidence[:_TDREPORT_MIN_SIZE])
@@ -135,7 +146,7 @@ def verify_tdx_measurement(
             result.details["dcap_chain"] = "requires_intel_dcap_service"
             return result
 
-    elif raw_evidence is not None:
+    else:
         # Truncated evidence
         result.verified = False
         result.failure_reason = "raw_evidence_parse_error"

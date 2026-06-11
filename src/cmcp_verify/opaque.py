@@ -63,6 +63,9 @@ def verify_opaque_measurement(
         return result
 
     if raw_evidence is None:
+        # Fail closed: an attestation claim with no evidence cannot verify.
+        result.verified = False
+        result.failure_reason = "no_raw_evidence"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["opaque_endpoint"] = endpoint
         result.details["hint"] = "raw_evidence not provided; cannot verify with Opaque"
