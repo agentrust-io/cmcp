@@ -288,7 +288,12 @@ class MCPServer:
         tool_name: str = params.get("name", "").lower()
         arguments: dict[str, Any] = params.get("arguments", {})
         call_id = str(uuid.uuid4())
-        workflow_id: str | None = params.get("_cmcp", {}).get("workflow_id")
+        # A malformed _cmcp (string, list, number) must not 500 the call path.
+        cmcp_params = params.get("_cmcp")
+        if not isinstance(cmcp_params, dict):
+            cmcp_params = {}
+        raw_workflow = cmcp_params.get("workflow_id")
+        workflow_id: str | None = raw_workflow if isinstance(raw_workflow, str) else None
 
         try:
             result = await self._proxy.call_tool(call_id, tool_name, arguments, workflow_id=workflow_id)
@@ -658,6 +663,10 @@ class MCPServer:
             )
         # AUTH-002: lock guards against a concurrent tool-call coroutine modifying sensitivity.
         async with self._session.mutation_lock:
+            # Capture the pre-reset sensitivity: reset() drops it back to
+            # "public", and the elevated value the session held at reset time
+            # is exactly the forensic detail the audit entry must preserve.
+            sensitivity_before = self._session.max_sensitivity
             old_id, new_id = self._session.reset(
                 reason="operator reset via API",
                 authorized_by="api",
@@ -667,7 +676,7 @@ class MCPServer:
             call_id=None,
             tool_name=None,
             policy_decision="n/a",
-            session_sensitivity_before=self._session.max_sensitivity,
+            session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
         )
         return JSONResponse({

@@ -274,9 +274,9 @@ def test_generate_claim_enforcement_mode_mapped():
 
 
 def test_generate_claim_software_only_platform():
-    """software-only provider maps to tpm2 platform with firmware marker."""
+    """software-only provider gets its own platform value, never tpm2."""
     claim = _make_claim()
-    assert claim.trace.runtime.platform == "tpm2"
+    assert claim.trace.runtime.platform == "software-only"
     assert claim.trace.runtime.firmware_version == "software-only-dev-mode"
 
 

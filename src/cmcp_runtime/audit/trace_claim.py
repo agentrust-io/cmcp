@@ -24,7 +24,9 @@ _PROVIDER_MAP: dict[str, str] = {
     "tdx": "intel-tdx",
     "opaque": "intel-tdx",
     "tpm": "tpm2",
-    "software-only": "tpm2",
+    # Dev mode is its own platform value: a consumer keying trust on
+    # runtime.platform must never mistake a non-attested record for TPM-backed.
+    "software-only": "software-only",
 }
 
 _SW_ONLY_MEASUREMENT = "sha256:" + "0" * 64

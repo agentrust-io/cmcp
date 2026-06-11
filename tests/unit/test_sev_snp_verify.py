@@ -56,11 +56,12 @@ def test_snp_struct_round_trip() -> None:
     assert bytes(report.host_data) == host_pattern
 
 
-def test_valid_measurement_format_no_evidence():
+def test_valid_measurement_format_no_evidence_fails_closed():
+    """A well-formed measurement string is not evidence."""
     good = "sha384:" + "a" * 96
     result = verify_sev_snp_measurement(good, raw_evidence=None)
-    assert result.verified is True
-    assert result.failure_reason is None
+    assert result.verified is False
+    assert result.failure_reason == "no_raw_evidence"
 
 
 def test_sha256_prefix_fails_format():
@@ -158,18 +159,20 @@ def test_truncated_report_is_parse_error():
     assert result.failure_reason == "raw_evidence_parse_error"
 
 
-def test_no_raw_evidence_hardware_unverified():
+def test_no_raw_evidence_fails_closed():
+    """A hardware-platform claim with no evidence must not verify."""
     good = "sha384:" + "f" * 96
     result = verify_sev_snp_measurement(good, raw_evidence=None)
-    assert result.verified is True
+    assert result.verified is False
+    assert result.failure_reason == "no_raw_evidence"
     assert "measurement" not in result.verified_fields
 
 
 def test_vcek_cert_chain_always_unverified_no_evidence():
     good = "sha384:" + "e" * 96
     result = verify_sev_snp_measurement(good, raw_evidence=None)
+    assert result.verified is False
     assert "vcek_cert_chain" in result.unverified_fields
-    assert result.details["vcek_chain"] == "requires_amd_kds_lookup"
 
 
 def test_vcek_cert_chain_always_unverified_with_matching_report():
