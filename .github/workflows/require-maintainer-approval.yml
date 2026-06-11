@@ -27,6 +27,12 @@ jobs:
           script: |
             const MAINTAINERS = ['imran-siddique'];
 
+            const author = context.payload.pull_request.user.login;
+            if (MAINTAINERS.includes(author)) {
+              core.info(`Author ${author} is a maintainer, skipping gate`);
+              return;
+            }
+
             const association = context.payload.pull_request.author_association;
             if (association === 'MEMBER' || association === 'OWNER') {
               core.info(`Author is ${association}, skipping gate`);
