@@ -153,6 +153,9 @@ class MCPServer:
         self._session = session
         self._max_request_bytes = max_request_bytes
         self._audit = audit_chain
+        # Chains of closed sessions, kept so /audit/export still serves them
+        # after the live session rotates.
+        self._closed_chains: dict[str, AuditChain] = {}
         self._kernel = StatelessKernel()
         # NET-002: rate-limit unauthenticated /health before auth middleware runs.
         # Starlette applies middleware outermost-first (first in list = first to run).
@@ -186,6 +189,11 @@ class MCPServer:
                 Route(
                     "/sessions/{session_id}/reset",
                     self._session_reset,
+                    methods=["POST"],
+                ),
+                Route(
+                    "/sessions/{session_id}/close",
+                    self._session_close,
                     methods=["POST"],
                 ),
                 Route("/catalog/exception", self._catalog_exception, methods=["POST"]),
@@ -372,6 +380,8 @@ class MCPServer:
             "would_have_denied": result.would_have_denied,
             "latency_us": result.latency_us,
         }
+        if self._session is not None:
+            cmcp_meta["session_id"] = self._session.session_id
         if result.would_have_denied and result.advice:
             cmcp_meta["advice"] = result.advice
         if workflow_id is not None:
@@ -472,10 +482,10 @@ class MCPServer:
                 {"error": "query parameter 'session_id' is required"},
                 status_code=400,
             )
+        # Closed sessions keep their chain available for export after rotation.
+        chain = self._closed_chains.get(session_id, self._audit_chain)
         try:
-            bundle = self._session_manager.get_audit_bundle(
-                session_id, self._audit_chain
-            )
+            bundle = self._session_manager.get_audit_bundle(session_id, chain)
         except ValueError as exc:
             logger.error(
                 "Audit chain integrity failure: session_id=%s error=%s",
@@ -486,6 +496,50 @@ class MCPServer:
                 {"error": "audit chain integrity check failed"}, status_code=500
             )
         return JSONResponse(bundle)
+
+    async def _session_close(self, request: Request) -> Response:
+        """POST /sessions/{session_id}/close — close the session, return its signed TRACE Claim.
+
+        Appends the session_end audit entry, signs the claim, then rotates the
+        gateway onto a fresh session so subsequent tool calls keep working.
+        The closed session's claim stays available at
+        GET /sessions/{session_id}/trace-claim and its audit bundle at
+        GET /audit/export?session_id=<id>.
+        """
+        if (
+            self._session_manager is None
+            or self._session is None
+            or self._audit_chain is None
+        ):
+            return JSONResponse(
+                {"error": "session management not available"}, status_code=501
+            )
+        session_id: str = request.path_params["session_id"]
+        if session_id != self._session.session_id:
+            return JSONResponse(
+                {"error": f"unknown or already closed session_id={session_id}"},
+                status_code=404,
+            )
+
+        claim = self._session_manager.close_session(
+            session_id,
+            self._session,
+            self._audit_chain,
+            call_log=getattr(self._proxy, "_call_log", None),
+            session_call_log=getattr(self._proxy, "_session_call_log", None),
+        )
+        self._closed_chains[session_id] = self._audit_chain
+
+        # Rotate onto a fresh session so the gateway keeps serving.
+        new_session, new_chain = self._session_manager.create_session()
+        self._session = new_session
+        self._audit_chain = new_chain
+        self._audit = new_chain
+        self._proxy.rebind_session(new_session, new_chain)
+        logger.info(
+            "Session closed via API: closed=%s new=%s", session_id, new_session.session_id
+        )
+        return JSONResponse(claim)
 
     async def _catalog_exception(self, request: Request) -> Response:
         """POST /catalog/exception — add a break-glass catalog exception at runtime.

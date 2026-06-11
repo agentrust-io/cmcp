@@ -380,3 +380,42 @@ async def test_audit_entry_detail_falls_back_to_unknown_when_fields_absent():
     assert entry.detail is not None
     assert entry.detail["injection_scanner"] == "agt_response_scanner"
     assert entry.detail["matched_pattern"] == "unknown"
+
+
+# ── Cedar-safe context coercion ────────────────────────────────────────────────
+
+
+def test_cedar_safe_coerces_floats_and_drops_none():
+    from cmcp_runtime.mcp.proxy import _cedar_safe
+
+    out = _cedar_safe({
+        "score": 72.3,
+        "labs": {"glucose": 9.2, "note": None},
+        "tags": ["a", 1, 2.5, None],
+        "count": 3,
+        "active": True,
+    })
+    assert out == {
+        "score": "72.3",
+        "labs": {"glucose": "9.2"},
+        "tags": ["a", 1, "2.5"],
+        "count": 3,
+        "active": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_float_arguments_do_not_fail_policy_evaluation():
+    """A float in tool arguments must not crash Cedar and deny the call."""
+    proxy, _, _ = _make_proxy()
+    captured = {}
+    original = proxy._policy.evaluate
+
+    def capture(ctx):
+        captured.update(ctx)
+        return original(ctx)
+
+    proxy._policy.evaluate = capture
+    result = await proxy.call_tool("c1", "test.tool", {"risk_score": 72.3})
+    assert result.allowed is True
+    assert captured["arguments"] == {"risk_score": "72.3"}
