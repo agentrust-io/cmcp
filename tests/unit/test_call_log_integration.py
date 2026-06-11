@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ from cmcp_runtime.errors import PolicyDeny
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.call_log import CallLog
 from cmcp_runtime.session.state import SessionState
+from tests.unit.conftest import wire_mock_gateway
 
 
 def _make_entry(tool_name: str = "test.tool") -> CatalogEntry:
@@ -81,10 +82,7 @@ def _make_proxy(catalog=None, evaluator=None, call_log=None):
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(cat, ev, session, chain, cfg, call_log=call_log)
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False
-        ))
+        wire_mock_gateway(proxy)
     return proxy, session, chain
 
 
