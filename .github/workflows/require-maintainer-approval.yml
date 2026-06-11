@@ -4,6 +4,12 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened]
     branches: [main]
+  # Re-evaluate the gate when a review is submitted or dismissed so an
+  # approval clears the failing status without waiting for a new push.
+  # Note: pull_request_review does not support a branches filter, so the
+  # base-branch check lives in the job-level `if` below.
+  pull_request_review:
+    types: [submitted, dismissed]
 
 permissions:
   contents: read
@@ -13,27 +19,60 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    if: github.event.pull_request.base.ref == 'main'
     steps:
       - name: Check for maintainer approval
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
             const MAINTAINERS = ['imran-siddique'];
-            const { data: reviews } = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-            });
+
             const association = context.payload.pull_request.author_association;
             if (association === 'MEMBER' || association === 'OWNER') {
-              core.info(`Author is ${association} — skipping gate`);
+              core.info(`Author is ${association}, skipping gate`);
               return;
             }
-            const approved = reviews.some(
-              r => r.state === 'APPROVED' &&
-                   r.user.type === 'User' &&
-                   MAINTAINERS.includes(r.user.login)
+
+            // Both pull_request_target and pull_request_review payloads
+            // carry the PR at context.payload.pull_request.
+            const prNumber = context.payload.pull_request.number;
+
+            // Re-fetch the PR so we compare against the head SHA at
+            // evaluation time, not a possibly stale SHA from the payload.
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const headSha = pr.head.sha;
+
+            // Paginate: listReviews otherwise returns only the first 30.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            // Only a maintainer's most recent non-comment review counts,
+            // and it must approve the current head commit. An approval of
+            // an older commit does not clear the gate after a later push
+            // (prevents approve-then-swap).
+            const latestByMaintainer = new Map();
+            for (const review of reviews) {
+              if (
+                review.user &&
+                review.user.type === 'User' &&
+                MAINTAINERS.includes(review.user.login) &&
+                review.state !== 'COMMENTED'
+              ) {
+                latestByMaintainer.set(review.user.login, review);
+              }
+            }
+
+            const approved = [...latestByMaintainer.values()].some(
+              (r) => r.state === 'APPROVED' && r.commit_id === headSha
             );
+
             if (!approved) {
-              core.setFailed('Waiting for maintainer approval before merging.');
+              core.setFailed('Waiting for maintainer approval of the current head commit before merging.');
             }
