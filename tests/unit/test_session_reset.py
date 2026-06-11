@@ -9,7 +9,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from starlette.testclient import TestClient
 
@@ -24,6 +24,7 @@ from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
 from cmcp_runtime.mcp.server import MCPServer
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
+from tests.unit.conftest import wire_mock_gateway
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -82,10 +83,7 @@ def _make_server(session_id: str = "sess-reset-001"):
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(cat, ev, session, chain, cfg)
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False
-        ))
+        wire_mock_gateway(proxy)
 
     server = MCPServer(proxy, session=session, audit_chain=chain)
     return server, session, chain

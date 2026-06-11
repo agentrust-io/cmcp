@@ -144,10 +144,7 @@ def _make_soak_gateway(
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         evaluator = PolicyEvaluator(bundle=bundle, config=config)
 
-    agt_result = MagicMock(
-        sensitivity_tags=[], injection_detected=False,
-        modified_response=b'{"result": "soak-ok"}',
-    )
+    _soak_response = '{"result": "soak-ok"}'
 
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
@@ -160,8 +157,16 @@ def _make_soak_gateway(
             attestation_generated_at=datetime.now(UTC),
             attestation_validity_seconds=attestation_validity_seconds,
         )
+        # Mock the AGT gateway seam + upstream forwarding (new proxy step 3 seam)
         proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=agt_result)
+        proxy._mcp_gateway.intercept_tool_call = MagicMock(return_value=(True, "ok"))
+        proxy._forward_to_upstream = AsyncMock(return_value=_soak_response)
+        proxy._mcp_gateway.intercept_tool_response = MagicMock(return_value=MagicMock(
+            allowed=True,
+            content=_soak_response,
+            threats=[],
+            action="allowed",
+        ))
 
     with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy, session=session, audit_chain=chain, bearer_token=bearer_token)

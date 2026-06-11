@@ -6,8 +6,30 @@ import json
 
 import pytest
 
+from tests.unit.conftest import wire_mock_gateway
 
-def test_benchmark_runs_smoke(tmp_path):
+
+@pytest.fixture
+def benchmark_gateway_seam(monkeypatch):
+    """Rewire the benchmark proxy onto the current gateway seam.
+
+    benchmarks._make_proxy still mocks the removed `_mcp_gateway.call_tool`
+    coroutine; wrap it so the proxy gets the intercept_tool_call /
+    _forward_to_upstream / intercept_tool_response mocks instead.
+    """
+    import cmcp_runtime.benchmarks as benchmarks
+
+    original = benchmarks._make_proxy
+
+    def _patched(bundle, catalog):
+        proxy, evaluator = original(bundle, catalog)
+        wire_mock_gateway(proxy, response_text='{"result": "benchmark-ok"}')
+        return proxy, evaluator
+
+    monkeypatch.setattr(benchmarks, "_make_proxy", _patched)
+
+
+def test_benchmark_runs_smoke(tmp_path, benchmark_gateway_seam):
     """Smoke test: benchmark produces valid JSON output with all required keys."""
     import asyncio
 
@@ -29,7 +51,7 @@ def test_benchmark_runs_smoke(tmp_path):
         assert stats["p99"] >= stats["p95"] >= stats["p50"]
 
 
-def test_benchmark_writes_output_file(tmp_path):
+def test_benchmark_writes_output_file(tmp_path, benchmark_gateway_seam):
     """Benchmark writes a timestamped JSON file to the output directory."""
     import asyncio
 
