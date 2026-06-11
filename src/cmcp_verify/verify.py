@@ -36,7 +36,22 @@ _KNOWN_PLATFORMS = {
     "aws-nitro",
     "arm-cca",
     "google-confidential-space",
+    "software-only",
 }
+
+
+def _is_software_only(runtime: dict[str, Any]) -> bool:
+    """True for dev-mode (non-attested) records.
+
+    Current records use platform "software-only"; records produced before
+    that value existed used platform "tpm2" with the dev firmware sentinel.
+    """
+    if runtime.get("platform") == "software-only":
+        return True
+    return (
+        runtime.get("platform") == "tpm2"
+        and runtime.get("firmware_version") == _SW_ONLY_FIRMWARE
+    )
 
 
 class VerificationStatus(StrEnum):
@@ -54,6 +69,7 @@ class VerificationError(StrEnum):
     ATTESTATION_STALE = "ATTESTATION_STALE"
     CHAIN_BROKEN = "CHAIN_BROKEN"
     CLAIM_MALFORMED = "CLAIM_MALFORMED"
+    HARDWARE_ATTESTATION_FAILED = "HARDWARE_ATTESTATION_FAILED"
 
 
 @dataclass
@@ -384,10 +400,7 @@ def verify_trace_claim(
     # An attacker who substitutes their own keypair cannot forge the TEE-signed nonce,
     # so verification fails even when the Ed25519 signature is self-consistent.
     _runtime = claim_json.get("trace", {}).get("runtime", {})
-    _is_sw_only = (
-        _runtime.get("platform") == "tpm2"
-        and _runtime.get("firmware_version") == _SW_ONLY_FIRMWARE
-    )
+    _is_sw_only = _is_software_only(_runtime)
 
     binding_result, binding_msg = _verify_key_binding(claim_json, is_sw_only=_is_sw_only)
     if binding_result is True:
@@ -462,12 +475,11 @@ def verify_trace_claim(
 
     # Step 7: Platform-specific attestation
     platform = _runtime.get("platform", "")
-    firmware_version = _runtime.get("firmware_version", "")
 
-    if platform == "tpm2" and firmware_version == _SW_ONLY_FIRMWARE:
+    if _is_sw_only:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = "software-only mode — not hardware-backed"
-    elif platform == "tpm2" and firmware_version != _SW_ONLY_FIRMWARE:
+    elif platform == "tpm2":
         from cmcp_verify.tpm import verify_tpm_measurement
 
         raw_ev = _runtime.get("raw_evidence")
@@ -483,11 +495,12 @@ def verify_trace_claim(
             verified.extend(tpm_result.verified_fields)
         else:
             unverified.append("hardware_attestation")
+            failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
             if tpm_result.failure_reason:
                 details["tpm_failure"] = tpm_result.failure_reason
         unverified.extend(tpm_result.unverified_fields)
         details.update(tpm_result.details)
-    elif platform == "sev-snp" and firmware_version != _SW_ONLY_FIRMWARE:
+    elif platform == "amd-sev-snp":
         from cmcp_verify.sev_snp import verify_sev_snp_measurement
 
         raw_ev = _runtime.get("raw_evidence")
@@ -503,6 +516,7 @@ def verify_trace_claim(
             verified.extend(snp_result.verified_fields)
         else:
             unverified.append("hardware_attestation")
+            failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
             if snp_result.failure_reason:
                 details["sev_snp_failure"] = snp_result.failure_reason
         unverified.extend(snp_result.unverified_fields)
@@ -523,6 +537,7 @@ def verify_trace_claim(
             verified.extend(tdx_result.verified_fields)
         else:
             unverified.append("hardware_attestation")
+            failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
             if tdx_result.failure_reason:
                 details["tdx_failure"] = tdx_result.failure_reason
         unverified.extend(tdx_result.unverified_fields)
@@ -541,6 +556,7 @@ def verify_trace_claim(
             verified.extend(opaque_result.verified_fields)
         else:
             unverified.append("hardware_attestation")
+            failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
             if opaque_result.failure_reason:
                 details["opaque_failure"] = opaque_result.failure_reason
         unverified.extend(opaque_result.unverified_fields)
