@@ -94,6 +94,97 @@ def start(config: str, enforcement: str | None) -> None:
     uvicorn.run(server.app, host=host, port=port)
 
 
+@main.command()
+@click.argument("claim_file", type=click.Path(exists=True))
+@click.option("--policy-hash", default=None,
+              help="Approved policy bundle hash (sha256:<hex>). Unpinned if omitted.")
+@click.option("--catalog-hash", default=None,
+              help="Approved tool catalog hash (sha256:<hex>). Unpinned if omitted.")
+@click.option("--max-age", default=86400, type=int, show_default=True,
+              help="Maximum attestation age in seconds.")
+@click.option("--trusted-key", default=None,
+              help="Out-of-band pinned Ed25519 public key (hex) to cross-check trace.cnf.jwk.")
+@click.option("--audit-bundle", default=None, type=click.Path(exists=True),
+              help="Also verify an exported audit bundle (GET /audit/export) against the claim.")
+def verify(
+    claim_file: str,
+    policy_hash: str | None,
+    catalog_hash: str | None,
+    max_age: int,
+    trusted_key: str | None,
+    audit_bundle: str | None,
+) -> None:
+    """Verify a signed TRACE Claim (and optionally its audit bundle).
+
+    Checks the Ed25519 signature against the confirmation key in
+    trace.cnf.jwk, the claim schema, attestation freshness, audit chain
+    consistency, and (when pinned) the policy and catalog hashes.
+    Exits 0 when verified, 1 otherwise.
+    """
+    import json as _json
+
+    from cmcp_verify import ApprovedHashes, verify_audit_bundle, verify_trace_claim
+
+    with open(claim_file) as f:
+        claim = _json.load(f)
+
+    pinned_policy = policy_hash is not None
+    pinned_catalog = catalog_hash is not None
+    # Unpinned hashes fall back to the claim's own values: the check passes
+    # trivially and is reported as "not pinned" rather than verified.
+    approved = ApprovedHashes(
+        policy_bundle_hash=policy_hash
+        or claim.get("trace", {}).get("policy", {}).get("bundle_hash", ""),
+        tool_catalog_hash=catalog_hash
+        or claim.get("gateway", {}).get("catalog", {}).get("hash", ""),
+    )
+
+    result = verify_trace_claim(
+        claim,
+        approved,
+        max_attestation_age_seconds=max_age,
+        trusted_public_key_hex=trusted_key,
+    )
+
+    def _line(name: str, ok: bool, note: str = "") -> None:
+        mark = "PASS" if ok else "FAIL"
+        click.echo(f"[cmcp verify] {name:<24} {mark}{('  ' + note) if note else ''}")
+
+    for field_name in result.verified_fields:
+        note = ""
+        if field_name == "policy_bundle.hash" and not pinned_policy:
+            note = "(not pinned — pass --policy-hash to pin)"
+        if field_name == "tool_catalog.hash" and not pinned_catalog:
+            note = "(not pinned — pass --catalog-hash to pin)"
+        _line(field_name, True, note)
+    for field_name in result.unverified_fields:
+        _line(field_name, False, result.details.get(field_name, ""))
+
+    bundle_ok = True
+    if audit_bundle is not None:
+        with open(audit_bundle) as f:
+            bundle = _json.load(f)
+        bundle_result = verify_audit_bundle(bundle, claim)
+        bundle_ok = bundle_result.verified
+        _line(
+            "audit_bundle",
+            bundle_ok,
+            f"({bundle_result.entry_count} entries)"
+            if bundle_ok
+            else "; ".join(bundle_result.failures),
+        )
+
+    overall = result.status.value == "verified" and bundle_ok
+    if "hardware_attestation" in result.unverified_fields:
+        click.echo(
+            "[cmcp verify] note: "
+            + result.details.get("hardware_attestation", "hardware attestation not verified")
+        )
+    click.echo(f"[cmcp verify] RESULT: {'PASS' if overall else 'FAIL'} ({result.status.value})")
+    if not overall:
+        raise SystemExit(1)
+
+
 @main.command("validate-config")
 @click.option("--config", required=True, type=click.Path(exists=True), help="Path to cmcp-config.yaml")
 def validate_config(config: str) -> None:

@@ -211,13 +211,18 @@ def test_all_software_only_verified_fields_are_present():
 
 
 def test_known_hardware_platform_without_verifier_is_partially_verified():
-    """TEE-001 -- amd-sev-snp must be PARTIALLY_VERIFIED not VERIFIED."""
+    """TEE-001 -- amd-sev-snp without raw evidence must not be VERIFIED.
+
+    The dispatch previously compared against the provider name ("sev-snp")
+    instead of the platform name ("amd-sev-snp"), so SNP verification never
+    ran; with the dispatch fixed, the missing raw evidence fails closed.
+    """
     claim_dict, key = _make_signed_claim(provider="sev-snp")
     result = verify_trace_claim(
         claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
     )
     assert result.status == VerificationStatus.PARTIALLY_VERIFIED
-    assert result.failure_reason == VerificationError.UNSUPPORTED_PROVIDER
+    assert result.failure_reason == VerificationError.HARDWARE_ATTESTATION_FAILED
     assert "hardware_attestation" in result.unverified_fields
 
 
