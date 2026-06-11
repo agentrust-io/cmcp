@@ -52,6 +52,26 @@ class CallResult:
     advice: dict[str, str] | None = None
 
 
+def _cedar_safe(value: Any) -> Any:
+    """
+    Coerce a JSON value into types Cedar can ingest.
+
+    Cedar has no float or null type: a single float anywhere in the request
+    context makes cedarpy reject the whole request, which fails closed and
+    denies the call. Floats are preserved as strings; None values are dropped
+    (policies use `has` checks, so absence is the correct representation).
+    """
+    if isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _cedar_safe(v) for k, v in value.items() if v is not None}
+    if isinstance(value, (list, tuple)):
+        return [_cedar_safe(v) for v in value if v is not None]
+    return str(value)
+
+
 class CMCPProxy:
     """
     Wraps AGT's MCPGateway so every tool call is:
@@ -238,7 +258,7 @@ class CMCPProxy:
         entry = self._catalog.lookup(tool_name)
         ctx: dict[str, Any] = {
             "tool_name": tool_name,
-            "arguments": arguments,
+            "arguments": _cedar_safe(arguments),
             "server_identity": entry.server.url if entry else "",
             "compliance_domain": entry.compliance_domain if entry else "external",
             "baa_covered": (not entry.requires_baa) if entry else False,
