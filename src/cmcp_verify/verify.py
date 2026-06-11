@@ -236,6 +236,86 @@ def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None]:
         return False, str(exc)
 
 
+@dataclass
+class AuditBundleResult:
+    """Outcome of verifying an exported audit bundle against a claim."""
+
+    verified: bool
+    entry_count: int
+    failures: list[str] = field(default_factory=list)
+
+
+def verify_audit_bundle(
+    bundle_json: dict[str, Any],
+    claim_json: dict[str, Any] | None = None,
+) -> AuditBundleResult:
+    """
+    Verify an exported audit bundle (GET /audit/export):
+
+    1. Recompute every entry hash from its canonical body and check the
+       prev_entry_hash linkage from "genesis" to the tip.
+    2. If a claim is provided, cross-check the bundle's root/tip/length
+       against gateway.audit_chain and verify the bundle_signature with the
+       claim's confirmation key (trace.cnf.jwk.x).
+    """
+    failures: list[str] = []
+    entries = bundle_json.get("entries", [])
+    if not entries:
+        return AuditBundleResult(verified=False, entry_count=0, failures=["bundle has no entries"])
+
+    prev = "genesis"
+    for i, entry in enumerate(entries):
+        body = {k: v for k, v in entry.items() if k != "entry_hash"}
+        recomputed = hashlib.sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        ).hexdigest()
+        if recomputed != entry.get("entry_hash"):
+            failures.append(f"entry {i}: hash mismatch (content altered)")
+        if entry.get("prev_entry_hash") != prev:
+            failures.append(f"entry {i}: chain link broken")
+        prev = entry.get("entry_hash", "")
+
+    if claim_json is not None:
+        chain = claim_json.get("gateway", {}).get("audit_chain", {})
+        if chain.get("root") != entries[0].get("entry_hash"):
+            failures.append("bundle root does not match claim gateway.audit_chain.root")
+        if chain.get("tip") != entries[-1].get("entry_hash"):
+            failures.append("bundle tip does not match claim gateway.audit_chain.tip")
+        if chain.get("length") != len(entries):
+            failures.append(
+                f"bundle has {len(entries)} entries, claim says {chain.get('length')}"
+            )
+
+        sig_b64 = bundle_json.get("bundle_signature", "")
+        x_b64 = claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
+        if not sig_b64:
+            failures.append("bundle_signature is missing")
+        elif not x_b64:
+            failures.append("claim has no confirmation key to check bundle_signature against")
+        else:
+            try:
+                pad = 4 - (len(x_b64) % 4)
+                pub = Ed25519PublicKey.from_public_bytes(
+                    base64.urlsafe_b64decode(x_b64 + ("=" * pad if pad != 4 else ""))
+                )
+                pad = 4 - (len(sig_b64) % 4)
+                sig = base64.urlsafe_b64decode(sig_b64 + ("=" * pad if pad != 4 else ""))
+                digest = hashlib.sha256(
+                    json.dumps(
+                        entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                    ).encode()
+                ).digest()
+                pub.verify(sig, digest)
+            except InvalidSignature:
+                failures.append("bundle_signature is invalid")
+            except Exception as exc:
+                failures.append(f"bundle_signature could not be checked: {exc}")
+
+    return AuditBundleResult(
+        verified=not failures, entry_count=len(entries), failures=failures
+    )
+
+
 def verify_trace_claim(
     claim_json: dict[str, Any],
     approved: ApprovedHashes,
