@@ -200,6 +200,7 @@ class PolicyEvaluator:
         tool_name: str,
         response_bytes: bytes,
         session: SessionState,
+        workflow_id: str | None = None,
     ) -> PolicyDecision:
         """
         Evaluate Cedar egress policies after a tool response is received.
@@ -207,6 +208,10 @@ class PolicyEvaluator:
         Uses the same CedarBackend as ingress evaluation but passes egress-specific
         context fields so Cedar policies can distinguish direction.  The principal
         and action are implicit in the context dict the backend receives.
+
+        workflow_id carries the same call identity as the ingress evaluation:
+        without it, workflow-scoped permits (default-deny bundles with no
+        catch-all) can never match at egress and every response would be denied.
 
         Returns PolicyDecision(allowed=True/False, ...).  In ENFORCING mode a deny
         raises PolicyDeny; in ADVISORY/SILENT a deny is flagged via would_have_denied.
@@ -220,6 +225,8 @@ class PolicyEvaluator:
             "reset_count": session.reset_count,
             "response_size_bytes": len(response_bytes),
         }
+        if workflow_id is not None:
+            context["workflow_id"] = workflow_id
         return self.evaluate(context)
 
     @property

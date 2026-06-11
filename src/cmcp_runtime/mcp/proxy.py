@@ -695,7 +695,7 @@ class CMCPProxy:
 
         try:
             egress_decision = self._policy.authorize_egress(
-                tool_name, response_bytes, self._session
+                tool_name, response_bytes, self._session, workflow_id=workflow_id
             )
             egress_would_deny = egress_decision.would_have_denied
             egress_advice = egress_decision.advice

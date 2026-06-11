@@ -86,23 +86,30 @@ def verify_tpm_measurement(
             unverified_fields.append("qualifying_data")
             details["tpm_parse_error"] = parse_details.get("error", "failed to parse TPM2B_ATTEST")
     else:
-        # No raw evidence — cannot verify PCR digest or qualifying data
-        unverified_fields.append("pcr_digest")
-        unverified_fields.append("qualifying_data")
+        # No raw evidence — a claim asserting a hardware platform with no
+        # evidence to check must fail closed, not pass on format checks alone.
+        unverified_fields.extend(["pcr_digest", "qualifying_data", "ek_cert_chain"])
         details["pcr_digest_note"] = "raw_evidence not provided; PCR digest unverifiable"
+        return TPMVerificationResult(
+            verified=False,
+            verified_fields=verified_fields,
+            unverified_fields=unverified_fields,
+            failure_reason="no_raw_evidence",
+            details=details,
+        )
 
     # Step 3: EK cert chain always unverified in Phase 1
     unverified_fields.append("ek_cert_chain")
     details["ek_cert_chain_validation"] = "ek_cert_chain_validation_requires_ca_lookup"
 
-    # verified=True if we have at least measurement_format and no parse failures
+    # verified=True only when the evidence parsed and matched
     verified = "measurement_format" in verified_fields and "pcr_format" not in unverified_fields
 
     return TPMVerificationResult(
         verified=verified,
         verified_fields=verified_fields,
         unverified_fields=unverified_fields,
-        failure_reason=None,
+        failure_reason=None if verified else "tpm_evidence_check_failed",
         details=details,
     )
 

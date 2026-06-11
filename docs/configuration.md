@@ -15,7 +15,9 @@ attestation:
 
   # enforcing: policy denies block the tool call and return HTTP 403.
   # advisory: policy denies are logged but the call is forwarded.
-  # silent: evaluates policy but takes no action and does not log denies.
+  # silent: like advisory but without operational log lines. The hash-chained
+  #   audit log still records every would-have-denied decision -- silent
+  #   quiets logs, never the evidence.
   enforcement_mode: enforcing
 
   # How long (in seconds) an attestation report is considered fresh.
@@ -97,7 +99,7 @@ Environment variables control secrets and mode flags that must not appear in con
 |------|----------|----------|
 | `enforcing` | Policy denies block the tool call. The runtime returns HTTP 403 and a structured error to the agent. The call is not forwarded to the upstream server. | Production. Default for new deployments. |
 | `advisory` | Policy denies are logged in the audit chain but the call is forwarded. The TRACE Claim records the deny. No tool call is blocked. | Policy testing, migration from existing runtime. Safe for first run with an untuned policy. |
-| `silent` | Policy is evaluated but the result is not acted on and denies are not logged. Observability-only mode. | Measuring policy impact before rollout. Not suitable for any compliance scenario. |
+| `silent` | Policy is evaluated, the call is forwarded, and **the audit chain still records every would-have-denied decision** (as `advisory_deny`, visible in the TRACE Claim's call summary). The only difference from `advisory` is that no operational log lines are emitted. Silent quiets logs, never the evidence. | Measuring policy impact before rollout without operational log noise. The tamper-evident record remains complete, so post-hoc review stays possible. |
 
 ## Minimal working config
 

@@ -109,7 +109,7 @@ def _make_proxy_with_egress(egress_allow: bool, ingress_allow: bool = True):
     evaluator = MagicMock(spec=PolicyEvaluator)
     evaluator.evaluate.side_effect = _side_effect
     # authorize_egress delegates to evaluate() — wire it the same way
-    evaluator.authorize_egress.side_effect = lambda tool, resp, sess: _side_effect(
+    evaluator.authorize_egress.side_effect = lambda tool, resp, sess, **kw: _side_effect(
         {"egress": True, "tool_name": tool}
     )
     evaluator.bundle_hash = "sha256:" + "0" * 64
@@ -275,7 +275,7 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     def _make_evaluator_for(session_sensitivity: str) -> MagicMock:
         ev = MagicMock(spec=PolicyEvaluator)
         ev.evaluate.side_effect = _sensitivity_aware_egress
-        ev.authorize_egress.side_effect = lambda tool, resp, sess: _sensitivity_aware_egress(
+        ev.authorize_egress.side_effect = lambda tool, resp, sess, **kw: _sensitivity_aware_egress(
             {"egress": True, "sensitivity_level": {"public": 0, "pii": 1, "confidential": 2, "hipaa_phi": 3}.get(sess.max_sensitivity, 0)}
         )
         ev.bundle_hash = "sha256:" + "0" * 64
@@ -335,7 +335,7 @@ async def test_proxy_after_session_reset_egress_allowed_again():
 
     evaluator = MagicMock(spec=PolicyEvaluator)
     evaluator.evaluate.side_effect = _egress_aware
-    evaluator.authorize_egress.side_effect = lambda tool, resp, sess: _egress_aware(
+    evaluator.authorize_egress.side_effect = lambda tool, resp, sess, **kw: _egress_aware(
         {"egress": True, "sensitivity_level": {"public": 0, "pii": 1, "confidential": 2, "hipaa_phi": 3, "mnpi": 3, "trade_secret": 3}.get(sess.max_sensitivity, 0)}
     )
     evaluator.bundle_hash = "sha256:" + "0" * 64
@@ -357,3 +357,47 @@ async def test_proxy_after_session_reset_egress_allowed_again():
     # After reset — same tool should be allowed
     result_after = await proxy.call_tool("c2", "test.tool", {})
     assert result_after.allowed is True
+
+
+def test_egress_carries_workflow_id_for_default_deny_bundles():
+    """A workflow-scoped permit (no catch-all) must also match at egress.
+
+    Without workflow_id in the egress context, default-deny bundles deny
+    every response even when the ingress evaluation allowed the call.
+    """
+    from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+    from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest
+    from cmcp_runtime.policy.evaluator import PolicyEvaluator
+    from cmcp_runtime.session.state import SessionState
+
+    policy = """
+permit (principal, action == Action::"Ehr.patientRecordLookup", resource)
+when { context has workflow_id && context.workflow_id == "clinical-decision-support" };
+"""
+    bundle = PolicyBundle(
+        manifest=PolicyManifest(
+            version="1.0.0",
+            authored_at="2026-06-11T00:00:00Z",
+            author_identity="test",
+            commit_sha="abc",
+        ),
+        policy_files={"allow.cedar": policy},
+        schema_content='{"cMCP": {}}',
+        bundle_hash="sha256:" + "0" * 64,
+    )
+    config = Config(attestation=AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING))
+    evaluator = PolicyEvaluator(bundle=bundle, config=config)
+    session = SessionState(session_id="egress-wf-test")
+
+    decision = evaluator.authorize_egress(
+        "ehr.patient_record_lookup",
+        b"{}",
+        session,
+        workflow_id="clinical-decision-support",
+    )
+    assert decision.allowed is True
+
+    with pytest.raises(PolicyDeny):
+        evaluator.authorize_egress(
+            "ehr.patient_record_lookup", b"{}", session, workflow_id="wrong-workflow"
+        )
