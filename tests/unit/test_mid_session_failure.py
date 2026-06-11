@@ -10,7 +10,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,6 +24,7 @@ from cmcp_runtime.catalog.loader import (
 from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
+from tests.unit.conftest import wire_mock_gateway
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,10 +96,7 @@ def _make_proxy(
             attestation_validity_seconds=attestation_validity_seconds,
             catalog_hash=catalog_hash,
         )
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False
-        ))
+        wire_mock_gateway(proxy)
     return proxy, session, chain
 
 

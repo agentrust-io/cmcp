@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ from cmcp_runtime.errors import PolicyDeny
 from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
+from tests.unit.conftest import wire_mock_gateway
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -117,10 +118,7 @@ def _make_proxy_with_egress(egress_allow: bool, ingress_allow: bool = True):
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(catalog, evaluator, session, chain, cfg)
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(proxy)
 
     return proxy, session, chain, evaluator
 
@@ -292,10 +290,7 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         high_proxy = CMCPProxy(catalog, high_ev, high_session, high_chain, cfg)
-        high_proxy._mcp_gateway = MagicMock()
-        high_proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(high_proxy)
 
     high_result = await high_proxy.call_tool("c1", "test.tool", {})
     assert high_result.allowed is False
@@ -308,10 +303,7 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         low_proxy = CMCPProxy(catalog, low_ev, low_session, low_chain, cfg)
-        low_proxy._mcp_gateway = MagicMock()
-        low_proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(low_proxy)
 
     low_result = await low_proxy.call_tool("c1", "test.tool", {})
     assert low_result.allowed is True
@@ -352,10 +344,7 @@ async def test_proxy_after_session_reset_egress_allowed_again():
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(catalog, evaluator, session, chain, cfg)
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(proxy)
 
     # Before reset — high sensitivity should be blocked
     result_before = await proxy.call_tool("c1", "test.tool", {})

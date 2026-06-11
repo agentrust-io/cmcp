@@ -400,6 +400,7 @@ def test_deny_response_does_not_include_internal_reason():
         audit_entry_hash=None,
         would_have_denied=False,
         latency_us=0,
+        advice=None,
     ))
     with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)

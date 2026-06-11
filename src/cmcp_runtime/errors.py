@@ -38,6 +38,18 @@ class PolicyDeny(CMCPError):
     code = "POLICY_DENY"
     http_status = 403
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        detail: str | None = None,
+        advice: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message, detail=detail)
+        # Annotations of the forbid policies that caused this deny — sourced
+        # from the hash-pinned policy bundle, safe to reflect to the caller.
+        self.advice: dict[str, str] = advice or {}
+
 
 class CatalogToolNameCollision(CMCPError):
     code = "CATALOG_TOOL_NAME_COLLISION"
@@ -82,6 +94,16 @@ class SessionResetRequired(CMCPError):
 class TeeFault(CMCPError):
     code = "TEE_FAULT"
     http_status = 500
+
+
+class UpstreamUnavailable(CMCPError):
+    code = "UPSTREAM_UNAVAILABLE"
+    http_status = 502
+
+
+class UpstreamToolError(CMCPError):
+    code = "UPSTREAM_TOOL_ERROR"
+    http_status = 502
 
 
 class AttestationStale(CMCPError):

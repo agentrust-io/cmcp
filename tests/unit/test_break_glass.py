@@ -19,6 +19,7 @@ from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
 from cmcp_runtime.mcp.server import MCPServer
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
+from tests.unit.conftest import wire_mock_gateway
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -333,8 +334,6 @@ def _make_real_proxy_for_break_glass():
         )
     )
 
-    mock_agt_result = MagicMock(sensitivity_tags=[], injection_detected=False, modified_response=b"ok")
-
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(
@@ -344,8 +343,7 @@ def _make_real_proxy_for_break_glass():
             audit_chain=chain,
             config=config,
         )
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=mock_agt_result)
+        wire_mock_gateway(proxy, response_text="ok")
 
     return proxy, chain
 
