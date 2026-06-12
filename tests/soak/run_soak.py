@@ -1,5 +1,5 @@
 """
-cMCP Runtime 72-hour soak test — implements issue #82.
+cMCP Runtime 72-hour soak test - implements issue #82.
 
 Runs a sustained load against a software-only or hardware-TEE gateway and validates
 all 6 edge cases from docs/testing/soak-test.md.
@@ -144,10 +144,7 @@ def _make_soak_gateway(
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         evaluator = PolicyEvaluator(bundle=bundle, config=config)
 
-    agt_result = MagicMock(
-        sensitivity_tags=[], injection_detected=False,
-        modified_response=b'{"result": "soak-ok"}',
-    )
+    _soak_response = '{"result": "soak-ok"}'
 
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
@@ -160,8 +157,16 @@ def _make_soak_gateway(
             attestation_generated_at=datetime.now(UTC),
             attestation_validity_seconds=attestation_validity_seconds,
         )
+        # Mock the AGT gateway seam + upstream forwarding (new proxy step 3 seam)
         proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=agt_result)
+        proxy._mcp_gateway.intercept_tool_call = MagicMock(return_value=(True, "ok"))
+        proxy._forward_to_upstream = AsyncMock(return_value=_soak_response)
+        proxy._mcp_gateway.intercept_tool_response = MagicMock(return_value=MagicMock(
+            allowed=True,
+            content=_soak_response,
+            threats=[],
+            action="allowed",
+        ))
 
     with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy, session=session, audit_chain=chain, bearer_token=bearer_token)
@@ -299,7 +304,7 @@ async def _check_idle_transition(
                 latency,
                 state.baseline_latency_us,
             )
-            # Don't mark as failed — this is expected on connection re-establishment
+            # Don't mark as failed - this is expected on connection re-establishment
     state.total_calls += 1
 
 
@@ -310,7 +315,7 @@ def _check_signing_key(state: SoakState, chain: Any) -> None:
     key_sample = chain.chain_root[:16] if chain.entries else "no-entries"
     if state.signing_key_samples and state.signing_key_samples[-1] != key_sample:
         now = datetime.now(UTC).isoformat()
-        logger.warning("Signing key changed at %s — enclave restart detected", now)
+        logger.warning("Signing key changed at %s - enclave restart detected", now)
         state.signing_key_restart_timestamps.append(now)
         state.signing_key_stable = False
     state.signing_key_samples.append(key_sample)

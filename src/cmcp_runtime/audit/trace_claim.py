@@ -1,4 +1,4 @@
-"""TRACE Claim (cmcp profile) — RuntimeClaim envelope wrapping canonical TRACE fields."""
+"""TRACE Claim (cmcp profile) - RuntimeClaim envelope wrapping canonical TRACE fields."""
 
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ _PROVIDER_MAP: dict[str, str] = {
     "tdx": "intel-tdx",
     "opaque": "intel-tdx",
     "tpm": "tpm2",
-    "software-only": "tpm2",
+    # Dev mode is its own platform value: a consumer keying trust on
+    # runtime.platform must never mistake a non-attested record for TPM-backed.
+    "software-only": "software-only",
 }
 
 _SW_ONLY_MEASUREMENT = "sha256:" + "0" * 64
@@ -160,7 +162,7 @@ class GatewayAddenda(BaseModel):
 
 
 class RuntimeClaim(BaseModel):
-    """cmcp TRACE profile — canonical trust fields nested inside a gateway envelope."""
+    """cmcp TRACE profile - canonical trust fields nested inside a gateway envelope."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -276,7 +278,7 @@ def generate_trace_claim(
 ) -> RuntimeClaim:
     """Generate a RuntimeClaim from session data, validate it via Pydantic, and optionally sign it.
 
-    signing_key must be a SigningKey instance (audit/keys.py) — it is always required
+    signing_key must be a SigningKey instance (audit/keys.py) - it is always required
     to build the JWK confirmation key in trace.cnf.  Set do_sign=False to produce an
     unsigned claim (e.g. in tests).
     """

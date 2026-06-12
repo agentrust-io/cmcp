@@ -1,4 +1,4 @@
-"""Audit chain — append-only hash-chained log inside the enclave. Implements issue #47."""
+"""Audit chain - append-only hash-chained log inside the enclave. Implements issue #47."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ class AuditChain:
 
     When a TEE anchor is set, verify_chain() also checks that the current
     chain_root equals the anchored value.  In dev / Level-0 mode where no
-    TEE is available, anchoring is skipped and a warning is emitted — the
+    TEE is available, anchoring is skipped and a warning is emitted - the
     internal hash-chain check still runs.
     """
 
@@ -125,7 +125,7 @@ class AuditChain:
 
         anchor must equal chain_root at the time of the call (i.e. the value
         that was measured into the TEE attestation report nonce).  Raises
-        ValueError if anchor does not match the current chain_root — this
+        ValueError if anchor does not match the current chain_root - this
         would indicate a programming error in the caller.
 
         Once set, verify_chain() will reject any chain whose root no longer
@@ -223,7 +223,7 @@ class AuditChain:
         this check even if its internal hash links are self-consistent.
 
         If no anchor is set (dev / Level-0 mode), emit a warning but do not
-        fail — the caller should ensure set_tee_anchor() is called in
+        fail - the caller should ensure set_tee_anchor() is called in
         production.
         """
         if not self._entries:
@@ -240,7 +240,7 @@ class AuditChain:
         # AUDIT-002: external anchor check.
         if self._tee_anchor is None:
             logger.warning(
-                "AUDIT-002: audit chain has no TEE anchor — chain substitution cannot be "
+                "AUDIT-002: audit chain has no TEE anchor - chain substitution cannot be "
                 "detected. Call set_tee_anchor() at session start in production. "
                 "session_id=%s",
                 self._session_id,

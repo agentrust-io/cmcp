@@ -1,4 +1,4 @@
-"""Session lifecycle management — implements issues #60 and #55."""
+"""Session lifecycle management - implements issues #60 and #55."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ class SessionManager:
         the root into hardware-attested evidence so an attacker cannot silently
         swap out the chain and pass verify_chain().  In dev / Level-0 mode
         (software-only provider) the anchor is still set so that verify_chain()
-        performs the root comparison — the security guarantee is limited to what
+        performs the root comparison - the security guarantee is limited to what
         a software TEE provides, and a warning is emitted.
         """
         session_id = str(uuid4())
@@ -73,7 +73,7 @@ class SessionManager:
 
         try:
             self._ctx.tee_provider.get_attestation_report(nonce)
-            # The report itself is not stored here — the startup-time report in
+            # The report itself is not stored here - the startup-time report in
             # ctx.attestation_report already covers the gateway instance.  What
             # matters is that the nonce (containing chain_root) was submitted to
             # the TEE, making chain_root part of the attested evidence.
@@ -82,7 +82,7 @@ class SessionManager:
             # internal chain-substitution detection works.  In production,
             # callers should validate that the TEE provider is not software-only.
             logger.warning(
-                "AUDIT-002: per-session TEE attestation call failed — "
+                "AUDIT-002: per-session TEE attestation call failed - "
                 "chain root is not hardware-anchored. session_id=%s error=%s",
                 session_id,
                 exc,

@@ -51,13 +51,15 @@ def _make_tpm2b_attest(
 # ── Unit tests for verify_tpm_measurement ────────────────────────────────────
 
 
-def test_valid_measurement_format_passes() -> None:
+def test_valid_measurement_format_alone_does_not_verify() -> None:
+    """Format checks pass, but no evidence means fail closed."""
     result = verify_tpm_measurement(
         measurement=VALID_MEASUREMENT,
         raw_evidence=None,
     )
     assert "measurement_format" in result.verified_fields
-    assert result.failure_reason is None
+    assert result.verified is False
+    assert result.failure_reason == "no_raw_evidence"
 
 
 def test_invalid_measurement_no_prefix_fails() -> None:
@@ -103,8 +105,8 @@ def test_no_raw_evidence_ek_cert_always_unverified() -> None:
         measurement=VALID_MEASUREMENT,
         raw_evidence=None,
     )
+    assert result.verified is False
     assert "ek_cert_chain" in result.unverified_fields
-    assert result.details.get("ek_cert_chain_validation") == "ek_cert_chain_validation_requires_ca_lookup"
 
 
 def test_raw_evidence_valid_magic_parsed() -> None:
@@ -123,7 +125,7 @@ def test_raw_evidence_wrong_magic_fails_gracefully() -> None:
         measurement=VALID_MEASUREMENT,
         raw_evidence=blob,
     )
-    # Must not raise — verified should be False or pcr_format unverified
+    # Must not raise - verified should be False or pcr_format unverified
     assert "pcr_format" in result.unverified_fields
     assert "tpm_parse_error" in result.details
 
@@ -311,7 +313,7 @@ def test_software_only_stays_in_sw_path() -> None:
     claim_dict = _to_dict(claim)
     result = verify_trace_claim(claim_dict, _approved())
     assert "hardware_attestation" in result.unverified_fields
-    assert result.details.get("hardware_attestation") == "software-only mode — not hardware-backed"
+    assert result.details.get("hardware_attestation") == "software-only mode - not hardware-backed"
 
 
 def test_tpm2_with_valid_raw_evidence_parses() -> None:

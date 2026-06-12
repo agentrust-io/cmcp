@@ -203,7 +203,7 @@ def test_generate_claim_signed_has_signature():
 
 
 def test_generate_claim_signature_verifiable():
-    """TRACE-002 — signature verifies against trace.cnf.jwk."""
+    """TRACE-002 - signature verifies against trace.cnf.jwk."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     key = SigningKey()
@@ -218,7 +218,7 @@ def test_generate_claim_signature_verifiable():
 
 
 def test_generate_claim_tee_key_consistent_in_session():
-    """ATTEST-003 — same JWK across all claims produced with the same signing key."""
+    """ATTEST-003 - same JWK across all claims produced with the same signing key."""
     key = SigningKey()
     c1 = _make_claim(signing_key=key)
     c2 = _make_claim(signing_key=key)
@@ -274,9 +274,9 @@ def test_generate_claim_enforcement_mode_mapped():
 
 
 def test_generate_claim_software_only_platform():
-    """software-only provider maps to tpm2 platform with firmware marker."""
+    """software-only provider gets its own platform value, never tpm2."""
     claim = _make_claim()
-    assert claim.trace.runtime.platform == "tpm2"
+    assert claim.trace.runtime.platform == "software-only"
     assert claim.trace.runtime.firmware_version == "software-only-dev-mode"
 
 

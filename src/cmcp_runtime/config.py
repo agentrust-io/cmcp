@@ -1,4 +1,4 @@
-"""Configuration parser — cmcp-config.yaml. Implements issue #64."""
+"""Configuration parser - cmcp-config.yaml. Implements issue #64."""
 
 from __future__ import annotations
 

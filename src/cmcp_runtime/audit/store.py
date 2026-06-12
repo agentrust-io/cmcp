@@ -1,10 +1,11 @@
-"""SQLite-backed audit store — durable persistence for AuditChain entries (AUDIT-001)."""
+"""SQLite-backed audit store - durable persistence for AuditChain entries (AUDIT-001)."""
 
 from __future__ import annotations
 
 import json
 import logging
 import sqlite3
+import threading
 from dataclasses import asdict
 from pathlib import Path
 
@@ -40,7 +41,10 @@ class SqliteAuditStore:
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
+        # check_same_thread=False allows use from async handlers and worker
+        # threads; all access is serialised through self._lock.
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._lock = threading.Lock()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.executescript(_CREATE_TABLE)
@@ -49,21 +53,22 @@ class SqliteAuditStore:
 
     def append(self, entry: AuditEntry) -> None:
         payload = json.dumps(asdict(entry), sort_keys=True, separators=(",", ":"))
-        self._conn.execute(
-            "INSERT INTO audit_entries "
-            "(sequence_number, session_id, entry_id, entry_type, entry_hash, prev_entry_hash, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                entry.sequence_number,
-                entry.session_id,
-                entry.entry_id,
-                entry.entry_type,
-                entry.entry_hash,
-                entry.prev_entry_hash,
-                payload,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO audit_entries "
+                "(sequence_number, session_id, entry_id, entry_type, entry_hash, prev_entry_hash, payload) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entry.sequence_number,
+                    entry.session_id,
+                    entry.entry_id,
+                    entry.entry_type,
+                    entry.entry_hash,
+                    entry.prev_entry_hash,
+                    payload,
+                ),
+            )
+            self._conn.commit()
 
     def find_orphaned_sessions(self) -> list[str]:
         """
@@ -72,16 +77,18 @@ class SqliteAuditStore:
         These represent sessions that were open when the gateway last stopped,
         either due to a crash or an unclean shutdown.
         """
-        cur = self._conn.execute(
-            """
-            SELECT DISTINCT session_id FROM audit_entries
-            WHERE entry_type = 'session_start'
-              AND session_id NOT IN (
-                  SELECT session_id FROM audit_entries WHERE entry_type = 'session_end'
-              )
-            """
-        )
-        return [row[0] for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                SELECT DISTINCT session_id FROM audit_entries
+                WHERE entry_type = 'session_start'
+                  AND session_id NOT IN (
+                      SELECT session_id FROM audit_entries WHERE entry_type = 'session_end'
+                  )
+                """
+            )
+            return [row[0] for row in cur.fetchall()]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

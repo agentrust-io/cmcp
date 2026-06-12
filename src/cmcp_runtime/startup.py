@@ -1,4 +1,4 @@
-"""Gateway startup sequence with fail-closed validation — implements issue #66."""
+"""Gateway startup sequence with fail-closed validation - implements issue #66."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # HW-001: allowlist of canonical TEE provider names that may appear in
 # AttestationReport.provider.  Mirrors the keys of _PROVIDER_MAP in
-# audit/trace_claim.py — kept as a local constant to avoid a circular import.
+# audit/trace_claim.py - kept as a local constant to avoid a circular import.
 _VALID_PROVIDERS: frozenset[str] = frozenset({
     "sev-snp",
     "tdx",
@@ -68,7 +68,7 @@ def _fatal(code: str, message: str, **fields: Any) -> None:
 def run_startup(config_path: str) -> RuntimeContext:
     """
     Execute the ordered startup sequence. Any failure before step 6 (network bind)
-    is fatal — the gateway exits with code 1.
+    is fatal - the gateway exits with code 1.
 
     Startup order per docs/spec/failure-modes.md:
     1. Load and validate config
@@ -76,7 +76,7 @@ def run_startup(config_path: str) -> RuntimeContext:
     3. Generate ephemeral signing keypair
     4. Load and verify policy bundle hash
     5. Load and verify catalog hash
-    (Step 6: bind network port — done by the caller after this returns)
+    (Step 6: bind network port - done by the caller after this returns)
     """
     # Step 1: config
     try:
@@ -235,7 +235,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         catalog.catalog_hash,
     )
 
-    # Step 5b: SPIFFE/SPIRE SVID fetch (non-fatal — falls back to self-signed TLS)
+    # Step 5b: SPIFFE/SPIRE SVID fetch (non-fatal - falls back to self-signed TLS)
     # SVID issuance is conditioned on TEE attestation succeeding (handled by the
     # SPIRE node attestation plugin on the SPIRE server side).
     spiffe_result = fetch_svid()
@@ -246,7 +246,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
     else:
         logger.warning(
-            "SPIFFE SVID not available (%s) — gateway will use self-signed TLS for mTLS",
+            "SPIFFE SVID not available (%s) - gateway will use self-signed TLS for mTLS",
             spiffe_result.failure_reason,
         )
 
@@ -261,7 +261,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         orphaned = audit_store.find_orphaned_sessions()
         if orphaned:
             logger.warning(
-                "AUDIT-001: %d session(s) have no session_end entry in the audit DB — "
+                "AUDIT-001: %d session(s) have no session_end entry in the audit DB - "
                 "gateway may have restarted mid-session. Orphaned session IDs: %s",
                 len(orphaned),
                 orphaned,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ from cmcp_runtime.errors import PolicyDeny
 from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
+from tests.unit.conftest import wire_mock_gateway
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -107,8 +108,8 @@ def _make_proxy_with_egress(egress_allow: bool, ingress_allow: bool = True):
 
     evaluator = MagicMock(spec=PolicyEvaluator)
     evaluator.evaluate.side_effect = _side_effect
-    # authorize_egress delegates to evaluate() — wire it the same way
-    evaluator.authorize_egress.side_effect = lambda tool, resp, sess: _side_effect(
+    # authorize_egress delegates to evaluate() - wire it the same way
+    evaluator.authorize_egress.side_effect = lambda tool, resp, sess, **kw: _side_effect(
         {"egress": True, "tool_name": tool}
     )
     evaluator.bundle_hash = "sha256:" + "0" * 64
@@ -117,10 +118,7 @@ def _make_proxy_with_egress(egress_allow: bool, ingress_allow: bool = True):
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(catalog, evaluator, session, chain, cfg)
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(proxy)
 
     return proxy, session, chain, evaluator
 
@@ -277,14 +275,14 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     def _make_evaluator_for(session_sensitivity: str) -> MagicMock:
         ev = MagicMock(spec=PolicyEvaluator)
         ev.evaluate.side_effect = _sensitivity_aware_egress
-        ev.authorize_egress.side_effect = lambda tool, resp, sess: _sensitivity_aware_egress(
+        ev.authorize_egress.side_effect = lambda tool, resp, sess, **kw: _sensitivity_aware_egress(
             {"egress": True, "sensitivity_level": {"public": 0, "pii": 1, "confidential": 2, "hipaa_phi": 3}.get(sess.max_sensitivity, 0)}
         )
         ev.bundle_hash = "sha256:" + "0" * 64
         ev.enforcement_mode = EnforcementMode.ENFORCING
         return ev
 
-    # High sensitivity session — should be blocked
+    # High sensitivity session - should be blocked
     high_session = SessionState(session_id="high", max_sensitivity="hipaa_phi")
     high_chain = AuditChain("high")
     high_ev = _make_evaluator_for("hipaa_phi")
@@ -292,15 +290,12 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         high_proxy = CMCPProxy(catalog, high_ev, high_session, high_chain, cfg)
-        high_proxy._mcp_gateway = MagicMock()
-        high_proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(high_proxy)
 
     high_result = await high_proxy.call_tool("c1", "test.tool", {})
     assert high_result.allowed is False
 
-    # Low sensitivity session — same tool should be allowed
+    # Low sensitivity session - same tool should be allowed
     low_session = SessionState(session_id="low", max_sensitivity="public")
     low_chain = AuditChain("low")
     low_ev = _make_evaluator_for("public")
@@ -308,10 +303,7 @@ async def test_proxy_high_sensitivity_session_blocked_by_egress():
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         low_proxy = CMCPProxy(catalog, low_ev, low_session, low_chain, cfg)
-        low_proxy._mcp_gateway = MagicMock()
-        low_proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(low_proxy)
 
     low_result = await low_proxy.call_tool("c1", "test.tool", {})
     assert low_result.allowed is True
@@ -343,7 +335,7 @@ async def test_proxy_after_session_reset_egress_allowed_again():
 
     evaluator = MagicMock(spec=PolicyEvaluator)
     evaluator.evaluate.side_effect = _egress_aware
-    evaluator.authorize_egress.side_effect = lambda tool, resp, sess: _egress_aware(
+    evaluator.authorize_egress.side_effect = lambda tool, resp, sess, **kw: _egress_aware(
         {"egress": True, "sensitivity_level": {"public": 0, "pii": 1, "confidential": 2, "hipaa_phi": 3, "mnpi": 3, "trade_secret": 3}.get(sess.max_sensitivity, 0)}
     )
     evaluator.bundle_hash = "sha256:" + "0" * 64
@@ -352,12 +344,9 @@ async def test_proxy_after_session_reset_egress_allowed_again():
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(catalog, evaluator, session, chain, cfg)
-        proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=MagicMock(
-            sensitivity_tags=[], injection_detected=False, modified_response=None
-        ))
+        wire_mock_gateway(proxy)
 
-    # Before reset — high sensitivity should be blocked
+    # Before reset - high sensitivity should be blocked
     result_before = await proxy.call_tool("c1", "test.tool", {})
     assert result_before.allowed is False
 
@@ -365,6 +354,50 @@ async def test_proxy_after_session_reset_egress_allowed_again():
     session.reset(reason="test reset", authorized_by="operator")
     assert session.max_sensitivity == "public"
 
-    # After reset — same tool should be allowed
+    # After reset - same tool should be allowed
     result_after = await proxy.call_tool("c2", "test.tool", {})
     assert result_after.allowed is True
+
+
+def test_egress_carries_workflow_id_for_default_deny_bundles():
+    """A workflow-scoped permit (no catch-all) must also match at egress.
+
+    Without workflow_id in the egress context, default-deny bundles deny
+    every response even when the ingress evaluation allowed the call.
+    """
+    from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
+    from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest
+    from cmcp_runtime.policy.evaluator import PolicyEvaluator
+    from cmcp_runtime.session.state import SessionState
+
+    policy = """
+permit (principal, action == Action::"Ehr.patientRecordLookup", resource)
+when { context has workflow_id && context.workflow_id == "clinical-decision-support" };
+"""
+    bundle = PolicyBundle(
+        manifest=PolicyManifest(
+            version="1.0.0",
+            authored_at="2026-06-11T00:00:00Z",
+            author_identity="test",
+            commit_sha="abc",
+        ),
+        policy_files={"allow.cedar": policy},
+        schema_content='{"cMCP": {}}',
+        bundle_hash="sha256:" + "0" * 64,
+    )
+    config = Config(attestation=AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING))
+    evaluator = PolicyEvaluator(bundle=bundle, config=config)
+    session = SessionState(session_id="egress-wf-test")
+
+    decision = evaluator.authorize_egress(
+        "ehr.patient_record_lookup",
+        b"{}",
+        session,
+        workflow_id="clinical-decision-support",
+    )
+    assert decision.allowed is True
+
+    with pytest.raises(PolicyDeny):
+        evaluator.authorize_egress(
+            "ehr.patient_record_lookup", b"{}", session, workflow_id="wrong-workflow"
+        )
