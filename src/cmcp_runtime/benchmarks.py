@@ -1,5 +1,5 @@
 """
-cMCP runtime latency benchmark suite — implements issue #78.
+cMCP runtime latency benchmark suite - implements issue #78.
 
 Measures: cedar_eval_latency_us, audit_entry_latency_us, end_to_end_latency_us (p50/p95/p99)
 
@@ -194,12 +194,6 @@ def _make_proxy(bundle: Any, catalog: Any) -> tuple[Any, Any]:
     session = SessionState(session_id=str(uuid.uuid4()))
     chain = AuditChain(session_id=session.session_id)
 
-    agt_result = MagicMock(
-        sensitivity_tags=[],
-        injection_detected=False,
-        modified_response=b'{"result": "benchmark-ok"}',
-    )
-
     with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
          patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
         proxy = CMCPProxy(
@@ -209,8 +203,21 @@ def _make_proxy(bundle: Any, catalog: Any) -> tuple[Any, Any]:
             audit_chain=chain,
             config=config,
         )
+        # Mock the gateway seam (pre-call check, upstream forward, response
+        # scan) so benchmarks measure cmcp overhead, not network latency.
         proxy._mcp_gateway = MagicMock()
-        proxy._mcp_gateway.call_tool = AsyncMock(return_value=agt_result)
+        proxy._mcp_gateway.intercept_tool_call = MagicMock(return_value=(True, "ok"))
+        proxy._forward_to_upstream = AsyncMock(  # type: ignore[method-assign]
+            return_value='{"result": "benchmark-ok"}'
+        )
+        proxy._mcp_gateway.intercept_tool_response = MagicMock(
+            return_value=MagicMock(
+                allowed=True,
+                content='{"result": "benchmark-ok"}',
+                threats=[],
+                action="allowed",
+            )
+        )
 
     return proxy, evaluator
 

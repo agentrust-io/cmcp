@@ -1,5 +1,5 @@
 """
-MCP gateway proxy using AGT's MCPGateway + StatelessKernel — implements #48, #53, #54.
+MCP gateway proxy using AGT's MCPGateway + StatelessKernel - implements #48, #53, #54.
 
 AGT's MCPGateway handles MCP protocol enforcement (tool allow/deny, parameter
 sanitization, rate limiting, response scanning). cMCP wraps it so that every
@@ -20,13 +20,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from agent_os.mcp_gateway import GovernancePolicy, MCPGateway  # type: ignore[attr-defined]
 from agent_os.mcp_response_scanner import MCPResponseScanner
 
 from cmcp_runtime.audit.chain import AuditChain
-from cmcp_runtime.catalog.loader import ToolCatalog
+from cmcp_runtime.catalog.loader import CatalogEntry, ToolCatalog
 from cmcp_runtime.config import Config
-from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
 from cmcp_runtime.policy.evaluator import PolicyEvaluator
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_runtime.session.state import SessionState
@@ -46,6 +47,29 @@ class CallResult:
     deny_reason: str | None
     latency_us: int
     audit_entry_hash: str
+    # Annotations from the forbid policies that matched (deny or advisory).
+    # Sourced from the hash-pinned policy bundle, safe to reflect to callers.
+    advice: dict[str, str] | None = None
+
+
+def _cedar_safe(value: Any) -> Any:
+    """
+    Coerce a JSON value into types Cedar can ingest.
+
+    Cedar has no float or null type: a single float anywhere in the request
+    context makes cedarpy reject the whole request, which fails closed and
+    denies the call. Floats are preserved as strings; None values are dropped
+    (policies use `has` checks, so absence is the correct representation).
+    """
+    if isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _cedar_safe(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list | tuple):
+        return [_cedar_safe(v) for v in value if v is not None]
+    return str(value)
 
 
 class CMCPProxy:
@@ -96,11 +120,86 @@ class CMCPProxy:
             allowed_tools=allowed_tools,
         )
 
-        # AGT MCPGateway — handles protocol, sanitization, rate limiting
+        # AGT MCPGateway - handles protocol, sanitization, rate limiting
         self._mcp_gateway = MCPGateway(
             policy=gov_policy,
             response_scanner=MCPResponseScanner(),
         )
+
+        # Shared async HTTP client for upstream forwarding; created lazily so
+        # proxy construction stays sync and tests need no event loop.
+        self._http: httpx.AsyncClient | None = None
+
+    def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
+        """
+        Point the proxy at a fresh session after the previous one was closed.
+
+        Call logs are recreated for the new session id; catalog, policy
+        evaluator, and gateway are unchanged.
+        """
+        self._session = session
+        self._audit = audit_chain
+        self._call_log = CallLog(session_id=session.session_id)
+        self._session_call_log = SessionCallLog(session_id=session.session_id)
+
+    async def _forward_to_upstream(
+        self,
+        call_id: str,
+        entry: CatalogEntry,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        """
+        Forward the tool call to the attested upstream MCP server (JSON-RPC 2.0
+        tools/call over HTTP POST to the catalog entry's server.url).
+
+        Returns the concatenated text content of the MCP result.
+
+        Raises UpstreamUnavailable on transport errors / non-2xx / non-JSON,
+        UpstreamToolError when the upstream returns a JSON-RPC error object.
+        """
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        payload = {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        }
+        try:
+            resp = await self._http.post(entry.server.url, json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+        except httpx.HTTPError as exc:
+            raise UpstreamUnavailable(
+                f"Upstream MCP server unreachable: {entry.server.url}",
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise UpstreamUnavailable(
+                f"Upstream returned non-JSON body: {entry.server.url}",
+                detail=str(exc),
+            ) from exc
+        if not isinstance(body, dict):
+            raise UpstreamUnavailable(
+                f"Upstream returned non-object JSON-RPC body: {entry.server.url}"
+            )
+        if "error" in body:
+            error = body["error"] if isinstance(body["error"], dict) else {}
+            raise UpstreamToolError(
+                f"Upstream tool error from {tool_name}: "
+                f"{str(error.get('message', 'unknown'))[:200]}"
+            )
+        result = body.get("result", {})
+        content = result.get("content", []) if isinstance(result, dict) else []
+        texts = [
+            c.get("text", "")
+            for c in content
+            if isinstance(c, dict) and c.get("type") == "text"
+        ]
+        if texts:
+            return "\n".join(texts)
+        return json.dumps(result, default=str)
 
     def _check_health(self) -> str | None:
         """
@@ -159,7 +258,7 @@ class CMCPProxy:
         entry = self._catalog.lookup(tool_name)
         ctx: dict[str, Any] = {
             "tool_name": tool_name,
-            "arguments": arguments,
+            "arguments": _cedar_safe(arguments),
             "server_identity": entry.server.url if entry else "",
             "compliance_domain": entry.compliance_domain if entry else "external",
             "baa_covered": (not entry.requires_baa) if entry else False,
@@ -307,7 +406,7 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
-        # Step 1b: break-glass warning — log and audit every call via an exception entry
+        # Step 1b: break-glass warning - log and audit every call via an exception entry
         if entry.catalog_exception:
             logger.warning(
                 "BREAK_GLASS_ACTIVE: tool=%s call_id=%s server=%s",
@@ -329,10 +428,12 @@ class CMCPProxy:
         # Step 2: Cedar policy evaluation
         cedar_context = self._build_cedar_context(tool_name, arguments, workflow_id)
         policy_rule: str | None = None
+        ingress_advice: dict[str, str] = {}
         try:
             decision = self._policy.evaluate(cedar_context)
             policy_rule = decision.rule_matched
             would_have_denied = decision.would_have_denied
+            ingress_advice = decision.advice
         except PolicyDeny as exc:
             self._audit.append(
                 "tool_call",
@@ -367,6 +468,7 @@ class CMCPProxy:
                 deny_reason=str(exc),
                 latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
+                advice=exc.advice or None,
             )
         except Exception as exc:
             # POLICY-003: Cedar backend raised an unexpected exception (e.g. malformed
@@ -387,25 +489,24 @@ class CMCPProxy:
             )
             raise
 
-        # Step 3: AGT MCPGateway enforcement
-        # AGT handles per-agent rate limiting, parameter sanitization, and
-        # response scanning. We pass tool_name as the action and arguments as params.
-        try:
-            agt_result = await self._mcp_gateway.call_tool(  # type: ignore[attr-defined]
-                tool_name=tool_name,
-                arguments=arguments,
-                agent_id=self._session.session_id,
+        # Step 3a: AGT MCPGateway pre-call interception - per-agent rate
+        # limiting, parameter sanitization, allow/deny. Fail-closed inside AGT.
+        agt_allowed, agt_reason = self._mcp_gateway.intercept_tool_call(
+            agent_id=self._session.session_id,
+            tool_name=tool_name,
+            params=arguments,
+        )
+        if not agt_allowed:
+            logger.warning(
+                "AGT MCPGateway rejected call: tool=%s reason=%s", tool_name, agt_reason
             )
-        except Exception as exc:
-            # AGT denied or errored — map to our error types
-            logger.warning("AGT MCPGateway rejected call: tool=%s error=%s", tool_name, exc)
             self._audit.append(
                 "tool_call",
                 call_id=call_id,
                 tool_name=tool_name,
                 server_identity=entry.server.url,
                 policy_decision="deny",
-                policy_rule_matched=f"agt_gateway:{type(exc).__name__}",
+                policy_rule_matched=f"agt_gateway:{agt_reason[:200]}",
                 request_payload_hash=request_payload_hash,
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
@@ -429,45 +530,175 @@ class CMCPProxy:
                 allowed=False,
                 would_have_denied=would_have_denied,
                 response=None,
-                deny_reason=str(exc),
+                deny_reason=agt_reason,
                 latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )
 
+        # Step 3b: forward to the attested upstream MCP server.
+        try:
+            response_text = await self._forward_to_upstream(
+                call_id, entry, tool_name, arguments
+            )
+        except (UpstreamUnavailable, UpstreamToolError) as exc:
+            logger.warning("Upstream call failed: tool=%s error=%s", tool_name, exc)
+            self._audit.append(
+                "fault",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                policy_decision="fault",
+                policy_rule_matched=f"upstream:{exc.code}",
+                request_payload_hash=request_payload_hash,
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+                detail={"error_code": exc.code},
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"upstream": "fault"},
+                call_id=call_id,
+                catalog_entry=entry,
+                policy_decision="fault",
+            )
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=would_have_denied,
+                response=None,
+                deny_reason=f"upstream_error:{exc.code}",
+                latency_us=int(elapsed_ms * 1000),
+                audit_entry_hash=self._audit.chain_tip,
+            )
+
+        # Step 3c: response size guard (DOS-002) before scanning.
+        if len(response_text.encode()) > self._config.max_response_size_bytes:
+            self._audit.append(
+                "tool_call",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                policy_decision="deny",
+                policy_rule_matched="response_size_exceeded",
+                request_payload_hash=request_payload_hash,
+                response_inspection_result="size_exceeded",
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+                workflow_id=workflow_id,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"inspection": "size_exceeded"},
+                call_id=call_id,
+                catalog_entry=entry,
+                policy_decision="deny",
+            )
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=would_have_denied,
+                response=None,
+                deny_reason="response_size_exceeded",
+                latency_us=int(elapsed_ms * 1000),
+                audit_entry_hash=self._audit.chain_tip,
+            )
+
+        # Step 3d: AGT response interception - injection / credential / PII scan.
+        scan = self._mcp_gateway.intercept_tool_response(
+            agent_id=self._session.session_id,
+            tool_name=tool_name,
+            response_content=response_text,
+        )
+        injection_detected = bool(scan.threats)
+        if not scan.allowed:
+            async with self._session.mutation_lock:
+                self._session.update_from_inspection(
+                    call_id=call_id,
+                    sensitivity_tags=[entry.sensitivity_level],
+                    injection_detected=injection_detected,
+                    response_allowed=False,
+                )
+            threat_categories = ",".join(
+                sorted({str(t.get("category", "unknown")) for t in scan.threats})
+            )
+            self._audit.append(
+                "tool_call",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                policy_decision="deny",
+                policy_rule_matched=f"response_scan:{threat_categories[:200]}",
+                request_payload_hash=request_payload_hash,
+                response_inspection_result="injection_detected",
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+                workflow_id=workflow_id,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"response_scan": "deny"},
+                call_id=call_id,
+                catalog_entry=entry,
+                policy_decision="deny",
+            )
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=would_have_denied,
+                response=None,
+                deny_reason="response_blocked_by_scanner",
+                latency_us=int(elapsed_ms * 1000),
+                audit_entry_hash=self._audit.chain_tip,
+            )
+        # Scanner may have sanitized the content (ResponsePolicy.SANITIZE).
+        agt_result: str = scan.content if scan.content is not None else response_text
+
         # Step 4: session update from response sensitivity
         # AUTH-002: lock protects against race with concurrent session reset requests.
-        response_sensitivity = getattr(agt_result, "sensitivity_tags", [])
-        injection_detected = getattr(agt_result, "injection_detected", False)
-        # INJECT-003: capture scanner attribution and matched pattern for audit chain detail
-        injection_scanner = getattr(agt_result, "injection_scanner", None)
-        injection_pattern = getattr(agt_result, "matched_pattern", None) or getattr(
-            agt_result, "injection_pattern", None
+        # Sensitivity comes from the attested catalog entry's declared level.
+        response_sensitivity = [entry.sensitivity_level]
+        injection_scanner = "agt_response_scanner" if injection_detected else None
+        injection_pattern = (
+            ",".join(sorted({str(t.get("category", "unknown")) for t in scan.threats}))
+            if injection_detected
+            else None
         )
-        # INJECT-007: capture threshold so audit consumers can replay the decision
-        injection_threshold = getattr(agt_result, "injection_threshold", None)
+        injection_threshold = None
         async with self._session.mutation_lock:
             self._session.update_from_inspection(
                 call_id=call_id,
-                sensitivity_tags=response_sensitivity or [entry.sensitivity_level],
+                sensitivity_tags=response_sensitivity,
                 injection_detected=injection_detected,
                 response_allowed=True,
             )
 
         # Step 5: egress Cedar policy check
-        # Derive response bytes for size accounting and egress evaluation.
-        # Prefer a bytes-typed modified_response (Stage 2 redaction output);
-        # fall back to str() so we never block on an un-serialisable AGT object.
-        modified = getattr(agt_result, "modified_response", None)
-        if isinstance(modified, bytes):
-            response_bytes: bytes = modified
-        else:
-            response_bytes = str(agt_result).encode()
+        response_bytes: bytes = agt_result.encode()
 
         try:
             egress_decision = self._policy.authorize_egress(
-                tool_name, response_bytes, self._session
+                tool_name, response_bytes, self._session, workflow_id=workflow_id
             )
             egress_would_deny = egress_decision.would_have_denied
+            egress_advice = egress_decision.advice
         except PolicyDeny as exc:
             egress_deny_reason = str(exc)
             self._audit.append(
@@ -490,10 +721,12 @@ class CMCPProxy:
                 deny_reason=egress_deny_reason,
                 latency_us=int((time.perf_counter() - t0) * 1_000_000),
                 audit_entry_hash=self._audit.chain_tip,
+                advice=exc.advice or None,
             )
 
         # Merge egress advisory flag into the overall would_have_denied
         would_have_denied = would_have_denied or egress_would_deny
+        advisory_advice = {**ingress_advice, **egress_advice}
 
         # Step 6: audit chain write
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
@@ -504,7 +737,7 @@ class CMCPProxy:
                 "injection_scanner": str(injection_scanner or "unknown")[:128],
                 "matched_pattern": str(injection_pattern or "unknown")[:256],
                 # INJECT-007: include threshold so the decision is replayable under config changes
-                **({"injection_threshold": float(injection_threshold)} if isinstance(injection_threshold, (int, float)) else {}),
+                **({"injection_threshold": float(injection_threshold)} if isinstance(injection_threshold, int | float) else {}),
             }
             if injection_detected
             else None
@@ -548,4 +781,5 @@ class CMCPProxy:
             deny_reason=None,
             latency_us=latency_us,
             audit_entry_hash=self._audit.chain_tip,
+            advice=advisory_advice or None,
         )

@@ -44,7 +44,7 @@ def test_no_orphans_after_clean_close(store, tmp_path):
 
 def test_orphan_detected_after_crash(store):
     AuditChain(session_id="crash-session", store=store)
-    # No session_end appended — simulates crash
+    # No session_end appended - simulates crash
     orphans = store.find_orphaned_sessions()
     assert "crash-session" in orphans
 

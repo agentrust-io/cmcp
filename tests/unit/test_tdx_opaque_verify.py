@@ -47,22 +47,23 @@ def test_tdx_invalid_measurement_hex_length():
     assert result.failure_reason == "invalid_measurement_format"
 
 
-def test_tdx_no_raw_evidence_no_dcap(monkeypatch):
+def test_tdx_no_raw_evidence_fails_closed(monkeypatch):
+    """A hardware-platform claim with no evidence must not verify."""
     monkeypatch.setattr("cmcp_verify.tdx._check_dcap_reachable", lambda: False)
     measurement = "sha384:" + "b" * 96
     result = verify_tdx_measurement(measurement, None)
-    assert result.verified
+    assert result.verified is False
+    assert result.failure_reason == "no_raw_evidence"
     assert "dcap_quote_signature" in result.unverified_fields
-    assert result.details.get("dcap_chain") == "dcap_service_unreachable"
 
 
-def test_tdx_no_raw_evidence_dcap_reachable(monkeypatch):
+def test_tdx_no_raw_evidence_fails_closed_even_with_dcap(monkeypatch):
+    """DCAP reachability cannot substitute for missing evidence."""
     monkeypatch.setattr("cmcp_verify.tdx._check_dcap_reachable", lambda: True)
     measurement = "sha384:" + "c" * 96
     result = verify_tdx_measurement(measurement, None)
-    assert result.verified
-    assert "dcap_quote_signature" in result.unverified_fields
-    assert "reachable" in result.details.get("dcap_qe_identity", "")
+    assert result.verified is False
+    assert result.failure_reason == "no_raw_evidence"
 
 
 def test_tdx_measurement_matches_mrtd(monkeypatch):
@@ -100,11 +101,11 @@ def test_opaque_no_endpoint_configured(monkeypatch):
     assert "opaque_managed_attestation" in result.unverified_fields
 
 
-def test_opaque_no_raw_evidence(monkeypatch):
+def test_opaque_no_raw_evidence_fails_closed(monkeypatch):
     monkeypatch.setenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", "https://attest.opaque.co/v1/verify")
     result = verify_opaque_measurement("sha384:" + "a" * 96, None)
-    assert result.verified
-    assert "opaque_managed_attestation" in result.unverified_fields
+    assert result.verified is False
+    assert result.failure_reason == "no_raw_evidence"
     assert "raw_evidence not provided" in result.details.get("hint", "")
 
 

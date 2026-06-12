@@ -1,5 +1,5 @@
 """
-HTTP/SSE MCP server — inbound agent-facing endpoint (issue #48).
+HTTP/SSE MCP server - inbound agent-facing endpoint (issue #48).
 
 Receives MCP JSON-RPC 2.0 calls from agent hosts, routes them through
 CMCPProxy, and returns results. Uses AGT's StatelessKernel for execution
@@ -153,6 +153,9 @@ class MCPServer:
         self._session = session
         self._max_request_bytes = max_request_bytes
         self._audit = audit_chain
+        # Chains of closed sessions, kept so /audit/export still serves them
+        # after the live session rotates.
+        self._closed_chains: dict[str, AuditChain] = {}
         self._kernel = StatelessKernel()
         # NET-002: rate-limit unauthenticated /health before auth middleware runs.
         # Starlette applies middleware outermost-first (first in list = first to run).
@@ -186,6 +189,11 @@ class MCPServer:
                 Route(
                     "/sessions/{session_id}/reset",
                     self._session_reset,
+                    methods=["POST"],
+                ),
+                Route(
+                    "/sessions/{session_id}/close",
+                    self._session_close,
                     methods=["POST"],
                 ),
                 Route("/catalog/exception", self._catalog_exception, methods=["POST"]),
@@ -276,11 +284,16 @@ class MCPServer:
     async def _handle_tool_call(self, rpc_id: Any, params: dict[str, Any]) -> Response:
         """Route a tools/call request through the proxy."""
         # POLICY-002: canonicalize tool names at ingress so Cedar policy, catalog, and
-        # request all use the same case — prevents case-variant bypass of deny rules.
+        # request all use the same case - prevents case-variant bypass of deny rules.
         tool_name: str = params.get("name", "").lower()
         arguments: dict[str, Any] = params.get("arguments", {})
         call_id = str(uuid.uuid4())
-        workflow_id: str | None = params.get("_cmcp", {}).get("workflow_id")
+        # A malformed _cmcp (string, list, number) must not 500 the call path.
+        cmcp_params = params.get("_cmcp")
+        if not isinstance(cmcp_params, dict):
+            cmcp_params = {}
+        raw_workflow = cmcp_params.get("workflow_id")
+        workflow_id: str | None = raw_workflow if isinstance(raw_workflow, str) else None
 
         try:
             result = await self._proxy.call_tool(call_id, tool_name, arguments, workflow_id=workflow_id)
@@ -300,6 +313,24 @@ class MCPServer:
             )
 
         if not result.allowed:
+            deny_reason = result.deny_reason or ""
+            # Upstream transport/tool failure is a 502, not a policy deny.
+            if deny_reason.startswith("upstream_error:"):
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32000,
+                            "message": "Upstream MCP server error",
+                            "data": {
+                                "error_code": deny_reason.removeprefix("upstream_error:"),
+                                "call_id": call_id,
+                            },
+                        },
+                        "id": rpc_id,
+                    },
+                    status_code=502,
+                )
             _HEALTH_REASONS = {"attestation_stale", "catalog_drift"}
             if result.deny_reason in _HEALTH_REASONS:
                 return JSONResponse(
@@ -327,16 +358,22 @@ class MCPServer:
                 "POLICY_DENY: call_id=%s error_code=%s reason=%s",
                 call_id, error_code, result.deny_reason,
             )
+            error_data: dict[str, Any] = {
+                "error_code": error_code,
+                "call_id": call_id,
+            }
+            # Advice annotations come from the hash-pinned policy bundle
+            # (operator-authored, not caller input), so reflecting them does
+            # not violate INJECT-003. They carry e.g. HITL escalation payloads.
+            if result.advice:
+                error_data["advice"] = result.advice
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
                     "error": {
                         "code": -32000,
                         "message": "Request denied by policy",
-                        "data": {
-                            "error_code": error_code,
-                            "call_id": call_id,
-                        },
+                        "data": error_data,
                     },
                     "id": rpc_id,
                 },
@@ -349,6 +386,10 @@ class MCPServer:
             "would_have_denied": result.would_have_denied,
             "latency_us": result.latency_us,
         }
+        if self._session is not None:
+            cmcp_meta["session_id"] = self._session.session_id
+        if result.would_have_denied and result.advice:
+            cmcp_meta["advice"] = result.advice
         if workflow_id is not None:
             cmcp_meta["workflow_id"] = workflow_id
         return JSONResponse({
@@ -421,7 +462,7 @@ class MCPServer:
         return JSONResponse({"status": status, "checks": checks}, status_code=503 if not_ready else 200)
 
     async def _get_trace_claim(self, request: Request) -> Response:
-        """GET /sessions/{session_id}/trace-claim — returns signed TRACE Claim for a closed session."""
+        """GET /sessions/{session_id}/trace-claim - returns signed TRACE Claim for a closed session."""
         if self._session_manager is None:
             return JSONResponse(
                 {"error": "session management not available"}, status_code=501
@@ -436,7 +477,7 @@ class MCPServer:
         return JSONResponse(claim)
 
     async def _audit_export(self, request: Request) -> Response:
-        """GET /audit/export?session_id=<id> — returns signed audit bundle."""
+        """GET /audit/export?session_id=<id> - returns signed audit bundle."""
         if self._session_manager is None or self._audit_chain is None:
             return JSONResponse(
                 {"error": "audit export not available"}, status_code=501
@@ -447,10 +488,10 @@ class MCPServer:
                 {"error": "query parameter 'session_id' is required"},
                 status_code=400,
             )
+        # Closed sessions keep their chain available for export after rotation.
+        chain = self._closed_chains.get(session_id, self._audit_chain)
         try:
-            bundle = self._session_manager.get_audit_bundle(
-                session_id, self._audit_chain
-            )
+            bundle = self._session_manager.get_audit_bundle(session_id, chain)
         except ValueError as exc:
             logger.error(
                 "Audit chain integrity failure: session_id=%s error=%s",
@@ -462,8 +503,52 @@ class MCPServer:
             )
         return JSONResponse(bundle)
 
+    async def _session_close(self, request: Request) -> Response:
+        """POST /sessions/{session_id}/close - close the session, return its signed TRACE Claim.
+
+        Appends the session_end audit entry, signs the claim, then rotates the
+        gateway onto a fresh session so subsequent tool calls keep working.
+        The closed session's claim stays available at
+        GET /sessions/{session_id}/trace-claim and its audit bundle at
+        GET /audit/export?session_id=<id>.
+        """
+        if (
+            self._session_manager is None
+            or self._session is None
+            or self._audit_chain is None
+        ):
+            return JSONResponse(
+                {"error": "session management not available"}, status_code=501
+            )
+        session_id: str = request.path_params["session_id"]
+        if session_id != self._session.session_id:
+            return JSONResponse(
+                {"error": f"unknown or already closed session_id={session_id}"},
+                status_code=404,
+            )
+
+        claim = self._session_manager.close_session(
+            session_id,
+            self._session,
+            self._audit_chain,
+            call_log=getattr(self._proxy, "_call_log", None),
+            session_call_log=getattr(self._proxy, "_session_call_log", None),
+        )
+        self._closed_chains[session_id] = self._audit_chain
+
+        # Rotate onto a fresh session so the gateway keeps serving.
+        new_session, new_chain = self._session_manager.create_session()
+        self._session = new_session
+        self._audit_chain = new_chain
+        self._audit = new_chain
+        self._proxy.rebind_session(new_session, new_chain)
+        logger.info(
+            "Session closed via API: closed=%s new=%s", session_id, new_session.session_id
+        )
+        return JSONResponse(claim)
+
     async def _catalog_exception(self, request: Request) -> Response:
-        """POST /catalog/exception — add a break-glass catalog exception at runtime.
+        """POST /catalog/exception - add a break-glass catalog exception at runtime.
 
         The exception is visible in the TRACE Claim but does NOT modify catalog_hash.
         Requires the same bearer token as all other operator endpoints.
@@ -567,7 +652,7 @@ class MCPServer:
         )
 
     async def _session_reset(self, request: Request) -> Response:
-        """POST /sessions/{session_id}/reset — operator-only session sensitivity reset."""
+        """POST /sessions/{session_id}/reset - operator-only session sensitivity reset."""
         if self._session is None or self._audit_chain is None:
             return JSONResponse(
                 {"error": "session management not configured"}, status_code=501
@@ -579,6 +664,10 @@ class MCPServer:
             )
         # AUTH-002: lock guards against a concurrent tool-call coroutine modifying sensitivity.
         async with self._session.mutation_lock:
+            # Capture the pre-reset sensitivity: reset() drops it back to
+            # "public", and the elevated value the session held at reset time
+            # is exactly the forensic detail the audit entry must preserve.
+            sensitivity_before = self._session.max_sensitivity
             old_id, new_id = self._session.reset(
                 reason="operator reset via API",
                 authorized_by="api",
@@ -588,7 +677,7 @@ class MCPServer:
             call_id=None,
             tool_name=None,
             policy_decision="n/a",
-            session_sensitivity_before=self._session.max_sensitivity,
+            session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
         )
         return JSONResponse({

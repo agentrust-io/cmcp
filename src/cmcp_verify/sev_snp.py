@@ -97,8 +97,17 @@ def verify_sev_snp_measurement(
         result.details["vcek_chain"] = "requires_amd_kds_lookup"
         return result
 
-    # Step 2: Parse raw_evidence if provided
-    if raw_evidence is not None and len(raw_evidence) >= _SNP_REPORT_MIN_SIZE:
+    # Step 2: raw evidence is mandatory - a claim asserting a hardware
+    # platform with no evidence to check must fail closed, not pass on
+    # string-format checks alone.
+    if raw_evidence is None:
+        result.verified = False
+        result.failure_reason = "no_raw_evidence"
+        result.unverified_fields.extend(["measurement", "vcek_cert_chain"])
+        result.details["raw_evidence"] = "not provided; SNP report cannot be checked"
+        return result
+
+    if len(raw_evidence) >= _SNP_REPORT_MIN_SIZE:
         try:
             # Parse via ctypes struct for named field access (HW-006)
             report = _SnpAttestationReport.from_buffer_copy(raw_evidence[:_SNP_REPORT_MIN_SIZE])
@@ -142,7 +151,7 @@ def verify_sev_snp_measurement(
             result.details["vcek_chain"] = "requires_amd_kds_lookup"
             return result
 
-    elif raw_evidence is not None and len(raw_evidence) < _SNP_REPORT_MIN_SIZE:
+    else:
         # Truncated report -- treat as parse error
         result.verified = False
         result.failure_reason = "raw_evidence_parse_error"

@@ -98,7 +98,7 @@ def test_audit_export_requires_auth():
 # ── DOS-001: request body size limit ─────────────────────────────────────────
 
 def test_oversized_body_returns_413():
-    """DOS-001 — request body exceeding max_request_bytes is rejected before parsing."""
+    """DOS-001 - request body exceeding max_request_bytes is rejected before parsing."""
     with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         proxy = MagicMock()
         proxy._catalog = MagicMock()
@@ -110,7 +110,7 @@ def test_oversized_body_returns_413():
 
 
 def test_content_length_check_rejects_before_body_read():
-    """DOS-001 — Content-Length check rejects before reading body."""
+    """DOS-001 - Content-Length check rejects before reading body."""
     with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         proxy = MagicMock()
         proxy._catalog = MagicMock()
@@ -311,7 +311,7 @@ def test_readyz_accessible_without_bearer_token():
 # ── INJECT-002: sanitize method in error responses ────────────────────────────
 
 def test_unknown_method_non_ascii_is_replaced():
-    """INJECT-002 — non-ASCII bytes in method are replaced so they cannot corrupt logs."""
+    """INJECT-002 - non-ASCII bytes in method are replaced so they cannot corrupt logs."""
     server = _make_server()
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.post(
@@ -324,7 +324,7 @@ def test_unknown_method_non_ascii_is_replaced():
 
 
 def test_unknown_method_truncated_at_64_chars():
-    """INJECT-002 — method longer than 64 chars is truncated."""
+    """INJECT-002 - method longer than 64 chars is truncated."""
     server = _make_server()
     client = TestClient(server.app, raise_server_exceptions=False)
     long_method = "a" * 200
@@ -342,9 +342,9 @@ def test_unknown_method_truncated_at_64_chars():
 # ── NET-004: unhandled exceptions return generic 500 ─────────────────────────
 
 def test_unhandled_exception_returns_generic_500():
-    """NET-004 — truly unhandled exception must not leak class or message to caller.
+    """NET-004 - truly unhandled exception must not leak class or message to caller.
 
-    Uses /tools/list which has no try/except — an exception from catalog.entries.items()
+    Uses /tools/list which has no try/except - an exception from catalog.entries.items()
     propagates out of the handler and must be caught by the global exception handler.
     """
     proxy = MagicMock()
@@ -364,7 +364,7 @@ def test_unhandled_exception_returns_generic_500():
 # ── POLICY-002: ingress tool name canonicalized to lowercase ─────────────────
 
 def test_tool_name_is_lowercased_at_ingress():
-    """POLICY-002 — tool name from MCP request must be lowercased before catalog lookup."""
+    """POLICY-002 - tool name from MCP request must be lowercased before catalog lookup."""
     received_names: list[str] = []
 
     async def _capture(call_id, tool_name, arguments, **kwargs):
@@ -390,7 +390,7 @@ def test_tool_name_is_lowercased_at_ingress():
 
 
 def test_deny_response_does_not_include_internal_reason():
-    """INJECT-003 — internal deny_reason must not appear in 403 response body."""
+    """INJECT-003 - internal deny_reason must not appear in 403 response body."""
     proxy = MagicMock()
     proxy._catalog = MagicMock()
     proxy._catalog.entries = {}
@@ -400,6 +400,7 @@ def test_deny_response_does_not_include_internal_reason():
         audit_entry_hash=None,
         would_have_denied=False,
         latency_us=0,
+        advice=None,
     ))
     with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         server = MCPServer(proxy)

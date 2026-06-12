@@ -63,6 +63,9 @@ def verify_opaque_measurement(
         return result
 
     if raw_evidence is None:
+        # Fail closed: an attestation claim with no evidence cannot verify.
+        result.verified = False
+        result.failure_reason = "no_raw_evidence"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["opaque_endpoint"] = endpoint
         result.details["hint"] = "raw_evidence not provided; cannot verify with Opaque"
@@ -89,7 +92,7 @@ def verify_opaque_measurement(
             method="POST",
             headers=request_headers,
         )
-        with urllib.request.urlopen(req, timeout=_OPAQUE_TIMEOUT_SECONDS) as resp:  # nosec B310 — req is a Request object with explicit HTTPS endpoint
+        with urllib.request.urlopen(req, timeout=_OPAQUE_TIMEOUT_SECONDS) as resp:  # nosec B310 - req is a Request object with explicit HTTPS endpoint
             body = json.loads(resp.read().decode())
 
         if body.get("verified") is True:
