@@ -313,8 +313,9 @@ class MCPServer:
             )
 
         if not result.allowed:
+            deny_reason = result.deny_reason or ""
             # Upstream transport/tool failure is a 502, not a policy deny.
-            if (result.deny_reason or "").startswith("upstream_error:"):
+            if deny_reason.startswith("upstream_error:"):
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -322,7 +323,7 @@ class MCPServer:
                             "code": -32000,
                             "message": "Upstream MCP server error",
                             "data": {
-                                "error_code": result.deny_reason.removeprefix("upstream_error:"),
+                                "error_code": deny_reason.removeprefix("upstream_error:"),
                                 "call_id": call_id,
                             },
                         },

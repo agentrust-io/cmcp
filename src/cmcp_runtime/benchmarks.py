@@ -207,7 +207,7 @@ def _make_proxy(bundle: Any, catalog: Any) -> tuple[Any, Any]:
         # scan) so benchmarks measure cmcp overhead, not network latency.
         proxy._mcp_gateway = MagicMock()
         proxy._mcp_gateway.intercept_tool_call = MagicMock(return_value=(True, "ok"))
-        proxy._forward_to_upstream = AsyncMock(
+        proxy._forward_to_upstream = AsyncMock(  # type: ignore[method-assign]
             return_value='{"result": "benchmark-ok"}'
         )
         proxy._mcp_gateway.intercept_tool_response = MagicMock(
