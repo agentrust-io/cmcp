@@ -101,6 +101,10 @@ Environment variables control secrets and mode flags that must not appear in con
 | `advisory` | Policy denies are logged in the audit chain but the call is forwarded. The TRACE Claim records the deny. No tool call is blocked. | Policy testing, migration from existing runtime. Safe for first run with an untuned policy. |
 | `silent` | Policy is evaluated, the call is forwarded, and **the audit chain still records every would-have-denied decision** (as `advisory_deny`, visible in the TRACE Claim's call summary). The only difference from `advisory` is that no operational log lines are emitted. Silent quiets logs, never the evidence. | Measuring policy impact before rollout without operational log noise. The tamper-evident record remains complete, so post-hoc review stays possible. |
 
+### Silent-mode audit contract
+
+`enforcing` is the default and must be configured explicitly to use any other mode. In `silent` mode, `PolicyEvaluator` suppresses application-level log lines for denied tool calls but still returns `would_have_denied=True` in the `PolicyDecision`. The proxy writes an `advisory_deny` entry into the hash-chained audit log for every call that would have been denied. The audit chain records evidence even in silent mode. Only operational logs are quiet; the tamper-evident record remains complete and available for post-hoc review.
+
 ## Minimal working config
 
 ```yaml
