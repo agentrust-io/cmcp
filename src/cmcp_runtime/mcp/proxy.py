@@ -28,6 +28,7 @@ from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.catalog.loader import CatalogEntry, ToolCatalog
 from cmcp_runtime.config import Config
 from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
+from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.policy.evaluator import PolicyEvaluator
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_runtime.session.state import SessionState
@@ -126,9 +127,13 @@ class CMCPProxy:
             response_scanner=MCPResponseScanner(),
         )
 
-        # Shared async HTTP client for upstream forwarding; created lazily so
-        # proxy construction stays sync and tests need no event loop.
-        self._http: httpx.AsyncClient | None = None
+        # Async HTTP clients for upstream forwarding, keyed by TLS pin so each
+        # pinned upstream gets a transport that enforces its own catalog
+        # fingerprint (#281). Created lazily so proxy construction stays sync
+        # and tests need no event loop.
+        self._http_clients: dict[str, httpx.AsyncClient] = {}
+        # Servers already warned about unenforceable pinning (warn once each).
+        self._tls_pin_warned: set[str] = set()
 
     def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
         """
@@ -141,6 +146,71 @@ class CMCPProxy:
         self._audit = audit_chain
         self._call_log = CallLog(session_id=session.session_id)
         self._session_call_log = SessionCallLog(session_id=session.session_id)
+
+    def _warn_pin_unenforced(self, server_url: str, reason: str) -> None:
+        """Log TLS_PIN_UNENFORCED once per server URL (#281, dev/demo paths)."""
+        if server_url in self._tls_pin_warned:
+            return
+        self._tls_pin_warned.add(server_url)
+        logger.warning("TLS_PIN_UNENFORCED: server=%s: %s", server_url, reason)
+
+    def _client_for_upstream(self, entry: CatalogEntry) -> httpx.AsyncClient:
+        """
+        Return (creating on first use) the HTTP client for this catalog entry,
+        enforcing the catalog TLS fingerprint pin (#281).
+
+        - https + real pin: client with tls_pinning.PinnedTransport. The peer
+          certificate's SHA-256 fingerprint is checked at TLS handshake time,
+          before any request bytes are written; a mismatch aborts the
+          connection (fail closed). Standard CA verification still applies -
+          the pin is additive.
+        - https + PLACEHOLDER_FINGERPRINT: unpinned dev mode. The examples ship
+          this all-"A" placeholder, meaning "no pin recorded yet"; warn once
+          per server and proceed with standard CA verification only.
+        - https + malformed pin: fail closed (UpstreamUnavailable) - a pin that
+          cannot be compared must never silently degrade to unpinned.
+        - http: pinning is impossible without TLS; warn once per server
+          (dev/demo only) and proceed.
+        """
+        server_url = entry.server.url
+        fingerprint = entry.server.tls_fingerprint
+        scheme = httpx.URL(server_url).scheme.lower()
+        if scheme != "https":
+            self._warn_pin_unenforced(
+                server_url,
+                "upstream is not https, TLS fingerprint pinning is impossible - "
+                "plain-http upstreams are for local dev/demo only",
+            )
+            key = "unpinned"
+        elif fingerprint == tls_pinning.PLACEHOLDER_FINGERPRINT:
+            self._warn_pin_unenforced(
+                server_url,
+                "catalog tls_fingerprint is the unpinned-dev placeholder - peer "
+                "identity is verified by CA trust only, not pinned to the catalog",
+            )
+            key = "unpinned"
+        elif not tls_pinning.FINGERPRINT_PATTERN.match(fingerprint):
+            raise UpstreamUnavailable(
+                f"Catalog tls_fingerprint for {server_url} is malformed - "
+                "refusing to connect",
+                detail=f"tls_fingerprint={fingerprint[:64]!r}",
+            )
+        else:
+            key = f"pin:{fingerprint}"
+
+        client = self._http_clients.get(key)
+        if client is None:
+            timeout = httpx.Timeout(30.0)
+            if key == "unpinned":
+                client = httpx.AsyncClient(
+                    timeout=timeout, verify=tls_pinning.default_ssl_context()
+                )
+            else:
+                client = httpx.AsyncClient(
+                    timeout=timeout, transport=tls_pinning.PinnedTransport(fingerprint)
+                )
+            self._http_clients[key] = client
+        return client
 
     async def _forward_to_upstream(
         self,
@@ -155,11 +225,12 @@ class CMCPProxy:
 
         Returns the concatenated text content of the MCP result.
 
-        Raises UpstreamUnavailable on transport errors / non-2xx / non-JSON,
-        UpstreamToolError when the upstream returns a JSON-RPC error object.
+        Raises UpstreamUnavailable on transport errors / non-2xx / non-JSON /
+        TLS fingerprint pin mismatch (#281, fail closed before the request is
+        sent), UpstreamToolError when the upstream returns a JSON-RPC error
+        object.
         """
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        client = self._client_for_upstream(entry)
         payload = {
             "jsonrpc": "2.0",
             "id": call_id,
@@ -167,9 +238,16 @@ class CMCPProxy:
             "params": {"name": tool_name, "arguments": arguments},
         }
         try:
-            resp = await self._http.post(entry.server.url, json=payload)
+            resp = await client.post(entry.server.url, json=payload)
             resp.raise_for_status()
             body = resp.json()
+        except tls_pinning.TLSPinMismatchError as exc:
+            raise UpstreamUnavailable(
+                f"Upstream TLS certificate fingerprint does not match the attested "
+                f"catalog pin: {entry.server.url} - connection rejected before the "
+                "request was sent (possible MITM)",
+                detail=str(exc),
+            ) from exc
         except httpx.HTTPError as exc:
             raise UpstreamUnavailable(
                 f"Upstream MCP server unreachable: {entry.server.url}",
@@ -731,6 +809,10 @@ class CMCPProxy:
         # Step 6: audit chain write
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
         latency_us = int((time.perf_counter() - t0) * 1_000_000)
+        # #293: bind the outcome into the audit entry. Hash exactly the bytes the
+        # egress check saw (post-scan, possibly sanitized) so a verifier can match
+        # the audited response against what the caller actually received.
+        response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
         # INJECT-003: include injection scanner and pattern in audit detail when detected
         injection_detail: dict[str, str | int | float] | None = (
             {
@@ -751,6 +833,7 @@ class CMCPProxy:
             policy_rule_matched=policy_rule,
             latency_us=latency_us,
             request_payload_hash=request_payload_hash,
+            response_payload_hash=response_payload_hash,
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
             workflow_id=workflow_id,

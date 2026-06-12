@@ -303,6 +303,59 @@ async def test_audit_payload_hash_is_canonical_sha256():
     assert entry.request_payload_hash == expected
 
 
+# ── #293: response_payload_hash in success-path audit entries ─────────────────
+
+def _sha256_of_text(text: str) -> str:
+    import hashlib
+
+    return f"sha256:{hashlib.sha256(text.encode()).hexdigest()}"
+
+
+@pytest.mark.asyncio
+async def test_audit_response_payload_hash_on_success():
+    """#293 - the success-path tool_call entry must carry response_payload_hash,
+    computed over the same bytes the egress check sees."""
+    proxy, _, chain = _make_proxy()
+    wire_mock_gateway(proxy, response_text="upstream says hi")
+    result = await proxy.call_tool("c1", "test.tool", {"q": "x"})
+    assert result.allowed is True
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.response_payload_hash == _sha256_of_text("upstream says hi")
+
+
+@pytest.mark.asyncio
+async def test_audit_response_payload_hash_uses_sanitized_content():
+    """#293 - when the scanner sanitizes the response, the audit hash must cover
+    the sanitized text (what the caller receives), not the raw upstream text."""
+    proxy, _, chain = _make_proxy()
+    wire_mock_gateway(
+        proxy,
+        response_text="raw text with SECRET-TOKEN",
+        scan_content="raw text with [REDACTED]",
+    )
+    result = await proxy.call_tool("c1", "test.tool", {})
+    assert result.response == "raw text with [REDACTED]"
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.response_payload_hash == _sha256_of_text("raw text with [REDACTED]")
+    assert entry.response_payload_hash != _sha256_of_text("raw text with SECRET-TOKEN")
+
+
+@pytest.mark.asyncio
+async def test_audit_response_payload_hash_absent_when_scanner_blocks():
+    """#293 - the scanner-blocked deny entry carries no response hash: the
+    content was blocked, so there is no released response to bind."""
+    proxy, _, chain = _make_proxy()
+    wire_mock_gateway(
+        proxy,
+        scan_allowed=False,
+        threats=[{"category": "prompt_injection", "description": "x"}],
+    )
+    result = await proxy.call_tool("c1", "test.tool", {})
+    assert result.allowed is False
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.response_payload_hash is None
+
+
 # ── POLICY-003: Cedar exception writes fault audit entry ──────────────────────
 
 @pytest.mark.asyncio
