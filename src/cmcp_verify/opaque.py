@@ -15,7 +15,7 @@ _OPAQUE_API_KEY_ENV = "OPAQUE_API_KEY"
 _OPAQUE_TIMEOUT_SECONDS = 10
 
 
-def _redact_auth_headers(headers: dict) -> dict:
+def _redact_auth_headers(headers: dict[str, str]) -> dict[str, str]:
     """HW-008: return a copy of headers with Authorization value replaced by [REDACTED]."""
     return {
         k: "[REDACTED]" if k.lower() == "authorization" else v
