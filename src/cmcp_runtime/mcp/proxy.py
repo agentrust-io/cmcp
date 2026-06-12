@@ -731,6 +731,10 @@ class CMCPProxy:
         # Step 6: audit chain write
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
         latency_us = int((time.perf_counter() - t0) * 1_000_000)
+        # #293: bind the outcome into the audit entry. Hash exactly the bytes the
+        # egress check saw (post-scan, possibly sanitized) so a verifier can match
+        # the audited response against what the caller actually received.
+        response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
         # INJECT-003: include injection scanner and pattern in audit detail when detected
         injection_detail: dict[str, str | int | float] | None = (
             {
@@ -751,6 +755,7 @@ class CMCPProxy:
             policy_rule_matched=policy_rule,
             latency_us=latency_us,
             request_payload_hash=request_payload_hash,
+            response_payload_hash=response_payload_hash,
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
             workflow_id=workflow_id,
