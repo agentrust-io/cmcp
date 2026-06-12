@@ -35,6 +35,7 @@ dependencies = [
     "uvicorn>=0.29",
     "click>=8.1",
     "agent-governance-toolkit-core>=4.0",
+    "cedarpy>=4.0",
 ]
 
 [project.optional-dependencies]
