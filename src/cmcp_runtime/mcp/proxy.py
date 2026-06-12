@@ -61,13 +61,13 @@ def _cedar_safe(value: Any) -> Any:
     denies the call. Floats are preserved as strings; None values are dropped
     (policies use `has` checks, so absence is the correct representation).
     """
-    if isinstance(value, (bool, int, str)):
+    if isinstance(value, bool | int | str):
         return value
     if isinstance(value, float):
         return str(value)
     if isinstance(value, dict):
         return {k: _cedar_safe(v) for k, v in value.items() if v is not None}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_cedar_safe(v) for v in value if v is not None]
     return str(value)
 
@@ -737,7 +737,7 @@ class CMCPProxy:
                 "injection_scanner": str(injection_scanner or "unknown")[:128],
                 "matched_pattern": str(injection_pattern or "unknown")[:256],
                 # INJECT-007: include threshold so the decision is replayable under config changes
-                **({"injection_threshold": float(injection_threshold)} if isinstance(injection_threshold, (int, float)) else {}),
+                **({"injection_threshold": float(injection_threshold)} if isinstance(injection_threshold, int | float) else {}),
             }
             if injection_detected
             else None

@@ -68,7 +68,7 @@ def test_advisory_does_emit_deny_log_line(caplog):
 async def test_silent_mode_audit_chain_records_advisory_deny():
     """The core contract: in silent mode the hash-chained audit log still
     records the would-have-denied decision."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from cmcp_runtime.audit.chain import AuditChain
     from cmcp_runtime.catalog.loader import (
