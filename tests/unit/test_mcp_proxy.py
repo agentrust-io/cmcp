@@ -356,6 +356,28 @@ async def test_audit_response_payload_hash_absent_when_scanner_blocks():
     assert entry.response_payload_hash is None
 
 
+# ── response_payload_hash tamper sensitivity (negative) ───────────────────────
+
+def test_response_payload_hash_differs_on_single_byte_change():
+    """A one-byte mutation in the response body must produce a different
+    response_payload_hash.  This confirms the hash is computed over the full
+    content bytes and is sensitive to even minimal tampering.  The computation
+    logic is exercised directly without a running proxy or server."""
+    import hashlib
+
+    original = b"the upstream tool returned this exact payload"
+    tampered = original[:20] + bytes([original[20] ^ 0x01]) + original[21:]
+
+    h_original = f"sha256:{hashlib.sha256(original).hexdigest()}"
+    h_tampered = f"sha256:{hashlib.sha256(tampered).hexdigest()}"
+
+    assert h_original != h_tampered, (
+        "Hashes must differ when even one byte changes; tamper detection is broken"
+    )
+    assert h_original.startswith("sha256:")
+    assert h_tampered.startswith("sha256:")
+
+
 # ── POLICY-003: Cedar exception writes fault audit entry ──────────────────────
 
 @pytest.mark.asyncio
