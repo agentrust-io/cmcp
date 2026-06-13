@@ -18,8 +18,9 @@ import logging
 import ssl
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpcore
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -301,3 +302,60 @@ def test_fingerprints_equal_tolerates_base64_padding():
     fp = tls_pinning.fingerprint_from_der(b"x")
     assert tls_pinning.fingerprints_equal(fp, fp.rstrip("="))
     assert not tls_pinning.fingerprints_equal(fp, tls_pinning.PLACEHOLDER_FINGERPRINT)
+
+
+# ── pure-mock negative tests (no real TLS server) ────────────────────────────
+
+@pytest.mark.asyncio
+async def test_pinned_stream_raises_on_fingerprint_mismatch():
+    """_PinnedStream.start_tls raises TLSPinMismatchError when the peer DER does
+    not hash to the expected pin.  No real TLS server is needed: the inner stream
+    mock returns a controlled DER byte string so the test is deterministic and
+    runs in any environment without network access."""
+    real_der = b"real certificate DER bytes"
+    wrong_pin = tls_pinning.fingerprint_from_der(b"completely different cert")
+
+    # Build a mock TLS stream whose ssl_object returns our controlled DER.
+    mock_ssl_object = MagicMock()
+    mock_ssl_object.getpeercert.return_value = real_der
+
+    mock_tls_stream = MagicMock(spec=httpcore.AsyncNetworkStream)
+    mock_tls_stream.get_extra_info.return_value = mock_ssl_object
+    mock_tls_stream.aclose = AsyncMock()
+
+    mock_inner = MagicMock(spec=httpcore.AsyncNetworkStream)
+    mock_inner.start_tls = AsyncMock(return_value=mock_tls_stream)
+
+    stream = tls_pinning._PinnedStream(mock_inner, wrong_pin)
+    with pytest.raises(tls_pinning.TLSPinMismatchError) as exc_info:
+        await stream.start_tls(ssl_context=MagicMock(), server_hostname="localhost")
+
+    assert exc_info.value.expected == wrong_pin
+    assert exc_info.value.actual == tls_pinning.fingerprint_from_der(real_der)
+    # Connection must be torn down so the unverified peer never sees request bytes.
+    mock_tls_stream.aclose.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_pinned_stream_passes_when_fingerprint_matches():
+    """_PinnedStream.start_tls returns the TLS stream when the pin matches,
+    without raising.  Verifies the happy path alongside the mismatch test so
+    both branches are exercised in the same mock setup."""
+    cert_der = b"server certificate DER"
+    correct_pin = tls_pinning.fingerprint_from_der(cert_der)
+
+    mock_ssl_object = MagicMock()
+    mock_ssl_object.getpeercert.return_value = cert_der
+
+    mock_tls_stream = MagicMock(spec=httpcore.AsyncNetworkStream)
+    mock_tls_stream.get_extra_info.return_value = mock_ssl_object
+    mock_tls_stream.aclose = AsyncMock()
+
+    mock_inner = MagicMock(spec=httpcore.AsyncNetworkStream)
+    mock_inner.start_tls = AsyncMock(return_value=mock_tls_stream)
+
+    stream = tls_pinning._PinnedStream(mock_inner, correct_pin)
+    result = await stream.start_tls(ssl_context=MagicMock(), server_hostname="localhost")
+
+    assert result is mock_tls_stream
+    mock_tls_stream.aclose.assert_not_called()
