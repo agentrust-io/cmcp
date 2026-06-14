@@ -1,0 +1,146 @@
+site_name: cMCP
+site_description: Confidential MCP Runtime — hardware-attested policy enforcement for MCP tool calls
+site_url: https://agentrust-io.github.io/cmcp
+repo_url: https://github.com/agentrust-io/cmcp
+repo_name: agentrust-io/cmcp
+edit_uri: edit/main/
+docs_dir: .
+exclude_docs: |
+  .github/
+  node_modules/
+  benchmarks/
+  src/
+  tests/
+  schemas/
+  Dockerfile
+  docker-compose.yml
+  LICENSE
+  NOTICE
+  ANTITRUST.md
+  ADOPTERS.md
+  MAINTAINERS.md
+  SECURITY.md
+  CHARTER.md
+  CODE_OF_CONDUCT.md
+  pyproject.toml
+  .gitignore
+
+theme:
+  name: material
+  logo: docs/assets/icon.svg
+  favicon: docs/assets/icon.svg
+  palette:
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.path
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+    - header.autohide
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Inter, system-ui, -apple-system, sans-serif
+    code: JetBrains Mono, Cascadia Code, monospace
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            unwrap_annotated: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/agentrust-io/cmcp
+  generator: false
+
+extra_css:
+  - docs/stylesheets/extra.css
+
+nav:
+  - Home: README.md
+  - Quick Start: docs/quickstart.md
+  - Configuration: docs/configuration.md
+  - Specification:
+      - Overview: docs/SPEC.md
+      - Component Model: docs/spec/component-model.md
+      - Cedar Policy: docs/spec/cedar-policy.md
+      - Attestation: docs/spec/attestation.md
+      - Transport: docs/spec/transport.md
+      - Session Policy: docs/spec/session-policy.md
+      - Tool Identity: docs/spec/tool-identity.md
+      - Response Inspection: docs/spec/response-inspection.md
+      - Call Graph: docs/spec/call-graph.md
+      - Proxy Security: docs/spec/proxy-security.md
+      - Verification Library: docs/spec/verification-library.md
+      - Error Codes: docs/spec/error-codes.md
+      - Failure Modes: docs/spec/failure-modes.md
+      - Threat Model: docs/spec/threat-model.md
+      - Phase 2 Server: docs/spec/phase2-server.md
+  - Testing:
+      - Benchmarks: docs/testing/benchmarks.md
+      - Soak Test: docs/testing/soak-test.md
+  - Project:
+      - Limitations: LIMITATIONS.md
+      - Changelog: CHANGELOG.md
+      - Contributing: CONTRIBUTING.md
+      - Governance: GOVERNANCE.md
+      - Roadmap: ROADMAP.md
