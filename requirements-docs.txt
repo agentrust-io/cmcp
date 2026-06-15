@@ -2,5 +2,5 @@ mkdocs>=1.6
 mkdocs-material>=9.5
 mkdocs-minify-plugin>=0.8
 pymdown-extensions>=10.7
-mkdocstrings[python]>=0.25
+mkdocstrings[python]>=1.0.4
 griffe>=0.47
