@@ -51,7 +51,7 @@ Unlike tunnel-based connectivity solutions, the cMCP Runtime processes tool-call
 ## Quick Start
 
 ```bash
-pip install cmcp-gateway
+pip install cmcp-runtime
 ```
 
 Create `cmcp-config.yaml`:
