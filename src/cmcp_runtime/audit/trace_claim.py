@@ -78,6 +78,17 @@ class AttestationReportInfo:
     raw_evidence: str | None = None
 
 
+@dataclass
+class AgentIdentityInfo:
+    manifest_id: str
+    agent_id: str
+    authenticated_subject: str
+    issuer: str
+    issuer_key_id: str
+    policy_bundle_hash: str
+    tool_catalog_hash: str
+
+
 # ── Pydantic output models ─────────────────────────────────────────────────────
 
 
@@ -115,6 +126,18 @@ class CatalogSummary(BaseModel):
 
     hash: str
     drift_detected: bool = False
+
+
+class AgentIdentityOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manifest_id: str
+    agent_id: Annotated[str, Field(pattern=r"^spiffe://")]
+    authenticated_subject: Annotated[str, Field(pattern=r"^spiffe://")]
+    issuer: Annotated[str, Field(pattern=r"^spiffe://")]
+    issuer_key_id: str
+    policy_bundle_hash: str
+    tool_catalog_hash: str
 
 
 class GatewayTrace(BaseModel):
@@ -159,6 +182,7 @@ class GatewayAddenda(BaseModel):
     attestation_stale: bool
     catalog_exceptions: list[dict[str, str]] = Field(default_factory=list)
     call_log_summary: CallLogSummary | None = None
+    agent_identity: AgentIdentityOut | None = None
 
 
 class RuntimeClaim(BaseModel):
@@ -272,6 +296,7 @@ def generate_trace_claim(
     attestation_stale: bool = False,
     catalog_exceptions: list[dict[str, str]] | None = None,
     call_log_summary: CallLogSummary | None = None,
+    agent_identity: AgentIdentityInfo | None = None,
     sequence_number: int = 1,
     prev_claim_hash: str | None = None,
     do_sign: bool = True,
@@ -334,6 +359,19 @@ def generate_trace_claim(
         attestation_stale=attestation_stale,
         catalog_exceptions=catalog_exceptions or [],
         call_log_summary=call_log_summary,
+        agent_identity=(
+            AgentIdentityOut(
+                manifest_id=agent_identity.manifest_id,
+                agent_id=agent_identity.agent_id,
+                authenticated_subject=agent_identity.authenticated_subject,
+                issuer=agent_identity.issuer,
+                issuer_key_id=agent_identity.issuer_key_id,
+                policy_bundle_hash=agent_identity.policy_bundle_hash,
+                tool_catalog_hash=agent_identity.tool_catalog_hash,
+            )
+            if agent_identity is not None
+            else None
+        ),
     )
 
     claim = RuntimeClaim(trace=trace, gateway=gateway)

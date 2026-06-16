@@ -170,6 +170,44 @@
             "drift_detected": { "type": "boolean" }
           }
         },
+        "agent_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest_id",
+            "agent_id",
+            "authenticated_subject",
+            "issuer",
+            "issuer_key_id",
+            "policy_bundle_hash",
+            "tool_catalog_hash"
+          ],
+          "description": "Optional Agent Manifest binding carried by issue #302. The runtime emits this only after the signed manifest, authenticated agent subject, policy hash, and catalog hash have been checked at session creation.",
+          "properties": {
+            "manifest_id": { "type": "string" },
+            "agent_id": {
+              "type": "string",
+              "pattern": "^spiffe://"
+            },
+            "authenticated_subject": {
+              "type": "string",
+              "pattern": "^spiffe://"
+            },
+            "issuer": {
+              "type": "string",
+              "pattern": "^spiffe://"
+            },
+            "issuer_key_id": { "type": "string" },
+            "policy_bundle_hash": {
+              "type": "string",
+              "pattern": "^sha(256|384):[0-9a-f]+"
+            },
+            "tool_catalog_hash": {
+              "type": "string",
+              "pattern": "^sha(256|384):[0-9a-f]+"
+            }
+          }
+        },
         "attestation_generated_at": {
           "type": "string",
           "format": "date-time"
