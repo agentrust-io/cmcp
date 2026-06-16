@@ -279,6 +279,8 @@ class AuditBundleResult:
 def verify_audit_bundle(
     bundle_json: dict[str, Any],
     claim_json: dict[str, Any] | None = None,
+    *,
+    external_evidence_keys: dict[str, str] | None = None,
 ) -> AuditBundleResult:
     """
     Verify an exported audit bundle (GET /audit/export):
@@ -288,6 +290,12 @@ def verify_audit_bundle(
     2. If a claim is provided, cross-check the bundle's root/tip/length
        against gateway.audit_chain and verify the bundle_signature with the
        claim's confirmation key (trace.cnf.jwk.x).
+    3. #301: if external_evidence_keys is provided (issuer_key_id -> hex Ed25519
+       public key), verify any external_execution_evidence receipt bound to an
+       entry: linked_call_id must equal the entry call_id, and the issuer
+       signature must verify over the canonical receipt (all fields except
+       signature). This is opt-in: receipt-less entries and callers that do not
+       supply keys are unaffected, so existing evidence keeps verifying.
     """
     failures: list[str] = []
     entries = bundle_json.get("entries", [])
@@ -305,6 +313,45 @@ def verify_audit_bundle(
         if entry.get("prev_entry_hash") != prev:
             failures.append(f"entry {i}: chain link broken")
         prev = entry.get("entry_hash", "")
+
+    # #301: verify independent execution receipts (opt-in via external_evidence_keys).
+    if external_evidence_keys is not None:
+        for i, entry in enumerate(entries):
+            ev = entry.get("external_execution_evidence")
+            if not ev:
+                continue
+            if ev.get("linked_call_id") != entry.get("call_id"):
+                failures.append(
+                    f"entry {i}: external_execution_evidence linked_call_id does not "
+                    "match the entry call_id"
+                )
+            key_id = ev.get("issuer_key_id", "")
+            pub_hex = external_evidence_keys.get(key_id)
+            if not pub_hex:
+                failures.append(
+                    f"entry {i}: no trusted key for external evidence issuer_key_id '{key_id}'"
+                )
+                continue
+            try:
+                pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
+                signing_input = json.dumps(
+                    {k: v for k, v in ev.items() if k != "signature"},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ).encode()
+                sig_b64 = ev.get("signature", "")
+                pad = 4 - (len(sig_b64) % 4)
+                sig = base64.urlsafe_b64decode(sig_b64 + ("=" * pad if pad != 4 else ""))
+                pub.verify(sig, signing_input)
+            except InvalidSignature:
+                failures.append(
+                    f"entry {i}: external_execution_evidence signature is invalid"
+                )
+            except Exception as exc:
+                failures.append(
+                    f"entry {i}: external_execution_evidence could not be verified: {exc}"
+                )
 
     if claim_json is not None:
         chain = claim_json.get("gateway", {}).get("audit_chain", {})
