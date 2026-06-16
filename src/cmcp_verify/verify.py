@@ -21,7 +21,9 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
+from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
 from cmcp_runtime.audit.trace_claim import RuntimeClaim
+from cmcp_runtime.errors import ConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,7 @@ class VerificationError(StrEnum):
     CHAIN_BROKEN = "CHAIN_BROKEN"
     CLAIM_MALFORMED = "CLAIM_MALFORMED"
     HARDWARE_ATTESTATION_FAILED = "HARDWARE_ATTESTATION_FAILED"
+    AGENT_MANIFEST_MISMATCH = "AGENT_MANIFEST_MISMATCH"
 
 
 @dataclass
@@ -350,6 +353,8 @@ def verify_trace_claim(
     max_attestation_age_seconds: int = 86400,
     *,
     trusted_public_key_hex: str | None = None,
+    agent_manifest: dict[str, Any] | None = None,
+    trusted_agent_manifest_keys: dict[str, bytes] | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -361,9 +366,11 @@ def verify_trace_claim(
     2c. Optional out-of-band trusted_public_key_hex cross-check
     3. trace.policy.bundle_hash check against approved.policy_bundle_hash
     4. gateway.catalog.hash check against approved.tool_catalog_hash
-    5. Attestation freshness check
-    6. Audit chain consistency check
-    7. Platform-specific attestation verification (dispatched per-platform)
+    5. Optional Agent Manifest binding check when agent_manifest and trusted
+       issuer keys are provided.
+    6. Attestation freshness check
+    7. Audit chain consistency check
+    8. Platform-specific attestation verification (dispatched per-platform)
 
     Returns VerificationResult with status and details.
 
@@ -464,7 +471,54 @@ def verify_trace_claim(
         if failure is None:
             failure = VerificationError.CATALOG_HASH_MISMATCH
 
-    # Step 5: Attestation freshness
+    # Step 5: Optional Agent Manifest binding cross-check (#302).
+    if agent_manifest is not None:
+        agent_identity = claim_json.get("gateway", {}).get("agent_identity")
+        if not isinstance(agent_identity, dict):
+            unverified.append("agent_manifest.binding")
+            failure = failure or VerificationError.AGENT_MANIFEST_MISMATCH
+            details["agent_manifest"] = "claim has no gateway.agent_identity binding"
+        elif not trusted_agent_manifest_keys:
+            unverified.append("agent_manifest.binding")
+            failure = failure or VerificationError.AGENT_MANIFEST_MISMATCH
+            details["agent_manifest"] = "no trusted Agent Manifest issuer keys provided"
+        else:
+            try:
+                binding = verify_agent_manifest_binding(
+                    agent_manifest,
+                    trusted_agent_manifest_keys,
+                    authenticated_subject=agent_identity.get("authenticated_subject"),
+                    policy_bundle_hash=claimed_policy,
+                    tool_catalog_hash=claimed_catalog,
+                )
+                expected_identity = {
+                    "manifest_id": binding.manifest_id,
+                    "agent_id": binding.agent_id,
+                    "authenticated_subject": binding.authenticated_subject,
+                    "issuer": binding.issuer,
+                    "issuer_key_id": binding.issuer_key_id,
+                    "policy_bundle_hash": binding.policy_bundle_hash,
+                    "tool_catalog_hash": binding.tool_catalog_hash,
+                }
+                mismatched = [
+                    key
+                    for key, expected in expected_identity.items()
+                    if agent_identity.get(key) != expected
+                ]
+                if mismatched:
+                    unverified.append("agent_manifest.binding")
+                    failure = failure or VerificationError.AGENT_MANIFEST_MISMATCH
+                    details["agent_manifest"] = (
+                        "gateway.agent_identity mismatch: " + ", ".join(mismatched)
+                    )
+                else:
+                    verified.append("agent_manifest.binding")
+            except ConfigError as exc:
+                unverified.append("agent_manifest.binding")
+                failure = failure or VerificationError.AGENT_MANIFEST_MISMATCH
+                details["agent_manifest"] = str(exc)
+
+    # Step 6: Attestation freshness
     age, is_fresh = _check_attestation_freshness(claim_json, max_attestation_age_seconds)
     if is_fresh:
         verified.append("attestation_freshness")
@@ -474,7 +528,7 @@ def verify_trace_claim(
             failure = VerificationError.ATTESTATION_STALE
         details["attestation_age_seconds"] = str(age)
 
-    # Step 6: Audit chain consistency
+    # Step 7: Audit chain consistency
     chain_ok, chain_err = _check_audit_chain(claim_json)
     if chain_ok:
         verified.append("audit_chain")
@@ -485,7 +539,7 @@ def verify_trace_claim(
         if chain_err:
             details["chain_error"] = chain_err
 
-    # Step 7: Platform-specific attestation
+    # Step 8: Platform-specific attestation
     platform = _runtime.get("platform", "")
 
     if _is_sw_only:

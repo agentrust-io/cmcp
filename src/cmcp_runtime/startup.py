@@ -12,6 +12,12 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
+from cmcp_runtime.agent_manifest import (
+    AgentManifestBinding,
+    load_agent_manifest,
+    load_agent_manifest_trust_anchor,
+    verify_agent_manifest_binding,
+)
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.store import SqliteAuditStore
 from cmcp_runtime.catalog.loader import ToolCatalog, load_catalog
@@ -56,6 +62,7 @@ class RuntimeContext:
     audit_store: SqliteAuditStore | None = None
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
+    agent_manifest: AgentManifestBinding | None = None
 
 
 def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
@@ -249,7 +256,35 @@ def run_startup(config_path: str) -> RuntimeContext:
         catalog.catalog_hash,
     )
 
-    # Step 5b: SPIFFE/SPIRE SVID fetch (non-fatal - falls back to self-signed TLS)
+    # Step 5b: optional Agent Manifest binding (#302). When configured, this is
+    # fail-closed: signature, subject, policy hash, and catalog hash must agree
+    # before any session can be created.
+    agent_manifest: AgentManifestBinding | None = None
+    if config.agent_manifest.path is not None and config.agent_manifest.trust_anchor_path is not None:
+        try:
+            manifest = load_agent_manifest(config.agent_manifest.path)
+            trusted_keys = load_agent_manifest_trust_anchor(
+                config.agent_manifest.trust_anchor_path
+            )
+            agent_manifest = verify_agent_manifest_binding(
+                manifest,
+                trusted_keys,
+                authenticated_subject=config.agent_manifest.authenticated_subject,
+                policy_bundle_hash=policy_bundle.bundle_hash,
+                tool_catalog_hash=catalog.catalog_hash,
+                allow_dev_subject_from_manifest=config.dev_mode,
+            )
+        except ConfigError as exc:
+            _fatal("AGENT_MANIFEST_BINDING_FAILED", str(exc), action="startup_aborted")
+            sys.exit(1)
+
+        logger.info(
+            "Agent Manifest bound: manifest_id=%s agent_id=%s",
+            agent_manifest.manifest_id,
+            agent_manifest.agent_id,
+        )
+
+    # Step 5c: SPIFFE/SPIRE SVID fetch (non-fatal - falls back to self-signed TLS)
     # SVID issuance is conditioned on TEE attestation succeeding (handled by the
     # SPIRE node attestation plugin on the SPIRE server side).
     spiffe_result = fetch_svid()
@@ -264,11 +299,11 @@ def run_startup(config_path: str) -> RuntimeContext:
             spiffe_result.failure_reason,
         )
 
-    # Step 5c: NRAS post-attestation appraisal (non-fatal, Phase 2 / v0.2 -- issue #125).
+    # Step 5d: NRAS post-attestation appraisal (non-fatal, Phase 2 / v0.2 -- issue #125).
     # CMCP_NRAS_API_KEY missing -> skip with warning; any NRAS error -> skip with warning.
     nras_appraisal = try_appraise(attestation_report)
 
-    # Step 5d: open durable audit store and warn on orphaned sessions (AUDIT-001).
+    # Step 5e: open durable audit store and warn on orphaned sessions (AUDIT-001).
     try:
         from pathlib import Path as _Path
         audit_store = SqliteAuditStore(_Path(config.audit_db_path))
@@ -298,4 +333,5 @@ def run_startup(config_path: str) -> RuntimeContext:
         audit_store=audit_store,
         spiffe=spiffe_result,
         nras_appraisal=nras_appraisal,
+        agent_manifest=agent_manifest,
     )

@@ -10,6 +10,7 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 | `ATTESTATION_PROVIDER_UNSUPPORTED` | 500 | FATAL | No supported TEE provider detected and `CMCP_DEV_MODE` is not set | [attestation.md §1.1](attestation.md) |
 | `POLICY_HASH_MISMATCH` | 500 | FATAL | Measured policy bundle hash does not match deployment manifest | [failure-modes.md FM-4](failure-modes.md) |
 | `CATALOG_HASH_MISMATCH` | 500 | FATAL | Measured catalog hash does not match deployment manifest | [attestation.md §5](attestation.md) |
+| `AGENT_MANIFEST_BINDING_FAILED` | 500 | FATAL | Signed Agent Manifest signature, authenticated subject, policy hash, or catalog hash did not match the runtime session inputs | [session-policy.md](session-policy.md) |
 | `TOOL_NOT_IN_CATALOG` | 403 | WARN | Agent requested a tool not present in the attested catalog | [cedar-policy.md](cedar-policy.md) |
 | `POLICY_DENY` | 403 | INFO | Cedar policy evaluation returned deny for this call | [cedar-policy.md](cedar-policy.md) |
 | `CATALOG_TOOL_NAME_COLLISION` | 500 | FATAL | Two catalog entries register the same `tool_name` | [tool-identity.md](tool-identity.md) |
@@ -35,6 +36,7 @@ The following error codes are defined and documented in [verification-library.md
 | `PUBLIC_KEY_NOT_BOUND` |
 | `POLICY_HASH_MISMATCH` |
 | `CATALOG_HASH_MISMATCH` |
+| `AGENT_MANIFEST_MISMATCH` |
 | `ATTESTATION_STALE` |
 | `CHAIN_BROKEN` |
 | `CLAIM_MALFORMED` |

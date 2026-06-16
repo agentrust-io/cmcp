@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from cmcp_runtime.agent_manifest import AgentManifestBinding
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.session.manager import SessionManager
@@ -63,6 +64,7 @@ def _make_ctx(*, stale_attestation: bool = False) -> MagicMock:
     tee_provider = MagicMock()
     tee_provider.get_attestation_report.return_value = MagicMock()
     ctx.tee_provider = tee_provider
+    ctx.agent_manifest = None
     return ctx
 
 
@@ -93,6 +95,23 @@ def test_create_session_chain_has_session_start() -> None:
     mgr = SessionManager(_make_ctx())
     _, chain = mgr.create_session()
     assert chain.entries[0].entry_type == "session_start"
+
+
+def test_create_session_carries_agent_manifest_binding() -> None:
+    ctx = _make_ctx()
+    ctx.agent_manifest = AgentManifestBinding(
+        manifest_id="0197739a-8c00-7000-8000-000000000001",
+        agent_id="spiffe://factory.example/agent/material-movement/dev",
+        authenticated_subject="spiffe://factory.example/agent/material-movement/dev",
+        issuer="spiffe://factory.example/signing-authority/development",
+        issuer_key_id="a" * 64,
+        policy_bundle_hash="sha256:" + "a" * 64,
+        tool_catalog_hash="sha256:" + "b" * 64,
+    )
+    mgr = SessionManager(ctx)
+    state, _ = mgr.create_session()
+    assert state.agent_manifest_id == "0197739a-8c00-7000-8000-000000000001"
+    assert state.agent_id == "spiffe://factory.example/agent/material-movement/dev"
 
 
 # ── close_session ─────────────────────────────────────────────────────────────
@@ -136,6 +155,24 @@ def test_close_session_claim_session_id_matches() -> None:
     state, chain = mgr.create_session()
     claim = mgr.close_session(state.session_id, state, chain)
     assert claim["gateway"]["session_id"] == state.session_id
+
+
+def test_close_session_claim_includes_agent_identity_binding() -> None:
+    ctx = _make_ctx()
+    ctx.agent_manifest = AgentManifestBinding(
+        manifest_id="0197739a-8c00-7000-8000-000000000001",
+        agent_id="spiffe://factory.example/agent/material-movement/dev",
+        authenticated_subject="spiffe://factory.example/agent/material-movement/dev",
+        issuer="spiffe://factory.example/signing-authority/development",
+        issuer_key_id="a" * 64,
+        policy_bundle_hash="sha256:" + "a" * 64,
+        tool_catalog_hash="sha256:" + "b" * 64,
+    )
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    claim = mgr.close_session(state.session_id, state, chain)
+    assert claim["gateway"]["agent_identity"]["manifest_id"] == ctx.agent_manifest.manifest_id
+    assert claim["gateway"]["agent_identity"]["agent_id"] == ctx.agent_manifest.agent_id
 
 
 def test_close_session_attestation_stale_flag_false_when_fresh() -> None:

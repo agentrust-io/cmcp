@@ -46,6 +46,10 @@ def verify_trace_claim(
     claim_json: dict,
     approved: ApprovedHashes,
     max_attestation_age_seconds: int = 86400,
+    *,
+    trusted_public_key_hex: Optional[str] = None,
+    agent_manifest: Optional[dict] = None,
+    trusted_agent_manifest_keys: Optional[dict[str, bytes]] = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -55,8 +59,11 @@ def verify_trace_claim(
     2. Verify signature over canonical claim body using tee_public_key
     3. Check policy_bundle.hash against approved.policy_bundle_hash
     4. Check tool_catalog.hash against approved.tool_catalog_hash
-    5. Check attestation freshness (timestamp within max_attestation_age_seconds)
-    6. Verify audit chain continuity (audit_chain_root, audit_chain_tip)
+    5. If agent_manifest and trusted_agent_manifest_keys are provided, verify
+       the Agent Manifest issuer signature and cross-check gateway.agent_identity:
+       manifest_id, agent_id/authenticated_subject, policy hash, and catalog hash.
+    6. Check attestation freshness (timestamp within max_attestation_age_seconds)
+    7. Verify audit chain continuity (audit_chain_root, audit_chain_tip)
 
     Returns VerificationResult with status and details.
     """
@@ -116,6 +123,7 @@ VerificationError enum:
 - PUBLIC_KEY_NOT_BOUND: tee_public_key is not bound to the attestation_report (measurement mismatch or quote verification failed)
 - POLICY_HASH_MISMATCH: policy_bundle.hash != approved.policy_bundle_hash
 - CATALOG_HASH_MISMATCH: tool_catalog.hash != approved.tool_catalog_hash
+- AGENT_MANIFEST_MISMATCH: gateway.agent_identity does not match the signed Agent Manifest, the manifest signature is invalid, or trusted issuer keys were not supplied for a requested manifest check
 - ATTESTATION_STALE: attestation_generated_at is older than max_attestation_age_seconds
 - CHAIN_BROKEN: audit_chain_root -> audit_chain_tip traversal fails (missing entries or hash mismatch)
 - CLAIM_MALFORMED: claim_json fails JSON Schema validation against the TRACE Claim schema

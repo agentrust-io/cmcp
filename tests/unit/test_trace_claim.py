@@ -8,6 +8,7 @@ import json
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.trace_claim import (
+    AgentIdentityInfo,
     AttestationReportInfo,
     CallGraphSummary,
     CallSummary,
@@ -278,6 +279,41 @@ def test_generate_claim_software_only_platform():
     claim = _make_claim()
     assert claim.trace.runtime.platform == "software-only"
     assert claim.trace.runtime.firmware_version == "software-only-dev-mode"
+
+
+def test_generate_claim_agent_identity_binding():
+    key = SigningKey()
+    chain = AuditChain("sess-001")
+    claim = generate_trace_claim(
+        session_id="sess-001",
+        signing_key=key,
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64,
+            enforcement_mode="enforcing",
+            policy_version="1.0.0",
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        agent_identity=AgentIdentityInfo(
+            manifest_id="0197739a-8c00-7000-8000-000000000001",
+            agent_id="spiffe://factory.example/agent/material-movement/dev",
+            authenticated_subject="spiffe://factory.example/agent/material-movement/dev",
+            issuer="spiffe://factory.example/signing-authority/development",
+            issuer_key_id="a" * 64,
+            policy_bundle_hash="sha256:" + "0" * 64,
+            tool_catalog_hash="sha256:" + "1" * 64,
+        ),
+        do_sign=False,
+    )
+    assert claim.gateway.agent_identity is not None
+    assert (
+        claim.gateway.agent_identity.agent_id
+        == "spiffe://factory.example/agent/material-movement/dev"
+    )
 
 
 # ── RuntimeClaim Pydantic validation ─────────────────────────────────────────

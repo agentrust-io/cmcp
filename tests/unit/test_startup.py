@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from cmcp_runtime.agent_manifest import SIGNED_FIELDS, signing_pre_image
+from cmcp_runtime.catalog.loader import load_catalog
+from cmcp_runtime.policy.bundle import load_policy_bundle
 from cmcp_runtime.startup import RuntimeContext, run_startup
 
 MANIFEST = {
@@ -37,6 +44,59 @@ CATALOG_ENTRY = {
     "added_at": "2026-06-01T00:00:00Z",
     "approved_by": "test",
 }
+
+AGENT_ID = "spiffe://factory.example/agent/material-movement/dev"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _write_agent_manifest_files(
+    tmp_path: Path,
+    *,
+    policy_hash: str,
+    catalog_hash: str,
+) -> tuple[Path, Path]:
+    priv = Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    key_id = hashlib.sha256(pub).hexdigest()
+    manifest = {
+        "@context": "https://agentmanifest.agentrust.io/v0.1/context.json",
+        "@type": "AgentManifest",
+        "manifest_id": "0197739a-8c00-7000-8000-000000000001",
+        "agent_id": AGENT_ID,
+        "version": "0.1",
+        "issued_at": "2026-06-12T00:00:00Z",
+        "expires_at": "2099-09-10T00:00:00Z",
+        "issuer": "spiffe://factory.example/signing-authority/development",
+        "crypto_profile": "standard",
+        "artifacts": {
+            "policy_bundle": {"hash": policy_hash, "policy_language": "cedar"},
+            "tool_manifest": {"catalog_hash": catalog_hash, "tools": []},
+        },
+        "delegation_chain": [],
+    }
+    manifest["signature"] = {
+        "algorithm": "Ed25519",
+        "key_id": key_id,
+        "key_type": "software",
+        "signed_at": "2026-06-12T00:00:00Z",
+        "signed_fields": list(SIGNED_FIELDS),
+        "signature_value": _b64url(priv.sign(signing_pre_image(manifest))),
+    }
+
+    manifest_path = tmp_path / "agent-manifest.json"
+    key_path = tmp_path / "manifest-public-key.json"
+    manifest_path.write_text(json.dumps(manifest))
+    key_path.write_text(
+        json.dumps({
+            "algorithm": "Ed25519",
+            "key_id": key_id,
+            "public_key_base64url": _b64url(pub),
+        })
+    )
+    return manifest_path, key_path
 
 
 @pytest.fixture
@@ -79,6 +139,52 @@ def test_startup_returns_gateway_context_with_all_fields(complete_setup):
     assert ctx.tee_provider is not None
     assert ctx.attestation_report is not None
     assert ctx.attestation_report.provider == "software-only"
+
+
+def test_startup_binds_configured_agent_manifest(complete_setup):
+    config_path = Path(complete_setup)
+    tmp_path = config_path.parent
+    policy_hash = load_policy_bundle(str(tmp_path / "policy")).bundle_hash
+    catalog_hash = load_catalog(str(tmp_path / "catalog.json")).catalog_hash
+    manifest_path, key_path = _write_agent_manifest_files(
+        tmp_path,
+        policy_hash=policy_hash,
+        catalog_hash=catalog_hash,
+    )
+    config_path.write_text(
+        config_path.read_text()
+        + "\nagent_manifest:\n"
+        + f"  path: {manifest_path}\n"
+        + f"  trust_anchor_path: {key_path}\n"
+        + f"  authenticated_subject: {AGENT_ID}\n"
+    )
+
+    ctx = run_startup(str(config_path))
+    assert ctx.agent_manifest is not None
+    assert ctx.agent_manifest.agent_id == AGENT_ID
+
+
+def test_startup_fails_on_agent_manifest_subject_mismatch(complete_setup):
+    config_path = Path(complete_setup)
+    tmp_path = config_path.parent
+    policy_hash = load_policy_bundle(str(tmp_path / "policy")).bundle_hash
+    catalog_hash = load_catalog(str(tmp_path / "catalog.json")).catalog_hash
+    manifest_path, key_path = _write_agent_manifest_files(
+        tmp_path,
+        policy_hash=policy_hash,
+        catalog_hash=catalog_hash,
+    )
+    config_path.write_text(
+        config_path.read_text()
+        + "\nagent_manifest:\n"
+        + f"  path: {manifest_path}\n"
+        + f"  trust_anchor_path: {key_path}\n"
+        + "  authenticated_subject: spiffe://factory.example/agent/other/dev\n"
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
 
 
 def test_startup_fails_on_missing_config(tmp_path):

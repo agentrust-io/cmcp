@@ -48,8 +48,16 @@ class AttestationConfig:
 
 
 @dataclass
+class AgentManifestConfig:
+    path: str | None = None
+    trust_anchor_path: str | None = None
+    authenticated_subject: str | None = None
+
+
+@dataclass
 class Config:
     attestation: AttestationConfig = field(default_factory=AttestationConfig)
+    agent_manifest: AgentManifestConfig = field(default_factory=AgentManifestConfig)
     policy_bundle_path: str = "policy/"
     catalog_path: str = "catalog.json"
     listen_addr: str = "0.0.0.0:8443"
@@ -60,8 +68,24 @@ class Config:
     bearer_token: str | None = None
 
 
-_KNOWN_TOP_KEYS = {"attestation", "policy_bundle_path", "catalog_path", "listen_addr", "max_response_size_bytes", "policy_reload_interval_seconds", "audit_db_path"}
-_KNOWN_ATTEST_KEYS = {"provider", "enforcement_mode", "validity_seconds", "staleness_policy", "expected_measurement"}
+_KNOWN_TOP_KEYS = {
+    "attestation",
+    "agent_manifest",
+    "policy_bundle_path",
+    "catalog_path",
+    "listen_addr",
+    "max_response_size_bytes",
+    "policy_reload_interval_seconds",
+    "audit_db_path",
+}
+_KNOWN_ATTEST_KEYS = {
+    "provider",
+    "enforcement_mode",
+    "validity_seconds",
+    "staleness_policy",
+    "expected_measurement",
+}
+_KNOWN_AGENT_MANIFEST_KEYS = {"path", "trust_anchor_path", "authenticated_subject"}
 
 
 def _check_no_traversal(field_name: str, path_str: str) -> None:
@@ -108,6 +132,19 @@ def load_config(path: str) -> Config:
                 f"Unknown attestation key '{key}'. Valid keys: {sorted(_KNOWN_ATTEST_KEYS)}"
             )
 
+    manifest_raw = raw.get("agent_manifest", {})
+    if manifest_raw is None:
+        manifest_raw = {}
+    if not isinstance(manifest_raw, dict):
+        raise ConfigError("'agent_manifest' must be a mapping")
+
+    for key in manifest_raw:
+        if key not in _KNOWN_AGENT_MANIFEST_KEYS:
+            raise ConfigError(
+                "Unknown agent_manifest key "
+                f"'{key}'. Valid keys: {sorted(_KNOWN_AGENT_MANIFEST_KEYS)}"
+            )
+
     try:
         provider = TEEProvider(attest_raw.get("provider", "auto"))
     except ValueError as err:
@@ -152,6 +189,26 @@ def load_config(path: str) -> Config:
     _check_no_traversal("catalog_path", catalog_path)
     _check_no_traversal("audit_db_path", audit_db_path)
 
+    agent_manifest_path = manifest_raw.get("path")
+    trust_anchor_path = manifest_raw.get("trust_anchor_path")
+    authenticated_subject = manifest_raw.get("authenticated_subject")
+    if agent_manifest_path is not None and not isinstance(agent_manifest_path, str):
+        raise ConfigError("agent_manifest.path must be a string")
+    if trust_anchor_path is not None and not isinstance(trust_anchor_path, str):
+        raise ConfigError("agent_manifest.trust_anchor_path must be a string")
+    if authenticated_subject is not None and not isinstance(authenticated_subject, str):
+        raise ConfigError("agent_manifest.authenticated_subject must be a string")
+    if authenticated_subject is not None and not authenticated_subject.startswith("spiffe://"):
+        raise ConfigError("agent_manifest.authenticated_subject must be a SPIFFE URI")
+    if bool(agent_manifest_path) != bool(trust_anchor_path):
+        raise ConfigError(
+            "agent_manifest.path and agent_manifest.trust_anchor_path must be set together"
+        )
+    if agent_manifest_path is not None:
+        _check_no_traversal("agent_manifest.path", agent_manifest_path)
+    if trust_anchor_path is not None:
+        _check_no_traversal("agent_manifest.trust_anchor_path", trust_anchor_path)
+
     return Config(
         attestation=AttestationConfig(
             provider=provider,
@@ -159,6 +216,11 @@ def load_config(path: str) -> Config:
             validity_seconds=validity_seconds,
             staleness_policy=staleness_policy,
             expected_measurement=expected_measurement,
+        ),
+        agent_manifest=AgentManifestConfig(
+            path=agent_manifest_path,
+            trust_anchor_path=trust_anchor_path,
+            authenticated_subject=authenticated_subject,
         ),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,
