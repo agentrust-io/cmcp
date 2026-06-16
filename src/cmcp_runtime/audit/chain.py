@@ -61,6 +61,12 @@ class AuditEntry:
     detail: dict[str, str | int | float] | None  # optional structured detail (e.g. suspicious_call_sequence)
     workflow_id: str | None
     prev_entry_hash: str  # "genesis" for first entry
+    # #301: optional independent execution evidence, e.g. a controller-signed
+    # receipt of a physical outcome. Distinct from response_payload_hash:
+    # response_payload_hash is what the gateway forwarded, this is what an
+    # independent authority attested. Serialized uniformly (null when absent),
+    # so entries without a receipt hash exactly as before.
+    external_execution_evidence: dict[str, str] | None = None
     entry_hash: str = field(default="")  # computed after construction
 
     def _canonical_body(self) -> bytes:
@@ -161,6 +167,7 @@ class AuditChain:
         session_sensitivity_after: str | None = None,
         detail: dict[str, str | int | float] | None = None,
         workflow_id: str | None = None,
+        external_execution_evidence: dict[str, str] | None = None,
     ) -> AuditEntry:
         prev_hash = self._entries[-1].entry_hash if self._entries else "genesis"
         now = datetime.now(tz=UTC)
@@ -187,6 +194,7 @@ class AuditChain:
             session_sensitivity_after=session_sensitivity_after,
             detail=detail,
             workflow_id=workflow_id,
+            external_execution_evidence=external_execution_evidence,
             prev_entry_hash=prev_hash,
         )
         entry.entry_hash = entry.compute_hash()
