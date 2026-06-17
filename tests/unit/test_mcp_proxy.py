@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -321,6 +322,53 @@ async def test_audit_response_payload_hash_on_success():
     assert result.allowed is True
     entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
     assert entry.response_payload_hash == _sha256_of_text("upstream says hi")
+
+
+@pytest.mark.asyncio
+async def test_audit_binds_external_execution_evidence_from_json_response():
+    """#301 follow-up - a well-formed upstream receipt is copied into the audit entry."""
+    receipt = {
+        "issuer": "spiffe://factory.example/controller/robot-cell-7",
+        "issuer_key_id": "a" * 64,
+        "signature": "sig",
+        "evidence_hash": "sha256:" + "b" * 64,
+        "evidence_type": "controller-execution-receipt/v1",
+        "linked_call_id": "c1",
+    }
+    proxy, _, chain = _make_proxy()
+    wire_mock_gateway(
+        proxy,
+        response_text=json.dumps(
+            {
+                "controller_decision": "rejected",
+                "reason": "human_detected",
+                "external_execution_evidence": receipt,
+            }
+        ),
+    )
+    result = await proxy.call_tool("c1", "test.tool", {})
+    assert result.allowed is True
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.external_execution_evidence == receipt
+
+
+@pytest.mark.asyncio
+async def test_audit_ignores_malformed_external_execution_evidence():
+    """Malformed receipt-looking response fields are not bound as audit evidence."""
+    proxy, _, chain = _make_proxy()
+    wire_mock_gateway(
+        proxy,
+        response_text=json.dumps({
+            "external_execution_evidence": {
+                "issuer": "spiffe://factory.example/controller/robot-cell-7",
+                "linked_call_id": "c1",
+            }
+        }),
+    )
+    result = await proxy.call_tool("c1", "test.tool", {})
+    assert result.allowed is True
+    entry = next(e for e in reversed(chain.entries) if e.entry_type == "tool_call")
+    assert entry.external_execution_evidence is None
 
 
 @pytest.mark.asyncio
