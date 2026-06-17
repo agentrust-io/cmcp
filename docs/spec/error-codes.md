@@ -38,5 +38,6 @@ The following error codes are defined and documented in [verification-library.md
 | `ATTESTATION_STALE` |
 | `CHAIN_BROKEN` |
 | `CLAIM_MALFORMED` |
+| `EXTERNAL_EVIDENCE_VERIFICATION_FAILED` |
 
 > Note: `POLICY_HASH_MISMATCH`, `CATALOG_HASH_MISMATCH`, and `ATTESTATION_STALE` appear in both tables. The Runtime emits them during startup or request handling; the verification library emits them during offline or client-side verification. The semantics are consistent across both contexts.
