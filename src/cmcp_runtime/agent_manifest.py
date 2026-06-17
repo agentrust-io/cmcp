@@ -7,10 +7,10 @@ import hashlib
 import json
 import math
 import re
-import unicodedata
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -40,6 +40,7 @@ SIGNED_FIELDS: tuple[str, ...] = (
 
 _B64URL_RE = re.compile(r"^[A-Za-z0-9\-_]*$")
 _HASH_RE = re.compile(r"^(sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96})$")
+_SUBJECT_SOURCES: frozenset[str] = frozenset({"config", "svid", "manifest-dev"})
 _SMALL_ORDER_POINTS: frozenset[bytes] = frozenset({
     bytes.fromhex("0000000000000000000000000000000000000000000000000000000000000000"),
     bytes.fromhex("0100000000000000000000000000000000000000000000000000000000000000"),
@@ -51,6 +52,8 @@ _SMALL_ORDER_POINTS: frozenset[bytes] = frozenset({
     bytes.fromhex("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa"),
 })
 
+SubjectSource = Literal["config", "svid", "manifest-dev"]
+
 
 @dataclass(frozen=True)
 class AgentManifestBinding:
@@ -59,6 +62,7 @@ class AgentManifestBinding:
     manifest_id: str
     agent_id: str
     authenticated_subject: str
+    subject_source: SubjectSource
     issuer: str
     issuer_key_id: str
     policy_bundle_hash: str
@@ -77,7 +81,6 @@ def _key_id(public_key: bytes) -> str:
 
 
 def _quote(value: str) -> str:
-    value = unicodedata.normalize("NFC", value)
     parts = ['"']
     for ch in value:
         cp = ord(ch)
@@ -95,12 +98,16 @@ def _quote(value: str) -> str:
             parts.append("\\r")
         elif ch == "\t":
             parts.append("\\t")
-        elif cp <= 0x001F or 0x007F <= cp <= 0x009F or cp in (0x2028, 0x2029):
+        elif cp <= 0x001F:
             parts.append(f"\\u{cp:04x}")
         else:
             parts.append(ch)
     parts.append('"')
     return "".join(parts)
+
+
+def _utf16_sort_key(value: str) -> bytes:
+    return value.encode("utf-16-be")
 
 
 def _serialize_json(value: Any, *, depth: int = 0) -> str:
@@ -127,7 +134,7 @@ def _serialize_json(value: Any, *, depth: int = 0) -> str:
         return "[" + ",".join(_serialize_json(v, depth=depth + 1) for v in value) + "]"
     if isinstance(value, dict):
         items = []
-        for key in sorted(value):
+        for key in sorted(value, key=lambda item: _utf16_sort_key(str(item))):
             nested = value[key]
             if nested is None:
                 continue
@@ -225,6 +232,18 @@ def _require_hash(value: Any, field: str) -> str:
     return value
 
 
+def _parse_manifest_time(value: Any, field: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"Agent Manifest {field} is missing")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ConfigError(f"Agent Manifest {field} must be an RFC3339 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ConfigError(f"Agent Manifest {field} must include a timezone")
+    return parsed.astimezone(UTC)
+
+
 def _manifest_binding_fields(manifest: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
     manifest_id = manifest.get("manifest_id")
     agent_id = manifest.get("agent_id")
@@ -257,7 +276,9 @@ def verify_agent_manifest_binding(
     authenticated_subject: str | None,
     policy_bundle_hash: str,
     tool_catalog_hash: str,
+    authenticated_subject_source: str | None = None,
     allow_dev_subject_from_manifest: bool = False,
+    now: datetime | None = None,
 ) -> AgentManifestBinding:
     """Verify manifest signature and bind it to runtime session inputs."""
     verify_agent_manifest_signature(manifest, trusted_keys)
@@ -265,9 +286,26 @@ def verify_agent_manifest_binding(
         _manifest_binding_fields(manifest)
     )
 
+    _parse_manifest_time(manifest.get("issued_at"), "issued_at")
+    expires_at = _parse_manifest_time(manifest.get("expires_at"), "expires_at")
+    current_time = now or datetime.now(UTC)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=UTC)
+    if expires_at <= current_time.astimezone(UTC):
+        raise ConfigError("Agent Manifest has expired")
+
     subject = authenticated_subject
+    subject_source = authenticated_subject_source
     if subject is None and allow_dev_subject_from_manifest:
         subject = agent_id
+        subject_source = "manifest-dev"
+    if subject_source is None:
+        subject_source = "config"
+    if subject_source not in _SUBJECT_SOURCES:
+        raise ConfigError("Agent Manifest subject_source is not supported")
+    if subject_source == "manifest-dev" and not allow_dev_subject_from_manifest:
+        raise ConfigError("Agent Manifest manifest-dev subject_source requires dev mode")
+    subject_source = cast(SubjectSource, subject_source)
     if not isinstance(subject, str) or not subject.startswith("spiffe://"):
         raise ConfigError("Authenticated agent subject must be a SPIFFE URI")
     if subject != agent_id:
@@ -283,6 +321,7 @@ def verify_agent_manifest_binding(
         manifest_id=manifest_id,
         agent_id=agent_id,
         authenticated_subject=subject,
+        subject_source=subject_source,
         issuer=issuer,
         issuer_key_id=key_id,
         policy_bundle_hash=manifest_policy,

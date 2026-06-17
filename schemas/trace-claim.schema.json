@@ -177,6 +177,7 @@
             "manifest_id",
             "agent_id",
             "authenticated_subject",
+            "subject_source",
             "issuer",
             "issuer_key_id",
             "policy_bundle_hash",
@@ -192,6 +193,11 @@
             "authenticated_subject": {
               "type": "string",
               "pattern": "^spiffe://"
+            },
+            "subject_source": {
+              "type": "string",
+              "enum": ["config", "svid", "manifest-dev"],
+              "description": "Source of the authenticated_subject assertion. config means configured runtime input, svid means transport/mTLS SVID, and manifest-dev means dev-mode fallback from manifest.agent_id."
             },
             "issuer": {
               "type": "string",
