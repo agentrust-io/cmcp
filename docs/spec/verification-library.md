@@ -61,7 +61,8 @@ def verify_trace_claim(
     4. Check tool_catalog.hash against approved.tool_catalog_hash
     5. If agent_manifest and trusted_agent_manifest_keys are provided, verify
        the Agent Manifest issuer signature and cross-check gateway.agent_identity:
-       manifest_id, agent_id/authenticated_subject, policy hash, and catalog hash.
+       manifest_id, agent_id/authenticated_subject, subject_source, policy hash,
+       catalog hash, and manifest expiry.
     6. Check attestation freshness (timestamp within max_attestation_age_seconds)
     7. Verify audit chain continuity (audit_chain_root, audit_chain_tip)
 

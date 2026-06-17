@@ -146,6 +146,7 @@ def _agent_identity(*, agent_id: str = AGENT_ID) -> AgentIdentityInfo:
         manifest_id=MANIFEST_ID,
         agent_id=agent_id,
         authenticated_subject=AGENT_ID,
+        subject_source="config",
         issuer="spiffe://factory.example/signing-authority/development",
         issuer_key_id="",
         policy_bundle_hash=POLICY_HASH,

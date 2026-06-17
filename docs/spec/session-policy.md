@@ -152,20 +152,24 @@ When `agent_manifest` is configured, session creation is bound to a signed Agent
 - `artifacts.policy_bundle.hash`
 - `artifacts.tool_manifest.catalog_hash`
 
-The authenticated agent subject for the session MUST be a SPIFFE URI and MUST equal `manifest.agent_id`. In the current HTTP runtime this subject is supplied by `agent_manifest.authenticated_subject`; production deployments SHOULD wire this value from the inbound agent SVID/mTLS identity. If the subject, manifest signature, policy hash, or catalog hash does not match, the runtime fails closed before serving the session.
+The authenticated agent subject for the session MUST be a SPIFFE URI and MUST equal `manifest.agent_id`. In the current HTTP runtime this subject is supplied by `agent_manifest.authenticated_subject`; production deployments SHOULD wire this value from the inbound agent SVID/mTLS identity. The runtime records the provenance of this assertion in `gateway.agent_identity.subject_source`: `config` for configured input, `svid` for transport/mTLS SVID, or `manifest-dev` for the development-mode fallback that uses `manifest.agent_id`. If the subject, manifest signature, manifest expiry, policy hash, or catalog hash does not match, the runtime fails closed before serving the session.
 
-This binding answers "who acted" for the session. It does not replace `trace.subject`, which continues to identify the cMCP gateway session (`spiffe://cmcp.gateway/session/<uuid>`). Instead, the TRACE Trust Record carries `gateway.agent_identity` alongside the session subject:
+The Agent Manifest signing pre-image uses the manifest `signed_fields` subset. For HITL workflows, `hitl_record.approvals` is normalized to an empty array before signing so approvals can be attached after the manifest is issued without invalidating the manifest signature.
+
+This binding answers "who acted" for the session. It does not replace `trace.subject`, which identifies the cMCP gateway's TEE-backed issuing identity. The session identifier remains in `gateway.session_id`. Instead, the TRACE Trust Record carries `gateway.agent_identity` alongside the gateway subject:
 
 ```json
 {
   "trace": {
-    "subject": "spiffe://cmcp.gateway/session/<session-id>"
+    "subject": "spiffe://cmcp.gateway/tee/<gateway-id>"
   },
   "gateway": {
+    "session_id": "<session-id>",
     "agent_identity": {
       "manifest_id": "<manifest UUID>",
       "agent_id": "spiffe://factory.example/agent/material-movement/dev",
       "authenticated_subject": "spiffe://factory.example/agent/material-movement/dev",
+      "subject_source": "config",
       "issuer": "spiffe://factory.example/signing-authority/development",
       "issuer_key_id": "<sha256 of issuer public key>",
       "policy_bundle_hash": "sha256:<manifest policy hash>",
@@ -185,4 +189,4 @@ The following fields from session state are included in the TRACE attestation re
 |-------|------|-------------|
 | `session_max_sensitivity` | string | The highest `max_sensitivity` value reached during the session. |
 | `session_reset_count` | integer | Number of times `POST /session/reset` was called during the session lifetime. Normally `0`; a non-zero value warrants review. |
-| `agent_identity` | object | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, issuer key ID, policy hash, and catalog hash. Present only when `agent_manifest` is configured and verified. |
+| `agent_identity` | object | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, subject source, issuer key ID, policy hash, and catalog hash. Present only when `agent_manifest` is configured and verified. |

@@ -252,7 +252,7 @@ The response is a signed `GatewayClaim`. It looks like:
   "trace": {
     "eat_profile": "tag:agentrust.io,2026:trace-v0.1",
     "iat": 1749081600,
-    "subject": "spiffe://cmcp.gateway/session/demo-session-001",
+    "subject": "spiffe://cmcp.gateway/tee/<gateway-id>",
     "runtime": {
       "platform": "tpm2",
       "measurement": "sha256:0000000000000000000000000000000000000000000000000000000000000000",

@@ -12,6 +12,8 @@ from typing import Annotated, Any, Literal
 from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo, ToolTranscript
 from pydantic import BaseModel, ConfigDict, Field
 
+AgentSubjectSource = Literal["config", "svid", "manifest-dev"]
+
 try:
     _RUNTIME_VERSION: str = importlib.metadata.version("cmcp-runtime")  # was cmcp-gateway
 except importlib.metadata.PackageNotFoundError:
@@ -83,6 +85,7 @@ class AgentIdentityInfo:
     manifest_id: str
     agent_id: str
     authenticated_subject: str
+    subject_source: AgentSubjectSource
     issuer: str
     issuer_key_id: str
     policy_bundle_hash: str
@@ -134,6 +137,7 @@ class AgentIdentityOut(BaseModel):
     manifest_id: str
     agent_id: Annotated[str, Field(pattern=r"^spiffe://")]
     authenticated_subject: Annotated[str, Field(pattern=r"^spiffe://")]
+    subject_source: AgentSubjectSource
     issuer: Annotated[str, Field(pattern=r"^spiffe://")]
     issuer_key_id: str
     policy_bundle_hash: str
@@ -279,6 +283,10 @@ def _build_cnf(signing_key: Any) -> ConfirmationKey:
     return ConfirmationKey(jwk=JWK(kty="OKP", crv="Ed25519", x=x, kid=kid))
 
 
+def _build_subject(signing_key: Any) -> str:
+    return f"spiffe://cmcp.gateway/tee/{signing_key.public_key_hex[:16]}"
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
@@ -316,7 +324,7 @@ def generate_trace_claim(
     trace = GatewayTrace(
         eat_profile="tag:agentrust.io,2026:trace-v0.1",
         iat=int(datetime.now(tz=UTC).timestamp()),
-        subject=f"spiffe://cmcp.gateway/session/{session_id}",
+        subject=_build_subject(signing_key),
         runtime=_build_runtime(attestation_report),
         policy=_build_policy(policy_bundle),
         data_class=call_summary.session_max_sensitivity,
@@ -364,6 +372,7 @@ def generate_trace_claim(
                 manifest_id=agent_identity.manifest_id,
                 agent_id=agent_identity.agent_id,
                 authenticated_subject=agent_identity.authenticated_subject,
+                subject_source=agent_identity.subject_source,
                 issuer=agent_identity.issuer,
                 issuer_key_id=agent_identity.issuer_key_id,
                 policy_bundle_hash=agent_identity.policy_bundle_hash,

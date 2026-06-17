@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from cmcp_runtime.agent_manifest import (
     SIGNED_FIELDS,
+    _serialize_json,
     load_agent_manifest_trust_anchor,
     signing_pre_image,
     verify_agent_manifest_binding,
@@ -41,6 +43,7 @@ def _signed_manifest(
     agent_id: str = AGENT_ID,
     policy_hash: str = POLICY_HASH,
     catalog_hash: str = CATALOG_HASH,
+    expires_at: str = "2099-09-10T00:00:00Z",
 ) -> dict:
     manifest = {
         "@context": "https://agentmanifest.agentrust.io/v0.1/context.json",
@@ -49,7 +52,7 @@ def _signed_manifest(
         "agent_id": agent_id,
         "version": "0.1",
         "issued_at": "2026-06-12T00:00:00Z",
-        "expires_at": "2099-09-10T00:00:00Z",
+        "expires_at": expires_at,
         "issuer": "spiffe://factory.example/signing-authority/development",
         "crypto_profile": "standard",
         "artifacts": {
@@ -91,7 +94,23 @@ def test_valid_manifest_binds_subject_policy_and_catalog() -> None:
     )
     assert binding.manifest_id == manifest["manifest_id"]
     assert binding.agent_id == AGENT_ID
+    assert binding.subject_source == "config"
     assert binding.issuer_key_id == key_id
+
+
+def test_dev_subject_fallback_is_marked_as_manifest_dev() -> None:
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    binding = verify_agent_manifest_binding(
+        manifest,
+        {key_id: pub},
+        authenticated_subject=None,
+        policy_bundle_hash=POLICY_HASH,
+        tool_catalog_hash=CATALOG_HASH,
+        allow_dev_subject_from_manifest=True,
+    )
+    assert binding.authenticated_subject == AGENT_ID
+    assert binding.subject_source == "manifest-dev"
 
 
 def test_subject_mismatch_fails_closed() -> None:
@@ -147,6 +166,20 @@ def test_catalog_hash_drift_fails_closed() -> None:
         )
 
 
+def test_expired_manifest_fails_closed() -> None:
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id, expires_at="2026-06-16T00:00:00Z")
+    with pytest.raises(ConfigError, match="expired"):
+        verify_agent_manifest_binding(
+            manifest,
+            {key_id: pub},
+            authenticated_subject=AGENT_ID,
+            policy_bundle_hash=POLICY_HASH,
+            tool_catalog_hash=CATALOG_HASH,
+            now=datetime(2026, 6, 17, tzinfo=UTC),
+        )
+
+
 def test_trust_anchor_loader_accepts_single_public_key(tmp_path: Path) -> None:
     _, pub, key_id = _keypair()
     path = tmp_path / "manifest-public-key.json"
@@ -158,3 +191,37 @@ def test_trust_anchor_loader_accepts_single_public_key(tmp_path: Path) -> None:
         })
     )
     assert load_agent_manifest_trust_anchor(str(path)) == {key_id: pub}
+
+
+def test_rfc8785_sample_canonicalization() -> None:
+    value = {
+        "numbers": [333333333.3333333, 1e30, 4.5, 0.002, 1e-27],
+        "string": "€$\u000f\nA'B\"\\\\\"/",
+        "literals": [None, True, False],
+    }
+    assert _serialize_json(value) == (
+        '{"literals":[null,true,false],'
+        '"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],'
+        '"string":"€$\\u000f\\nA\'B\\"\\\\\\\\\\"/"}'
+    )
+
+
+def test_rfc8785_utf16_property_sorting_vector() -> None:
+    value = {
+        "\u20ac": "Euro Sign",
+        "\r": "Carriage Return",
+        "\ufb33": "Hebrew Letter Dalet With Dagesh",
+        "1": "One",
+        "\U0001f600": "Emoji: Grinning Face",
+        "\u0080": "Control",
+        "\u00f6": "Latin Small Letter O With Diaeresis",
+    }
+    assert _serialize_json(value) == (
+        '{"\\r":"Carriage Return",'
+        '"1":"One",'
+        '"\u0080":"Control",'
+        '"ö":"Latin Small Letter O With Diaeresis",'
+        '"€":"Euro Sign",'
+        '"😀":"Emoji: Grinning Face",'
+        '"דּ":"Hebrew Letter Dalet With Dagesh"}'
+    )

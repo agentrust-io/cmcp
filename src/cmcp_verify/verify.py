@@ -488,13 +488,18 @@ def verify_trace_claim(
                     agent_manifest,
                     trusted_agent_manifest_keys,
                     authenticated_subject=agent_identity.get("authenticated_subject"),
+                    authenticated_subject_source=agent_identity.get("subject_source"),
                     policy_bundle_hash=claimed_policy,
                     tool_catalog_hash=claimed_catalog,
+                    allow_dev_subject_from_manifest=(
+                        agent_identity.get("subject_source") == "manifest-dev"
+                    ),
                 )
                 expected_identity = {
                     "manifest_id": binding.manifest_id,
                     "agent_id": binding.agent_id,
                     "authenticated_subject": binding.authenticated_subject,
+                    "subject_source": binding.subject_source,
                     "issuer": binding.issuer,
                     "issuer_key_id": binding.issuer_key_id,
                     "policy_bundle_hash": binding.policy_bundle_hash,

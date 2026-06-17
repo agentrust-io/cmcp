@@ -63,13 +63,6 @@ class SessionManager:
         """
         session_id = str(uuid4())
         state = SessionState(session_id=session_id)
-        binding = getattr(self._ctx, "agent_manifest", None)
-        if not isinstance(binding, AgentManifestBinding):
-            binding = None
-        if binding is not None:
-            state.agent_manifest_id = binding.manifest_id
-            state.agent_id = binding.agent_id
-            state.authenticated_subject = binding.authenticated_subject
         chain = AuditChain(session_id=session_id, store=self._ctx.audit_store)
 
         # AUDIT-002: derive a per-session nonce that encodes the chain root so
@@ -236,6 +229,7 @@ class SessionManager:
                 manifest_id=binding.manifest_id,
                 agent_id=binding.agent_id,
                 authenticated_subject=binding.authenticated_subject,
+                subject_source=binding.subject_source,
                 issuer=binding.issuer,
                 issuer_key_id=binding.issuer_key_id,
                 policy_bundle_hash=binding.policy_bundle_hash,

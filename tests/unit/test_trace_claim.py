@@ -181,6 +181,12 @@ def test_generate_claim_session_id():
     assert claim.gateway.session_id == "sess-001"
 
 
+def test_generate_claim_subject_is_gateway_identity():
+    claim = _make_claim()
+    assert claim.trace.subject.startswith("spiffe://cmcp.gateway/tee/")
+    assert claim.gateway.session_id == "sess-001"
+
+
 def test_generate_claim_cnf_jwk():
     key = SigningKey()
     claim = _make_claim(signing_key=key)
@@ -302,6 +308,7 @@ def test_generate_claim_agent_identity_binding():
             manifest_id="0197739a-8c00-7000-8000-000000000001",
             agent_id="spiffe://factory.example/agent/material-movement/dev",
             authenticated_subject="spiffe://factory.example/agent/material-movement/dev",
+            subject_source="config",
             issuer="spiffe://factory.example/signing-authority/development",
             issuer_key_id="a" * 64,
             policy_bundle_hash="sha256:" + "0" * 64,
@@ -314,6 +321,7 @@ def test_generate_claim_agent_identity_binding():
         claim.gateway.agent_identity.agent_id
         == "spiffe://factory.example/agent/material-movement/dev"
     )
+    assert claim.gateway.agent_identity.subject_source == "config"
 
 
 # ── RuntimeClaim Pydantic validation ─────────────────────────────────────────
