@@ -73,6 +73,41 @@ def verify_trace_claim(
 public key bytes keyed by issuer `key_id`; the verifier base64url-encodes those
 keys when calling the Agent Manifest SDK.
 
+### Audit Bundle Verification and External Execution Evidence
+
+```python
+@dataclass
+class AuditBundleResult:
+    verified: bool
+    entry_count: int
+    failures: list[str]
+
+def verify_audit_bundle(
+    bundle_json: dict,
+    claim_json: Optional[dict] = None,
+    *,
+    external_evidence_keys: Optional[dict[str, bytes]] = None,
+) -> AuditBundleResult:
+    """
+    Verify an exported audit bundle. When external_evidence_keys is supplied,
+    each key is issuer_key_id -> raw 32-byte Ed25519 public key. issuer_key_id
+    is lowercase hex SHA-256(public_key_bytes).
+    """
+    ...
+```
+
+`external_execution_evidence.evidence_hash` is the digest of the detached evidence payload attested by the issuer, not the digest of the receipt envelope. For JSON evidence payloads, the hash pre-image is the UTF-8 bytes of the RFC 8785/JCS canonical JSON representation. For non-JSON evidence payloads, the pre-image is the exact byte string identified by the issuer's evidence format. The field value is `sha256:<hex>` or `sha384:<hex>`.
+
+The verifier computes the receipt signing input as canonical JSON over the receipt object excluding `signature`, with sorted keys and compact separators. It then checks:
+
+1. `linked_call_id` equals the audit entry `call_id`.
+2. `issuer_key_id` is lowercase hex SHA-256 of the trusted issuer public key.
+3. `evidence_hash` has a supported hash prefix and hex digest.
+4. `evidence_type` is one of the documented receipt types.
+5. The Ed25519 signature verifies over the canonical receipt signing input.
+
+If any external evidence check fails, the audit bundle result is `verified=False` and the failure string includes `EXTERNAL_EVIDENCE_VERIFICATION_FAILED`.
+
 ## Per-Provider Verification Steps
 
 ### TPM Verification
@@ -130,6 +165,7 @@ VerificationError enum:
 - ATTESTATION_STALE: attestation_generated_at is older than max_attestation_age_seconds
 - CHAIN_BROKEN: audit_chain_root -> audit_chain_tip traversal fails (missing entries or hash mismatch)
 - CLAIM_MALFORMED: claim_json fails JSON Schema validation against the TRACE Claim schema
+- EXTERNAL_EVIDENCE_VERIFICATION_FAILED: an audit bundle entry contains external_execution_evidence whose call binding, key id, evidence hash, evidence type, or issuer signature cannot be verified
 
 ## Phase 1 support matrix
 

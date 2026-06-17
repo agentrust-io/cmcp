@@ -66,7 +66,7 @@ class AuditEntry:
     # receipt of a physical outcome. Distinct from response_payload_hash:
     # response_payload_hash is what the gateway forwarded, this is what an
     # independent authority attested. Serialized uniformly (null when absent),
-    # so entries without a receipt hash exactly as before.
+    # so receipt-less entries remain deterministic and schema-stable.
     external_execution_evidence: dict[str, str] | None = None
     entry_hash: str = field(default="")  # computed after construction
 

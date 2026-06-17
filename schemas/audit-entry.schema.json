@@ -127,7 +127,8 @@
         },
         "issuer_key_id": {
           "type": "string",
-          "description": "Key identifier for the issuer public key used to verify the signature."
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase hex SHA-256 digest of the raw Ed25519 issuer public key used to verify the signature."
         },
         "signature": {
           "type": "string",
@@ -135,10 +136,17 @@
         },
         "evidence_hash": {
           "type": "string",
+          "pattern": "^sha(256|384):[0-9a-f]+",
           "description": "sha256:<hex> of the attested execution evidence (e.g. the controller decision payload)."
         },
         "evidence_type": {
           "type": "string",
+          "enum": [
+            "controller-execution-receipt/v1",
+            "tee-signed-receipt",
+            "controller-jwt",
+            "opaque-receipt"
+          ],
           "description": "Receipt type and version, e.g. controller-execution-receipt/v1."
         },
         "linked_call_id": {
