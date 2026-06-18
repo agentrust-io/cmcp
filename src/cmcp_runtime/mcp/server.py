@@ -206,15 +206,20 @@ class MCPServer:
         """Handle MCP JSON-RPC 2.0 calls."""
         # DOS-001: reject oversized requests before parsing to prevent OOM
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self._max_request_bytes:
-            return JSONResponse(
-                {
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Request body too large"},
-                    "id": None,
-                },
-                status_code=413,
-            )
+        if content_length:
+            try:
+                cl = int(content_length)
+            except ValueError:
+                return JSONResponse({"error": "invalid Content-Length"}, status_code=400)
+            if cl > self._max_request_bytes:
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32600, "message": "Request body too large"},
+                        "id": None,
+                    },
+                    status_code=413,
+                )
         try:
             body = await request.body()
             if len(body) > self._max_request_bytes:

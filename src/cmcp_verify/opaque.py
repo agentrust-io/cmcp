@@ -71,6 +71,12 @@ def verify_opaque_measurement(
         result.details["hint"] = "raw_evidence not provided; cannot verify with Opaque"
         return result
 
+    if not endpoint or not endpoint.startswith("https://"):
+        raise ValueError(
+            f"Opaque attestation endpoint must use https://. Got: {endpoint!r}. "
+            "Set CMCP_OPAQUE_ATTESTATION_ENDPOINT to a valid https:// URL."
+        )
+
     # POST raw_evidence (base64-encoded) to the Opaque attestation endpoint
     payload = json.dumps({
         "measurement": measurement,

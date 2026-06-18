@@ -184,7 +184,7 @@ def test_redact_auth_headers_no_auth_unchanged():
 
 def test_opaque_api_key_not_logged_on_failure(monkeypatch, caplog):
     """HW-008: OPAQUE_API_KEY value must not appear in log output on failure."""
-    monkeypatch.setenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", "https://attest.opaque.co/v1/verify")
+    monkeypatch.setenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", "https://attest.example.com/v1/verify")
     monkeypatch.setenv("OPAQUE_API_KEY", "sk-supersecret-key-do-not-log")
     import cmcp_verify.opaque as opaque_mod
     importlib.reload(opaque_mod)
@@ -211,7 +211,7 @@ def test_opaque_verify_sends_api_key_as_bearer(monkeypatch):
         opaque_mod.verify_opaque_measurement(
             "sha384:" + "a" * 96,
             b"\x00" * 64,
-            opaque_endpoint="https://attest.opaque.co/v1/verify",
+            opaque_endpoint="https://attest.example.com/v1/verify",
         )
     auth = captured.get("headers", {}).get("authorization")
     assert auth == "Bearer test-api-key-12345"
