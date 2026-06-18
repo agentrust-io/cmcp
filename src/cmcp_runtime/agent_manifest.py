@@ -5,52 +5,21 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+import agent_manifest as agent_manifest_sdk
 
 from cmcp_runtime.errors import ConfigError
 
-SIGNED_FIELDS: tuple[str, ...] = (
-    "@context",
-    "@type",
-    "manifest_id",
-    "previous_manifest_id",
-    "agent_id",
-    "version",
-    "min_verifier_version",
-    "issued_at",
-    "expires_at",
-    "issuer",
-    "crypto_profile",
-    "artifacts",
-    "delegation_chain",
-    "hitl_record",
-    "prior_transparency_log_entry",
-    "log_retention",
-    "data_scope",
-    "operational_lifecycle",
-)
+SIGNED_FIELDS: tuple[str, ...] = tuple(agent_manifest_sdk.SIGNED_FIELDS)
 
 _B64URL_RE = re.compile(r"^[A-Za-z0-9\-_]*$")
 _HASH_RE = re.compile(r"^(sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96})$")
 _SUBJECT_SOURCES: frozenset[str] = frozenset({"config", "svid", "manifest-dev"})
-_SMALL_ORDER_POINTS: frozenset[bytes] = frozenset({
-    bytes.fromhex("0000000000000000000000000000000000000000000000000000000000000000"),
-    bytes.fromhex("0100000000000000000000000000000000000000000000000000000000000000"),
-    bytes.fromhex("26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05"),
-    bytes.fromhex("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a"),
-    bytes.fromhex("0000000000000000000000000000000000000000000000000000000000000080"),
-    bytes.fromhex("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-    bytes.fromhex("26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85"),
-    bytes.fromhex("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa"),
-})
 
 SubjectSource = Literal["config", "svid", "manifest-dev"]
 
@@ -76,86 +45,17 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + ("=" * padding if padding != 4 else ""))
 
 
+def _b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+
 def _key_id(public_key: bytes) -> str:
     return hashlib.sha256(public_key).hexdigest()
 
 
-def _quote(value: str) -> str:
-    parts = ['"']
-    for ch in value:
-        cp = ord(ch)
-        if ch == '"':
-            parts.append('\\"')
-        elif ch == "\\":
-            parts.append("\\\\")
-        elif ch == "\b":
-            parts.append("\\b")
-        elif ch == "\f":
-            parts.append("\\f")
-        elif ch == "\n":
-            parts.append("\\n")
-        elif ch == "\r":
-            parts.append("\\r")
-        elif ch == "\t":
-            parts.append("\\t")
-        elif cp <= 0x001F:
-            parts.append(f"\\u{cp:04x}")
-        else:
-            parts.append(ch)
-    parts.append('"')
-    return "".join(parts)
-
-
-def _utf16_sort_key(value: str) -> bytes:
-    return value.encode("utf-16-be")
-
-
-def _serialize_json(value: Any, *, depth: int = 0) -> str:
-    if depth > 64:
-        raise ConfigError("Agent Manifest JSON nesting is too deep")
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        if math.isnan(value) or math.isinf(value):
-            raise ConfigError("Agent Manifest JSON contains non-finite number")
-        if value == math.floor(value) and abs(value) < 1e15:
-            return str(int(value))
-        text = repr(value)
-        if "e" in text and "e+" not in text and "e-" not in text:
-            text = text.replace("e", "e+")
-        return text
-    if isinstance(value, str):
-        return _quote(value)
-    if isinstance(value, list):
-        return "[" + ",".join(_serialize_json(v, depth=depth + 1) for v in value) + "]"
-    if isinstance(value, dict):
-        items = []
-        for key in sorted(value, key=lambda item: _utf16_sort_key(str(item))):
-            nested = value[key]
-            if nested is None:
-                continue
-            items.append(f"{_quote(str(key))}:{_serialize_json(nested, depth=depth + 1)}")
-        return "{" + ",".join(items) + "}"
-    raise ConfigError(f"Agent Manifest JSON contains unsupported value {type(value).__name__}")
-
-
-def _canonicalize(value: dict[str, Any]) -> bytes:
-    return _serialize_json(value).encode("utf-8")
-
-
 def signing_pre_image(manifest: dict[str, Any]) -> bytes:
-    """Return the Agent Manifest RFC 8785 signing pre-image."""
-    subset = {key: manifest[key] for key in SIGNED_FIELDS if key in manifest}
-    hitl_record = subset.get("hitl_record")
-    if isinstance(hitl_record, dict):
-        normalized = dict(hitl_record)
-        normalized["approvals"] = []
-        subset["hitl_record"] = normalized
-    return _canonicalize(subset)
+    """Return the Agent Manifest SDK signing pre-image."""
+    return agent_manifest_sdk.signing_pre_image(manifest)
 
 
 def load_agent_manifest(path: str) -> dict[str, Any]:
@@ -196,34 +96,82 @@ def load_agent_manifest_trust_anchor(path: str) -> dict[str, bytes]:
     )
 
 
+def _trusted_keys_for_sdk(trusted_keys: dict[str, bytes]) -> dict[str, str]:
+    sdk_keys: dict[str, str] = {}
+    for key_id, public_key in trusted_keys.items():
+        if len(public_key) != 32:
+            raise ConfigError("Agent Manifest trust anchor contains an invalid Ed25519 key")
+        if _key_id(public_key) != key_id:
+            raise ConfigError("Agent Manifest trust anchor key_id does not match public key")
+        sdk_keys[key_id] = _b64url_encode(public_key)
+    return sdk_keys
+
+
+def _result_value(value: Any) -> str:
+    return str(getattr(value, "value", value))
+
+
+def _raise_for_sdk_result(result: Any, *, require_runtime_artifacts: bool) -> None:
+    if result.result == agent_manifest_sdk.OverallResult.VALID:
+        if result.signature_verified is not True:
+            raise ConfigError("Agent Manifest signature verification failed")
+        if require_runtime_artifacts:
+            fields = result.fields_verified
+            if fields.policy_bundle != agent_manifest_sdk.FieldResult.MATCH:
+                raise ConfigError(
+                    "Agent Manifest policy bundle hash does not match runtime policy"
+                )
+            if fields.tool_manifest != agent_manifest_sdk.FieldResult.MATCH:
+                raise ConfigError(
+                    "Agent Manifest tool catalog hash does not match runtime catalog"
+                )
+        return
+
+    mismatch_fields = {str(detail.field) for detail in result.mismatch_details}
+    if "policy_bundle" in mismatch_fields:
+        raise ConfigError("Agent Manifest policy bundle hash does not match runtime policy")
+    if "tool_manifest" in mismatch_fields:
+        raise ConfigError("Agent Manifest tool catalog hash does not match runtime catalog")
+    if "signature" in mismatch_fields:
+        raise ConfigError("Agent Manifest signature verification failed")
+    if result.result == agent_manifest_sdk.OverallResult.EXPIRED:
+        raise ConfigError("Agent Manifest has expired")
+    if result.result == agent_manifest_sdk.OverallResult.SIGNATURE_MISSING:
+        raise ConfigError("Agent Manifest signature block is missing")
+    if result.result == agent_manifest_sdk.OverallResult.UNVERIFIABLE:
+        raise ConfigError("Agent Manifest signature verification failed")
+    if result.result == agent_manifest_sdk.OverallResult.INCOMPATIBLE_VERSION:
+        raise ConfigError("Agent Manifest version is not supported by the SDK verifier")
+    if result.result == agent_manifest_sdk.OverallResult.INCOMPLETE:
+        raise ConfigError("Agent Manifest SDK verification is incomplete")
+    raise ConfigError(f"Agent Manifest SDK verification failed: {_result_value(result.result)}")
+
+
+def _verify_with_sdk(
+    manifest: dict[str, Any],
+    trusted_keys: dict[str, bytes],
+    *,
+    policy_bundle_hash: str | None = None,
+    tool_catalog_hash: str | None = None,
+    require_runtime_artifacts: bool = False,
+) -> None:
+    result = agent_manifest_sdk.verify_manifest(
+        manifest,
+        agent_manifest_sdk.VerificationContext(
+            policy_bundle_hash=policy_bundle_hash,
+            tool_catalog_hash=tool_catalog_hash,
+            trusted_keys=_trusted_keys_for_sdk(trusted_keys),
+        ),
+        agent_manifest_sdk.RevocationStore(),
+    )
+    _raise_for_sdk_result(result, require_runtime_artifacts=require_runtime_artifacts)
+
+
 def verify_agent_manifest_signature(
     manifest: dict[str, Any],
     trusted_keys: dict[str, bytes],
 ) -> None:
-    sig = manifest.get("signature")
-    if not isinstance(sig, dict):
-        raise ConfigError("Agent Manifest signature block is missing")
-    if sig.get("algorithm") != "Ed25519":
-        raise ConfigError("Agent Manifest signature algorithm must be Ed25519")
-
-    key_id = str(sig.get("key_id") or "")
-    public_key = trusted_keys.get(key_id)
-    if public_key is None:
-        raise ConfigError(f"Agent Manifest issuer key_id {key_id!r} is not trusted")
-    if len(public_key) != 32 or public_key in _SMALL_ORDER_POINTS:
-        raise ConfigError("Agent Manifest trust anchor contains an invalid Ed25519 key")
-    if _key_id(public_key) != key_id:
-        raise ConfigError("Agent Manifest trust anchor key_id does not match public key")
-
-    signature = _b64url_decode(str(sig.get("signature_value") or ""))
-    if len(signature) != 64:
-        raise ConfigError("Agent Manifest Ed25519 signature must be 64 bytes")
-    try:
-        Ed25519PublicKey.from_public_bytes(public_key).verify(
-            signature, signing_pre_image(manifest)
-        )
-    except InvalidSignature as exc:
-        raise ConfigError("Agent Manifest signature verification failed") from exc
+    _verify_with_sdk(manifest, trusted_keys)
 
 
 def _require_hash(value: Any, field: str) -> str:
@@ -265,7 +213,8 @@ def _manifest_binding_fields(manifest: dict[str, Any]) -> tuple[str, str, str, s
     catalog_hash = _require_hash(
         tools.get("catalog_hash"), "artifacts.tool_manifest.catalog_hash"
     )
-    key_id = str((manifest.get("signature") or {}).get("key_id") or "")
+    signature = manifest.get("signature")
+    key_id = str(signature.get("key_id") or "") if isinstance(signature, dict) else ""
     return manifest_id, agent_id, issuer, key_id, policy_hash, catalog_hash
 
 
@@ -281,7 +230,6 @@ def verify_agent_manifest_binding(
     now: datetime | None = None,
 ) -> AgentManifestBinding:
     """Verify manifest signature and bind it to runtime session inputs."""
-    verify_agent_manifest_signature(manifest, trusted_keys)
     manifest_id, agent_id, issuer, key_id, manifest_policy, manifest_catalog = (
         _manifest_binding_fields(manifest)
     )
@@ -293,6 +241,13 @@ def verify_agent_manifest_binding(
         current_time = current_time.replace(tzinfo=UTC)
     if expires_at <= current_time.astimezone(UTC):
         raise ConfigError("Agent Manifest has expired")
+    _verify_with_sdk(
+        manifest,
+        trusted_keys,
+        policy_bundle_hash=policy_bundle_hash,
+        tool_catalog_hash=tool_catalog_hash,
+        require_runtime_artifacts=True,
+    )
 
     subject = authenticated_subject
     subject_source = authenticated_subject_source
@@ -312,10 +267,6 @@ def verify_agent_manifest_binding(
         raise ConfigError(
             "Agent Manifest agent_id does not match authenticated session subject"
         )
-    if manifest_policy != policy_bundle_hash:
-        raise ConfigError("Agent Manifest policy bundle hash does not match runtime policy")
-    if manifest_catalog != tool_catalog_hash:
-        raise ConfigError("Agent Manifest tool catalog hash does not match runtime catalog")
 
     return AgentManifestBinding(
         manifest_id=manifest_id,

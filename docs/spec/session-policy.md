@@ -145,7 +145,7 @@ This means a long-running agent that handles high-sensitivity data early in its 
 
 ## Agent Manifest Identity Binding
 
-When `agent_manifest` is configured, session creation is bound to a signed Agent Manifest. The runtime loads the manifest and issuer trust anchor, verifies the Ed25519 signature over the Agent Manifest `signed_fields` pre-image, and extracts:
+When `agent_manifest` is configured, session creation is bound to a signed Agent Manifest. The runtime loads the manifest and issuer trust anchor, delegates Agent Manifest signature and artifact verification to the `agent-manifest` SDK `verify_manifest()` API, and extracts:
 
 - `manifest_id`
 - `agent_id`

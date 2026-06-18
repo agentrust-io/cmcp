@@ -60,7 +60,8 @@ def verify_trace_claim(
     3. Check policy_bundle.hash against approved.policy_bundle_hash
     4. Check tool_catalog.hash against approved.tool_catalog_hash
     5. If agent_manifest and trusted_agent_manifest_keys are provided, verify
-       the Agent Manifest issuer signature and cross-check gateway.agent_identity:
+       the Agent Manifest issuer signature with agent-manifest SDK
+       verify_manifest() and cross-check gateway.agent_identity:
        manifest_id, agent_id/authenticated_subject, subject_source, policy hash,
        catalog hash, and manifest expiry.
     6. Check attestation freshness (timestamp within max_attestation_age_seconds)
@@ -70,6 +71,10 @@ def verify_trace_claim(
     """
     ...
 ```
+
+`trusted_agent_manifest_keys` keeps cMCP's runtime-facing shape as raw Ed25519
+public key bytes keyed by issuer `key_id`; the verifier base64url-encodes those
+keys when calling the Agent Manifest SDK.
 
 ## Per-Provider Verification Steps
 
