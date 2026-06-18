@@ -16,3 +16,7 @@ htmlcov/
 .coverage.*
 coverage.xml
 *.cover
+
+# Runtime artifacts
+*.db
+audit.db

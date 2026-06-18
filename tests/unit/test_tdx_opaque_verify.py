@@ -102,7 +102,7 @@ def test_opaque_no_endpoint_configured(monkeypatch):
 
 
 def test_opaque_no_raw_evidence_fails_closed(monkeypatch):
-    monkeypatch.setenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", "https://attest.opaque.co/v1/verify")
+    monkeypatch.setenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", "https://attest.example.com/v1/verify")
     result = verify_opaque_measurement("sha384:" + "a" * 96, None)
     assert result.verified is False
     assert result.failure_reason == "no_raw_evidence"
@@ -121,7 +121,7 @@ def test_opaque_endpoint_returns_verified(monkeypatch):
         result = verify_opaque_measurement(
             "sha384:" + "a" * 96,
             b"\x00" * 64,
-            opaque_endpoint="https://attest.opaque.co/v1/verify",
+            opaque_endpoint="https://attest.example.com/v1/verify",
         )
 
     assert result.verified
@@ -140,7 +140,7 @@ def test_opaque_endpoint_returns_unverified(monkeypatch):
         result = verify_opaque_measurement(
             "sha384:" + "a" * 96,
             b"\x00" * 64,
-            opaque_endpoint="https://attest.opaque.co/v1/verify",
+            opaque_endpoint="https://attest.example.com/v1/verify",
         )
 
     assert not result.verified
@@ -154,7 +154,7 @@ def test_opaque_network_error(monkeypatch):
         result = verify_opaque_measurement(
             "sha384:" + "a" * 96,
             b"\x00" * 64,
-            opaque_endpoint="https://attest.opaque.co/v1/verify",
+            opaque_endpoint="https://attest.example.com/v1/verify",
         )
 
     assert result.verified

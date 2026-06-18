@@ -36,6 +36,8 @@ if TYPE_CHECKING:
     from cmcp_runtime.session.manager import SessionManager
     from cmcp_runtime.session.state import SessionState
 
+from cmcp_runtime.audit.chain import ExternalExecutionEvidence, _validate_evidence_hash
+
 logger = logging.getLogger(__name__)
 
 # Endpoints exempt from bearer-token auth (Kubernetes liveness / readiness probes)
@@ -197,6 +199,11 @@ class MCPServer:
                     methods=["POST"],
                 ),
                 Route("/catalog/exception", self._catalog_exception, methods=["POST"]),
+                Route(
+                    "/sessions/{session_id}/tool-evidence/{call_id}",
+                    self._attach_tool_evidence,
+                    methods=["POST"],
+                ),
             ],
             middleware=middleware,
             exception_handlers={Exception: _unhandled_error_handler},
@@ -206,15 +213,20 @@ class MCPServer:
         """Handle MCP JSON-RPC 2.0 calls."""
         # DOS-001: reject oversized requests before parsing to prevent OOM
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self._max_request_bytes:
-            return JSONResponse(
-                {
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Request body too large"},
-                    "id": None,
-                },
-                status_code=413,
-            )
+        if content_length:
+            try:
+                cl = int(content_length)
+            except ValueError:
+                return JSONResponse({"error": "invalid Content-Length"}, status_code=400)
+            if cl > self._max_request_bytes:
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32600, "message": "Request body too large"},
+                        "id": None,
+                    },
+                    status_code=413,
+                )
         try:
             body = await request.body()
             if len(body) > self._max_request_bytes:
@@ -686,3 +698,120 @@ class MCPServer:
             "status": "reset",
             "attestation_stale": False,
         })
+
+    async def _attach_tool_evidence(self, request: Request) -> Response:
+        """POST /sessions/{session_id}/tool-evidence/{call_id}
+
+        Attach a signed external execution receipt to an existing tool-call audit
+        entry. The body must match ExternalExecutionEvidence. The signature is
+        stored verbatim; cryptographic verification is the verifier's responsibility
+        (cmcp-verify will check it if a matching public key is configured).
+
+        Returns 200 {"call_id": <call_id>} on success.
+        Returns 404 if the session_id or call_id is not found in the live chain.
+        Returns 422 if required fields are missing or evidence_hash is malformed.
+        """
+        if self._audit_chain is None:
+            return JSONResponse(
+                {"error": "audit chain not available", "error_code": "NOT_CONFIGURED"},
+                status_code=501,
+            )
+
+        session_id: str = request.path_params["session_id"]
+        call_id: str = request.path_params["call_id"]
+
+        # Validate session scope: live session only.
+        if self._session is None or session_id != self._session.session_id:
+            # Also check closed sessions whose chains we still hold.
+            if session_id not in self._closed_chains:
+                return JSONResponse(
+                    {"error": f"session_id={session_id} not found", "error_code": "SESSION_NOT_FOUND"},
+                    status_code=404,
+                )
+            chain = self._closed_chains[session_id]
+        else:
+            chain = self._audit_chain
+
+        try:
+            body = await request.body()
+            data = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JSONResponse(
+                {"error": "invalid JSON body", "error_code": "PARSE_ERROR"},
+                status_code=400,
+            )
+
+        if not isinstance(data, dict):
+            return JSONResponse(
+                {"error": "request body must be a JSON object", "error_code": "PARSE_ERROR"},
+                status_code=400,
+            )
+
+        # Validate required fields.
+        required_fields = ("issuer", "issuer_key_id", "signature", "evidence_hash", "evidence_type", "linked_call_id")
+        missing = [f for f in required_fields if not data.get(f) or not isinstance(data[f], str)]
+        if missing:
+            return JSONResponse(
+                {
+                    "error": f"missing or invalid required fields: {missing}",
+                    "error_code": "MISSING_FIELD",
+                },
+                status_code=422,
+            )
+
+        evidence_hash: str = data["evidence_hash"]
+        if not _validate_evidence_hash(evidence_hash):
+            return JSONResponse(
+                {
+                    "error": "evidence_hash must be formatted as 'sha256:<64 hex chars>'",
+                    "error_code": "INVALID_HASH_FORMAT",
+                },
+                status_code=422,
+            )
+
+        # linked_call_id in the body must match the URL path parameter.
+        if data["linked_call_id"] != call_id:
+            return JSONResponse(
+                {
+                    "error": "linked_call_id in body does not match call_id in URL",
+                    "error_code": "CALL_ID_MISMATCH",
+                },
+                status_code=422,
+            )
+
+        # Find the entry in the chain.
+        target = next(
+            (e for e in chain.entries if e.call_id == call_id and e.entry_type == "tool_call"),
+            None,
+        )
+        if target is None:
+            return JSONResponse(
+                {
+                    "error": f"no tool_call audit entry found for call_id={call_id} in session_id={session_id}",
+                    "error_code": "CALL_NOT_FOUND",
+                },
+                status_code=404,
+            )
+
+        evidence = ExternalExecutionEvidence(
+            issuer=data["issuer"],
+            issuer_key_id=data["issuer_key_id"],
+            signature=data["signature"],
+            evidence_hash=evidence_hash,
+            evidence_type=data["evidence_type"],
+            linked_call_id=call_id,
+        )
+        target.external_execution_evidence = evidence
+
+        # Persist the updated payload if a backing store is available.
+        if chain._store is not None:
+            chain._store.update_evidence(target)
+
+        logger.info(
+            "EXTERNAL_EVIDENCE_ATTACHED: session_id=%s call_id=%s issuer=%s key_id=%s",
+            session_id,
+            call_id,
+            data["issuer"],
+            data["issuer_key_id"],
+        )
+        return JSONResponse({"call_id": call_id}, status_code=200)
