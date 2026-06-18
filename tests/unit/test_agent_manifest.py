@@ -12,9 +12,9 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from cmcp_runtime import agent_manifest as cmcp_agent_manifest
 from cmcp_runtime.agent_manifest import (
     SIGNED_FIELDS,
-    _serialize_json,
     load_agent_manifest_trust_anchor,
     signing_pre_image,
     verify_agent_manifest_binding,
@@ -96,6 +96,50 @@ def test_valid_manifest_binds_subject_policy_and_catalog() -> None:
     assert binding.agent_id == AGENT_ID
     assert binding.subject_source == "config"
     assert binding.issuer_key_id == key_id
+
+
+def test_binding_verification_delegates_to_sdk_with_encoded_keys(monkeypatch) -> None:
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    captured = {}
+
+    def fake_verify_manifest(manifest_arg, context, revocation_store):
+        captured["manifest"] = manifest_arg
+        captured["trusted_keys"] = context.trusted_keys
+        captured["policy_bundle_hash"] = context.policy_bundle_hash
+        captured["tool_catalog_hash"] = context.tool_catalog_hash
+        assert isinstance(revocation_store, cmcp_agent_manifest.agent_manifest_sdk.RevocationStore)
+        return cmcp_agent_manifest.agent_manifest_sdk.VerificationResult(
+            manifest_id=manifest_arg["manifest_id"],
+            result=cmcp_agent_manifest.agent_manifest_sdk.OverallResult.VALID,
+            signature_verified=True,
+            fields_verified=cmcp_agent_manifest.agent_manifest_sdk.FieldsVerified(
+                policy_bundle=cmcp_agent_manifest.agent_manifest_sdk.FieldResult.MATCH,
+                tool_manifest=cmcp_agent_manifest.agent_manifest_sdk.FieldResult.MATCH,
+            ),
+        )
+
+    monkeypatch.setattr(
+        cmcp_agent_manifest.agent_manifest_sdk,
+        "verify_manifest",
+        fake_verify_manifest,
+    )
+
+    binding = verify_agent_manifest_binding(
+        manifest,
+        {key_id: pub},
+        authenticated_subject=AGENT_ID,
+        policy_bundle_hash=POLICY_HASH,
+        tool_catalog_hash=CATALOG_HASH,
+    )
+
+    assert binding.manifest_id == manifest["manifest_id"]
+    assert captured == {
+        "manifest": manifest,
+        "trusted_keys": {key_id: _b64url(pub)},
+        "policy_bundle_hash": POLICY_HASH,
+        "tool_catalog_hash": CATALOG_HASH,
+    }
 
 
 def test_dev_subject_fallback_is_marked_as_manifest_dev() -> None:
@@ -193,35 +237,17 @@ def test_trust_anchor_loader_accepts_single_public_key(tmp_path: Path) -> None:
     assert load_agent_manifest_trust_anchor(str(path)) == {key_id: pub}
 
 
-def test_rfc8785_sample_canonicalization() -> None:
-    value = {
-        "numbers": [333333333.3333333, 1e30, 4.5, 0.002, 1e-27],
-        "string": "€$\u000f\nA'B\"\\\\\"/",
-        "literals": [None, True, False],
-    }
-    assert _serialize_json(value) == (
-        '{"literals":[null,true,false],'
-        '"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],'
-        '"string":"€$\\u000f\\nA\'B\\"\\\\\\\\\\"/"}'
+def test_signing_pre_image_delegates_to_agent_manifest_sdk(monkeypatch) -> None:
+    manifest = {"manifest_id": "0197739a-8c00-7000-8000-000000000001"}
+
+    def fake_signing_pre_image(manifest_arg):
+        assert manifest_arg is manifest
+        return b"sdk-pre-image"
+
+    monkeypatch.setattr(
+        cmcp_agent_manifest.agent_manifest_sdk,
+        "signing_pre_image",
+        fake_signing_pre_image,
     )
 
-
-def test_rfc8785_utf16_property_sorting_vector() -> None:
-    value = {
-        "\u20ac": "Euro Sign",
-        "\r": "Carriage Return",
-        "\ufb33": "Hebrew Letter Dalet With Dagesh",
-        "1": "One",
-        "\U0001f600": "Emoji: Grinning Face",
-        "\u0080": "Control",
-        "\u00f6": "Latin Small Letter O With Diaeresis",
-    }
-    assert _serialize_json(value) == (
-        '{"\\r":"Carriage Return",'
-        '"1":"One",'
-        '"\u0080":"Control",'
-        '"ö":"Latin Small Letter O With Diaeresis",'
-        '"€":"Euro Sign",'
-        '"😀":"Emoji: Grinning Face",'
-        '"דּ":"Hebrew Letter Dalet With Dagesh"}'
-    )
+    assert cmcp_agent_manifest.signing_pre_image(manifest) == b"sdk-pre-image"
