@@ -1,0 +1,24 @@
+:root {
+  --md-primary-fg-color: #7c3aed;
+  --md-primary-fg-color--light: #a78bfa;
+  --md-primary-fg-color--dark: #5b21b6;
+  --md-accent-fg-color: #0ea5e9;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #818cf8;
+  --md-primary-fg-color--light: #a5b4fc;
+  --md-primary-fg-color--dark: #6366f1;
+  --md-accent-fg-color: #38bdf8;
+  --md-default-bg-color: #0f0a1e;
+  --md-default-bg-color--light: #1a1033;
+  --md-code-bg-color: #1e1533;
+}
+
+.md-header {
+  background: linear-gradient(135deg, #0d0a1f 0%, #071828 100%);
+}
+
+.md-hero__inner {
+  padding-top: 2rem;
+}

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f5f3ff"/>
+      <stop offset="100%" stop-color="#e0f2fe"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="400" fill="url(#bg)"/>
+  <path d="M200,58 L326,112 L326,224 C326,298 268,340 200,360 C132,340 74,298 74,224 L74,112 Z"
+        fill="url(#brand)" opacity="0.10" stroke="url(#brand)" stroke-width="3.5" stroke-linejoin="round"/>
+  <!-- Padlock shackle -->
+  <path d="M174,228 Q174,148 200,148 Q226,148 226,228"
+        fill="none" stroke="url(#brand)" stroke-width="13" stroke-linecap="round"/>
+  <!-- Padlock body -->
+  <rect x="154" y="222" width="92" height="74" rx="12" fill="url(#brand)" opacity="0.12"/>
+  <rect x="154" y="222" width="92" height="74" rx="12" fill="none" stroke="url(#brand)" stroke-width="3.5"/>
+  <!-- Keyhole glow ring -->
+  <circle cx="200" cy="251" r="18" fill="url(#brand)" opacity="0.18"/>
+  <!-- Keyhole circle -->
+  <circle cx="200" cy="251" r="12" fill="url(#brand)"/>
+  <!-- Keyhole stem -->
+  <rect x="196" y="259" width="8" height="18" rx="3" fill="url(#brand)"/>
+  <!-- White center -->
+  <circle cx="200" cy="251" r="4" fill="white"/>
+</svg>
