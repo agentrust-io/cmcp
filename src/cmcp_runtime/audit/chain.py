@@ -61,6 +61,7 @@ class AuditEntry:
     detail: dict[str, str | int | float] | None  # optional structured detail (e.g. suspicious_call_sequence)
     workflow_id: str | None
     prev_entry_hash: str  # "genesis" for first entry
+    evidence_class: str = field(default="hash-only")  # "tls-pinned" when server TLS cert pin is enforced
     entry_hash: str = field(default="")  # computed after construction
 
     def _canonical_body(self) -> bytes:
@@ -156,6 +157,7 @@ class AuditChain:
         latency_us: int | None = None,
         request_payload_hash: str | None = None,
         response_payload_hash: str | None = None,
+        evidence_class: str = "hash-only",
         response_inspection_result: InspectionResult | None = None,
         session_sensitivity_before: str | None = None,
         session_sensitivity_after: str | None = None,
@@ -183,6 +185,7 @@ class AuditChain:
             request_payload_hash=request_payload_hash,
             response_payload_hash=response_payload_hash,
             response_inspection_result=response_inspection_result,
+            evidence_class=evidence_class,
             session_sensitivity_before=session_sensitivity_before,
             session_sensitivity_after=session_sensitivity_after,
             detail=detail,

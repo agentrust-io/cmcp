@@ -16,6 +16,14 @@ The TEE-sealed signing key is generated inside the enclave and cannot be extract
 **Phase 2 completeness: server-side attestation**
 Phase 1 attests the gateway boundary. It does not attest what happens on the other side of that boundary. The `tool_transcript.hash` field in the TRACE Claim records a hash of the audit chain tip, but the tool transcript binding that ties a specific tool execution to a specific response is Phase 2 work. Phase 1 partially addresses P1.4 (transitive trust into upstream dependencies) and P4.1 (typosquatted packages added to catalog) -- both are fully closed by Phase 2. Any compliance claim that relies on server-side proof must wait for Phase 2.
 
+**Tool server non-repudiation**
+The audit chain records a `response_payload_hash` for each tool call and an `evidence_class` that indicates the assurance level of the recorded response:
+
+- **`tls-pinned`**: The tool server URL uses HTTPS and has a non-placeholder TLS certificate fingerprint in the catalog. The response was received over a TLS connection whose certificate was pinned at catalog-load time. A verifier can confirm the server identity against the catalog fingerprint.
+- **`hash-only`**: The tool server uses HTTP, has no TLS fingerprint assigned in the catalog (dev placeholder), or TLS pinning could not be enforced on the current platform. The hash proves what the gateway received, but the server identity cannot be independently verified from the audit record alone.
+
+Tool servers do not sign their individual responses. A `tls-pinned` entry proves the response came from a server holding the catalog-pinned certificate but does not prevent the server itself from later denying it produced a specific response. For strong non-repudiation, configure non-placeholder TLS fingerprints for all upstream servers so all evidence is `tls-pinned`, and treat the TEE attestation as the binding authority for what the gateway recorded.
+
 **LLM inference and model output**
 cMCP intercepts tool calls at the MCP protocol boundary. It does not observe or modify LLM inference, the contents of the agent's context window, or model outputs that do not produce a tool call. A model could hallucinate a response, leak sensitive context in a chat reply, or receive a poisoned tool response that influences subsequent reasoning -- none of these are visible to the gateway. cMCP controls the tool boundary, not the model boundary.
 
