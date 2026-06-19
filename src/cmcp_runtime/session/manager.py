@@ -12,8 +12,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from cmcp_runtime.agent_manifest import AgentManifestBinding
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.trace_claim import (
+    AgentIdentityInfo,
     AttestationReportInfo,
     CallGraphSummary,
     CallLogSummary,
@@ -218,6 +220,22 @@ class SessionManager:
                 suspicious_sequences_detected=state.suspicious_sequences,
             )
 
+        agent_identity: AgentIdentityInfo | None = None
+        binding = getattr(ctx, "agent_manifest", None)
+        if not isinstance(binding, AgentManifestBinding):
+            binding = None
+        if binding is not None:
+            agent_identity = AgentIdentityInfo(
+                manifest_id=binding.manifest_id,
+                agent_id=binding.agent_id,
+                authenticated_subject=binding.authenticated_subject,
+                subject_source=binding.subject_source,
+                issuer=binding.issuer,
+                issuer_key_id=binding.issuer_key_id,
+                policy_bundle_hash=binding.policy_bundle_hash,
+                tool_catalog_hash=binding.tool_catalog_hash,
+            )
+
         # AUDIT-005: increment the module-level counter to get a monotonic sequence number.
         global _CLAIM_SEQUENCE
         _CLAIM_SEQUENCE += 1
@@ -235,6 +253,7 @@ class SessionManager:
             attestation_stale=attestation_stale,
             catalog_exceptions=catalog_exceptions,
             call_log_summary=call_log_summary,
+            agent_identity=agent_identity,
             sequence_number=_CLAIM_SEQUENCE,
             prev_claim_hash=self._last_claim_hash,
             do_sign=True,

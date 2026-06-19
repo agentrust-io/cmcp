@@ -106,6 +106,10 @@ def start(config: str, enforcement: str | None) -> None:
               help="Out-of-band pinned Ed25519 public key (hex) to cross-check trace.cnf.jwk.")
 @click.option("--audit-bundle", default=None, type=click.Path(exists=True),
               help="Also verify an exported audit bundle (GET /audit/export) against the claim.")
+@click.option("--agent-manifest", default=None, type=click.Path(exists=True),
+              help="Signed Agent Manifest to cross-check against the Trust Record.")
+@click.option("--agent-manifest-trust-anchor", default=None, type=click.Path(exists=True),
+              help="JSON issuer public key trust anchor for --agent-manifest.")
 def verify(
     claim_file: str,
     policy_hash: str | None,
@@ -113,6 +117,8 @@ def verify(
     max_age: int,
     trusted_key: str | None,
     audit_bundle: str | None,
+    agent_manifest: str | None,
+    agent_manifest_trust_anchor: str | None,
 ) -> None:
     """Verify a signed TRACE Claim (and optionally its audit bundle).
 
@@ -123,6 +129,10 @@ def verify(
     """
     import json as _json
 
+    from cmcp_runtime.agent_manifest import (
+        load_agent_manifest,
+        load_agent_manifest_trust_anchor,
+    )
     from cmcp_verify import ApprovedHashes, verify_audit_bundle, verify_trace_claim
 
     with open(claim_file) as f:
@@ -139,11 +149,26 @@ def verify(
         or claim.get("gateway", {}).get("catalog", {}).get("hash", ""),
     )
 
+    manifest_json = load_agent_manifest(agent_manifest) if agent_manifest is not None else None
+    manifest_keys = (
+        load_agent_manifest_trust_anchor(agent_manifest_trust_anchor)
+        if agent_manifest_trust_anchor is not None
+        else None
+    )
+    if agent_manifest is not None and agent_manifest_trust_anchor is None:
+        click.echo(
+            "[cmcp verify] agent_manifest       FAIL  pass --agent-manifest-trust-anchor",
+            err=True,
+        )
+        raise SystemExit(1)
+
     result = verify_trace_claim(
         claim,
         approved,
         max_attestation_age_seconds=max_age,
         trusted_public_key_hex=trusted_key,
+        agent_manifest=manifest_json,
+        trusted_agent_manifest_keys=manifest_keys,
     )
 
     def _line(name: str, ok: bool, note: str = "") -> None:

@@ -50,6 +50,22 @@ def test_load_full_config(config_file):
     assert cfg.max_response_size_bytes == 1048576
 
 
+def test_load_agent_manifest_config(config_file):
+    path = config_file("""
+        agent_manifest:
+          path: /etc/cmcp/agent-manifest.json
+          trust_anchor_path: /etc/cmcp/manifest-public-key.json
+          authenticated_subject: spiffe://factory.example/agent/material-movement/dev
+    """)
+    cfg = load_config(path)
+    assert cfg.agent_manifest.path == "/etc/cmcp/agent-manifest.json"
+    assert cfg.agent_manifest.trust_anchor_path == "/etc/cmcp/manifest-public-key.json"
+    assert (
+        cfg.agent_manifest.authenticated_subject
+        == "spiffe://factory.example/agent/material-movement/dev"
+    )
+
+
 def test_invalid_provider(config_file):
     path = config_file("attestation:\n  provider: quantum\n")
     with pytest.raises(ConfigError, match="provider"):
@@ -72,6 +88,29 @@ def test_unknown_key_raises(config_file):
     """CONF-001 — unknown config keys must fail closed, not silently ignore."""
     path = config_file("unknown_key: value\n")
     with pytest.raises(ConfigError, match="unknown_key"):
+        load_config(path)
+
+
+def test_unknown_agent_manifest_key_raises(config_file):
+    path = config_file("agent_manifest:\n  surprise: value\n")
+    with pytest.raises(ConfigError, match="surprise"):
+        load_config(path)
+
+
+def test_agent_manifest_path_requires_trust_anchor(config_file):
+    path = config_file("agent_manifest:\n  path: /etc/cmcp/agent-manifest.json\n")
+    with pytest.raises(ConfigError, match="set together"):
+        load_config(path)
+
+
+def test_agent_manifest_subject_must_be_spiffe(config_file):
+    path = config_file("""
+        agent_manifest:
+          path: /etc/cmcp/agent-manifest.json
+          trust_anchor_path: /etc/cmcp/manifest-public-key.json
+          authenticated_subject: not-a-spiffe-uri
+    """)
+    with pytest.raises(ConfigError, match="SPIFFE"):
         load_config(path)
 
 

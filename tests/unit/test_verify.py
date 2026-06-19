@@ -8,9 +8,14 @@ import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from cmcp_runtime.agent_manifest import SIGNED_FIELDS, signing_pre_image
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.trace_claim import (
+    AgentIdentityInfo,
     AttestationReportInfo,
     CallGraphSummary,
     CallSummary,
@@ -28,6 +33,8 @@ from cmcp_verify.verify import (
 
 POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
+AGENT_ID = "spiffe://factory.example/agent/material-movement/dev"
+MANIFEST_ID = "0197739a-8c00-7000-8000-000000000001"
 
 
 def _make_nonce_for_key(key: SigningKey) -> str:
@@ -47,7 +54,12 @@ def _make_nonce_for_key(key: SigningKey) -> str:
     return (fingerprint + salt).hex()
 
 
-def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH, provider="software-only"):
+def _make_signed_claim(
+    policy_hash=POLICY_HASH,
+    catalog_hash=CATALOG_HASH,
+    provider="software-only",
+    agent_identity: AgentIdentityInfo | None = None,
+):
     key = SigningKey()
     chain = AuditChain("test-session")
     measurement = "DEVELOPMENT_ONLY" if provider == "software-only" else "ab" * 32
@@ -85,9 +97,61 @@ def _make_signed_claim(policy_hash=POLICY_HASH, catalog_hash=CATALOG_HASH, provi
         audit_chain_root=chain.chain_root,
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,
+        agent_identity=agent_identity,
         do_sign=True,
     )
     return _to_dict(claim), key
+
+
+def _manifest_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
+    priv = Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return priv, pub, hashlib.sha256(pub).hexdigest()
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _signed_manifest(priv: Ed25519PrivateKey, key_id: str) -> dict:
+    manifest = {
+        "@context": "https://agentmanifest.agentrust.io/v0.1/context.json",
+        "@type": "AgentManifest",
+        "manifest_id": MANIFEST_ID,
+        "agent_id": AGENT_ID,
+        "version": "0.1",
+        "issued_at": "2026-06-12T00:00:00Z",
+        "expires_at": "2099-09-10T00:00:00Z",
+        "issuer": "spiffe://factory.example/signing-authority/development",
+        "crypto_profile": "standard",
+        "artifacts": {
+            "policy_bundle": {"hash": POLICY_HASH, "policy_language": "cedar"},
+            "tool_manifest": {"catalog_hash": CATALOG_HASH, "tools": []},
+        },
+        "delegation_chain": [],
+    }
+    manifest["signature"] = {
+        "algorithm": "Ed25519",
+        "key_id": key_id,
+        "key_type": "software",
+        "signed_at": "2026-06-12T00:00:00Z",
+        "signed_fields": list(SIGNED_FIELDS),
+        "signature_value": _b64url(priv.sign(signing_pre_image(manifest))),
+    }
+    return manifest
+
+
+def _agent_identity(*, agent_id: str = AGENT_ID) -> AgentIdentityInfo:
+    return AgentIdentityInfo(
+        manifest_id=MANIFEST_ID,
+        agent_id=agent_id,
+        authenticated_subject=AGENT_ID,
+        subject_source="config",
+        issuer="spiffe://factory.example/signing-authority/development",
+        issuer_key_id="",
+        policy_bundle_hash=POLICY_HASH,
+        tool_catalog_hash=CATALOG_HASH,
+    )
 
 
 def _approved():
@@ -157,6 +221,37 @@ def test_mismatched_catalog_hash_fails():
     )
     result = verify_trace_claim(claim_dict, approved)
     assert "tool_catalog.hash" in result.unverified_fields
+
+
+def test_agent_manifest_binding_is_verified():
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id)
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+    assert "agent_manifest.binding" in result.verified_fields
+
+
+def test_agent_manifest_binding_mismatch_fails():
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id)
+    identity = _agent_identity(agent_id="spiffe://factory.example/agent/other/dev")
+    identity.issuer_key_id = key_id
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+    assert "agent_manifest.binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
 
 
 # -- Attestation freshness ----------------------------------------------------

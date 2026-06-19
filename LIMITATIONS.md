@@ -24,6 +24,9 @@ The audit chain records a `response_payload_hash` for each tool call and an `evi
 
 Tool servers do not sign their individual responses. A `tls-pinned` entry proves the response came from a server holding the catalog-pinned certificate but does not prevent the server itself from later denying it produced a specific response. For strong non-repudiation, configure non-placeholder TLS fingerprints for all upstream servers so all evidence is `tls-pinned`, and treat the TEE attestation as the binding authority for what the gateway recorded.
 
+**Agent Manifest identity binding (issue #302)**
+When configured, cMCP verifies a signed Agent Manifest against a trusted issuer key, checks that the authenticated agent subject equals `manifest.agent_id`, and requires the manifest's policy and catalog hashes to match the loaded runtime hashes. The Trust Record carries this as `gateway.agent_identity`. This proves that the session was bound to the reviewed manifest identity and approved hashes. It does not prove that the agent behaved correctly, that the model output was safe, or that the same logical agent persisted across restarts. The first implementation takes the authenticated subject from configuration; production deployments should source it from the agent SVID/mTLS identity path. Trust in the manifest issuer key remains an out-of-band PKI concern.
+
 **LLM inference and model output**
 cMCP intercepts tool calls at the MCP protocol boundary. It does not observe or modify LLM inference, the contents of the agent's context window, or model outputs that do not produce a tool call. A model could hallucinate a response, leak sensitive context in a chat reply, or receive a poisoned tool response that influences subsequent reasoning -- none of these are visible to the gateway. cMCP controls the tool boundary, not the model boundary.
 
