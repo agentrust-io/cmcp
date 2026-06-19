@@ -188,7 +188,7 @@ def _verify_key_binding(
     try:
         padding = 4 - (len(x_b64) % 4)
         padded = x_b64 + ("=" * padding if padding != 4 else "")
-        pub_key_bytes = base64.urlsafe_b64decode(padded)
+        base64.urlsafe_b64decode(padded)  # validate encoding; bytes not needed
     except Exception as exc:
         return False, f"cannot decode trace.cnf.jwk.x: {exc}"
 
