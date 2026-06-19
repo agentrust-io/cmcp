@@ -205,3 +205,59 @@ def test_tpm_get_report_raises_when_no_tss2(monkeypatch: pytest.MonkeyPatch) -> 
 def test_tpm_detect_does_not_raise_on_exception() -> None:
     with patch.object(Path, "exists", side_effect=PermissionError("no access")):
         assert TPMProvider().detect() is False
+
+
+def test_tpm_sha1_fallback_subprocess_produces_software_only_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SHA-1 fallback via subprocess must downgrade provider to software-only."""
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
+
+    sha256_fail = MagicMock(spec=subprocess.CompletedProcess)
+    sha256_fail.returncode = 1
+    sha256_fail.stderr = "algorithm not supported"
+    sha256_fail.stdout = ""
+
+    sha1_pcr_output = "\n".join(
+        [
+            "sha1:",
+            *[f"  {i} : 0x" + ("ab" * 20) for i in range(8)],
+        ]
+    )
+    sha1_ok = MagicMock(spec=subprocess.CompletedProcess)
+    sha1_ok.returncode = 0
+    sha1_ok.stderr = ""
+    sha1_ok.stdout = sha1_pcr_output
+
+    monkeypatch.setattr(subprocess, "run", MagicMock(side_effect=[sha256_fail, sha1_ok]))
+
+    report = TPMProvider().get_attestation_report(b"\x00" * 32)
+
+    assert report.provider == "software-only"
+    assert report.measurement_note == "sha1-bank-fallback"
+    assert report.measurement.startswith("sha256:")
+
+
+def test_tpm_sha256_success_subprocess_keeps_tpm_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When SHA-256 PCR bank is available, provider must remain 'tpm'."""
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
+
+    sha256_pcr_output = "\n".join(
+        [
+            "sha256:",
+            *[f"  {i} : 0x" + ("cd" * 32) for i in range(8)],
+        ]
+    )
+    sha256_ok = MagicMock(spec=subprocess.CompletedProcess)
+    sha256_ok.returncode = 0
+    sha256_ok.stderr = ""
+    sha256_ok.stdout = sha256_pcr_output
+
+    monkeypatch.setattr(subprocess, "run", MagicMock(return_value=sha256_ok))
+
+    report = TPMProvider().get_attestation_report(b"\x00" * 32)
+
+    assert report.provider == "tpm"
+    assert report.measurement_note is None

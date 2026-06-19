@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import subprocess  # nosec B404
 import sys
 from datetime import UTC, datetime
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -74,6 +77,11 @@ class TPMProvider(TEEProvider):
             except Exception:  # noqa: BLE001
                 # Fall back to SHA-1
                 measurement_note = "sha1-bank-fallback"
+                logger.warning(
+                    "TPM SHA-1 fallback: SHA-256 PCR bank unavailable. "
+                    "Downgrading attestation to software-only. "
+                    "TRACE Claim will not present as hardware-attested."
+                )
                 pcr_sel = TPML_PCR_SELECTION.parse("sha1:0,1,2,3,4,5,6,7")
                 _, _, digests = ectx.pcr_read(pcr_sel)
                 raw_pcrs = []
@@ -105,8 +113,11 @@ class TPMProvider(TEEProvider):
             except Exception:  # noqa: BLE001
                 raw_evidence = None
 
+        effective_provider = (
+            "software-only" if measurement_note == "sha1-bank-fallback" else self.provider_name()
+        )
         return AttestationReport(
-            provider=self.provider_name(),
+            provider=effective_provider,
             measurement=measurement,
             report_data=nonce.hex(),
             raw_evidence=raw_evidence,
@@ -145,6 +156,11 @@ class TPMProvider(TEEProvider):
                     f"{result.returncode}: {result.stderr.strip()}"
                 )
             measurement_note: str | None = "sha1-bank-fallback"
+            logger.warning(
+                "TPM SHA-1 fallback: SHA-256 PCR bank unavailable. "
+                "Downgrading attestation to software-only. "
+                "TRACE Claim will not present as hardware-attested."
+            )
         else:
             measurement_note = None
 
@@ -157,8 +173,11 @@ class TPMProvider(TEEProvider):
         concatenated = b"".join(pcr_values[:8])
         measurement = "sha256:" + hashlib.sha256(concatenated).hexdigest()
 
+        effective_provider = (
+            "software-only" if measurement_note == "sha1-bank-fallback" else self.provider_name()
+        )
         return AttestationReport(
-            provider=self.provider_name(),
+            provider=effective_provider,
             measurement=measurement,
             report_data=nonce.hex(),
             raw_evidence=None,
