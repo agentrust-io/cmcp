@@ -813,6 +813,17 @@ class CMCPProxy:
         # egress check saw (post-scan, possibly sanitized) so a verifier can match
         # the audited response against what the caller actually received.
         response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
+        # Evidence class: tls-pinned when the upstream server has a real cert pin in the catalog.
+        from cmcp_runtime.mcp import tls_pinning as _tls_mod
+        _fp = entry.server.tls_fingerprint if entry else ""
+        evidence_class = (
+            "tls-pinned"
+            if entry
+            and entry.server.url.startswith("https://")
+            and _fp
+            and _fp != _tls_mod.PLACEHOLDER_FINGERPRINT
+            else "hash-only"
+        )
         # INJECT-003: include injection scanner and pattern in audit detail when detected
         injection_detail: dict[str, str | int | float] | None = (
             {
@@ -834,6 +845,7 @@ class CMCPProxy:
             latency_us=latency_us,
             request_payload_hash=request_payload_hash,
             response_payload_hash=response_payload_hash,
+            evidence_class=evidence_class,
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
             workflow_id=workflow_id,

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import logging
 import os
+import secrets
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -54,6 +58,16 @@ class RuntimeContext:
     nras_appraisal: AppraisalResult | None = None
 
 
+def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
+    """RFC 7638 §3 JWK Thumbprint — SHA-256(UTF-8(JSON of sorted required OKP members))."""
+    canonical = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": x_b64url},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(canonical).digest()
+
+
 def _fatal(code: str, message: str, **fields: Any) -> None:
     """Log a FATAL structured entry and exit with code 1."""
     entry = {
@@ -101,14 +115,14 @@ def run_startup(config_path: str) -> RuntimeContext:
     signing_key = SigningKey()
     logger.info("Signing key generated: %s...", signing_key.public_key_hex[:16])
 
-    # CRYPTO-001 + CRYPTO-002: the first 32 bytes of the nonce are SHA-256(public_key_bytes)
-    # so verifiers can re-derive the fingerprint from the public key in cnf.jwk and confirm
-    # it matches report_data[:32] -- binding the attestation report to this specific keypair.
+    # CRYPTO-001 + CRYPTO-002: the first 32 bytes of the nonce are the RFC 7638 JWK Thumbprint
+    # (SHA-256 of the sorted JSON OKP key members) so verifiers can re-derive the fingerprint
+    # from cnf.jwk and confirm it matches report_data[:32] -- binding the attestation report
+    # to this specific keypair.
     # The remaining 32 bytes are a random salt so two gateways with different random bytes
     # produce different nonces even if they share the same keypair (blue-green deploy).
-    import hashlib
-    import secrets
-    key_fingerprint = hashlib.sha256(signing_key.public_key_bytes).digest()
+    _x_b64 = base64.urlsafe_b64encode(signing_key.public_key_bytes).rstrip(b"=").decode()
+    key_fingerprint = _jwk_thumbprint_sha256(_x_b64)
     random_salt = secrets.token_bytes(32)
     nonce = key_fingerprint + random_salt
     try:
