@@ -25,6 +25,17 @@ from cmcp_runtime.audit.trace_claim import RuntimeClaim
 
 logger = logging.getLogger(__name__)
 
+
+def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
+    """RFC 7638 §3 JWK Thumbprint — SHA-256(UTF-8(JSON of sorted required OKP members))."""
+    canonical = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": x_b64url},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(canonical).digest()
+
+
 _SW_ONLY_FIRMWARE = "software-only-dev-mode"
 
 _KNOWN_PLATFORMS = {
@@ -147,12 +158,13 @@ def _verify_key_binding(
     """
     CRYPTO-001: verify that cnf.jwk public key fingerprint matches report_data[:32].
 
-    The gateway embeds SHA-256(public_key_bytes) as the first 32 bytes of the nonce
-    it submits to the TEE when requesting the attestation report.  The TEE hardware
+    The gateway embeds the RFC 7638 JWK Thumbprint (SHA-256 of the JSON representation
+    of required OKP key members, sorted lexicographically) as the first 32 bytes of the
+    nonce it submits to the TEE when requesting the attestation report.  The TEE hardware
     commits that nonce into the signed report_data field.  The nonce is stored as
     trace.runtime.nonce (base64url of the full 64-byte value).
 
-    Verifiers re-derive SHA-256(cnf.jwk.x public key bytes) and compare it against
+    Verifiers re-derive the RFC 7638 JWK Thumbprint from cnf.jwk.x and compare it against
     nonce[:32].  A mismatch means the public key was substituted after attestation;
     the claim must be rejected with PUBLIC_KEY_NOT_BOUND.
 
@@ -180,8 +192,8 @@ def _verify_key_binding(
     except Exception as exc:
         return False, f"cannot decode trace.cnf.jwk.x: {exc}"
 
-    # Compute SHA-256(public_key_bytes) -- the expected fingerprint
-    expected_fingerprint = hashlib.sha256(pub_key_bytes).digest()
+    # Compute RFC 7638 JWK Thumbprint -- the expected fingerprint
+    expected_fingerprint = _jwk_thumbprint_sha256(x_b64)
 
     # Extract the nonce from trace.runtime.nonce (base64url, first 32 bytes = fingerprint)
     nonce_b64 = claim.get("trace", {}).get("runtime", {}).get("nonce", "")

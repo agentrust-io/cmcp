@@ -33,10 +33,16 @@ CATALOG_HASH = "sha256:" + "b" * 64
 def _make_nonce_for_key(key: SigningKey) -> str:
     """Build a report_data hex string matching the CRYPTO-001 format.
 
-    First 32 bytes: SHA-256(public_key_bytes) -- verifiable key fingerprint.
+    First 32 bytes: RFC 7638 JWK Thumbprint (SHA-256 of sorted OKP members) -- verifiable key fingerprint.
     Next 32 bytes: random salt -- session uniqueness (CRYPTO-002).
     """
-    fingerprint = hashlib.sha256(key.public_key_bytes).digest()
+    x_b64 = base64.urlsafe_b64encode(key.public_key_bytes).rstrip(b"=").decode()
+    jwk_json = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": x_b64},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    fingerprint = hashlib.sha256(jwk_json).digest()
     salt = secrets.token_bytes(32)
     return (fingerprint + salt).hex()
 
@@ -233,9 +239,7 @@ def test_tee_key_binding_happy_path():
     """CRYPTO-001 -- valid key with correct fingerprint in nonce passes binding check."""
     key = SigningKey()
     chain = AuditChain("test-session")
-    fingerprint = hashlib.sha256(key.public_key_bytes).digest()
-    salt = secrets.token_bytes(32)
-    report_data = (fingerprint + salt).hex()
+    report_data = _make_nonce_for_key(key)
 
     claim = generate_trace_claim(
         session_id="test-session",
@@ -293,7 +297,13 @@ def test_tee_key_binding_attack_path_mismatched_fingerprint():
     attacker_key = SigningKey()
 
     chain = AuditChain("test-session")
-    gateway_fingerprint = hashlib.sha256(gateway_key.public_key_bytes).digest()
+    _gw_x_b64 = base64.urlsafe_b64encode(gateway_key.public_key_bytes).rstrip(b"=").decode()
+    _gw_jwk_json = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": _gw_x_b64},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    gateway_fingerprint = hashlib.sha256(_gw_jwk_json).digest()
     salt = secrets.token_bytes(32)
     report_data = (gateway_fingerprint + salt).hex()
 
