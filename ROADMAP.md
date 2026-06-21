@@ -9,7 +9,7 @@ Scope: Minimal viable trust layer for MCP servers, sufficient for early adopters
 - TRACE Claim generation from attestation evidence
 - Standalone verifier CLI for offline claim inspection
 
-## v0.2 — Candidates
+## v0.2 — Released (June 2026)
 
 Provider-specific attestation verification:
 - TPM2 quote verification
