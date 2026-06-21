@@ -118,6 +118,7 @@ extra_css:
 nav:
   - Home: README.md
   - Quick Start: docs/quickstart.md
+  - How It Works: docs/concepts.md
   - Configuration: docs/configuration.md
   - Tutorials:
       - Cedar policy walkthrough: docs/tutorials/cedar-policy-walkthrough.md
