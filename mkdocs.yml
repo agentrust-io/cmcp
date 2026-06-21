@@ -119,6 +119,13 @@ nav:
   - Home: README.md
   - Quick Start: docs/quickstart.md
   - Configuration: docs/configuration.md
+  - Tutorials:
+      - Cedar policy walkthrough: docs/tutorials/cedar-policy-walkthrough.md
+      - TLS pinning: docs/tutorials/tls-pinning.md
+      - Verify a TRACE claim: docs/tutorials/verifying-a-trace-claim.md
+      - TEE attestation: docs/tutorials/tee-attestation.md
+      - Multi-tenant deployment: docs/tutorials/multi-tenant-config.md
+      - Response inspection: docs/tutorials/response-inspection.md
   - Specification:
       - Overview: docs/SPEC.md
       - Component Model: docs/spec/component-model.md
