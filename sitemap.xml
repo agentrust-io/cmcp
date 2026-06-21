@@ -104,4 +104,28 @@
          <loc>https://cmcp.agentrust-io.com/docs/testing/soak-test/</loc>
          <lastmod>2026-06-21</lastmod>
     </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/cedar-policy-walkthrough/</loc>
+         <lastmod>2026-06-21</lastmod>
+    </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/multi-tenant-config/</loc>
+         <lastmod>2026-06-21</lastmod>
+    </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/response-inspection/</loc>
+         <lastmod>2026-06-21</lastmod>
+    </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/tee-attestation/</loc>
+         <lastmod>2026-06-21</lastmod>
+    </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/tls-pinning/</loc>
+         <lastmod>2026-06-21</lastmod>
+    </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/verifying-a-trace-claim/</loc>
+         <lastmod>2026-06-21</lastmod>
+    </url>
 </urlset>
