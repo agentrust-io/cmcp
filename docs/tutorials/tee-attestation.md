@@ -13,7 +13,7 @@ Deploy cMCP on real Trusted Execution Environment hardware so TRACE claims carry
 ## Prerequisites
 
 ```bash
-pip install cmcp-gateway
+pip install cmcp-runtime
 ```
 
 For AMD SEV-SNP: an Azure DCasv5 VM or any host running a kernel with `/dev/sev-guest`.
@@ -29,7 +29,7 @@ The `provider` field in `cmcp-config.yaml` controls which TEE the runtime uses. 
 |---|---|
 | `auto` | Probes in order: `tpm`, `sev-snp`, `tdx`. Falls back to `software-only` only when `CMCP_DEV_MODE=1` is set. |
 | `tpm` | TPM 2.0 chip present and accessible. |
-| `sev-snp` | AMD SEV-SNP hardware. Requires `/dev/sev-guest` or the path set in `CMCP_AMD_SEV_SNP_REPORT_PATH`. |
+| `sev-snp` | AMD SEV-SNP hardware. Requires `/dev/sev-guest` (device path is hardcoded; no env var override). |
 | `tdx` | Intel TDX hardware. |
 | `opaque` | Opaque Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var. |
 | `software-only` | No hardware. Requires `CMCP_DEV_MODE=1`. |
@@ -66,7 +66,7 @@ On a real TEE host:
 - `trace.runtime.measurement` is the real hardware measurement — a non-zero hash specific to the loaded workload
 - `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`
 
-The measurement value is deterministic for a given workload binary and startup config. If the workload binary changes (e.g., an update to `cmcp-gateway`) the measurement changes, and verifiers who pinned the previous measurement will see a mismatch.
+The measurement value is deterministic for a given workload binary and startup config. If the workload binary changes (e.g., an update to `cmcp-runtime`) the measurement changes, and verifiers who pinned the previous measurement will see a mismatch.
 
 ---
 
@@ -90,13 +90,7 @@ attestation:
   staleness_policy: fail_closed
 ```
 
-3. Optionally, if the device is not at the default path, point the runtime at it:
-
-```bash
-export CMCP_AMD_SEV_SNP_REPORT_PATH=/dev/sev-guest
-```
-
-4. Set the required production env vars before starting:
+3. Set the required production env vars before starting:
 
 ```bash
 export CMCP_BEARER_TOKEN="$(openssl rand -hex 32)"
@@ -118,7 +112,7 @@ After switching from software-only to SEV-SNP, the TRACE claim shows:
   "trace": {
     "runtime": {
       "platform": "amd-sev-snp",
-      "measurement": "sha256:7f3c9a1b2e4d8f6a0c5b7e9d3f1a4c8b2e6f0d4a8c1b3e5f7a9d2c4e6f8a0b2",
+      "measurement": "sha384:7f3c9a1b2e4d8f6a0c5b7e9d3f1a4c8b2e6f0d4a8c1b3e5f7a9d2c4e6f8a0b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
       "firmware_version": "1.51.00",
       "nonce": "<base64url 64-byte nonce>"
     }
@@ -132,7 +126,7 @@ After switching from software-only to SEV-SNP, the TRACE claim shows:
 attestation:
   provider: sev-snp
   enforcement_mode: enforcing
-  expected_measurement: "sha256:7f3c9a1b2e4d8f6a0c5b7e9d3f1a4c8b2e6f0d4a8c1b3e5f7a9d2c4e6f8a0b2"
+  expected_measurement: "sha384:7f3c9a1b2e4d8f6a0c5b7e9d3f1a4c8b2e6f0d4a8c1b3e5f7a9d2c4e6f8a0b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 ```
 
 If the deployed binary differs from the expected measurement, the runtime exits at startup rather than producing claims with an unexpected measurement.

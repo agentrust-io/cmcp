@@ -6,14 +6,14 @@ Write and test Cedar policies that control which tools a cMCP-governed agent can
 
 - How Cedar policy syntax maps to cMCP entity types (principal, action, resource)
 - How to write a minimal allow-all policy and a production-grade restrictive policy
-- How to test policies with `cedar-policy-analysis` before deploying
+- How to test policies with the `cedar` CLI before deploying
 - The most common mistakes and how to avoid them
 
 ## Prerequisites
 
 ```bash
-pip install cmcp-gateway
-pip install cedar-policy-analysis   # CLI for local Cedar evaluation
+pip install cmcp-runtime
+cargo install cedar-policy-cli   # Cedar CLI for local policy evaluation
 ```
 
 ---
@@ -43,7 +43,7 @@ Create `policies/allow-all.cedar`:
 ```cedar
 permit (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 );
 ```
@@ -83,7 +83,7 @@ Create `policies/production.cedar`:
 // Permit the customer-onboarding workflow to call approved tools only
 permit (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 )
 when {
@@ -94,7 +94,7 @@ when {
 // Block salesforce.contacts when the session has reached PII sensitivity
 forbid (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 )
 when {
@@ -106,7 +106,7 @@ when {
 // auditable — the bundle hash changes if this rule is removed
 forbid (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 );
 ```
@@ -115,17 +115,17 @@ The explicit `forbid` at the bottom ensures that removing all `permit` rules doe
 
 ---
 
-## Test a policy with cedar-policy-analysis
+## Test a policy with the cedar CLI
 
-Before loading a policy bundle into the runtime, test it locally with `cedar-policy-analysis`. This lets you verify decisions without starting the gateway.
+Before loading a policy bundle into the runtime, test it locally with the `cedar` CLI. Install it with `cargo install cedar-policy-cli`. This lets you verify decisions without starting the gateway.
 
 ```bash
-cedar-policy-analysis evaluate \
-  --policy policies/production.cedar \
+cedar authorize \
+  --policies policies/production.cedar \
   --schema policies/schema.cedarschema \
-  --principal '{"type":"cMCP::Principal","attributes":{"session_id":"s1","workflow_id":"customer_onboarding"}}' \
-  --action 'Action::"call_tool"' \
-  --resource '{"type":"cMCP::Resource","attributes":{"tool_name":"crm.get_customer"}}' \
+  --principal 'cMCP::Principal::"s1"' \
+  --action 'cMCP::Action::"call_tool"' \
+  --resource 'cMCP::Resource::"crm.get_customer"' \
   --context '{"session_max_sensitivity":"public","workflow_id":"customer_onboarding"}'
 ```
 
@@ -134,12 +134,12 @@ Expected output: `ALLOW`
 Test the forbid rule:
 
 ```bash
-cedar-policy-analysis evaluate \
-  --policy policies/production.cedar \
+cedar authorize \
+  --policies policies/production.cedar \
   --schema policies/schema.cedarschema \
-  --principal '{"type":"cMCP::Principal","attributes":{"session_id":"s1","workflow_id":"customer_onboarding"}}' \
-  --action 'Action::"call_tool"' \
-  --resource '{"type":"cMCP::Resource","attributes":{"tool_name":"salesforce.contacts"}}' \
+  --principal 'cMCP::Principal::"s1"' \
+  --action 'cMCP::Action::"call_tool"' \
+  --resource 'cMCP::Resource::"salesforce.contacts"' \
   --context '{"session_max_sensitivity":"pii","workflow_id":"customer_onboarding"}'
 ```
 
@@ -153,10 +153,10 @@ Expected output: `DENY`
 
 ```cedar
 // Wrong: permits every tool call from every principal
-permit (principal, action == Action::"call_tool", resource);
+permit (principal, action == cMCP::Action::"call_tool", resource);
 
 // Right: scoped to a workflow and tool list
-permit (principal, action == Action::"call_tool", resource)
+permit (principal, action == cMCP::Action::"call_tool", resource)
 when {
   context.workflow_id == "my_workflow" &&
   resource.tool_name in ["tool_a", "tool_b"]
@@ -173,6 +173,6 @@ when {
 
 ## Summary
 
-You wrote a minimal dev policy and a production policy with workflow scoping, a PII-triggered forbid, and an explicit default-deny. You tested both with `cedar-policy-analysis` before loading them into the runtime. Any change to the policy bundle changes the `policy_bundle.hash` field in TRACE Claims, making the active policy tamper-evident.
+You wrote a minimal dev policy and a production policy with workflow scoping, a PII-triggered forbid, and an explicit default-deny. You tested both with the `cedar` CLI before loading them into the runtime. Any change to the policy bundle changes the `policy_bundle.hash` field in TRACE Claims, making the active policy tamper-evident.
 
 Related tutorials: [Verify a TRACE claim](./verifying-a-trace-claim.md) — confirm the policy hash in a produced claim matches what you deployed. [Multi-tenant deployment](./multi-tenant-config.md) — run per-tenant policy bundles with separate hashes.

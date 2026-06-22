@@ -13,7 +13,7 @@ Run cMCP with per-tenant policy isolation by deploying separate runtime instance
 ## Prerequisites
 
 ```bash
-pip install cmcp-gateway
+pip install cmcp-runtime
 ```
 
 ---
@@ -74,7 +74,7 @@ listen_addr: "0.0.0.0:8443"
 ```cedar
 permit (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 )
 when {
@@ -83,7 +83,7 @@ when {
 
 forbid (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 );
 ```
@@ -136,7 +136,7 @@ listen_addr: "0.0.0.0:8444"
 ```cedar
 permit (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 )
 when {
@@ -145,7 +145,7 @@ when {
 
 forbid (
   principal,
-  action == Action::"call_tool",
+  action == cMCP::Action::"call_tool",
   resource
 );
 ```

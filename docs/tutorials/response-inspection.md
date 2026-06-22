@@ -1,19 +1,18 @@
 # Response Inspection
 
-Tune the cMCP response inspector to block prompt injection patterns in tool responses, adjust the default pattern list to reduce false positives, and monitor inspection events in the audit chain.
+Monitor prompt injection detection in tool responses and understand the audit trail that inspection events produce.
 
 ## What you'll learn
 
 - What the response inspection pipeline catches and how it fits into the call flow
 - The default injection detection patterns and their false-positive risks
 - What happens when a pattern fires: the call is blocked and the audit entry records why
-- How to configure allow-list exceptions for deployments with legitimate XML or role-description content
 - What audit fields to watch for inspection events
 
 ## Prerequisites
 
 ```bash
-pip install cmcp-gateway
+pip install cmcp-runtime
 ```
 
 ---
@@ -35,60 +34,26 @@ A response denied at any stage is not delivered to the agent. Session sensitivit
 
 ## Read the default injection patterns
 
-The Phase 1 default pattern list, from the source:
+The Phase 1 default pattern list, from `src/cmcp_runtime/inspection/patterns_v1.json`:
 
 | Pattern name | Regex | Notes |
 |---|---|---|
-| `xml_system` | `<system>.*?</system>` | XML-style system block |
-| `xml_instructions` | `<instructions>.*?</instructions>` | XML-style instructions block |
-| `xml_context` | `<context>.*?</context>` | Can match legitimate XML |
-| `ignore_previous` | `(?i)ignore (previous\|all\|above) instructions` | |
-| `disregard_system` | `(?i)disregard (your\|the) (previous\|system\|initial) (prompt\|instructions\|context)` | |
-| `persona_hijack` | `(?i)(you are now\|from now on you are\|act as) [A-Z][a-zA-Z]+` | Can match legitimate role descriptions |
-| `exfil_instruction` | `(?i)(exfiltrate\|send\|forward\|transmit) (the\|all\|this\|user\|customer) (data\|information\|context\|message)` | |
-| `system_override` | `SYSTEM OVERRIDE` | |
-| `begin_system_block` | `---BEGIN SYSTEM---` | |
-| `llama_inst` | `\[INST\].*?\[/INST\]` | Llama-style instruction markers |
-| `conv_reset` | `Human:.*?Assistant:` | Embedded conversation resets |
+| `xml-system-tag` | `<system>[\s\S]*?</system>` | XML-style system block |
+| `xml-instructions-tag` | `<instructions>[\s\S]*?</instructions>` | XML-style instructions block |
+| `xml-context-tag` | `<context>[\s\S]*?</context>` | Can match legitimate XML |
+| `ignore-instructions` | `(?i)ignore (previous\|all\|above) instructions` | |
+| `disregard-instructions` | `(?i)disregard (your\|the) (previous\|system\|initial) (prompt\|instructions\|context)` | |
+| `persona-hijack` | `(?i)(you are now\|from now on you are\|act as) [A-Z][a-zA-Z]+` | Can match legitimate role descriptions |
+| `exfiltrate` | `(?i)(exfiltrate\|send\|forward\|transmit) (the\|all\|this\|user\|customer) (data\|information\|context\|message)` | |
+| `system-override` | `SYSTEM OVERRIDE` | |
+| `begin-system-marker` | `---BEGIN SYSTEM---` | |
+| `llama-instruction-markers` | `\[INST\][\s\S]*?\[/INST\]` | Llama-style instruction markers |
 
 These patterns are matched against the full response body as a UTF-8 string.
 
-The patterns `xml_context` and `persona_hijack` carry documented false-positive risk. A CRM tool that returns contact roles ("Account Executive") can match `persona_hijack`. A data API that returns XML with `<context>` elements will match `xml_context`.
+The patterns `xml-context-tag` and `persona-hijack` carry documented false-positive risk. A CRM tool that returns contact roles ("Account Executive") can match `persona-hijack`. A data API that returns XML with `<context>` elements will match `xml-context-tag`.
 
----
-
-## Configure the pattern list
-
-The pattern list is a configurable deployment file, not hardcoded in the binary. Provide your deployment's pattern config to override or extend the defaults.
-
-Create `inspection-config.yaml`:
-
-```yaml
-injection_patterns:
-  # Disable high-false-positive patterns for this deployment
-  disabled:
-    - xml_context
-    - persona_hijack
-
-  # Add deployment-specific patterns
-  additional:
-    - name: internal_exfil
-      regex: "(?i)(upload|post|push) (to|into) (s3|gcs|blob|external)"
-      notes: "Internal data exfil to cloud storage"
-```
-
-Reference it in `cmcp-config.yaml`:
-
-```yaml
-attestation:
-  provider: auto
-  enforcement_mode: enforcing
-policy_bundle_path: ./policies/
-catalog_path: ./catalog.json
-inspection_config_path: ./inspection-config.yaml
-```
-
-When you disable a pattern, that pattern no longer contributes to injection detection for any tool response in this deployment. Document the rationale in the config file — the config path and content are version-controlled alongside the rest of the deployment.
+The pattern list is compiled into the binary from `patterns_v1.json`. There is no runtime config key to disable individual patterns or add custom patterns in the current release — customization requires rebuilding with a modified patterns file.
 
 ---
 
@@ -168,6 +133,6 @@ if result.failures:
 
 ## Summary
 
-The response inspection pipeline runs four stages after every tool call returns. Injection detection in Stage 4 matches the full response body against configurable patterns. When a pattern fires, the response is blocked and the audit chain records the pattern name and a location window. False-positive-prone patterns (`xml_context`, `persona_hijack`) can be disabled in the deployment's inspection config. Monitor for injection events by filtering exported audit bundles on `response_inspection_result: "deny"`.
+The response inspection pipeline runs four stages after every tool call returns. Injection detection in Stage 4 matches the full response body against the patterns in `patterns_v1.json`. When a pattern fires, the response is blocked and the audit chain records the pattern name and a location window. Monitor for injection events by filtering exported audit bundles on `response_inspection_result: "deny"`.
 
 Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — Cedar `advice` blocks in policy rules instruct the inspection pipeline to redact named fields from the response. [Verify a TRACE claim](./verifying-a-trace-claim.md) — the audit chain that inspection writes to is verified as part of TRACE claim verification.

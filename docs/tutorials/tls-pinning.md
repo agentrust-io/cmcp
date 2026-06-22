@@ -13,7 +13,7 @@ Configure certificate pinning for upstream tool servers so the audit chain recor
 ## Prerequisites
 
 ```bash
-pip install cmcp-gateway
+pip install cmcp-runtime
 openssl  # standard on Linux/macOS; available via Git Bash on Windows
 ```
 
@@ -27,7 +27,7 @@ The quickstart `catalog.json` uses this fingerprint value:
 "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 ```
 
-This is a sentinel, not a real certificate pin. The runtime accepts it in dev mode (`CMCP_DEV_MODE=1`) and records `evidence_class: "hash-only"` in the audit chain for every call to that server. In production the sentinel is rejected and the runtime will not start.
+This is a sentinel, not a real certificate pin. When the runtime encounters this placeholder it logs a one-time warning and falls back to standard CA verification — the connection proceeds but peer identity is verified by CA trust only, not pinned to the catalog. The audit chain records `evidence_class: "hash-only"` for every call to that server.
 
 Replace it with the real SHA-256 fingerprint of your upstream server's certificate before setting `enforcement_mode: enforcing`.
 
@@ -87,14 +87,18 @@ Update the `server` block for the tool entry:
 
 The runtime verifies this fingerprint on every outbound connection to the tool server. If the server's certificate has changed (including rotation), the connection is refused and the call is blocked before it reaches Cedar policy evaluation.
 
-After updating `catalog.json`, recompute the catalog hash and set `CMCP_CATALOG_HASH`:
+After updating `catalog.json`, recompute the catalog hash and set `CMCP_CATALOG_HASH`.
+
+The runtime computes the hash over the canonical JSON of the catalog entries sorted by `tool_name` — not over the raw file bytes. The snippet below replicates that computation exactly:
 
 ```bash
 python3 -c "
 import json, hashlib
-with open('catalog.json', 'rb') as f:
-    data = f.read()
-print('sha256:' + hashlib.sha256(data).hexdigest())
+with open('catalog.json') as f:
+    entries = json.load(f)
+sorted_entries = sorted(entries, key=lambda e: e['tool_name'])
+canonical = json.dumps(sorted_entries, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+print('sha256:' + hashlib.sha256(canonical.encode()).hexdigest())
 "
 ```
 

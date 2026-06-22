@@ -13,14 +13,14 @@ Use `cmcp_verify` to confirm that a TRACE claim produced by cMCP is cryptographi
 ## Prerequisites
 
 ```bash
-pip install cmcp-gateway   # includes cmcp_verify
+pip install cmcp-runtime   # includes cmcp_verify
 ```
 
 ---
 
 ## Install the verify library
 
-`cmcp_verify` ships as part of `cmcp-gateway`. No separate install is needed:
+`cmcp_verify` ships as part of `cmcp-runtime`. No separate install is needed:
 
 ```python
 from cmcp_verify import verify_trace_claim, ApprovedHashes
