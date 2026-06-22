@@ -121,7 +121,10 @@ nav:
   - How It Works: docs/concepts.md
   - Configuration: docs/configuration.md
   - Tutorials:
+      - Connecting agent frameworks: docs/tutorials/connecting-agent-frameworks.md
+      - Tool catalog authoring: docs/tutorials/tool-catalog-authoring.md
       - Cedar policy walkthrough: docs/tutorials/cedar-policy-walkthrough.md
+      - Advisory mode debugging: docs/tutorials/advisory-mode-debugging.md
       - TLS pinning: docs/tutorials/tls-pinning.md
       - Verify a TRACE claim: docs/tutorials/verifying-a-trace-claim.md
       - TEE attestation: docs/tutorials/tee-attestation.md
