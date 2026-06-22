@@ -22,6 +22,7 @@ from cmcp_runtime.audit.trace_claim import (
     CallSummary,
     PolicyBundleInfo,
     ToolCatalogInfo,
+    ToolTranscriptEntry,
     generate_trace_claim,
 )
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
@@ -180,6 +181,26 @@ class SessionManager:
             {e.tool_name for e in tool_calls if e.tool_name is not None}
         )
 
+        # Privacy-preserving tool transcript (#126): one entry per tool call carrying
+        # the tool name, the data class from the catalog, and the policy decision.
+        # No request/response payloads, so the transcript leaks no PII. The entries
+        # are derived from the same audit chain whose tip is tool_transcript.hash.
+        transcript_entries: list[ToolTranscriptEntry] = []
+        for e in tool_calls:
+            if e.tool_name is None:
+                continue
+            catalog_entry = catalog.entries.get(e.tool_name)
+            data_class = (
+                catalog_entry.sensitivity_level if catalog_entry is not None else "unknown"
+            )
+            transcript_entries.append(
+                ToolTranscriptEntry(
+                    tool_name=e.tool_name,
+                    data_class=data_class,
+                    decision=e.policy_decision or "n/a",
+                )
+            )
+
         # Build call graph summary: prefer SessionCallLog (richer, with adjacency
         # tracking) and fall back to deriving domains from the audit chain entries.
         if session_call_log is not None:
@@ -250,6 +271,7 @@ class SessionManager:
             audit_chain_root=chain.chain_root,
             audit_chain_tip=chain.chain_tip,
             audit_chain_length=chain.length,
+            transcript_entries=transcript_entries,
             attestation_stale=attestation_stale,
             catalog_exceptions=catalog_exceptions,
             call_log_summary=call_log_summary,

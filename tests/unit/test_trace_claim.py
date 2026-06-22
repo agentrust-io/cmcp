@@ -410,3 +410,97 @@ def test_build_runtime_all_known_providers_accepted():
             attestation_validity_seconds=86400,
         )
         _build_runtime(report)  # must not raise
+
+
+# ── tool_transcript entries (#126) ──────────────────────────────────────────────
+
+
+def _three_entries() -> list:
+    from cmcp_runtime.audit.trace_claim import ToolTranscriptEntry
+
+    return [
+        ToolTranscriptEntry(tool_name="document_reader", data_class="confidential", decision="allow"),
+        ToolTranscriptEntry(tool_name="credit_score_lookup", data_class="confidential", decision="allow"),
+        ToolTranscriptEntry(tool_name="risk_report_writer", data_class="internal", decision="advisory_deny"),
+    ]
+
+
+def _claim_with_entries() -> RuntimeClaim:
+    chain = AuditChain("sess-126")
+    return generate_trace_claim(
+        session_id="sess-126",
+        signing_key=SigningKey(),
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64, enforcement_mode="enforcing", policy_version="1.0.0"
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        transcript_entries=_three_entries(),
+        do_sign=False,
+    )
+
+
+def test_transcript_entries_present_and_ordered():
+    claim = _claim_with_entries()
+    entries = claim.trace.tool_transcript.entries
+    assert entries is not None
+    assert [e.tool_name for e in entries] == [
+        "document_reader",
+        "credit_score_lookup",
+        "risk_report_writer",
+    ]
+    assert [e.decision for e in entries] == ["allow", "allow", "advisory_deny"]
+
+
+def test_transcript_hash_is_audit_chain_tip():
+    """Acceptance #1: tool_transcript.hash binds to the audit chain tip."""
+    chain = AuditChain("sess-126")
+    claim = generate_trace_claim(
+        session_id="sess-126",
+        signing_key=SigningKey(),
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64, enforcement_mode="enforcing", policy_version="1.0.0"
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        transcript_entries=_three_entries(),
+        do_sign=False,
+    )
+    assert claim.trace.tool_transcript.hash == f"sha256:{chain.chain_tip}"
+    assert claim.gateway.audit_chain.tip == chain.chain_tip
+
+
+def test_transcript_entries_carry_no_payloads():
+    """Privacy: serialized entries expose only tool_name, data_class, decision."""
+    claim = _claim_with_entries()
+    dumped = claim.model_dump(exclude_none=True)
+    for entry in dumped["trace"]["tool_transcript"]["entries"]:
+        assert set(entry.keys()) == {"tool_name", "data_class", "decision"}
+
+
+def test_transcript_entries_hash_roundtrip():
+    """A verifier can recompute the entries digest offline."""
+    from cmcp_runtime.audit.trace_claim import transcript_entries_hash
+
+    entries = _three_entries()
+    h = transcript_entries_hash(entries)
+    assert h.startswith("sha256:")
+    assert transcript_entries_hash(entries) == h
+    # A different decision changes the digest (tamper-evident).
+    entries[2].decision = "allow"
+    assert transcript_entries_hash(entries) != h
+
+
+def test_transcript_entries_optional():
+    """call_count is still set when no entries are supplied (backward compatible)."""
+    claim = _make_claim()
+    assert claim.trace.tool_transcript.entries is None
+    assert claim.trace.tool_transcript.call_count == 2

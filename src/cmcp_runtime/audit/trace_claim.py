@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.metadata
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo, ToolTranscript
+from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo
 from pydantic import BaseModel, ConfigDict, Field
 
 AgentSubjectSource = Literal["config", "svid", "manifest-dev"]
@@ -144,6 +145,35 @@ class AgentIdentityOut(BaseModel):
     tool_catalog_hash: str
 
 
+class ToolTranscriptEntry(BaseModel):
+    """One privacy-preserving entry in the bound tool transcript (issue #126).
+
+    Derived from the audit chain, never from raw tool-call parameters or response
+    bodies: it carries only the tool name, the data class the call touched, and the
+    policy decision. No request/response payloads, so the transcript leaks no PII.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str
+    data_class: str
+    decision: Literal["allow", "deny", "redact", "advisory_deny", "fault", "n/a"]
+
+
+class ToolTranscriptOut(BaseModel):
+    """cmcp tool_transcript: the canonical TRACE fields plus the privacy-preserving
+    entries array (issue #126). ``hash`` binds the full transcript to the audit chain
+    tip; ``entries`` lets a regulator read the per-call decision trail offline.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hash: Annotated[str, Field(pattern=r"^sha(256:[0-9a-f]{64}|384:[0-9a-f]{96})$")]
+    call_count: Annotated[int, Field(ge=0)] | None = None
+    transcript_uri: str | None = None
+    entries: list[ToolTranscriptEntry] | None = None
+
+
 class GatewayTrace(BaseModel):
     """Phase 1 TRACE fields applicable to the cmcp runtime context."""
 
@@ -155,7 +185,7 @@ class GatewayTrace(BaseModel):
     runtime: RuntimeInfo
     policy: PolicyInfo
     data_class: str
-    tool_transcript: ToolTranscript | None = None
+    tool_transcript: ToolTranscriptOut | None = None
     cnf: ConfirmationKey
 
 
@@ -276,6 +306,22 @@ def _build_policy(bundle: PolicyBundleInfo) -> PolicyInfo:
     )
 
 
+def canonical_entries(entries: list[ToolTranscriptEntry]) -> bytes:
+    """Canonical JSON of the transcript entries array, for offline hash verification."""
+    body = [e.model_dump() for e in entries]
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def transcript_entries_hash(entries: list[ToolTranscriptEntry]) -> str:
+    """SHA-256 over the canonical entries array, as a ``sha256:`` digest string.
+
+    A verifier recomputes this from the entries and checks it against the digest the
+    profile carries. Distinct from ``tool_transcript.hash`` (the audit-chain tip): this
+    one binds the human-readable per-call view, the chain tip binds the full transcript.
+    """
+    return "sha256:" + hashlib.sha256(canonical_entries(entries)).hexdigest()
+
+
 def _build_cnf(signing_key: Any) -> ConfirmationKey:
     pub_hex: str = signing_key.public_key_hex
     x = base64.urlsafe_b64encode(bytes.fromhex(pub_hex)).rstrip(b"=").decode()
@@ -301,6 +347,7 @@ def generate_trace_claim(
     audit_chain_root: str,
     audit_chain_tip: str,
     audit_chain_length: int,
+    transcript_entries: list[ToolTranscriptEntry] | None = None,
     attestation_stale: bool = False,
     catalog_exceptions: list[dict[str, str]] | None = None,
     call_log_summary: CallLogSummary | None = None,
@@ -328,9 +375,10 @@ def generate_trace_claim(
         runtime=_build_runtime(attestation_report),
         policy=_build_policy(policy_bundle),
         data_class=call_summary.session_max_sensitivity,
-        tool_transcript=ToolTranscript(
+        tool_transcript=ToolTranscriptOut(
             hash=tool_transcript_hash,
             call_count=call_summary.tool_calls_total,
+            entries=transcript_entries,
         ),
         cnf=_build_cnf(signing_key),
     )

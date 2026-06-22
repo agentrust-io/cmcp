@@ -84,7 +84,24 @@
               "pattern": "^sha(256|384):[0-9a-f]+"
             },
             "call_count": { "type": "integer", "minimum": 0 },
-            "transcript_uri": { "type": "string" }
+            "transcript_uri": { "type": "string" },
+            "entries": {
+              "type": "array",
+              "description": "Privacy-preserving per-call view (#126): tool name, data class, and policy decision, derived from the audit chain. No raw parameters or response bodies.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["tool_name", "data_class", "decision"],
+                "properties": {
+                  "tool_name": { "type": "string" },
+                  "data_class": { "type": "string" },
+                  "decision": {
+                    "type": "string",
+                    "enum": ["allow", "deny", "redact", "advisory_deny", "fault", "n/a"]
+                  }
+                }
+              }
+            }
           }
         },
         "cnf": {
