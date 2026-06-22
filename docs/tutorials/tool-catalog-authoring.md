@@ -33,13 +33,13 @@ pip install cmcp-runtime
     "sensitivity_level": "pii",
     "added_at": "2026-06-01T00:00:00Z",
     "approved_by": "security-team",
-    "catalog_exception": null,
+    "catalog_exception": false,
     "schema_validation_mode": "redact"
   }
 ]
 ```
 
-All fields are required except `catalog_exception` (nullable).
+All fields are required. `catalog_exception` defaults to `false`; set to `true` via the runtime break-glass API (`POST /catalog/exception`), never in the static file.
 
 ---
 
@@ -166,13 +166,23 @@ Steps:
 2. Canonical JSON: `sort_keys=True`, no spaces (`separators=(",", ":")`)
 3. SHA-256 of the UTF-8 bytes
 
-You can verify the hash the gateway will compute before deploying:
+Compute the hash before deploying with a short Python script:
 
-```bash
-cmcp validate-config --config cmcp-config.yaml
+```python
+import hashlib, json
+
+def catalog_hash(entries: list[dict]) -> str:
+    sorted_entries = sorted(entries, key=lambda e: e["tool_name"])
+    canonical = json.dumps(sorted_entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+with open("catalog.json") as f:
+    entries = json.load(f)
+
+print(catalog_hash(entries))
 ```
 
-This prints the computed `catalog_hash`. Pin it in `CMCP_CATALOG_HASH` or in your attestation policy to detect unauthorized catalog changes.
+Pin it in `CMCP_CATALOG_HASH` or in your attestation policy to detect unauthorized catalog changes. After startup the hash is also visible in the TRACE claim under `gateway.catalog.hash`.
 
 ---
 
@@ -207,7 +217,7 @@ This prints the computed `catalog_hash`. Pin it in `CMCP_CATALOG_HASH` or in you
     "sensitivity_level": "pii",
     "added_at": "2026-06-01T00:00:00Z",
     "approved_by": "security-team",
-    "catalog_exception": null,
+    "catalog_exception": false,
     "schema_validation_mode": "redact"
   },
   {
@@ -237,7 +247,7 @@ This prints the computed `catalog_hash`. Pin it in `CMCP_CATALOG_HASH` or in you
     "sensitivity_level": "confidential",
     "added_at": "2026-06-01T00:00:00Z",
     "approved_by": "compliance-officer",
-    "catalog_exception": null,
+    "catalog_exception": false,
     "schema_validation_mode": "strict"
   }
 ]
@@ -249,12 +259,23 @@ Note that `kyc.verify` uses `"strict"` because unexpected fields in a KYC call c
 
 ## Validate before deploying
 
-```bash
-# Validate catalog JSON structure and hash computation
-cmcp validate-config --config cmcp-config.yaml
+Compute and pin the catalog hash before starting the gateway:
 
-# Verify the bundle hash if you also want to pin policies
+```bash
+# Pin the catalog hash (required in production — see CMCP_CATALOG_HASH)
+export CMCP_CATALOG_HASH="$(python -c "
+import hashlib, json
+entries = json.load(open('catalog.json'))
+s = sorted(entries, key=lambda e: e['tool_name'])
+c = json.dumps(s, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+print('sha256:' + hashlib.sha256(c.encode()).hexdigest())
+")"
+
+# Validate the Cedar policy bundle hash separately
 cmcp validate-bundle --bundle-path ./policies/ --expected-hash sha256:<hex>
+
+# Validate cmcp-config.yaml syntax
+cmcp validate-config --config cmcp-config.yaml
 ```
 
 Both commands exit non-zero on any validation error without starting the gateway.
