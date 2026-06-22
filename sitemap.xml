@@ -109,7 +109,15 @@
          <lastmod>2026-06-22</lastmod>
     </url>
     <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/advisory-mode-debugging/</loc>
+         <lastmod>2026-06-22</lastmod>
+    </url>
+    <url>
          <loc>https://cmcp.agentrust-io.com/docs/tutorials/cedar-policy-walkthrough/</loc>
+         <lastmod>2026-06-22</lastmod>
+    </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/connecting-agent-frameworks/</loc>
          <lastmod>2026-06-22</lastmod>
     </url>
     <url>
@@ -126,6 +134,10 @@
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/docs/tutorials/tls-pinning/</loc>
+         <lastmod>2026-06-22</lastmod>
+    </url>
+    <url>
+         <loc>https://cmcp.agentrust-io.com/docs/tutorials/tool-catalog-authoring/</loc>
          <lastmod>2026-06-22</lastmod>
     </url>
     <url>
