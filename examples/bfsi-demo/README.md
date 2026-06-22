@@ -1,6 +1,6 @@
 # BFSI Demo : cMCP Gateway
 
-Demonstrates the CC Summit demo scenario: an agent calls financial tools, the gateway enforces Cedar policies, and produces a TRACE Claim an auditor can verify.
+Demonstrates a financial services governance scenario: an agent calls financial tools, the gateway enforces Cedar policies, and produces a TRACE Claim an auditor can verify.
 
 ## Scenario
 

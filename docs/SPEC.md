@@ -1,7 +1,6 @@
 ﻿# cMCP Runtime - Product Specification
 
-Status: Draft | Target: CC Summit June 23, 2026
-Primary opportunity: Enterprises cannot prove to regulators, auditors, or customers how their data was handled during AI processing.
+Status: Draft v0.1
 
 Architectural conviction: in the agent era, the agent-to-tool boundary is a primary control surface, not a backup to deterministic backends. Primary control surfaces must be tamper-evident in hardware. Phase 1 attests that boundary on the consumer side (the gateway). Phase 2 attests it on the provider side (the server).
 
@@ -292,4 +291,4 @@ Five attestable properties unique to Phase 2:
 | Multi-tenant isolation hardware-provable | SaaS providers demonstrate that tenant boundaries were enforced, not just configured. |
 | Cross-organizational attestation chains | Party A verifies party B's server directly -- no shared operator, no SOC 2 in between. |
 
-Not the current build focus. Revisit after Phase 1 GA and first design partner cohort feedback.
+Not the current build focus. Revisit after Phase 1 GA and early production feedback.

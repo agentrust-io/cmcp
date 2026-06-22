@@ -32,7 +32,7 @@ Issues in this repo track spec decisions, not implementation bugs. Each issue co
 
 | File | Covers | Phase | Status | Issues |
 |------|--------|-------|--------|--------|
-| docs/SPEC.md | Problem taxonomy, coverage matrix, target customer, success metric | 1+2 | Draft v0.1 | - |
+| docs/SPEC.md | Problem taxonomy, coverage matrix, Phase 1/2 scope | 1+2 | Draft v0.1 | - |
 | docs/spec/component-model.md | All MCP components, trust levels, hardware vs. software boundaries | 1+2 | Draft v0.1 | #43 |
 | docs/spec/transport.md | HTTP/SSE scope, stdio gap, SPIFFE-to-TEE binding spike | 1 | Draft v0.1 | #20, #21 |
 | docs/spec/attestation.md | TEE provider detection, audit chain, key management, catalog pinning | 1 | Draft v0.1 | #5, #6, #23, #33, #38 |

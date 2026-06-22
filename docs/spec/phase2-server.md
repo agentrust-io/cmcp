@@ -8,7 +8,7 @@ Stability: Unstable , expect breaking changes before v1.0
 
 ## Section 1 : Phase 2 Architecture Overview
 
-Phase 2 targets a different buyer than Phase 1. The Phase 1 buyer is an agent developer who deploys a runtime in front of their own agents. The Phase 2 buyer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Their enterprise customers - Phase 1 buyers - eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.
+Phase 2 targets a different deployer than Phase 1. The Phase 1 deployer is an agent developer who runs a runtime in front of their own agents. The Phase 2 deployer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Those enterprise customers — Phase 1 deployers — eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.
 
 Phase 1 closes from the agent side: the runtime attests what the agent sent and what policy was applied. Phase 2 closes from the server side: the MCP server binary, its tool surface, and its egress behavior are all measured inside a TEE and published as a second TRACE Claim that any enterprise verifier can check without trusting the SaaS operator.
 
@@ -44,7 +44,7 @@ SaaS / Platform Provider
 
 The combined trust artifact delivered to the verifier is a pair of TRACE Claims: the Phase 1 runtime claim (proves runtime policy ran) and the Phase 2 server claim (proves server binary and tool surface are attested). Neither claim requires trusting the other party's operator.
 
-**Sequencing note.** Phase 2 is the natural pull from Phase 1 adoption. It is not the current build focus. Revisit after Phase 1 GA and first design partner cohort feedback.
+**Sequencing note.** Phase 2 is the natural pull from Phase 1 adoption. It is not the current build focus. Revisit after Phase 1 GA and early production feedback.
 
 ---
 
@@ -186,7 +186,7 @@ Maximum bytes buffered before forced termination: configurable per tool, default
 
 ## Section 4 : Phase 2 Proxy Reliability Targets
 
-These targets apply to the proxy classification path under nominal load with a representative policy suite. They are design targets for the Phase 2 implementation milestone; final values will be validated against benchmark results from the first design partner deployments.
+These targets apply to the proxy classification path under nominal load with a representative policy suite. They are design targets for the Phase 2 implementation milestone; final values will be validated against benchmark results from early production deployments.
 
 | Metric | Target | Notes |
 |---|---|---|
