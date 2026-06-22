@@ -22,7 +22,7 @@
   </strong>
 </p>
 
-[![CI](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/cmcp-runtime)](https://pypi.org/project/cmcp-runtime/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/agentrust-io/cmcp/badge)](https://scorecard.dev/viewer/?uri=github.com/agentrust-io/cmcp) [![Discord](https://dcbadge.limes.pink/api/server/9JWNpH7E?style=flat)](https://discord.gg/9JWNpH7E)
+[![CI](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/cmcp-runtime)](https://pypi.org/project/cmcp-runtime/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/agentrust-io/cmcp/badge)](https://scorecard.dev/viewer/?uri=github.com/agentrust-io/cmcp) [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white&style=flat)](https://discord.gg/grgzFEHgkj)
 
 > **Developer Preview** - launching at Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0.
 
@@ -245,7 +245,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and response SLAs. Se
 
 [CONTRIBUTING.md](CONTRIBUTING.md) · [GOVERNANCE.md](GOVERNANCE.md) · [Discussions](https://github.com/agentrust-io/cmcp/discussions)
 
-Join the community on [Discord](https://discord.gg/9JWNpH7E).
+Join the community on [Discord](https://discord.gg/grgzFEHgkj).
 
 Using cMCP in production? Add your organization to [ADOPTERS.md](ADOPTERS.md).
 
