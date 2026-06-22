@@ -41,7 +41,8 @@
               "type": "string",
               "enum": [
                 "intel-tdx", "amd-sev-snp", "nvidia-h100", "nvidia-blackwell",
-                "aws-nitro", "arm-cca", "google-confidential-space", "tpm2"
+                "aws-nitro", "arm-cca", "google-confidential-space", "tpm2",
+                "software-only"
               ]
             },
             "measurement": {
@@ -135,6 +136,12 @@
       "description": "cmcp-specific addenda outside the canonical TRACE spec.",
       "properties": {
         "session_id": { "type": "string" },
+        "gateway_version": { "type": "string" },
+        "sequence_number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonically increasing claim counter for this gateway instance (AUDIT-005)."
+        },
         "audit_chain": {
           "type": "object",
           "additionalProperties": false,
