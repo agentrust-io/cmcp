@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import base64
 import json
+import pathlib
+
+import jsonschema
 
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
@@ -511,9 +514,6 @@ def test_transcript_entries_optional():
 
 def test_software_only_claim_validates_against_json_schema():
     """A software-only claim must pass JSON schema validation (issue #324)."""
-    import pathlib
-    import jsonschema
-
     schema_path = pathlib.Path(__file__).parents[2] / "schemas" / "trace-claim.schema.json"
     schema = json.loads(schema_path.read_text())
     claim = _make_claim()
