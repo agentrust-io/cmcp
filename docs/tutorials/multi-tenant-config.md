@@ -13,7 +13,7 @@ Run cMCP with per-tenant policy isolation by deploying separate runtime instance
 ## Prerequisites
 
 ```bash
-pip install cmcp-gateway
+pip install cmcp-runtime
 ```
 
 ---

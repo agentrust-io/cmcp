@@ -28,7 +28,7 @@ pip --version
 ## Install
 
 ```bash
-pip install cmcp-gateway
+pip install cmcp-runtime
 ```
 
 This installs:
