@@ -35,6 +35,15 @@ from cmcp_runtime.session.state import SessionState
 
 logger = logging.getLogger(__name__)
 
+_EXTERNAL_EVIDENCE_FIELDS: frozenset[str] = frozenset({
+    "issuer",
+    "issuer_key_id",
+    "signature",
+    "evidence_hash",
+    "evidence_type",
+    "linked_call_id",
+})
+
 
 @dataclass
 class CallResult:
@@ -71,6 +80,36 @@ def _cedar_safe(value: Any) -> Any:
     if isinstance(value, list | tuple):
         return [_cedar_safe(v) for v in value if v is not None]
     return str(value)
+
+
+def _extract_external_execution_evidence(response_text: str) -> dict[str, str] | None:
+    """Return a well-formed external execution receipt from a JSON response, if present."""
+    try:
+        decoded = json.loads(response_text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(decoded, dict):
+        return None
+
+    receipt = decoded.get("external_execution_evidence")
+    if receipt is None:
+        return None
+    if not isinstance(receipt, dict):
+        logger.warning(
+            "EXTERNAL_EVIDENCE_IGNORED: external_execution_evidence is not an object"
+        )
+        return None
+    if set(receipt) != _EXTERNAL_EVIDENCE_FIELDS:
+        logger.warning(
+            "EXTERNAL_EVIDENCE_IGNORED: external_execution_evidence fields mismatch"
+        )
+        return None
+    if not all(isinstance(receipt[field], str) for field in _EXTERNAL_EVIDENCE_FIELDS):
+        logger.warning(
+            "EXTERNAL_EVIDENCE_IGNORED: external_execution_evidence values must be strings"
+        )
+        return None
+    return {field: receipt[field] for field in sorted(_EXTERNAL_EVIDENCE_FIELDS)}
 
 
 class CMCPProxy:
@@ -824,6 +863,7 @@ class CMCPProxy:
             and _fp != _tls_mod.PLACEHOLDER_FINGERPRINT
             else "hash-only"
         )
+        external_execution_evidence = _extract_external_execution_evidence(agt_result)
         # INJECT-003: include injection scanner and pattern in audit detail when detected
         injection_detail: dict[str, str | int | float] | None = (
             {
@@ -850,6 +890,7 @@ class CMCPProxy:
             session_sensitivity_after=self._session.max_sensitivity,
             workflow_id=workflow_id,
             detail=injection_detail,
+            external_execution_evidence=external_execution_evidence,
         )
 
         # Step 6: call log record + suspicious-sequence check

@@ -108,6 +108,53 @@
       ],
       "description": "Result of response inspection by the gateway; null for non-tool-call entries."
     },
+    "external_execution_evidence": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Optional independent execution evidence bound to this call (issue #301). Distinct from response_payload_hash: response_payload_hash is what the gateway forwarded, this is what an independent authority (e.g. a safety controller) attested. Null when absent. Intentionally not in 'required' so entries that predate the field still validate.",
+      "required": [
+        "issuer",
+        "issuer_key_id",
+        "signature",
+        "evidence_hash",
+        "evidence_type",
+        "linked_call_id"
+      ],
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "description": "Identity (e.g. SPIFFE URI) of the authority that signed the receipt."
+        },
+        "issuer_key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase hex SHA-256 digest of the raw Ed25519 issuer public key used to verify the signature."
+        },
+        "signature": {
+          "type": "string",
+          "description": "base64url Ed25519 signature over the canonical receipt (all fields except signature)."
+        },
+        "evidence_hash": {
+          "type": "string",
+          "pattern": "^sha(256|384):[0-9a-f]+",
+          "description": "sha256:<hex> of the attested execution evidence (e.g. the controller decision payload)."
+        },
+        "evidence_type": {
+          "type": "string",
+          "enum": [
+            "controller-execution-receipt/v1",
+            "tee-signed-receipt",
+            "controller-jwt",
+            "opaque-receipt"
+          ],
+          "description": "Receipt type and version, e.g. controller-execution-receipt/v1."
+        },
+        "linked_call_id": {
+          "type": "string",
+          "description": "The call_id this receipt is bound to; a verifier checks it equals the entry call_id."
+        }
+      }
+    },
     "session_sensitivity_before": {
       "type": ["string", "null"],
       "description": "Session sensitivity level before this entry was processed."

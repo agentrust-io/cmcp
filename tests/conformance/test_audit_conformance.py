@@ -4,6 +4,7 @@ Covers AUDIT-001 through AUDIT-005.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -12,6 +13,8 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
@@ -23,6 +26,7 @@ from cmcp_runtime.audit.trace_claim import (
     ToolCatalogInfo,
     generate_trace_claim,
 )
+from cmcp_verify.verify import verify_audit_bundle
 
 # ---- helpers ----------------------------------------------------------------
 
@@ -315,3 +319,173 @@ class TestAudit005ClaimSequence:
             d = _claim_dict(chain, key, seq=s)
             assert d["gateway"]["sequence_number"] == s
         assert seqs == sorted(set(seqs))
+
+
+# ---- #301: independent execution evidence -----------------------------------
+
+
+def _ed25519_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
+    priv = Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes(
+        encoding=Encoding.Raw, format=PublicFormat.Raw
+    )
+    return priv, pub, hashlib.sha256(pub).hexdigest()
+
+
+def _signed_receipt(
+    priv: Ed25519PrivateKey,
+    call_id: str,
+    *,
+    issuer_key_id: str,
+) -> dict[str, str]:
+    """Build a controller-signed execution receipt for a call."""
+    receipt = {
+        "issuer": "spiffe://factory.example/controller/robot-cell-7",
+        "issuer_key_id": issuer_key_id,
+        "evidence_hash": "sha256:" + "ab" * 32,
+        "evidence_type": "controller-execution-receipt/v1",
+        "linked_call_id": call_id,
+    }
+    signing_input = json.dumps(
+        receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    receipt["signature"] = (
+        base64.urlsafe_b64encode(priv.sign(signing_input)).rstrip(b"=").decode()
+    )
+    return receipt
+
+
+def _bundle(chain: AuditChain) -> dict:
+    return {"entries": [asdict(e) for e in chain.entries]}
+
+
+def _signed_bundle(chain: AuditChain, key: SigningKey) -> dict:
+    entries = [asdict(e) for e in chain.entries]
+    digest = hashlib.sha256(
+        json.dumps(entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    ).digest()
+    return {
+        "session_id": chain._session_id,
+        "entries": entries,
+        "bundle_signature": base64.urlsafe_b64encode(key.sign(digest)).rstrip(b"=").decode(),
+    }
+
+
+class TestExternalExecutionEvidence301:
+    """#301: optional external_execution_evidence bound to an audit entry."""
+
+    def test_absent_receipt_verifies_with_null_evidence_field(self):
+        # Receipt-less entries serialize and hash deterministically, and a
+        # bundle with no receipts verifies without any keys configured.
+        chain = AuditChain("sess-301-a")
+        entry = chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
+        d = asdict(entry)
+        d.pop("entry_hash")
+        expected = hashlib.sha256(
+            json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        ).hexdigest()
+        assert entry.entry_hash == expected
+        assert verify_audit_bundle(_bundle(chain)).verified
+
+    def test_populated_receipt_verifies(self):
+        priv, pub, key_id = _ed25519_keypair()
+        chain = AuditChain("sess-301-b")
+        chain.append(
+            "tool_call",
+            call_id="c1",
+            tool_name="robot.request_motion",
+            policy_decision="allow",
+            external_execution_evidence=_signed_receipt(priv, "c1", issuer_key_id=key_id),
+        )
+        result = verify_audit_bundle(
+            _bundle(chain), external_evidence_keys={key_id: pub}
+        )
+        assert result.verified, result.failures
+
+    def test_exported_bundle_with_receipt_verifies_end_to_end(self):
+        priv, pub, key_id = _ed25519_keypair()
+        signing_key = SigningKey()
+        chain = AuditChain("sess-301-export")
+        chain.append(
+            "tool_call",
+            call_id="c1",
+            tool_name="robot.request_motion",
+            policy_decision="allow",
+            external_execution_evidence=_signed_receipt(priv, "c1", issuer_key_id=key_id),
+        )
+        result = verify_audit_bundle(
+            _signed_bundle(chain, signing_key),
+            _claim_dict(chain, signing_key),
+            external_evidence_keys={key_id: pub},
+        )
+        assert result.verified, result.failures
+
+    def test_tampered_receipt_fails(self):
+        priv, pub, key_id = _ed25519_keypair()
+        receipt = _signed_receipt(priv, "c1", issuer_key_id=key_id)
+        receipt["evidence_hash"] = "sha256:" + "cd" * 32  # tamper after signing
+        chain = AuditChain("sess-301-c")
+        chain.append(
+            "tool_call",
+            call_id="c1",
+            tool_name="robot.request_motion",
+            policy_decision="allow",
+            external_execution_evidence=receipt,
+        )
+        # The chain hash still matches (append sealed the tampered receipt), so
+        # only the receipt signature check fails.
+        result = verify_audit_bundle(
+            _bundle(chain), external_evidence_keys={key_id: pub}
+        )
+        assert not result.verified
+        assert any("signature is invalid" in f for f in result.failures)
+
+    def test_linked_call_id_mismatch_fails(self):
+        priv, pub, key_id = _ed25519_keypair()
+        chain = AuditChain("sess-301-d")
+        chain.append(
+            "tool_call",
+            call_id="c1",
+            tool_name="t",
+            policy_decision="allow",
+            external_execution_evidence=_signed_receipt(
+                priv, "a-different-call", issuer_key_id=key_id
+            ),
+        )
+        result = verify_audit_bundle(
+            _bundle(chain), external_evidence_keys={key_id: pub}
+        )
+        assert not result.verified
+        assert any("linked_call_id" in f for f in result.failures)
+
+    def test_unknown_issuer_key_fails(self):
+        priv, _, key_id = _ed25519_keypair()
+        chain = AuditChain("sess-301-e")
+        chain.append(
+            "tool_call",
+            call_id="c1",
+            tool_name="t",
+            policy_decision="allow",
+            external_execution_evidence=_signed_receipt(priv, "c1", issuer_key_id=key_id),
+        )
+        result = verify_audit_bundle(
+            _bundle(chain), external_evidence_keys={"0" * 64: b"\x00" * 32}
+        )
+        assert not result.verified
+        assert any("no trusted key" in f for f in result.failures)
+
+    def test_key_id_mismatch_fails(self):
+        priv, pub, key_id = _ed25519_keypair()
+        chain = AuditChain("sess-301-f")
+        chain.append(
+            "tool_call",
+            call_id="c1",
+            tool_name="t",
+            policy_decision="allow",
+            external_execution_evidence=_signed_receipt(priv, "c1", issuer_key_id=key_id),
+        )
+        result = verify_audit_bundle(
+            _bundle(chain), external_evidence_keys={key_id: b"\x00" * len(pub)}
+        )
+        assert not result.verified
+        assert any("issuer_key_id does not match" in f for f in result.failures)

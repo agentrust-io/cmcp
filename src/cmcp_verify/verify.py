@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -39,6 +40,15 @@ def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
 
 
 _SW_ONLY_FIRMWARE = "software-only-dev-mode"
+_EXTERNAL_EVIDENCE_ERROR = "EXTERNAL_EVIDENCE_VERIFICATION_FAILED"
+_EXTERNAL_EVIDENCE_HASH_RE = re.compile(r"^sha(256|384):[0-9a-f]+$")
+_ISSUER_KEY_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+_EXTERNAL_EVIDENCE_TYPES = frozenset({
+    "controller-execution-receipt/v1",
+    "tee-signed-receipt",
+    "controller-jwt",
+    "opaque-receipt",
+})
 
 _KNOWN_PLATFORMS = {
     "amd-sev-snp",
@@ -276,9 +286,15 @@ class AuditBundleResult:
     failures: list[str] = field(default_factory=list)
 
 
+def _external_evidence_failure(entry_index: int, reason: str) -> str:
+    return f"entry {entry_index}: {_EXTERNAL_EVIDENCE_ERROR}: {reason}"
+
+
 def verify_audit_bundle(
     bundle_json: dict[str, Any],
     claim_json: dict[str, Any] | None = None,
+    *,
+    external_evidence_keys: dict[str, bytes] | None = None,
 ) -> AuditBundleResult:
     """
     Verify an exported audit bundle (GET /audit/export):
@@ -288,6 +304,12 @@ def verify_audit_bundle(
     2. If a claim is provided, cross-check the bundle's root/tip/length
        against gateway.audit_chain and verify the bundle_signature with the
        claim's confirmation key (trace.cnf.jwk.x).
+    3. #301: if external_evidence_keys is provided (issuer_key_id -> raw Ed25519
+       public key bytes), verify any external_execution_evidence receipt bound to an
+       entry: linked_call_id must equal the entry call_id, and the issuer
+       signature must verify over the canonical receipt (all fields except
+       signature). This is opt-in: receipt-less entries and callers that do not
+       supply keys are unaffected, so existing evidence keeps verifying.
     """
     failures: list[str] = []
     entries = bundle_json.get("entries", [])
@@ -305,6 +327,83 @@ def verify_audit_bundle(
         if entry.get("prev_entry_hash") != prev:
             failures.append(f"entry {i}: chain link broken")
         prev = entry.get("entry_hash", "")
+
+    # #301: verify independent execution receipts (opt-in via external_evidence_keys).
+    if external_evidence_keys is not None:
+        for i, entry in enumerate(entries):
+            ev = entry.get("external_execution_evidence")
+            if not ev:
+                continue
+            if not isinstance(ev, dict):
+                failures.append(
+                    _external_evidence_failure(i, "external_execution_evidence is not an object")
+                )
+                continue
+            if ev.get("linked_call_id") != entry.get("call_id"):
+                failures.append(
+                    _external_evidence_failure(
+                        i,
+                        "external_execution_evidence linked_call_id does not match "
+                        "the entry call_id",
+                    )
+                )
+            key_id = ev.get("issuer_key_id", "")
+            if not isinstance(key_id, str) or not _ISSUER_KEY_ID_RE.match(key_id):
+                failures.append(
+                    _external_evidence_failure(
+                        i,
+                        "issuer_key_id must be lowercase hex SHA-256 of the issuer public key",
+                    )
+                )
+                continue
+            evidence_hash = ev.get("evidence_hash", "")
+            if not isinstance(evidence_hash, str) or not _EXTERNAL_EVIDENCE_HASH_RE.match(evidence_hash):
+                failures.append(
+                    _external_evidence_failure(
+                        i, "evidence_hash must be sha256:<hex> or sha384:<hex>"
+                    )
+                )
+                continue
+            evidence_type = ev.get("evidence_type", "")
+            if evidence_type not in _EXTERNAL_EVIDENCE_TYPES:
+                failures.append(
+                    _external_evidence_failure(i, f"unsupported evidence_type '{evidence_type}'")
+                )
+                continue
+            pub_bytes = external_evidence_keys.get(key_id)
+            if not pub_bytes:
+                failures.append(
+                    _external_evidence_failure(
+                        i, f"no trusted key for external evidence issuer_key_id '{key_id}'"
+                    )
+                )
+                continue
+            try:
+                if len(pub_bytes) != 32:
+                    raise ValueError("trusted issuer key must be 32 raw Ed25519 public key bytes")
+                if hashlib.sha256(pub_bytes).hexdigest() != key_id:
+                    raise ValueError("issuer_key_id does not match trusted issuer public key")
+                pub = Ed25519PublicKey.from_public_bytes(pub_bytes)
+                signing_input = json.dumps(
+                    {k: v for k, v in ev.items() if k != "signature"},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ).encode()
+                sig_b64 = ev.get("signature", "")
+                pad = 4 - (len(sig_b64) % 4)
+                sig = base64.urlsafe_b64decode(sig_b64 + ("=" * pad if pad != 4 else ""))
+                pub.verify(sig, signing_input)
+            except InvalidSignature:
+                failures.append(
+                    _external_evidence_failure(i, "external_execution_evidence signature is invalid")
+                )
+            except Exception as exc:
+                failures.append(
+                    _external_evidence_failure(
+                        i, f"external_execution_evidence could not be verified: {exc}"
+                    )
+                )
 
     if claim_json is not None:
         chain = claim_json.get("gateway", {}).get("audit_chain", {})
