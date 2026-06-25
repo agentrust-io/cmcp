@@ -63,6 +63,7 @@ Documentation = "https://github.com/agentrust-io/cmcp/tree/main/docs"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cmcp_runtime", "src/cmcp_verify"]
 
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
