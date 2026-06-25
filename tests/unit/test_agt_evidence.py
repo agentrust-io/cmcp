@@ -158,8 +158,8 @@ def test_verify_evidence_passes(tmp_path, generator):
 
     evidence_path = tmp_path / "agt-evidence.json"
     ev = generator.generate_evidence()
-    from datetime import datetime
-    ev["generated_at"] = datetime.now(datetime.UTC).isoformat()
+    from datetime import datetime, timezone
+    ev["generated_at"] = datetime.now(timezone.utc).isoformat()
     evidence_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
 
     attestation = GovernanceVerifier().verify_evidence(evidence_path, strict=True)
@@ -184,8 +184,8 @@ def test_verify_evidence_json_is_valid(tmp_path, generator):
 
     evidence_path = tmp_path / "agt-evidence.json"
     ev = generator.generate_evidence()
-    from datetime import datetime
-    ev["generated_at"] = datetime.now(datetime.UTC).isoformat()
+    from datetime import datetime, timezone
+    ev["generated_at"] = datetime.now(timezone.utc).isoformat()
     evidence_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
 
     attestation = GovernanceVerifier().verify_evidence(evidence_path)
