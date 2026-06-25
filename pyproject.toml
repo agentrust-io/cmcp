@@ -27,7 +27,8 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "agentrust-trace>=0.1",
-    "agent-manifest>=0.1.1",
+    # Replace with a version constraint after the next SDK release exports verify_manifest.
+    "agent-manifest @ git+https://github.com/agentrust-io/agent-manifest.git@1297c223d68fdaf95ac9438d9de844597281a3c2#subdirectory=python",
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "httpx>=0.27",
@@ -62,6 +63,9 @@ Documentation = "https://github.com/agentrust-io/cmcp/tree/main/docs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cmcp_runtime", "src/cmcp_verify"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
