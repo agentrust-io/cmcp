@@ -3,8 +3,8 @@ Tests for Claim 5: temporal adjacency call graph properties.
 These tests assert the invariants the experiment demonstrates.
 """
 from cmcp_runtime.session.call_log import (  # noqa: PLC2701
-    SessionCallLog,
     _HIGH_SENSITIVITY_DOMAINS,
+    SessionCallLog,
 )
 
 
