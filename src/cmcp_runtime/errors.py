@@ -126,3 +126,10 @@ class ConfigError(CMCPError):
 class ClaimValidationError(CMCPError):
     code = "CLAIM_VALIDATION_ERROR"
     http_status = 500
+
+
+class KillSwitchTripped(CMCPError):
+    """Raised when a new session is rejected because the agent identity has tripped the kill switch."""
+
+    code = "KILL_SWITCH_TRIPPED"
+    http_status = 403

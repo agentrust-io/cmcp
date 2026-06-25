@@ -217,6 +217,7 @@ class GatewayAddenda(BaseModel):
     catalog_exceptions: list[dict[str, str]] = Field(default_factory=list)
     call_log_summary: CallLogSummary | None = None
     agent_identity: AgentIdentityOut | None = None
+    kill_switch_triggered: bool = False
 
 
 class RuntimeClaim(BaseModel):
@@ -354,6 +355,7 @@ def generate_trace_claim(
     agent_identity: AgentIdentityInfo | None = None,
     sequence_number: int = 1,
     prev_claim_hash: str | None = None,
+    kill_switch_triggered: bool = False,
     do_sign: bool = True,
 ) -> RuntimeClaim:
     """Generate a RuntimeClaim from session data, validate it via Pydantic, and optionally sign it.
@@ -414,6 +416,7 @@ def generate_trace_claim(
         attestation_validity_seconds=attestation_report.attestation_validity_seconds,
         attestation_stale=attestation_stale,
         catalog_exceptions=catalog_exceptions or [],
+        kill_switch_triggered=kill_switch_triggered,
         call_log_summary=call_log_summary,
         agent_identity=(
             AgentIdentityOut(

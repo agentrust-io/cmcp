@@ -25,6 +25,9 @@ from cmcp_runtime.audit.trace_claim import (
     ToolTranscriptEntry,
     generate_trace_claim,
 )
+from cmcp_runtime.config import KillSwitchConfig
+from cmcp_runtime.errors import KillSwitchTripped
+from cmcp_runtime.kill_switch import KillSwitchEvaluator
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
 from cmcp_runtime.session.state import SessionState
 from cmcp_runtime.startup import RuntimeContext
@@ -49,6 +52,10 @@ class SessionManager:
         # Stores signed claim dicts keyed by session_id, populated on close.
         self._closed_claims: dict[str, dict[str, Any]] = {}
         self._last_claim_hash: str | None = None
+        ks_cfg = getattr(ctx.config, "kill_switch", None)
+        if not isinstance(ks_cfg, KillSwitchConfig):
+            ks_cfg = KillSwitchConfig()  # disabled by default if not configured
+        self._kill_switch = KillSwitchEvaluator(ks_cfg)
 
     def create_session(self) -> tuple[SessionState, AuditChain]:
         """
@@ -62,6 +69,15 @@ class SessionManager:
         performs the root comparison - the security guarantee is limited to what
         a software TEE provides, and a warning is emitted.
         """
+        # Kill switch: reject sessions for blocked agent identities before allocating resources.
+        binding = getattr(self._ctx, "agent_manifest", None)
+        if isinstance(binding, AgentManifestBinding) and self._kill_switch.is_blocked(binding.agent_id):
+            raise KillSwitchTripped(
+                f"Session rejected: agent identity {binding.agent_id!r} has tripped the "
+                "kill switch. Contact the platform operator to unblock.",
+                detail=binding.agent_id,
+            )
+
         session_id = str(uuid4())
         state = SessionState(session_id=session_id)
         chain = AuditChain(session_id=session_id, store=self._ctx.audit_store)
@@ -241,6 +257,35 @@ class SessionManager:
                 suspicious_sequences_detected=state.suspicious_sequences,
             )
 
+        # Kill switch: record this session's outcomes and evaluate.
+        # Only evaluated when an agent manifest is bound (anonymous sessions have no identity to block).
+        ks_binding = getattr(ctx, "agent_manifest", None)
+        if not isinstance(ks_binding, AgentManifestBinding):
+            ks_binding = None
+        kill_switch_triggered = False
+        if ks_binding is not None:
+            self._kill_switch.record_calls(
+                ks_binding.agent_id,
+                allowed=tool_calls_allowed,
+                denied=tool_calls_denied,
+            )
+            kill_switch_triggered = self._kill_switch.evaluate(ks_binding.agent_id)
+            if kill_switch_triggered:
+                state.kill_switch_triggered = True
+                chain.append(
+                    "break_glass_used",
+                    detail={
+                        "reason": "kill_switch_triggered",
+                        "agent_id": ks_binding.agent_id,
+                        "deny_rate_window_seconds": ctx.config.kill_switch.window_seconds,
+                    },
+                )
+                logger.warning(
+                    "Kill switch triggered: agent_id=%s deny_rate exceeded threshold. "
+                    "Future sessions for this identity will be rejected.",
+                    ks_binding.agent_id,
+                )
+
         agent_identity: AgentIdentityInfo | None = None
         binding = getattr(ctx, "agent_manifest", None)
         if not isinstance(binding, AgentManifestBinding):
@@ -278,6 +323,7 @@ class SessionManager:
             agent_identity=agent_identity,
             sequence_number=_CLAIM_SEQUENCE,
             prev_claim_hash=self._last_claim_hash,
+            kill_switch_triggered=kill_switch_triggered,
             do_sign=True,
         )
 

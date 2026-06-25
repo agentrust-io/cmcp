@@ -132,6 +132,7 @@ nav:
       - Deploy on GCP: docs/tutorials/deploy-gcp.md
       - Multi-tenant deployment: docs/tutorials/multi-tenant-config.md
       - Response inspection: docs/tutorials/response-inspection.md
+      - AGT SRE kill switch: docs/tutorials/kill-switch.md
   - Specification:
       - Overview: docs/SPEC.md
       - Component Model: docs/spec/component-model.md

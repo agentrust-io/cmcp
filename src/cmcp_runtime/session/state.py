@@ -56,6 +56,7 @@ class SessionState:
     suspicious_sequences: int = 0
     attestation_stale: bool = False
     catalog_drift: bool = False
+    kill_switch_triggered: bool = False
     # AUTH-002: guards concurrent mutations from tool-call coroutines and session-reset requests
     mutation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False, compare=False)
 
