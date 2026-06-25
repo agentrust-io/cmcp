@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 from pathlib import Path
 
 import pytest
-
-# Import the generator as a module so tests don't rely on subprocess.
-import importlib.util
 
 _SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
 _REPO_ROOT = Path(__file__).parent.parent.parent
@@ -163,15 +161,15 @@ def test_verify_evidence_passes(tmp_path, generator):
     # the evidence file location; the audit target is a string, not checked for existence).
     evidence_path = tmp_path / "agt-evidence.json"
     ev = generator.generate_evidence()
-    from datetime import datetime, timezone
-    ev["generated_at"] = datetime.now(timezone.utc).isoformat()
+    from datetime import datetime
+    ev["generated_at"] = datetime.now(datetime.UTC).isoformat()
     evidence_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
 
     attestation = GovernanceVerifier().verify_evidence(evidence_path, strict=True)
 
     failures = [c for c in attestation.evidence_checks if c.status == "fail"]
     assert not failures, (
-        f"Evidence checks failed:\n"
+        "Evidence checks failed:\n"
         + "\n".join(f"  {c.check_id}: {c.message}" for c in failures)
     )
 
@@ -193,8 +191,8 @@ def test_verify_evidence_json_is_valid(tmp_path, generator):
 
     evidence_path = tmp_path / "agt-evidence.json"
     ev = generator.generate_evidence()
-    from datetime import datetime, timezone
-    ev["generated_at"] = datetime.now(timezone.utc).isoformat()
+    from datetime import datetime
+    ev["generated_at"] = datetime.now(datetime.UTC).isoformat()
     evidence_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
 
     attestation = GovernanceVerifier().verify_evidence(evidence_path)
