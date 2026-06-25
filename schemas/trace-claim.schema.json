@@ -250,6 +250,10 @@
         "catalog_exceptions": {
           "type": "array",
           "items": { "type": "object" }
+        },
+        "kill_switch_triggered": {
+          "type": "boolean",
+          "description": "True when the AGT SRE kill switch fired for this session's agent identity. Future sessions from the same identity will be rejected."
         }
       }
     },
