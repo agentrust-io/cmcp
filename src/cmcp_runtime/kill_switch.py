@@ -26,7 +26,7 @@ class KillSwitchEvaluator:
     close_session() is called synchronously, so no lock is needed.
     """
 
-    def __init__(self, config: "KillSwitchConfig") -> None:
+    def __init__(self, config: KillSwitchConfig) -> None:
         self._config = config
         # agent_id -> deque of (monotonic_time, is_deny: bool)
         self._events: dict[str, deque[tuple[float, bool]]] = defaultdict(deque)

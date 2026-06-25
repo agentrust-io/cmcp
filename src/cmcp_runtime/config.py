@@ -178,7 +178,7 @@ def load_config(path: str) -> Config:
     if not isinstance(ks_window, int) or ks_window <= 0:
         raise ConfigError("kill_switch.window_seconds must be a positive integer")
     ks_threshold = ks_raw.get("deny_rate_threshold", 0.9)
-    if not isinstance(ks_threshold, (int, float)) or not (0.0 < ks_threshold <= 1.0):
+    if not isinstance(ks_threshold, int | float) or not (0.0 < ks_threshold <= 1.0):
         raise ConfigError("kill_switch.deny_rate_threshold must be a float in (0, 1]")
     ks_min_calls = ks_raw.get("min_calls", 10)
     if not isinstance(ks_min_calls, int) or ks_min_calls <= 0:

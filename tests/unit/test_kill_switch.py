@@ -7,13 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from cmcp_runtime.agent_manifest import AgentManifestBinding
-from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.config import KillSwitchConfig
 from cmcp_runtime.errors import KillSwitchTripped
 from cmcp_runtime.kill_switch import KillSwitchEvaluator
 from cmcp_runtime.session.manager import SessionManager
-from cmcp_runtime.session.state import SessionState
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
