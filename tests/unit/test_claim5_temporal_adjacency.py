@@ -2,7 +2,10 @@
 Tests for Claim 5: temporal adjacency call graph properties.
 These tests assert the invariants the experiment demonstrates.
 """
-from cmcp_runtime.session.call_log import SessionCallLog, _HIGH_SENSITIVITY_DOMAINS
+from cmcp_runtime.session.call_log import (  # noqa: PLC2701
+    SessionCallLog,
+    _HIGH_SENSITIVITY_DOMAINS,
+)
 
 
 class _Entry:
@@ -67,7 +70,7 @@ def test_no_false_negatives_by_construction():
         ("billing.submit_claim",  "external", []),
     )
     phi_seq = log.entries[0].sequence_number
-    subsequent = [e for e in log.entries[1:]]
+    subsequent = list(log.entries[1:])
     assert all(e.sequence_number > phi_seq for e in subsequent), (
         "Every call after a PHI call must have a higher sequence number (implicit edge)"
     )

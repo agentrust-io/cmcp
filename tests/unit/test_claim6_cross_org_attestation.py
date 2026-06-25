@@ -66,7 +66,7 @@ def test_independent_keypairs():
 
 def test_session_linkage():
     session_id = "test-session-X"
-    gw_key, sv_key = SigningKey(), SigningKey()
+    gw_key = SigningKey()
     p1 = _make_phase1(session_id, gw_key)
     assert p1["gateway"]["session_id"] == session_id
 
@@ -133,10 +133,6 @@ def test_cross_claim_tamper_independence():
 
 
 def test_binary_swap_changes_claim():
-    session_id = "session-binary"
-    key = SigningKey()
     approved = "sha256:" + hashlib.sha256(b"approved-binary-v1").hexdigest()
     tampered  = "sha256:" + hashlib.sha256(b"tampered-binary-v2").hexdigest()
     assert approved != tampered
-    # measurement change propagates to claim content -- distinct from approved
-    assert tampered != approved
