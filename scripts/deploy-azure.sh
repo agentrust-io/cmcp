@@ -19,17 +19,21 @@ SSH_KEY="${HOME}/.ssh/id_rsa.pub"
 case "$TEE_TYPE" in
   sev-snp)
     VM_SIZE="Standard_DC2as_v5"
-    LOCATION="eastus"
     ;;
   tdx)
-    VM_SIZE="Standard_DC2eds_v5"
-    LOCATION="eastus2"
+    # DCesv6 = current-gen Intel TDX (5th Gen Intel). DCedsv5 is previous gen.
+    VM_SIZE="Standard_DC2es_v6"
     ;;
   *)
     echo "Unknown TEE type: $TEE_TYPE. Use sev-snp or tdx." >&2
     exit 1
     ;;
 esac
+
+# Default location — Confidential VM availability varies by region.
+# Verify the SKU is available before proceeding:
+#   az vm list-skus --location <region> --size "$VM_SIZE" --output table
+LOCATION="${AZURE_LOCATION:-eastus}"
 
 echo "==> Deploying cMCP on Azure ($TEE_TYPE) in $LOCATION"
 
@@ -41,7 +45,7 @@ echo "  Resource group: $RESOURCE_GROUP"
 az vm create \
   --resource-group "$RESOURCE_GROUP" \
   --name "$VM_NAME" \
-  --image "Canonical:ubuntu-24_04-lts:server:latest" \
+  --image "Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest" \
   --size "$VM_SIZE" \
   --security-type ConfidentialVM \
   --os-disk-security-encryption-type VMGuestStateOnly \

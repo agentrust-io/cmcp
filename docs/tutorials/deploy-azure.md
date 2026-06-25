@@ -19,13 +19,19 @@ Run cMCP on Azure hardware-attested infrastructure so TRACE claims carry real SE
 
 ## Choose your hardware
 
-| TEE type | Azure VM series | `provider` value | Availability |
+| TEE type | Azure VM series | `provider` value | Notes |
 |---|---|---|---|
-| AMD SEV-SNP | DCasv5, DCadsv5 | `sev-snp` | East US, West Europe, and others |
-| Intel TDX | DCedsv5 | `tdx` | East US 2, West US 3 (select regions) |
+| AMD SEV-SNP | DCasv5, DCadsv5 | `sev-snp` | Most widely available |
+| Intel TDX | DCesv6, DCedsv6 | `tdx` | Current-gen (v6); DCedsv5 is previous gen |
 | vTPM (Trusted Launch) | Any Gen2 VM with Trusted Launch | `tpm` | All regions |
 
-SEV-SNP (DCasv5) is the most widely available. Use TDX (DCedsv5) where your compliance requirements specify Intel.
+SEV-SNP (DCasv5) is the most widely available. Use TDX (DCesv6) where your compliance requirements specify Intel.
+
+Region availability varies. Check which SKUs are available in your target region before creating a resource group:
+
+```bash
+az vm list-skus --location eastus --size dc --output table
+```
 
 ---
 
@@ -34,14 +40,19 @@ SEV-SNP (DCasv5) is the most widely available. Use TDX (DCedsv5) where your comp
 ### SEV-SNP (DCasv5)
 
 ```bash
-# Create resource group
-az group create --name cmcp-rg --location eastus
+# Set your target region — verify DCasv5 is available first:
+# az vm list-skus --location <region> --size Standard_DC2as_v5 --output table
+LOCATION=eastus
 
-# Create SEV-SNP Confidential VM
+az group create --name cmcp-rg --location $LOCATION
+
+# Azure Confidential VMs require a CVM-specific OS image.
+# Verify the latest available image with:
+# az vm image list --publisher Canonical --offer 0001-com-ubuntu-confidential-vm-jammy --all --output table
 az vm create \
   --resource-group cmcp-rg \
   --name cmcp-gateway \
-  --image Canonical:ubuntu-24_04-lts:server:latest \
+  --image Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest \
   --size Standard_DC2as_v5 \
   --security-type ConfidentialVM \
   --os-disk-security-encryption-type VMGuestStateOnly \
@@ -52,16 +63,22 @@ az vm create \
   --public-ip-sku Standard
 ```
 
-### TDX (DCedsv5)
+### TDX (DCesv6)
+
+DCesv6 is the current-gen Intel TDX series (5th Gen Intel). DCedsv5 (previous gen) also supports TDX but is superseded.
 
 ```bash
-az group create --name cmcp-rg --location eastus2
+# Verify DCesv6 availability in your region first:
+# az vm list-skus --location <region> --size Standard_DC2es_v6 --output table
+LOCATION=eastus
+
+az group create --name cmcp-rg --location $LOCATION
 
 az vm create \
   --resource-group cmcp-rg \
   --name cmcp-gateway-tdx \
-  --image Canonical:ubuntu-24_04-lts:server:latest \
-  --size Standard_DC2eds_v5 \
+  --image Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest \
+  --size Standard_DC2es_v6 \
   --security-type ConfidentialVM \
   --os-disk-security-encryption-type VMGuestStateOnly \
   --enable-secure-boot true \
@@ -186,13 +203,10 @@ cmcp start --config cmcp-config.yaml
 Expected startup log on a real SEV-SNP VM:
 
 ```
-[cmcp] provider=amd-sev-snp enforcement_mode=enforcing
-[cmcp] policy bundle loaded: sha256:<bundle_hash>
-[cmcp] catalog loaded: 0 tools, sha256:<catalog_hash>
-[cmcp] listening on 0.0.0.0:8443
+cMCP Runtime starting: TEE: sev-snp, listen: 0.0.0.0:8443
 ```
 
-The provider line reads `amd-sev-snp` (not `software-only`). If it reads `software-only`, the VM does not have an accessible SEV-SNP device — confirm the VM SKU and that `/dev/sev-guest` exists.
+The TEE field reads `sev-snp` (not `software-only`). If it reads `software-only`, the VM does not have an accessible SEV-SNP device — confirm the VM SKU and that `/dev/sev-guest` exists.
 
 ---
 

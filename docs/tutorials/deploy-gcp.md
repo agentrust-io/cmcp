@@ -194,13 +194,10 @@ cmcp start --config cmcp-config.yaml
 Expected startup log on a real TDX VM:
 
 ```
-[cmcp] provider=intel-tdx enforcement_mode=enforcing
-[cmcp] policy bundle loaded: sha256:<bundle_hash>
-[cmcp] catalog loaded: 0 tools, sha256:<catalog_hash>
-[cmcp] listening on 0.0.0.0:8443
+cMCP Runtime starting: TEE: tdx, listen: 0.0.0.0:8443
 ```
 
-The provider line reads `intel-tdx`. If it reads `software-only`, the TDX device was not found — confirm the instance type and that `/dev/tdx_guest` exists.
+The TEE field reads `tdx`. If it reads `software-only`, the TDX device was not found — confirm the instance type and that `/dev/tdx_guest` exists.
 
 ---
 
