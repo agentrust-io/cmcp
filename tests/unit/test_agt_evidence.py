@@ -1,16 +1,29 @@
-"""Tests for scripts/gen_agt_evidence.py and the generated agt-evidence.json."""
+"""Tests for scripts/gen_agt_evidence.py, scripts/verify_agt_evidence.py, and cmcp-enforcement.yaml."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
 
 _SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
 _REPO_ROOT = Path(__file__).parent.parent.parent
+
+
+def _load_module(name: str):
+    spec = importlib.util.spec_from_file_location(name, _SCRIPTS_DIR / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    sys.modules[name] = mod  # register before exec so @dataclass can find the module
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def _load_verifier():
+    return _load_module("verify_agt_evidence")
 
 
 def _load_generator():
@@ -132,24 +145,10 @@ def test_main_writes_valid_json(tmp_path, generator):
 # --------------------------------------------------------------------------- #
 
 
-def _try_import_verifier():
-    try:
-        from agent_compliance.verify import GovernanceVerifier
-        return GovernanceVerifier
-    except ImportError:
-        return None
-
-
-@pytest.mark.skipif(
-    _try_import_verifier() is None,
-    reason="agent-governance-toolkit-core not installed",
-)
 def test_verify_evidence_passes(tmp_path, generator):
     """GovernanceVerifier.verify_evidence() must succeed with no evidence failures."""
-    from agent_compliance.verify import GovernanceVerifier
+    GovernanceVerifier = _load_verifier().GovernanceVerifier
 
-    # Write evidence file to tmp_path root so relative policy paths resolve.
-    # governance/cmcp-enforcement.yaml must exist relative to the evidence file.
     gov_dir = tmp_path / "governance"
     gov_dir.mkdir()
     shutil.copy(
@@ -157,8 +156,6 @@ def test_verify_evidence_passes(tmp_path, generator):
         gov_dir / "cmcp-enforcement.yaml",
     )
 
-    # Catalog must also be accessible (policy_files_loaded uses paths relative to
-    # the evidence file location; the audit target is a string, not checked for existence).
     evidence_path = tmp_path / "agt-evidence.json"
     ev = generator.generate_evidence()
     from datetime import datetime
@@ -174,13 +171,9 @@ def test_verify_evidence_passes(tmp_path, generator):
     )
 
 
-@pytest.mark.skipif(
-    _try_import_verifier() is None,
-    reason="agent-governance-toolkit-core not installed",
-)
 def test_verify_evidence_json_is_valid(tmp_path, generator):
     """to_json() output is valid JSON with expected top-level keys."""
-    from agent_compliance.verify import GovernanceVerifier
+    GovernanceVerifier = _load_verifier().GovernanceVerifier
 
     gov_dir = tmp_path / "governance"
     gov_dir.mkdir()
@@ -203,6 +196,66 @@ def test_verify_evidence_json_is_valid(tmp_path, generator):
     assert isinstance(output["controls_total"], int)
     assert isinstance(output["controls_passed"], int)
     assert isinstance(output["attestation_hash"], str) and len(output["attestation_hash"]) == 64
+
+
+def test_verify_returns_all_check_ids(tmp_path, generator):
+    """All 8 GOV-00N check IDs must be present in the attestation."""
+    GovernanceVerifier = _load_verifier().GovernanceVerifier
+
+    gov_dir = tmp_path / "governance"
+    gov_dir.mkdir()
+    shutil.copy(
+        _REPO_ROOT / "governance" / "cmcp-enforcement.yaml",
+        gov_dir / "cmcp-enforcement.yaml",
+    )
+
+    evidence_path = tmp_path / "agt-evidence.json"
+    ev = generator.generate_evidence()
+    from datetime import datetime, timezone
+    ev["generated_at"] = datetime.now(timezone.utc).isoformat()
+    evidence_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
+
+    attestation = GovernanceVerifier().verify_evidence(evidence_path)
+    check_ids = {c.check_id for c in attestation.evidence_checks}
+    expected = {
+        "GOV-001", "GOV-002", "GOV-003", "GOV-004",
+        "GOV-005", "GOV-006", "GOV-007", "GOV-008",
+    }
+    assert expected == check_ids
+
+
+def test_verify_fails_on_missing_policy_file(tmp_path, generator):
+    """If a listed policy file is absent, GOV-003 must fail."""
+    GovernanceVerifier = _load_verifier().GovernanceVerifier
+
+    evidence_path = tmp_path / "agt-evidence.json"
+    ev = generator.generate_evidence()
+    from datetime import datetime, timezone
+    ev["generated_at"] = datetime.now(timezone.utc).isoformat()
+    evidence_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
+
+    attestation = GovernanceVerifier().verify_evidence(evidence_path)
+    gov003 = next(c for c in attestation.evidence_checks if c.check_id == "GOV-003")
+    assert gov003.status == "fail"
+
+
+def test_verify_fails_if_deny_by_default_missing(tmp_path, generator):
+    """If deny_by_default is absent from policy YAML, GOV-004 must fail."""
+    GovernanceVerifier = _load_verifier().GovernanceVerifier
+
+    gov_dir = tmp_path / "governance"
+    gov_dir.mkdir()
+    (gov_dir / "cmcp-enforcement.yaml").write_text("name: test\n", encoding="utf-8")
+
+    evidence_path = tmp_path / "agt-evidence.json"
+    ev = generator.generate_evidence()
+    from datetime import datetime, timezone
+    ev["generated_at"] = datetime.now(timezone.utc).isoformat()
+    evidence_path.write_text(json.dumps(ev, indent=2), encoding="utf-8")
+
+    attestation = GovernanceVerifier().verify_evidence(evidence_path)
+    gov004 = next(c for c in attestation.evidence_checks if c.check_id == "GOV-004")
+    assert gov004.status == "fail"
 
 
 # --------------------------------------------------------------------------- #
