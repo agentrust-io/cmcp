@@ -128,6 +128,8 @@ nav:
       - TLS pinning: docs/tutorials/tls-pinning.md
       - Verify a TRACE claim: docs/tutorials/verifying-a-trace-claim.md
       - TEE attestation: docs/tutorials/tee-attestation.md
+      - Deploy on Azure: docs/tutorials/deploy-azure.md
+      - Deploy on GCP: docs/tutorials/deploy-gcp.md
       - Multi-tenant deployment: docs/tutorials/multi-tenant-config.md
       - Response inspection: docs/tutorials/response-inspection.md
   - Specification:
