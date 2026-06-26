@@ -103,7 +103,7 @@ def test_avalanche_one_char_change():
     assert b1.bundle_hash != b2.bundle_hash
     h1 = bytes.fromhex(b1.bundle_hash.removeprefix("sha256:"))
     h2 = bytes.fromhex(b2.bundle_hash.removeprefix("sha256:"))
-    bits_diff = sum(bin(a ^ b).count("1") for a, b in zip(h1, h2))
+    bits_diff = sum(bin(a ^ b).count("1") for a, b in zip(h1, h2, strict=True))
     assert bits_diff > 64, f"Expected >64 bits to change on single-char delta, got {bits_diff}"
 
 

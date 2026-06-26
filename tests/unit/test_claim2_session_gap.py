@@ -7,8 +7,6 @@ that produces that gap.
 
 from __future__ import annotations
 
-import pytest
-
 from cmcp_runtime.session.state import SENSITIVITY_ORDER, SessionState
 
 _PHI_LEVEL = SENSITIVITY_ORDER["hipaa_phi"]
@@ -33,9 +31,12 @@ def _per_call_verdict(compliance_domain: str, requires_baa: bool) -> str:
 
 def _session_verdict(compliance_domain: str, requires_baa: bool, session_max: str) -> str:
     """Session policy: block external non-BAA calls once session is PHI-contaminated."""
-    if SENSITIVITY_ORDER.get(session_max, 0) >= _PHI_LEVEL:
-        if compliance_domain == "external" and not requires_baa:
-            return "DENY"
+    if (
+        SENSITIVITY_ORDER.get(session_max, 0) >= _PHI_LEVEL
+        and compliance_domain == "external"
+        and not requires_baa
+    ):
+        return "DENY"
     return "ALLOW"
 
 
