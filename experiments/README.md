@@ -37,5 +37,7 @@ All experiments run in software-only mode. No hardware TEE is required. TRACE Cl
 |------|--------|-------|
 | `tests/unit/test_claim1_hash_binding.py` | Claim 1 | 6 |
 | `tests/unit/test_claim2_session_gap.py` | Claim 2 | 6 |
+| `tests/unit/test_claim3_rug_pull_detection.py` | Claim 3 | 6 |
+| `tests/unit/test_claim4_trace_claim_nonce.py` | Claim 4 | 6 |
 | `tests/unit/test_claim5_temporal_adjacency.py` | Claim 5 | 9 |
 | `tests/unit/test_claim6_cross_org_attestation.py` | Claim 6 | 9 |
