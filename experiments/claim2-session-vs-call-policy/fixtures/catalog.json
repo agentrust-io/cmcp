@@ -1,0 +1,122 @@
+[
+  {
+    "tool_name": "ehr.get_patient",
+    "server": {
+      "display_name": "EHR MCP Server",
+      "url": "https://ehr.internal/mcp",
+      "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "transport": "http-sse"
+    },
+    "approved_definition": {
+      "description": "Retrieve patient record by patient ID. Returns PHI including diagnosis and MRN.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"patient_id": {"type": "string"}},
+        "required": ["patient_id"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "patient_id": {"type": "string"},
+          "name": {"type": "string", "x-sensitivity": "pii"},
+          "mrn": {"type": "string", "x-sensitivity": "hipaa_phi"},
+          "diagnosis": {"type": "string", "x-sensitivity": "hipaa_phi"},
+          "dob": {"type": "string", "x-sensitivity": "pii"}
+        }
+      }
+    },
+    "definition_hash": "sha256:349649298fe6366ffddaa6bc81c431c8f6fcf0d311168cf0c7f7ece977d64775",
+    "compliance_domain": "hipaa_phi",
+    "requires_baa": true,
+    "sensitivity_level": "hipaa_phi",
+    "added_at": "2026-06-01T00:00:00Z",
+    "approved_by": "security-team@example.com"
+  },
+  {
+    "tool_name": "slack.post_message",
+    "server": {
+      "display_name": "Slack MCP Server",
+      "url": "https://slack-mcp.example.com/mcp",
+      "tls_fingerprint": "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+      "transport": "http-sse"
+    },
+    "approved_definition": {
+      "description": "Post a message to a Slack channel.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "channel": {"type": "string"},
+          "message": {"type": "string"}
+        },
+        "required": ["channel", "message"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}, "ts": {"type": "string"}}
+      }
+    },
+    "definition_hash": "sha256:474f4c201949327c0bcee67f71c802bad53e82a31011fcb471a34383806b21a6",
+    "compliance_domain": "external",
+    "requires_baa": false,
+    "sensitivity_level": "public",
+    "added_at": "2026-06-01T00:00:00Z",
+    "approved_by": "security-team@example.com"
+  },
+  {
+    "tool_name": "analytics.run_query",
+    "server": {
+      "display_name": "Internal Analytics MCP Server",
+      "url": "https://analytics.internal/mcp",
+      "tls_fingerprint": "SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=",
+      "transport": "http-sse"
+    },
+    "approved_definition": {
+      "description": "Run a read-only analytics query against the internal data warehouse.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {"rows": {"type": "array"}, "row_count": {"type": "integer"}}
+      }
+    },
+    "definition_hash": "sha256:024f68c06c2c0cb59aa6545853a4a15068db0fbe05b6c8ace1444f11ab119e79",
+    "compliance_domain": "internal",
+    "requires_baa": false,
+    "sensitivity_level": "public",
+    "added_at": "2026-06-01T00:00:00Z",
+    "approved_by": "security-team@example.com"
+  },
+  {
+    "tool_name": "external_webhook.post",
+    "server": {
+      "display_name": "External Webhook MCP Server",
+      "url": "https://webhook-proxy.external.com/mcp",
+      "tls_fingerprint": "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=",
+      "transport": "http-sse"
+    },
+    "approved_definition": {
+      "description": "POST a JSON payload to a preconfigured external webhook endpoint.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "endpoint_id": {"type": "string"},
+          "payload": {"type": "object"}
+        },
+        "required": ["endpoint_id", "payload"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {"status": {"type": "integer"}, "body": {"type": "string"}}
+      }
+    },
+    "definition_hash": "sha256:1b8191b9d1ae6d7adbe238c3b46143fda16a743842a28efec31070c88efb2274",
+    "compliance_domain": "external",
+    "requires_baa": false,
+    "sensitivity_level": "public",
+    "added_at": "2026-06-01T00:00:00Z",
+    "approved_by": "security-team@example.com"
+  }
+]
