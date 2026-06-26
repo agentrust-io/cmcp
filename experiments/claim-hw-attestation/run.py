@@ -160,13 +160,13 @@ def _verify_raw_evidence(report: AttestationReport, signing_key: SigningKey, ses
             report_data_hex=report.report_data,
         )
     if name == "tpm":
+        from cmcp_runtime.tee.base import jwk_thumbprint
         from cmcp_verify.tpm import verify_tpm_measurement
 
         return verify_tpm_measurement(
             measurement=report.measurement,
             raw_evidence=report.raw_evidence,
-            tee_public_key_hex=signing_key.public_key_hex,
-            session_id=session_id,
+            expected_qualifying_data=jwk_thumbprint(signing_key.public_key_bytes),
         )
     return None
 
