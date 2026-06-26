@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import hmac
 import struct
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,8 +24,7 @@ _TPM_GENERATED_VALUE = 0xFF544347
 def verify_tpm_measurement(
     measurement: str,
     raw_evidence: bytes | None,
-    tee_public_key_hex: str | None = None,
-    session_id: str | None = None,
+    expected_qualifying_data: bytes | None = None,
 ) -> TPMVerificationResult:
     """
     Verify TPM attestation from a TRACE Claim.
@@ -34,7 +33,11 @@ def verify_tpm_measurement(
     - measurement field format: must start with "sha256:" followed by 64 hex chars
 
     What requires raw_evidence (TPM2B_ATTEST):
-    - qualifying_data = SHA-256(tee_public_key || session_id) matches quote
+    - the quote's qualifying_data equals expected_qualifying_data. The gateway
+      commits the attestation nonce's first 32 bytes -- the RFC 7638 JWK Thumbprint
+      of the TEE public key (docs/spec/attestation.md §3.3) -- as the TPM2_Quote
+      qualifying_data. The caller re-derives that thumbprint from cnf.jwk and passes
+      it here, so a key substituted after attestation is detected.
     - PCR digest in quote matches measurement field
 
     EK cert chain validation: always marked as unverified_fields (requires
@@ -63,13 +66,11 @@ def verify_tpm_measurement(
     if raw_evidence is not None:
         parse_ok, parse_details = _parse_tpm2b_attest(
             raw_evidence,
-            measurement=measurement,
-            tee_public_key_hex=tee_public_key_hex,
-            session_id=session_id,
+            expected_qualifying_data=expected_qualifying_data,
         )
         if parse_ok:
             verified_fields.append("pcr_format")
-            if tee_public_key_hex and session_id:
+            if expected_qualifying_data is not None:
                 qd_verified = parse_details.get("qualifying_data_verified", False)
                 if qd_verified:
                     verified_fields.append("qualifying_data")
@@ -80,7 +81,7 @@ def verify_tpm_measurement(
                     )
             else:
                 unverified_fields.append("qualifying_data")
-                details["qualifying_data_error"] = "tee_public_key_hex or session_id not provided"
+                details["qualifying_data_error"] = "expected_qualifying_data not provided"
         else:
             unverified_fields.append("pcr_format")
             unverified_fields.append("qualifying_data")
@@ -131,12 +132,10 @@ def _valid_measurement(measurement: str) -> bool:
 def _parse_tpm2b_attest(
     data: bytes,
     *,
-    measurement: str,
-    tee_public_key_hex: str | None,
-    session_id: str | None,
+    expected_qualifying_data: bytes | None,
 ) -> tuple[bool, dict[str, Any]]:
     """
-    Parse a TPM2B_ATTEST blob and verify qualifying_data if keys are provided.
+    Parse a TPM2B_ATTEST blob and verify qualifying_data if an expected value is given.
 
     TPM2B_ATTEST layout:
       [0:2]  size (uint16 big-endian) - size of the following TPMS_ATTEST
@@ -190,17 +189,12 @@ def _parse_tpm2b_attest(
 
         result: dict[str, Any] = {"qualifying_data_verified": False}
 
-        if tee_public_key_hex and session_id:
-            try:
-                expected_qd = hashlib.sha256(
-                    bytes.fromhex(tee_public_key_hex) + session_id.encode()
-                ).digest()
-                if qualifying_data == expected_qd:
-                    result["qualifying_data_verified"] = True
-                else:
-                    result["qualifying_data_error"] = "qualifying_data hash mismatch"
-            except ValueError as exc:
-                result["qualifying_data_error"] = f"cannot decode tee_public_key_hex: {exc}"
+        if expected_qualifying_data is not None:
+            # hmac.compare_digest for constant-time comparison of the committed nonce
+            if hmac.compare_digest(qualifying_data, expected_qualifying_data):
+                result["qualifying_data_verified"] = True
+            else:
+                result["qualifying_data_error"] = "qualifying_data does not match expected key thumbprint"
 
         return True, result
 

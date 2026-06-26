@@ -654,11 +654,15 @@ def verify_trace_claim(
 
         raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        # The TPM quote commits the attestation nonce's first 32 bytes -- the RFC 7638
+        # JWK Thumbprint of the TEE key -- as qualifying_data (§3.3). Re-derive it from
+        # cnf.jwk.x so a substituted key is detected.
+        _tpm_jwk_x = claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x")
+        _expected_qd = _jwk_thumbprint_sha256(_tpm_jwk_x) if _tpm_jwk_x else None
         tpm_result = verify_tpm_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
-            tee_public_key_hex=claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x"),
-            session_id=claim_json.get("gateway", {}).get("session_id"),
+            expected_qualifying_data=_expected_qd,
         )
         if tpm_result.verified:
             verified.append("hardware_attestation")
