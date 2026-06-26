@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -11,7 +10,7 @@ import pytest
 from cmcp_runtime.config import Config
 from cmcp_runtime.config import TEEProvider as TEEProviderEnum
 from cmcp_runtime.errors import AttestationProviderUnsupported
-from cmcp_runtime.tee.base import SoftwareOnlyProvider, make_nonce
+from cmcp_runtime.tee.base import SoftwareOnlyProvider, jwk_thumbprint, make_nonce
 from cmcp_runtime.tee.detect import detect_provider
 
 
@@ -60,26 +59,34 @@ def test_software_only_report_note():
 # ── make_nonce ────────────────────────────────────────────────────────────────
 
 def test_make_nonce_deterministic():
+    """Same key and salt produce the same 64-byte nonce."""
     key = b"\xab" * 32
-    sid = "session-123"
-    nonce1 = make_nonce(key, sid)
-    nonce2 = make_nonce(key, sid)
-    assert nonce1 == nonce2
+    salt = b"\x07" * 32
+    assert make_nonce(key, salt) == make_nonce(key, salt)
 
 
-def test_make_nonce_sha256():
+def test_make_nonce_structure():
+    """Nonce is jwk_thumbprint(key)(32) || salt(32)."""
     key = b"\x01" * 32
-    sid = "test"
-    expected = hashlib.sha256(key + sid.encode()).digest()
-    assert make_nonce(key, sid) == expected
+    salt = b"\x09" * 32
+    nonce = make_nonce(key, salt)
+    assert len(nonce) == 64
+    assert nonce[:32] == jwk_thumbprint(key)
+    assert nonce[32:] == salt
+
+
+def test_make_nonce_rejects_bad_salt():
+    with pytest.raises(ValueError):
+        make_nonce(b"\x01" * 32, b"\x00" * 16)
 
 
 def test_make_nonce_different_inputs():
-    n1 = make_nonce(b"\x01" * 32, "a")
-    n2 = make_nonce(b"\x02" * 32, "a")
-    n3 = make_nonce(b"\x01" * 32, "b")
-    assert n1 != n2
-    assert n1 != n3
+    salt = b"\x05" * 32
+    n1 = make_nonce(b"\x01" * 32, salt)
+    n2 = make_nonce(b"\x02" * 32, salt)
+    n3 = make_nonce(b"\x01" * 32, b"\x06" * 32)
+    assert n1 != n2  # different key -> different thumbprint
+    assert n1 != n3  # different salt -> different nonce
 
 
 # ── detect_provider ───────────────────────────────────────────────────────────
