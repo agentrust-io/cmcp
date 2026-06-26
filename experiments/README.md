@@ -15,6 +15,7 @@ Each experiment imports directly from `cmcp_runtime`. Run from the repo root aft
 | [claim4-trace-claim-nonce](claim4-trace-claim-nonce/) | Claim 4 — TRACE Claim nonce binding | 6 properties: nonce determinism, session/instance binding, replay prevention, sig tamper, selective disclosure |
 | [claim5-temporal-adjacency](claim5-temporal-adjacency/) | Claim 5 — Temporal adjacency provenance | Zero false negatives by construction; provenance disclaimer in every summary; denied calls in graph |
 | [claim6-cross-org-attestation](claim6-cross-org-attestation/) | Claim 6 — Cross-org attestation chains | Dual-TEE protocol: independent keys, session linkage, independent verify, binary swap detection |
+| [claim-hw-attestation](claim-hw-attestation/) | Hardware attestation (real TEE) | Requires a confidential VM; SKIPs without one. Real report + nonce binding + end-to-end claim verification |
 
 ## Running
 
@@ -27,9 +28,12 @@ python experiments/claim3-rug-pull-detection/run.py
 python experiments/claim4-trace-claim-nonce/run.py
 python experiments/claim5-temporal-adjacency/run.py
 python experiments/claim6-cross-org-attestation/run.py
+
+# Requires a confidential VM; SKIPs cleanly (exit 0) on hosts without a TEE.
+python experiments/claim-hw-attestation/run.py
 ```
 
-All experiments run in software-only mode. No hardware TEE is required. TRACE Claims produced in software-only mode carry `attestation_assurance: none` and must not be used for compliance purposes.
+The `claim1`–`claim6` experiments run in software-only mode. No hardware TEE is required. TRACE Claims produced in software-only mode carry `attestation_assurance: none` and must not be used for compliance purposes. The `claim-hw-attestation` experiment is the exception: it exercises a real hardware report and verification, and only produces results on a confidential VM (see [claim-hw-attestation/README.md](claim-hw-attestation/README.md)).
 
 ## CI tests
 
