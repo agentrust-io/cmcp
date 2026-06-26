@@ -1,9 +1,14 @@
-"""Tests for Claim 4: TRACE Claim nonce binding and disclosure resistance.
+"""Tests for Claim 4: TRACE Claim key binding and disclosure resistance.
 
-These tests assert the invariants the claim4 experiment demonstrates: the nonce
-binds a claim to a specific session and TEE instance, a session-id swap breaks
-the Ed25519 signature, and removing an audit entry breaks the export signature.
-They run in CI to catch regressions in nonce construction and claim signing.
+Asserts the invariants the claim4 experiment demonstrates under the implemented
+nonce construction (docs/spec/attestation.md §3.3):
+
+    nonce = JWK_thumbprint(tee_public_key) (32) || random_salt (32)
+
+The nonce binds the report to the gateway key (report_data[:32] is the RFC 7638
+thumbprint, re-derivable from cnf.jwk.x); the session is bound through the signed
+claim body, not the nonce. These run in CI to catch regressions in nonce
+construction and claim signing.
 """
 
 from __future__ import annotations
@@ -23,15 +28,10 @@ from cmcp_runtime.audit.trace_claim import (
     ToolCatalogInfo,
     generate_trace_claim,
 )
+from cmcp_runtime.tee.base import jwk_thumbprint, make_nonce
 
-
-def _compute_nonce(public_key_hex: str, session_id: str) -> str:
-    """SHA-256(tee_public_key_bytes || session_id_bytes) as hex."""
-    return hashlib.sha256(bytes.fromhex(public_key_hex) + session_id.encode("utf-8")).hexdigest()
-
-
-def _b64url(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+_SALT_A = b"\x11" * 32
+_SALT_B = b"\x22" * 32
 
 
 def _verify_sig(claim_dict: dict, pub_hex: str) -> bool:
@@ -46,11 +46,11 @@ def _verify_sig(claim_dict: dict, pub_hex: str) -> bool:
         return False
 
 
-def _stub_claim(session_id: str, signing_key: SigningKey, nonce_hex: str):
+def _stub_claim(session_id: str, signing_key: SigningKey, nonce: bytes):
     report = AttestationReportInfo(
         provider="tpm",
         measurement="sha256:" + "ab" * 32,
-        report_data=nonce_hex,
+        report_data=nonce.hex(),
         attestation_generated_at="2026-06-25T00:00:00Z",
         attestation_validity_seconds=3600,
     )
@@ -78,41 +78,37 @@ def _stub_claim(session_id: str, signing_key: SigningKey, nonce_hex: str):
     )
 
 
-def test_nonce_is_deterministic():
-    """The same key and session_id always produce the same nonce."""
+def test_thumbprint_is_deterministic():
+    """The JWK thumbprint is deterministic for a given key."""
     key = SigningKey()
-    assert _compute_nonce(key.public_key_hex, "session-A") == _compute_nonce(key.public_key_hex, "session-A")
+    assert jwk_thumbprint(key.public_key_bytes) == jwk_thumbprint(key.public_key_bytes)
 
 
-def test_nonce_changes_with_session_id():
-    """Changing the session_id changes the nonce (session binding)."""
+def test_report_data_binds_key():
+    """nonce[:32] equals the JWK thumbprint, so report_data is bound to the key."""
     key = SigningKey()
-    assert _compute_nonce(key.public_key_hex, "session-A") != _compute_nonce(key.public_key_hex, "session-B")
+    nonce = make_nonce(key.public_key_bytes, _SALT_A)
+    assert len(nonce) == 64
+    assert nonce[:32] == jwk_thumbprint(key.public_key_bytes)
+    assert nonce[32:] == _SALT_A
 
 
-def test_nonce_changes_with_tee_key():
-    """Changing the TEE key changes the nonce for the same session (instance binding)."""
-    key1 = SigningKey()
-    key2 = SigningKey()
-    assert _compute_nonce(key1.public_key_hex, "session-A") != _compute_nonce(key2.public_key_hex, "session-A")
+def test_thumbprint_changes_with_key():
+    """Different TEE keys produce different thumbprints (instance binding)."""
+    assert jwk_thumbprint(SigningKey().public_key_bytes) != jwk_thumbprint(SigningKey().public_key_bytes)
 
 
-def test_claim_nonce_does_not_match_other_session():
-    """A claim minted for session-A carries A's nonce, which fails B's expected nonce."""
+def test_salt_makes_nonce_fresh():
+    """A different salt yields a different nonce for the same key (freshness)."""
     key = SigningKey()
-    nonce_a = _compute_nonce(key.public_key_hex, "session-A")
-    claim = _stub_claim("session-A", key, nonce_a)
-    embedded = json.loads(claim.model_dump_json(exclude_none=True))["trace"]["runtime"]["nonce"]
-    assert embedded == _b64url(bytes.fromhex(nonce_a))
-    expected_for_b = _b64url(bytes.fromhex(_compute_nonce(key.public_key_hex, "session-B")))
-    assert embedded != expected_for_b
+    assert make_nonce(key.public_key_bytes, _SALT_A) != make_nonce(key.public_key_bytes, _SALT_B)
 
 
 def test_session_id_tamper_breaks_signature():
     """Replacing session_id in a signed claim invalidates its Ed25519 signature."""
     key = SigningKey()
-    nonce_a = _compute_nonce(key.public_key_hex, "session-A")
-    claim_dict = json.loads(_stub_claim("session-A", key, nonce_a).model_dump_json(exclude_none=True))
+    nonce = make_nonce(key.public_key_bytes, _SALT_A)
+    claim_dict = json.loads(_stub_claim("session-A", key, nonce).model_dump_json(exclude_none=True))
     assert _verify_sig(claim_dict, key.public_key_hex)
     claim_dict["gateway"]["session_id"] = "session-B"
     assert not _verify_sig(claim_dict, key.public_key_hex)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -49,9 +51,12 @@ class TEEProvider(ABC):
         """
         Produce a hardware attestation report.
 
-        nonce should be SHA-256(tee_public_key || session_id) as defined in
-        docs/spec/attestation.md §3.3 — this binds the report to a specific
-        gateway instance and session.
+        nonce is the 64-byte value defined in docs/spec/attestation.md §3.3:
+        the RFC 7638 JWK Thumbprint of the gateway public key (32 bytes) followed
+        by a random salt (32 bytes). See make_nonce(). This binds the report to a
+        specific gateway key (verifiable from cnf.jwk) and makes each instance's
+        report fresh. Session linkage is carried separately by the signed claim
+        body (gateway.session_id), not by the nonce.
         """
 
     @abstractmethod
@@ -59,9 +64,32 @@ class TEEProvider(ABC):
         """Return the canonical provider name string for attestation_report.provider."""
 
 
-def make_nonce(tee_public_key: bytes, session_id: str) -> bytes:
-    """Compute the attestation nonce: SHA-256(tee_public_key || session_id_bytes)."""
-    return hashlib.sha256(tee_public_key + session_id.encode()).digest()
+def jwk_thumbprint(tee_public_key: bytes) -> bytes:
+    """RFC 7638 JWK Thumbprint of an Ed25519 OKP public key (32-byte SHA-256).
+
+    Hashes the canonical JSON of the required OKP members in lexicographic order
+    (crv, kty, x), matching what a verifier re-derives from cnf.jwk.x.
+    """
+    x_b64 = base64.urlsafe_b64encode(tee_public_key).rstrip(b"=").decode()
+    members = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": x_b64},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(members).digest()
+
+
+def make_nonce(tee_public_key: bytes, salt: bytes) -> bytes:
+    """Compute the attestation nonce: jwk_thumbprint(pubkey) (32) || salt (32).
+
+    The first 32 bytes bind the report to the gateway key (a verifier re-derives
+    the RFC 7638 thumbprint from cnf.jwk.x and checks report_data[:32]). The salt
+    is 32 random bytes so each enclave instance/startup produces a distinct nonce
+    even with the same key. See docs/spec/attestation.md §3.3.
+    """
+    if len(salt) != 32:
+        raise ValueError(f"salt must be 32 bytes, got {len(salt)}")
+    return jwk_thumbprint(tee_public_key) + salt
 
 
 class SoftwareOnlyProvider(TEEProvider):

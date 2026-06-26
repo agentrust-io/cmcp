@@ -1,31 +1,31 @@
 """
-Claim 4: Operator-trust-free governance proof artifact with session-bound nonce.
+Claim 4: Operator-trust-free governance proof artifact with key-bound nonce.
 
-The TRACE Claim nonce construction binds each attestation report to a specific
-session and TEE instance. An attacker cannot replay a valid TRACE Claim from a
-different session or a different TEE instance.
+The TRACE Claim nonce binds each attestation report to the gateway's TEE key, and
+the session is bound through the signed claim body. An operator cannot replay a
+valid TRACE Claim under a different session or forge one for a different TEE key.
 
-Nonce construction (hardware mode):
-    nonce = SHA-256(tee_public_key_bytes || session_id_bytes)
+Nonce construction (hardware mode), per docs/spec/attestation.md §3.3:
+    nonce = JWK_thumbprint(tee_public_key) (32 bytes) || random_salt (32 bytes)
 
-This nonce is set as the 'report_data' / 'user_data' field when requesting
-the hardware attestation report. A verifier checks that the nonce in the
-hardware-signed report matches SHA-256(claim.cnf.jwk.x || claim.gateway.session_id).
+The first 32 bytes are the RFC 7638 JWK Thumbprint of the gateway public key, so a
+verifier re-derives them from cnf.jwk.x and confirms they equal report_data[:32]
+(key / instance binding). The remaining 32 bytes are a per-startup random salt so
+every enclave instance produces a distinct, fresh nonce. Session linkage is NOT in
+the nonce: it is carried by gateway.session_id inside the Ed25519-signed claim body.
 
 Properties demonstrated (software simulation):
 
-P1  Nonce is deterministic for the same key and session_id.
-P2  Nonce changes when session_id changes (session binding).
-P3  Nonce changes when the TEE key changes (instance binding).
-P4  A TRACE Claim produced for session A cannot be replayed for session B --
-    the nonce in the claim would not match the verifier's expected nonce for B.
-P5  Replacing session_id in a signed claim breaks the Ed25519 signature --
-    an attacker cannot forge a valid claim for a different session.
-P6  Selective disclosure: removing one audit entry from the export changes the
-    bundle hash, invalidating the gateway's signature over the export.
-
-Note: P4 is demonstrated as a mathematical check in software mode. In hardware
-mode, the nonce is hardware-signed and cannot be forged by the operator.
+P1  The JWK thumbprint is deterministic for a given key, and a verifier can
+    re-derive it from cnf.jwk.x.
+P2  report_data[:32] equals the thumbprint -> the report is bound to this key.
+P3  A different TEE key yields a different thumbprint (instance binding).
+P4  A different salt yields a different nonce (freshness across startups).
+P5  Session binding: replacing session_id in a signed claim breaks the Ed25519
+    signature -- an attacker cannot present a claim under a different session.
+P6  Removing one audit entry from the export changes the bundle hash, which
+    invalidates the gateway's signature over the export (selective disclosure
+    resistance).
 
 Running:
   pip install -e .
@@ -50,13 +50,7 @@ from cmcp_runtime.audit.trace_claim import (
     canonical_json,
     generate_trace_claim,
 )
-
-
-def _compute_nonce(public_key_hex: str, session_id: str) -> str:
-    """SHA-256(tee_public_key_bytes || session_id_bytes) as hex."""
-    key_bytes = bytes.fromhex(public_key_hex)
-    session_bytes = session_id.encode("utf-8")
-    return hashlib.sha256(key_bytes + session_bytes).hexdigest()
+from cmcp_runtime.tee.base import jwk_thumbprint, make_nonce
 
 
 def _verify_sig(claim_dict: dict, pub_hex: str) -> bool:
@@ -71,12 +65,12 @@ def _verify_sig(claim_dict: dict, pub_hex: str) -> bool:
         return False
 
 
-def _stub_claim(session_id: str, signing_key: SigningKey, nonce_hex: str):
+def _stub_claim(session_id: str, signing_key: SigningKey, nonce: bytes):
     """Generate a minimal TRACE Claim with an explicit nonce in report_data."""
     report = AttestationReportInfo(
         provider="tpm",
         measurement="sha256:" + "ab" * 32,
-        report_data=nonce_hex,
+        report_data=nonce.hex(),
         attestation_generated_at="2026-06-25T00:00:00Z",
         attestation_validity_seconds=3600,
     )
@@ -102,73 +96,77 @@ def _result(label: str, value: str) -> None:
 
 def main() -> int:
     print()
-    print("Claim 4 | TRACE Claim nonce binding and selective disclosure resistance")
+    print("Claim 4 | TRACE Claim key binding and disclosure resistance")
     print("=" * 72)
 
-    # --- P1 & P2: Nonce determinism and session binding ---
+    # --- P1: thumbprint determinism + verifier re-derivation ---
     print()
-    print("P1 + P2  Nonce determinism and session binding")
+    print("P1  JWK thumbprint determinism")
     key = SigningKey()
-    nonce_A1 = _compute_nonce(key.public_key_hex, "session-A")
-    nonce_A2 = _compute_nonce(key.public_key_hex, "session-A")
-    nonce_B  = _compute_nonce(key.public_key_hex, "session-B")
-    _result("Nonce(key, session-A) run 1", f"sha256:{nonce_A1}")
-    _result("Nonce(key, session-A) run 2", f"sha256:{nonce_A2}")
-    _result("Nonce(key, session-B)",       f"sha256:{nonce_B}")
-    if nonce_A1 != nonce_A2:
-        print("  FAIL: nonce not deterministic")
+    salt = b"\x11" * 32
+    tp1 = jwk_thumbprint(key.public_key_bytes)
+    tp2 = jwk_thumbprint(key.public_key_bytes)
+    _result("thumbprint run 1", tp1.hex())
+    _result("thumbprint run 2", tp2.hex())
+    if tp1 != tp2:
+        print("  FAIL: thumbprint not deterministic")
         return 1
-    if nonce_A1 == nonce_B:
-        print("  FAIL: different session_ids produced the same nonce")
-        return 1
-    print("  PASS: nonce is deterministic; changes with session_id")
+    print("  PASS: thumbprint is deterministic and re-derivable from cnf.jwk.x")
 
-    # --- P3: Instance binding (different key) ---
+    # --- P2: report_data binds the key ---
     print()
-    print("P3  Instance binding -- different TEE key -> different nonce")
+    print("P2  report_data[:32] equals the thumbprint (key binding)")
+    nonce = make_nonce(key.public_key_bytes, salt)
+    _result("nonce", nonce.hex())
+    _result("report_data[:32]", nonce[:32].hex())
+    if nonce[:32] != tp1:
+        print("  FAIL: report_data[:32] does not match the thumbprint")
+        return 1
+    print("  PASS: report is bound to this gateway key")
+
+    # --- P3: instance binding (different key) ---
+    print()
+    print("P3  Instance binding -- different TEE key -> different thumbprint")
     key2 = SigningKey()
-    nonce_key2 = _compute_nonce(key2.public_key_hex, "session-A")
-    _result("Key 1 nonce for session-A", f"sha256:{nonce_A1}")
-    _result("Key 2 nonce for session-A", f"sha256:{nonce_key2}")
-    if nonce_A1 == nonce_key2:
-        print("  FAIL: different TEE keys produced the same nonce for the same session")
+    tp_key2 = jwk_thumbprint(key2.public_key_bytes)
+    _result("key 1 thumbprint", tp1.hex())
+    _result("key 2 thumbprint", tp_key2.hex())
+    if tp1 == tp_key2:
+        print("  FAIL: different keys produced the same thumbprint")
         return 1
-    print("  PASS: nonce changes with TEE key -- instance-binding confirmed")
+    print("  PASS: nonce[:32] changes with the TEE key")
 
-    # --- P4: Replay attack (mathematical check) ---
+    # --- P4: freshness (different salt) ---
     print()
-    print("P4  Session replay attack (mathematical verification)")
-    claim_A = _stub_claim("session-A", key, nonce_A1)
-    claim_A_dict = json.loads(claim_A.model_dump_json(exclude_none=True))
-    actual_nonce_in_claim = claim_A_dict["trace"]["runtime"].get("nonce", "")
-    expected_nonce_for_B = base64.urlsafe_b64encode(bytes.fromhex(nonce_B)).rstrip(b"=").decode()
-    _result("Nonce embedded in claim (session-A)", actual_nonce_in_claim)
-    _result("Verifier expected nonce for session-B", expected_nonce_for_B)
-    if actual_nonce_in_claim == expected_nonce_for_B:
-        print("  FAIL: nonce would pass for the wrong session")
+    print("P4  Freshness -- different salt -> different nonce")
+    nonce_b = make_nonce(key.public_key_bytes, b"\x22" * 32)
+    _result("nonce (salt A)", nonce.hex())
+    _result("nonce (salt B)", nonce_b.hex())
+    if nonce == nonce_b:
+        print("  FAIL: different salts produced the same nonce")
         return 1
-    print("  PASS: claim from session-A fails nonce check for session-B")
-    print("        In hardware mode, the nonce is hardware-signed; this check")
-    print("        is enforced by the TEE provider's endorsement chain.")
+    print("  PASS: per-startup salt makes each instance nonce distinct")
 
-    # --- P5: Signature breaks on session_id tamper ---
+    # --- P5: session binding via signed claim body ---
     print()
-    print("P5  Ed25519 signature breaks on session_id tampering")
-    sig_valid_original = _verify_sig(claim_A_dict, key.public_key_hex)
-    tampered = json.loads(json.dumps(claim_A_dict))
+    print("P5  Session binding -- session_id tamper breaks the Ed25519 signature")
+    claim = _stub_claim("session-A", key, nonce)
+    claim_dict = json.loads(claim.model_dump_json(exclude_none=True))
+    sig_valid_original = _verify_sig(claim_dict, key.public_key_hex)
+    tampered = json.loads(json.dumps(claim_dict))
     tampered["gateway"]["session_id"] = "session-B"
     sig_valid_tampered = _verify_sig(tampered, key.public_key_hex)
-    _result("Signature on original claim (session-A)", "VALID" if sig_valid_original else "INVALID")
-    _result("Signature after replacing session_id with session-B", "VALID" if sig_valid_tampered else "INVALID")
+    _result("signature on original claim (session-A)", "VALID" if sig_valid_original else "INVALID")
+    _result("signature after replacing session_id", "VALID" if sig_valid_tampered else "INVALID")
     if not sig_valid_original:
         print("  FAIL: original claim signature invalid")
         return 1
     if sig_valid_tampered:
         print("  FAIL: tampered claim signature still valid")
         return 1
-    print("  PASS: session_id tampering immediately breaks signature")
+    print("  PASS: a claim cannot be presented under a different session")
 
-    # --- P6: Selective disclosure resistance ---
+    # --- P6: selective disclosure resistance ---
     print()
     print("P6  Selective disclosure resistance -- removing one audit entry breaks export hash")
     verifier_nonce = "v-nonce-abc123"
@@ -183,7 +181,6 @@ def main() -> int:
         sort_keys=True, separators=(",", ":"), ensure_ascii=True
     ).encode()
     export_sig_raw = key.sign(export_body)
-    export_sig = base64.urlsafe_b64encode(export_sig_raw).rstrip(b"=").decode()
 
     entries_minus_one = [e for e in audit_entries if e["call_id"] != "call-2"]
     canonical_minus = json.dumps(entries_minus_one, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
@@ -212,16 +209,16 @@ def main() -> int:
     # --- Summary ---
     print()
     print("Summary:")
-    print("  P1: Nonce deterministic                         PASS")
-    print("  P2: Nonce changes with session_id              PASS")
-    print("  P3: Nonce changes with TEE key                 PASS")
-    print("  P4: Session-A claim fails check for session-B  PASS (mathematical)")
-    print("  P5: session_id tamper breaks Ed25519 sig       PASS")
-    print("  P6: Entry removal breaks export signature      PASS")
+    print("  P1: Thumbprint deterministic / re-derivable     PASS")
+    print("  P2: report_data[:32] binds the TEE key          PASS")
+    print("  P3: Thumbprint changes with TEE key             PASS")
+    print("  P4: Salt makes each instance nonce fresh        PASS")
+    print("  P5: session_id tamper breaks Ed25519 sig        PASS")
+    print("  P6: Entry removal breaks export signature       PASS")
     print()
-    print("In hardware TEE mode, P4 becomes a hardware-enforced check:")
-    print("The nonce is signed by the TEE hardware. The operator cannot forge")
-    print("a nonce for a different session without compromising the hardware.")
+    print("In hardware TEE mode, the nonce is committed into the hardware-signed")
+    print("report_data field. The operator cannot forge a thumbprint for a different")
+    print("key without compromising the TEE.")
     print()
     return 0
 
