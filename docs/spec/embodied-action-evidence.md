@@ -1,6 +1,6 @@
 # Embodied Action Evidence Profile
 
-Status: Proposal v0.1 | Related: [verification-library.md](verification-library.md), [session-policy.md](session-policy.md), [issue #337](https://github.com/agentrust-io/cmcp/issues/337)
+Status: Proposal v0.1 | Related: [verification-library.md](verification-library.md), [session-policy.md](session-policy.md), [issue #337](https://github.com/agentrust-io/cmcp/issues/337), [trace-spec#66](https://github.com/agentrust-io/trace-spec/issues/66)
 
 This profile defines a small evidence shape for embodied-agent workflows where
 an agent requests a physical-world action and cMCP records the governance
@@ -59,6 +59,44 @@ The evidence envelope remains the existing cMCP shape:
 overloaded with a controller-specific `action_ref`. If a controller or receipt
 system uses a content-derived action identifier, that identifier belongs in the
 detached payload as `action_ref`.
+
+## Relationship to TRACE Action Receipts
+
+TRACE `verification.action_receipts` defines whether a verifier expects
+per-action evidence below the session-level TRACE Claim. This cMCP profile is a
+concrete embodied-action evidence shape that can satisfy that axis for
+externally consequential tool or controller handoffs.
+
+For embodied AI, `verification.action_receipts: required` SHOULD mean every
+externally consequential action has offline-verifiable receipt evidence bound to
+the session or cMCP audit `call_id`. It SHOULD NOT mean TRACE proves physical
+completion, controller safety, functional-safety certification, or that the
+real world changed as intended.
+
+Profile-aware verifiers SHOULD keep three layers separate:
+
+| Layer | Verifier question | Example evidence |
+|-------|-------------------|------------------|
+| Session | Did this agent session run under the appraised policy/runtime context? | TRACE Claim, audit bundle, policy hashes |
+| Action | Was this specific action handoff authorized and receipt-bound? | Detached payload, `action_ref`, receipt signature |
+| Physical outcome | What did a controller, monitor, human, or safety system observe? | Controller verdicts, monitor logs, external safety records |
+
+When action receipts are required by verifier policy, profile-aware verifiers
+SHOULD:
+
+- recompute `action_ref` from the canonical action preimage;
+- verify receipt signatures against pinned or Agent Manifest-bound issuer keys,
+  not only keys embedded in the receipt itself;
+- verify receipt ordering when receipts are hash-chained;
+- verify the receipt binds to the TRACE session, cMCP `call_id`, or
+  `action_ref`;
+- classify missing, stale, mismatched, or unverifiable receipts distinctly from
+  negative controller outcomes;
+- treat a valid `rejected` receipt as evidence that the controller rejected the
+  action, not as a verifier failure by itself.
+
+This gives cMCP an action-level evidence convention that composes with TRACE
+without making the gateway an actuation path or a safety authority.
 
 ## Detached Payload
 
@@ -229,4 +267,3 @@ The profile intentionally preserves the distinction between:
 
 Keeping these three identifiers separate avoids making the gateway claim it
 observed physical execution.
-
