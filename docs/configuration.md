@@ -110,7 +110,7 @@ Environment variables control secrets and mode flags that must not appear in con
 |----------|-------------|-----------|
 | `CMCP_DEV_MODE=1` | Enables software-only attestation. No hardware TEE required. TRACE Claims will show `partially_verified` status. Required when `provider` is `software-only`. | `attestation.provider` (forces software-only) |
 | `CMCP_BEARER_TOKEN` | Optional bearer token for runtime HTTP auth. If set, all requests to the runtime must include `Authorization: Bearer <token>`. If unset, no bearer auth is enforced. | none |
-| `OPAQUE_ATTESTATION_URL` | Enables the Opaque Managed Runtime provider. Must be set to the Opaque attestation service URL. Required when `provider` is `opaque` or `auto` on Opaque infrastructure. | enables `opaque` provider detection |
+| `OPAQUE_ATTESTATION_URL` | Enables the OPAQUE Managed Runtime provider. Must be set to the OPAQUE attestation service URL. Required when `provider` is `opaque` or `auto` on OPAQUE infrastructure. | enables `opaque` provider detection |
 | `CMCP_POLICY_HASH` | SHA-256 hash of the approved policy bundle. Required in non-dev mode and checked by startup before Agent Manifest binding. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (startup policy integrity check) |
 | `CMCP_CATALOG_HASH` | SHA-256 hash of the approved `catalog.json`. Required in non-dev mode. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (additional startup check) |
 

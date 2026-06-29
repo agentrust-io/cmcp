@@ -126,7 +126,7 @@ if result.status == "verified":
         print("Agent was automatically blocked — hardware-attested enforcement confirmed.")
 ```
 
-A verifier running offline — with no connection to the cMCP gateway or to Opaque — can confirm that:
+A verifier running offline — with no connection to the cMCP gateway or to OPAQUE — can confirm that:
 
 - The kill switch fired in this session (`kill_switch_triggered: true`)
 - The policy that caused the denies is recorded by hash in `trace.policy.bundle_hash`
@@ -170,7 +170,7 @@ For UAE federal ministries and other sovereign deployments, `kill_switch_trigger
 
 - The TEE signs the claim — the cloud operator and the ministry IT team cannot produce this artifact for a different outcome
 - The audit chain entry records the agent identity, the deny rate window, and the trigger timestamp
-- The claim is verifiable offline by the federal oversight body without calling back to any Opaque service
+- The claim is verifiable offline by the federal oversight body without calling back to any OPAQUE service
 
 This closes the regulatory gap that a log file cannot close: a log entry is something the operator controls. A TEE-signed TRACE claim with `kill_switch_triggered: true` is not.
 

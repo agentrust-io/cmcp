@@ -4,7 +4,7 @@
 
 | Name | GitHub | Affiliation | Role |
 |------|--------|-------------|------|
-| Imran Siddique | @imransiddique | Opaque Systems | Project Lead |
+| Imran Siddique | @imransiddique | OPAQUE Systems | Project Lead |
 
 ## Roles
 

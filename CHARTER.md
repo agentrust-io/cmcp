@@ -30,7 +30,7 @@ Out of scope: AI model governance beyond tool-call enforcement, hardware TEE pla
 
 Upon host organization acceptance, governance transitions from the current Project Lead model to a Technical Steering Committee (TSC).
 
-**Composition**: 3–7 members. No single organization may hold more than 40% of TSC seats. The founding Project Lead (Imran Siddique, Opaque Systems) holds one founding seat for the v1.0 release cycle.
+**Composition**: 3–7 members. No single organization may hold more than 40% of TSC seats. The founding Project Lead (Imran Siddique, OPAQUE Systems) holds one founding seat for the v1.0 release cycle.
 
 **Election**: TSC members are elected annually by active contributors (at least one merged pull request in the preceding 12 months). Each contributor has one vote.
 
@@ -51,7 +51,7 @@ Code and schemas are licensed under Apache 2.0 with Patent Promise (see LICENSE)
 
 ## 5. Trademark Policy
 
-"cMCP" and "cMCP-compatible" as project and conformance marks are currently held by Opaque Systems, Inc. Upon host organization acceptance, trademark ownership transfers to AAIF under their standard trademark policy.
+"cMCP" and "cMCP-compatible" as project and conformance marks are currently held by OPAQUE Systems, Inc. Upon host organization acceptance, trademark ownership transfers to AAIF under their standard trademark policy.
 
 Use of "cMCP-compatible" to describe a gateway deployment requires that the implementation satisfies the hardware attestation and policy enforcement requirements defined in the project documentation for the version being claimed.
 

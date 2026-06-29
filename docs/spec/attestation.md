@@ -95,14 +95,14 @@ Each value is a 48-byte SHA-384 digest encoded as lowercase hex (96 characters).
 
 The full TD report and quote are stored in `attestation_report.raw_evidence` for verifier use.
 
-#### Opaque (Highest Assurance)
+#### OPAQUE (Highest Assurance)
 
 Detection conditions:
 - The environment variable `OPAQUE_RUNTIME_ENDPOINT` is set and non-empty.
 
 What goes in `attestation_report.measurement`:
 
-The Opaque Managed Runtime provides a dedicated attestation API. The runtime calls `GET $OPAQUE_RUNTIME_ENDPOINT/v1/attestation` with the §3.3 nonce (`JWK_thumbprint(tee_public_key) || random_salt`) as a query parameter. The response includes an Opaque-specific measurement blob and a signed attestation certificate chain rooted in Opaque's hardware root of trust. The measurement field is set to the `measurement` field from the Opaque attestation response (format defined by the Opaque Runtime SDK; currently a 32-byte SHA-256 encoded as lowercase hex). The full response is stored in `attestation_report.raw_evidence`.
+The OPAQUE Managed Runtime provides a dedicated attestation API. The runtime calls `GET $OPAQUE_RUNTIME_ENDPOINT/v1/attestation` with the §3.3 nonce (`JWK_thumbprint(tee_public_key) || random_salt`) as a query parameter. The response includes an OPAQUE-specific measurement blob and a signed attestation certificate chain rooted in OPAQUE's hardware root of trust. The measurement field is set to the `measurement` field from the OPAQUE attestation response (format defined by the OPAQUE Runtime SDK; currently a 32-byte SHA-256 encoded as lowercase hex). The full response is stored in `attestation_report.raw_evidence`.
 
 ### 1.3 Software-Only Development Fallback
 
@@ -132,7 +132,7 @@ Rules:
 
 At enclave startup, before accepting any connections:
 
-1. Generate an ephemeral Ed25519 keypair inside the TEE using a CSPRNG seeded from the hardware entropy source (TPM `TPM2_GetRandom`, SEV-SNP `RDRAND` + kernel `/dev/urandom` mix-in, TDX equivalent, or Opaque runtime entropy API).
+1. Generate an ephemeral Ed25519 keypair inside the TEE using a CSPRNG seeded from the hardware entropy source (TPM `TPM2_GetRandom`, SEV-SNP `RDRAND` + kernel `/dev/urandom` mix-in, TDX equivalent, or OPAQUE runtime entropy API).
 2. The private key is held only in enclave memory (or equivalent protected region). It is never written to disk, never logged, never exported via any API.
 3. The public key is encoded as a 32-byte Ed25519 public key in base64url (no padding). This value is placed in the `tee_public_key` field of every TRACE Claim issued by this runtime instance.
 4. When the enclave exits (graceful shutdown or crash), the private key is zeroed from memory via a secure-erase routine before the memory region is released.
@@ -318,7 +318,7 @@ Because the public key is embedded in the claim and attested by the hardware rep
 
 For use cases requiring long-lived keys (e.g., participation in a key transparency log, or runtime restarts without breaking verifier trust):
 
-- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation; Opaque sealing via Opaque's key management API).
+- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation; OPAQUE sealing via OPAQUE's key management API).
 - The sealed key blob is stored on disk. On restart, the enclave unseals the key. Unsealing succeeds only if the enclave's current measurement matches the measurement policy used when sealing.
 - Rotation: updating the enclave's code or configuration changes its measurement. The old sealed key cannot be unsealed by the new measurement. The new enclave generates a fresh keypair and seals it to its own measurement. Old TRACE Claims remain verifiable via their embedded public key. New claims use the new key.
 - A key rotation event should be logged in the operator's change management system.

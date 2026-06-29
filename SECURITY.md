@@ -19,7 +19,7 @@ Timeline starts when the issue is confirmed as a valid vulnerability, not on ini
 
 The following components are in scope:
 
-- **TEE attestation path** — measurement of policy bundle hash into hardware attestation report; attestation verification logic for TPM 2.0, AMD SEV-SNP, Intel TDX, and Opaque Managed Runtime providers
+- **TEE attestation path** — measurement of policy bundle hash into hardware attestation report; attestation verification logic for TPM 2.0, AMD SEV-SNP, Intel TDX, and OPAQUE Managed Runtime providers
 - **Signing key handling** — hardware-sealed key generation, storage, and use; any path by which a signing key could be extracted or used outside the enclave
 - **Cedar policy enforcement** — correctness of allow/deny decisions; policy bundle loading and hash verification inside the enclave; enforcement mode handling
 - **Audit chain** — integrity of TRACE claim output fields (`policy_bundle_hash`, `audit_chain_root`, `tee_public_key`); any path by which a valid audit entry could be forged or suppressed
