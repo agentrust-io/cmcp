@@ -11,12 +11,12 @@ At the MCP transport boundary, a gateway cannot observe whether an LLM agent inc
 
 | Property | What it proves |
 |---|---|
-| P1 — Sequential recording | Calls recorded with monotonic sequence numbers |
-| P2 — Cross-boundary detection | Transitions from high-sensitivity domains recorded in graph |
-| P3 — Provenance disclaimer | `edges_represent` field explicitly qualifies adjacency vs. provenance |
-| P4 — No false negatives | Any PHI-relevant subsequent call has seq > PHI call seq; edge implicit |
-| P5 — Concurrent calls | Simultaneous calls both adjacent to prior PHI call |
-| P6 — Denied calls in graph | Agent's request is evidence of awareness, regardless of response delivery |
+| P1: Sequential recording | Calls recorded with monotonic sequence numbers |
+| P2: Cross-boundary detection | Transitions from high-sensitivity domains recorded in graph |
+| P3: Provenance disclaimer | `edges_represent` field explicitly qualifies adjacency vs. provenance |
+| P4: No false negatives | Any PHI-relevant subsequent call has seq > PHI call seq; edge implicit |
+| P5: Concurrent calls | Simultaneous calls both adjacent to prior PHI call |
+| P6: Denied calls in graph | Agent's request is evidence of awareness, regardless of response delivery |
 
 ---
 
@@ -31,7 +31,7 @@ python experiments/claim5-temporal-adjacency/run.py
 
 ## Relationship to Claim 2 FPR
 
-The Claim 2 false positive rate experiment (`experiments/claim2-false-positive-rate/`) measures the operational cost of the monotonic model — what fraction of blocked external calls are unnecessary. That experiment and this one are two sides of the same coin: this experiment proves no false negatives; the FPR experiment measures the false positive rate empirically.
+The Claim 2 false positive rate experiment (`experiments/claim2-false-positive-rate/`) measures the operational cost of the monotonic model: what fraction of blocked external calls are unnecessary. That experiment and this one are two sides of the same coin: this experiment proves no false negatives; the FPR experiment measures the false positive rate empirically.
 
 ---
 

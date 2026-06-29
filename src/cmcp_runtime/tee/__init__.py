@@ -1,1 +1,1 @@
-"""TEE provider abstraction — implemented in subsequent issues."""
+"""TEE provider abstraction: implemented in subsequent issues."""

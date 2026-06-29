@@ -1,1 +1,1 @@
-"""Inspection package — implemented in subsequent issues."""
+"""Inspection package: implemented in subsequent issues."""

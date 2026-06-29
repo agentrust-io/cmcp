@@ -36,7 +36,7 @@ Reviewers do not have merge access but their approval counts toward the merge re
 
 ### Maintainer
 
-A Reviewer who has held that role for **at least 60 days** and has demonstrated sustained contributions — consistent review activity, issue triage, or code — may be nominated for Maintainer by any existing Maintainer. Maintainer status requires explicit approval by 2/3 of current Maintainers.
+A Reviewer who has held that role for **at least 60 days** and has demonstrated sustained contributions: consistent review activity, issue triage, or code: may be nominated for Maintainer by any existing Maintainer. Maintainer status requires explicit approval by 2/3 of current Maintainers.
 
 Maintainers have merge access to `main` and are collectively responsible for the health of the project.
 
@@ -48,7 +48,7 @@ Maintainers have merge access to `main` and are collectively responsible for the
 
 ### Day-to-day changes (lazy consensus)
 
-Most decisions — feature additions, bug fixes, documentation, refactors — are made by **lazy consensus on pull requests**. A PR is mergeable when:
+Most decisions: feature additions, bug fixes, documentation, refactors: are made by **lazy consensus on pull requests**. A PR is mergeable when:
 
 - At least one Maintainer has approved it, and
 - No Maintainer has raised a blocking objection within **5 business days** of the last substantive change.

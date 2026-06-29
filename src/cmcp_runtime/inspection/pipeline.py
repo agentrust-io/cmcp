@@ -1,5 +1,5 @@
 """
-Response inspection pipeline — implements issues #61, #65, #81.
+Response inspection pipeline: implements issues #61, #65, #81.
 
 Stage 4 (injection detection) and Stage 3 (sensitivity classification) now
 delegate to AGT components where available:
@@ -27,7 +27,7 @@ from cmcp_runtime.catalog.loader import CatalogEntry
 
 _log = logging.getLogger(__name__)
 
-# ── AGT components (optional — fall back gracefully) ─────────────────────────
+# ── AGT components (optional: fall back gracefully) ─────────────────────────
 try:
     from agent_os.credential_redactor import CredentialRedactor
     from agent_os.mcp_response_scanner import MCPResponseScanner as AGTResponseScanner
@@ -36,7 +36,7 @@ try:
 except ImportError:
     _AGT_AVAILABLE = False
 
-# Mirrors agent_os._SENSITIVITY_THRESHOLDS — update if the package changes.
+# Mirrors agent_os._SENSITIVITY_THRESHOLDS: update if the package changes.
 _INJECTION_THRESHOLDS: dict[str, float] = {"strict": 0.3, "balanced": 0.5, "permissive": 0.7}
 
 # ── Fallback injection patterns (used when AGT not available) ─────────────────
@@ -142,7 +142,7 @@ def _stage2_schema_validation(
     mode = catalog_entry.schema_validation_mode
 
     if not surplus:
-        # No surplus fields — still run jsonschema for type/required violations
+        # No surplus fields: still run jsonschema for type/required violations
         try:
             jsonschema.validate(payload, output_schema)
         except jsonschema.ValidationError as exc:
@@ -156,7 +156,7 @@ def _stage2_schema_validation(
             )
         return StageResult(stage="schema", decision="allow"), response_bytes
 
-    # Surplus fields present — mode determines action
+    # Surplus fields present: mode determines action
     if mode == "strict":
         return (
             StageResult(
@@ -286,7 +286,7 @@ def _classify_sensitivity(
     """
     Stage 3: derive sensitivity tags from three sources (applied in order):
 
-    1. catalog_entry.sensitivity_level — always applied
+    1. catalog_entry.sensitivity_level: always applied
     2. field-level x-sensitivity annotations in output_schema properties
     3. pattern matching on response content (AGT CredentialRedactor or regex fallback)
     """
@@ -334,7 +334,7 @@ def _classify_sensitivity(
 
 class SensitivityClassificationStage:
     """
-    Stage 3 of the InspectionPipeline — sensitivity classification.
+    Stage 3 of the InspectionPipeline: sensitivity classification.
 
     Applies three classification sources in order:
     1. catalog_entry.sensitivity_level annotation
@@ -369,7 +369,7 @@ class InspectionPipeline:
     """
     4-stage response inspection pipeline.
 
-    All stages run even when an earlier stage would deny — this produces a
+    All stages run even when an earlier stage would deny: this produces a
     complete audit record. Final decision = deny if ANY stage returns deny.
 
     After completing all stages, calls session.update_from_inspection() to
@@ -440,7 +440,7 @@ class InspectionPipeline:
         if s2.stripped_fields:
             stripped_fields = s2.stripped_fields
         if s2.decision == "allow" and s2.stripped_fields and s2.reason == "surplus fields redacted":
-            # Redact mode modified the bytes — expose to caller
+            # Redact mode modified the bytes: expose to caller
             modified_response = response_bytes
 
         # Stage 3: sensitivity classification (AGT CredentialRedactor + catalog)
@@ -457,7 +457,7 @@ class InspectionPipeline:
         stage_results["classification"] = "allow"
 
         # Stage 4: injection detection (AGT PromptInjectionDetector + MCPResponseScanner)
-        # INJECT-005: scan bytes decoded strictly — non-UTF-8 is treated as a deny to
+        # INJECT-005: scan bytes decoded strictly: non-UTF-8 is treated as a deny to
         # prevent bypass via invalid byte sequences that errors="replace" would corrupt.
         try:
             response_text = response_bytes.decode("utf-8")
@@ -512,7 +512,7 @@ class InspectionPipeline:
                     stage_results["injection"] = "deny"
                     agt_mcp_denied = True
             except concurrent.futures.TimeoutError:
-                # INJECT-002: scanner timed out — deny to prevent bypass via slow AGT
+                # INJECT-002: scanner timed out: deny to prevent bypass via slow AGT
                 deny_reasons.append(f"AGT MCPResponseScanner timed out after {self._scanner_timeout}s")
                 injection_pattern = "scanner_timeout"
                 injection_scanner = "timeout"
@@ -557,7 +557,7 @@ class InspectionPipeline:
         deny_reasons = list(dict.fromkeys(deny_reasons))
         final = "deny" if deny_reasons else "allow"
 
-        # Handoff to session state — happens even for denied responses
+        # Handoff to session state: happens even for denied responses
         # (a denied high-sensitivity response still raises session sensitivity)
         # INJECT-004: injection_detected must reflect both scanners, not only s4.
         injection_detected = s4.decision == "deny" or agt_mcp_denied

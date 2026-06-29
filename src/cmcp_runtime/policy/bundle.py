@@ -1,4 +1,4 @@
-"""Cedar policy bundle loading and hash verification — implements issue #63."""
+"""Cedar policy bundle loading and hash verification: implements issue #63."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class PolicyBundle:
     manifest: PolicyManifest
     policy_files: dict[str, str]  # filename → file content
     schema_content: str
-    bundle_hash: str  # sha256:<hex> — what gets measured into the TEE report
+    bundle_hash: str  # sha256:<hex>: what gets measured into the TEE report
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -90,7 +90,7 @@ def load_policy_bundle(bundle_path: str, expected_hash: str | None = None) -> Po
     - *.cedar        (Cedar policy files)
     - schema.cedarschema  (Cedar schema)
 
-    expected_hash is "sha256:<hex>" — must match the computed bundle hash.
+    expected_hash is "sha256:<hex>": must match the computed bundle hash.
     If expected_hash is None, the hash is computed but not verified (dev convenience).
 
     Raises PolicyHashMismatch if hashes do not match.
@@ -120,7 +120,7 @@ def load_policy_bundle(bundle_path: str, expected_hash: str | None = None) -> Po
         # gateway cannot know in advance whether a newer agent_os is semantically
         # compatible. Operators must review changelogs and re-pin after upgrade.
         logger.warning(
-            "POLICY-007: agent_os_version mismatch — bundle pinned %s, installed %s. "
+            "POLICY-007: agent_os_version mismatch: bundle pinned %s, installed %s. "
             "Cedar policy semantics may have changed; review the agent-os-kernel changelog.",
             pinned_agent_os,
             _AGENT_OS_VERSION,
@@ -164,7 +164,7 @@ def load_policy_bundle(bundle_path: str, expected_hash: str | None = None) -> Po
         expected_hex = expected_hash.removeprefix("sha256:")
         if computed != expected_hex:
             raise PolicyHashMismatch(
-                "Policy bundle hash mismatch — gateway will not start",
+                "Policy bundle hash mismatch: gateway will not start",
                 detail=f"expected=sha256:{expected_hex} actual=sha256:{computed}",
             )
 

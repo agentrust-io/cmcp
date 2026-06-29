@@ -1,1 +1,1 @@
-"""Session package — implemented in subsequent issues."""
+"""Session package: implemented in subsequent issues."""

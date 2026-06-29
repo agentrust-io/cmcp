@@ -4,19 +4,19 @@
 
 **What this experiment proves:**
 
-1. The policy bundle hash is fully determined by the bundle content — same content, same hash, every time.
+1. The policy bundle hash is fully determined by the bundle content: same content, same hash, every time.
 2. Any change to any byte in any policy file produces a completely different hash (avalanche property).
 3. `load_policy_bundle` raises `PolicyHashMismatch` when the hash of the bundle on disk does not match the expected hash, preventing a substituted bundle from being used.
 4. The bundle hash appears in the TRACE Claim's `trace.policy.bundle_hash` field and is covered by the claim's Ed25519 signature. Tampering with the hash breaks signature verification.
 
 **What this means for governance:**
 
-A rogue administrator who modifies the Cedar policy bundle after it was approved cannot silently substitute the new bundle — the computed hash will not match the approved hash, and the gateway will refuse to start. The approved hash recorded in the TRACE Claim can be compared against the policy bundle in version control by any verifier at any time, without trusting the operator.
+A rogue administrator who modifies the Cedar policy bundle after it was approved cannot silently substitute the new bundle: the computed hash will not match the approved hash, and the gateway will refuse to start. The approved hash recorded in the TRACE Claim can be compared against the policy bundle in version control by any verifier at any time, without trusting the operator.
 
 **Fixtures:**
 
-- `fixtures/bundle-v1/` — original approved policy (permits `ehr.get_patient`)
-- `fixtures/bundle-v2/` — identical except one character changed in a comment (`A` → `a` in `allow_ehr_tools.cedar` line 1)
+- `fixtures/bundle-v1/`: original approved policy (permits `ehr.get_patient`)
+- `fixtures/bundle-v2/`: identical except one character changed in a comment (`A` → `a` in `allow_ehr_tools.cedar` line 1)
 
 ## Running
 

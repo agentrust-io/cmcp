@@ -1,4 +1,4 @@
-"""TEE provider detection loop — implements issue #72 (dev mode) and #77 (abstraction)."""
+"""TEE provider detection loop: implements issue #72 (dev mode) and #77 (abstraction)."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def detect_provider(config: Config) -> TEEProvider:
                     "provider=software-only requires CMCP_DEV_MODE=1"
                 )
             logger.warning(
-                "Running in development mode — attestation is not hardware-backed. "
+                "Running in development mode: attestation is not hardware-backed. "
                 "TRACE Claims produced here must not be used for compliance purposes."
             )
             return SoftwareOnlyProvider()
@@ -92,7 +92,7 @@ def detect_provider(config: Config) -> TEEProvider:
     # No hardware provider found
     if dev_mode:
         logger.warning(
-            "No hardware TEE detected. Running in development mode — "
+            "No hardware TEE detected. Running in development mode: "
             "attestation is not hardware-backed. "
             "TRACE Claims produced here must not be used for compliance purposes."
         )

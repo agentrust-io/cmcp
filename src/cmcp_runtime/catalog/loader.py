@@ -1,4 +1,4 @@
-"""Tool catalog loading, hash verification, and identity binding — implements #86, #88."""
+"""Tool catalog loading, hash verification, and identity binding: implements #86, #88."""
 
 from __future__ import annotations
 
@@ -170,7 +170,7 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
             )
         if tool_name in entries:
             raise CatalogToolNameCollision(
-                f"Duplicate tool_name '{tool_name}' — gateway will not start",
+                f"Duplicate tool_name '{tool_name}': gateway will not start",
                 detail="Each tool_name must map to exactly one upstream server",
             )
 
@@ -227,7 +227,7 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
         actual_hex = computed_hash.removeprefix("sha256:")
         if expected_hex != actual_hex:
             raise CatalogHashMismatch(
-                "Tool catalog hash mismatch — gateway will not start",
+                "Tool catalog hash mismatch: gateway will not start",
                 detail=f"expected=sha256:{expected_hex} actual={computed_hash}",
             )
 

@@ -21,11 +21,11 @@ An [Agent Manifest](../../docs/spec/component-model.md) must be bound to the gat
 
 ## Background
 
-In a production deployment an agent can go rogue: a bug, a prompt injection, or a misconfiguration causes it to request tool calls that policy forbids. Without automated remediation, the agent keeps running — accumulating denies in the audit chain but never stopping.
+In a production deployment an agent can go rogue: a bug, a prompt injection, or a misconfiguration causes it to request tool calls that policy forbids. Without automated remediation, the agent keeps running: accumulating denies in the audit chain but never stopping.
 
 The kill switch closes this gap. cMCP tracks policy decisions per agent identity in a rolling time window. When the deny rate crosses a configurable threshold with enough samples, the runtime:
 
-1. Marks the closing TRACE claim with `gateway.kill_switch_triggered: true` — hardware-attested evidence of automated enforcement, verifiable offline by any regulator
+1. Marks the closing TRACE claim with `gateway.kill_switch_triggered: true`: hardware-attested evidence of automated enforcement, verifiable offline by any regulator
 2. Blocks all subsequent `create_session()` calls from that agent identity with a `KILL_SWITCH_TRIPPED (403)` response
 3. Appends a `break_glass_used` audit entry to the chain recording the trigger event
 
@@ -40,12 +40,12 @@ Add a `kill_switch` block to `cmcp-config.yaml`:
 ```yaml
 kill_switch:
   enabled: true
-  window_seconds: 300      # rolling window — 5 minutes
+  window_seconds: 300      # rolling window: 5 minutes
   deny_rate_threshold: 0.9 # trip at 90% deny rate
   min_calls: 10            # require at least 10 calls before evaluating
 ```
 
-All fields have defaults — setting `enabled: false` (the default) disables evaluation without removing the block.
+All fields have defaults: setting `enabled: false` (the default) disables evaluation without removing the block.
 
 | Field | Default | Description |
 |---|---|---|
@@ -82,7 +82,7 @@ export CMCP_BEARER_TOKEN="$(openssl rand -hex 32)"
 cmcp start --config cmcp-config.yaml
 ```
 
-Run a session where the agent makes mostly denied calls. When the session closes, cMCP evaluates the rolling window and — if the threshold is exceeded — marks the claim:
+Run a session where the agent makes mostly denied calls. When the session closes, cMCP evaluates the rolling window and: if the threshold is exceeded: marks the claim:
 
 ```json
 {
@@ -123,10 +123,10 @@ result = verify_trace_claim(claim, approved)
 
 if result.status == "verified":
     if claim["gateway"]["kill_switch_triggered"]:
-        print("Agent was automatically blocked — hardware-attested enforcement confirmed.")
+        print("Agent was automatically blocked: hardware-attested enforcement confirmed.")
 ```
 
-A verifier running offline — with no connection to the cMCP gateway or to OPAQUE — can confirm that:
+A verifier running offline: with no connection to the cMCP gateway or to OPAQUE: can confirm that:
 
 - The kill switch fired in this session (`kill_switch_triggered: true`)
 - The policy that caused the denies is recorded by hash in `trace.policy.bundle_hash`
@@ -137,7 +137,7 @@ A verifier running offline — with no connection to the cMCP gateway or to OPAQ
 
 ## Unblock an agent identity
 
-The kill switch is a process-lifetime block — it persists as long as the gateway process is running. To unblock, restart the gateway. This clears all in-memory state including the blocked identity set and the rolling window.
+The kill switch is a process-lifetime block: it persists as long as the gateway process is running. To unblock, restart the gateway. This clears all in-memory state including the blocked identity set and the rolling window.
 
 For a manual operator override without restart, cMCP exposes an operator endpoint (requires `CMCP_BEARER_TOKEN`):
 
@@ -146,13 +146,13 @@ curl -X DELETE https://localhost:8443/admin/kill-switch/spiffe%3A%2F%2Fexample.c
   -H "Authorization: Bearer $CMCP_BEARER_TOKEN"
 ```
 
-This calls `KillSwitchEvaluator.unblock()` — clearing the block flag and all rolling window events for that identity. The action is logged to the audit chain.
+This calls `KillSwitchEvaluator.unblock()`: clearing the block flag and all rolling window events for that identity. The action is logged to the audit chain.
 
 ---
 
 ## What counts as a deny
 
-Both `deny` and `advisory_deny` policy decisions count toward the deny rate. A `fault` (tool error) does not count — it indicates a tool-side failure, not a policy enforcement event.
+Both `deny` and `advisory_deny` policy decisions count toward the deny rate. A `fault` (tool error) does not count: it indicates a tool-side failure, not a policy enforcement event.
 
 | Decision | Counted as deny? |
 |---|---|
@@ -168,7 +168,7 @@ Both `deny` and `advisory_deny` policy decisions count toward the deny rate. A `
 
 For UAE federal ministries and other sovereign deployments, `kill_switch_triggered: true` in a TRACE claim is the answer to "what happens when an agent goes rogue." The proof is hardware-rooted:
 
-- The TEE signs the claim — the cloud operator and the ministry IT team cannot produce this artifact for a different outcome
+- The TEE signs the claim: the cloud operator and the ministry IT team cannot produce this artifact for a different outcome
 - The audit chain entry records the agent identity, the deny rate window, and the trigger timestamp
 - The claim is verifiable offline by the federal oversight body without calling back to any OPAQUE service
 
@@ -180,4 +180,4 @@ This closes the regulatory gap that a log file cannot close: a log entry is some
 
 You configured the rolling-window kill switch, ran a session that tripped the threshold, and verified that the closing TRACE claim carries `gateway.kill_switch_triggered: true`. Subsequent sessions from the flagged agent identity are rejected with `KILL_SWITCH_TRIPPED (403)`. The hardware-signed artifact is verifiable by any regulator offline.
 
-Related tutorials: [TEE attestation](./tee-attestation.md) — hardware-backing the TRACE claim that carries `kill_switch_triggered`. [Verify a TRACE claim](./verifying-a-trace-claim.md) — checking `kill_switch_triggered` as part of offline verification.
+Related tutorials: [TEE attestation](./tee-attestation.md): hardware-backing the TRACE claim that carries `kill_switch_triggered`. [Verify a TRACE claim](./verifying-a-trace-claim.md): checking `kill_switch_triggered` as part of offline verification.

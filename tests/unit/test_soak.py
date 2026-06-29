@@ -90,7 +90,7 @@ def test_soak_state_initial():
 def test_soak_memory_growth_check_bounded():
     from tests.soak.run_soak import SoakState, _check_memory_growth
     state = SoakState()
-    state.memory_samples = [1000, 2000]  # 2x growth — just within threshold
+    state.memory_samples = [1000, 2000]  # 2x growth: just within threshold
     state.total_calls = 1
     # Should pass: tn=2000, threshold=(2*1000) + (1*512) = 2512
     assert _check_memory_growth(state) is True
@@ -136,7 +136,7 @@ def test_check_signing_key_detects_change():
     state = SoakState()
     _check_signing_key(state, chain1)
     _check_signing_key(state, chain2)  # different chain root
-    # Different sessions produce different chain roots — simulates key change
+    # Different sessions produce different chain roots: simulates key change
     if chain1.chain_root[:16] != chain2.chain_root[:16]:
         assert state.signing_key_stable is False
         assert len(state.signing_key_restart_timestamps) == 1

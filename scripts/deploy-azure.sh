@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-azure.sh — provision an Azure Confidential VM and install cMCP
+# deploy-azure.sh: provision an Azure Confidential VM and install cMCP
 #
 # Usage:
 #   ./scripts/deploy-azure.sh [sev-snp|tdx]    (default: sev-snp)
@@ -30,7 +30,7 @@ case "$TEE_TYPE" in
     ;;
 esac
 
-# Default location — Confidential VM availability varies by region.
+# Default location: Confidential VM availability varies by region.
 # Verify the SKU is available before proceeding:
 #   az vm list-skus --location <region> --size "$VM_SIZE" --output table
 LOCATION="${AZURE_LOCATION:-eastus}"

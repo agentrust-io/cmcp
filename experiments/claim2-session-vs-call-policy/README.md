@@ -1,4 +1,4 @@
-# Experiment: Session-Level vs. Per-Call Policy — The Compliance Gap
+# Experiment: Session-Level vs. Per-Call Policy: The Compliance Gap
 
 **Claim:** Monotonic session sensitivity state for LLM data governance (cMCP Claim 2)
 
@@ -8,7 +8,7 @@ Individual call authorization is necessary but insufficient for cross-system com
 
 **Scenario:**
 
-A clinical decision-support agent retrieves a patient record (PHI), then makes several downstream calls. Each downstream call is individually authorized — the agent has permission to call each of those tools. But after the PHI retrieval, the session context is contaminated: any external call the agent makes could carry PHI from its context window. Per-call policy cannot detect this; session-level policy blocks it.
+A clinical decision-support agent retrieves a patient record (PHI), then makes several downstream calls. Each downstream call is individually authorized: the agent has permission to call each of those tools. But after the PHI retrieval, the session context is contaminated: any external call the agent makes could carry PHI from its context window. Per-call policy cannot detect this; session-level policy blocks it.
 
 **Call trace:**
 

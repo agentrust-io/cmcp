@@ -1,6 +1,6 @@
 """
 Experiment: Policy Bundle Hash Binding
-Claim 1 — Hardware-attested policy enforcement at the AI agent tool boundary
+Claim 1: Hardware-attested policy enforcement at the AI agent tool boundary
 
 Proves four properties:
   1. Bundle hash is deterministic (same content → same hash, always)
@@ -124,7 +124,7 @@ def result(label: str, value: str, ok: bool | None = None) -> None:
 def main() -> int:
     print("=" * 60)
     print("Experiment: Policy Bundle Hash Binding")
-    print("Claim 1 — cMCP TEE-measured policy enforcement")
+    print("Claim 1: cMCP TEE-measured policy enforcement")
     print("=" * 60)
 
     failures = 0
@@ -132,7 +132,7 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Property 1: Determinism
     # ------------------------------------------------------------------
-    section("1. Hash determinism — same bundle, same hash across loads")
+    section("1. Hash determinism: same bundle, same hash across loads")
 
     b1_load1 = load_policy_bundle(str(BUNDLE_V1))
     b1_load2 = load_policy_bundle(str(BUNDLE_V1))
@@ -150,7 +150,7 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Property 2: Avalanche effect
     # ------------------------------------------------------------------
-    section("2. Avalanche effect — one character changed in cedar comment")
+    section("2. Avalanche effect: one character changed in cedar comment")
 
     b2_load = load_policy_bundle(str(BUNDLE_V2))
     h2 = b2_load.bundle_hash
@@ -168,14 +168,14 @@ def main() -> int:
     result("Change", f"line 1 of cedar file: {repr(cedar_v1)} -> {repr(cedar_v2)}")
     result("Bits changed (of 256)", f"{bits_diff} ({100 * bits_diff // 256}%)")
     result("Hex chars changed (of 64)", f"{chars_diff}")
-    result("Hashes differ", "YES — tamper detectable" if hashes_differ else "NO — NOT detectable", hashes_differ)
+    result("Hashes differ", "YES: tamper detectable" if hashes_differ else "NO: NOT detectable", hashes_differ)
     if not hashes_differ:
         failures += 1
 
     # ------------------------------------------------------------------
     # Property 3: PolicyHashMismatch on disk/expected mismatch
     # ------------------------------------------------------------------
-    section("3. Tamper detection — load bundle-v2 with expected_hash of bundle-v1")
+    section("3. Tamper detection: load bundle-v2 with expected_hash of bundle-v1")
     print(f"    (simulates an admin swapping the bundle after approval)")
 
     mismatch_raised = False
@@ -186,7 +186,7 @@ def main() -> int:
         result("PolicyHashMismatch raised", "YES", True)
         result("Error detail", str(exc)[:80] + "...")
     if not mismatch_raised:
-        result("PolicyHashMismatch raised", "NO — bundle substitution NOT caught", False)
+        result("PolicyHashMismatch raised", "NO: bundle substitution NOT caught", False)
         failures += 1
 
     # Positive control: correct hash passes
@@ -239,7 +239,7 @@ def main() -> int:
         print("  - TRACE Claim signature is invalidated by any hash field change")
         return 0
     else:
-        print(f"Result: {failures} PROPERTIES FAILED — see output above")
+        print(f"Result: {failures} PROPERTIES FAILED: see output above")
         return 1
 
 

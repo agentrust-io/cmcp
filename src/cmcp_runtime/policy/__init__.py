@@ -1,1 +1,1 @@
-"""Policy package — implemented in subsequent issues."""
+"""Policy package: implemented in subsequent issues."""

@@ -9,7 +9,7 @@ version: "1.0"
 description: >
   cMCP enforces default-deny Cedar policy on all MCP tool calls at the gateway
   boundary inside a TEE. The Cedar policy bundle is measured into hardware at
-  startup — any tool call not matching an explicit permit rule is denied without
+  startup, any tool call not matching an explicit permit rule is denied without
   any code path the operator can override at runtime.
 
 enforcement_model: cedar
@@ -20,7 +20,7 @@ hardware_roots:
   - tpm2
 
 owasp_coverage:
-  ASI-01: PromptInjectionDetector — blocks injected instructions in tool responses
-  ASI-02: catalog + Cedar permit rules — enforces approved tool list
-  ASI-03: Cedar scope boundary — agent cannot call tools outside explicit permit
-  ASI-06: hash-chained audit inside TEE — tamper-evident call log per session
+  ASI-01: PromptInjectionDetector, blocks injected instructions in tool responses
+  ASI-02: catalog + Cedar permit rules, enforces approved tool list
+  ASI-03: Cedar scope boundary, agent cannot call tools outside explicit permit
+  ASI-06: hash-chained audit inside TEE, tamper-evident call log per session

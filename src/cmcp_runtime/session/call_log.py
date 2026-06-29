@@ -1,4 +1,4 @@
-"""Per-session call log and temporal adjacency tracking — implements issue #94."""
+"""Per-session call log and temporal adjacency tracking: implements issue #94."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ class CallLog:
     def suspicious_sequence(self, threshold: int = 3) -> bool:
         """
         Return True if the same tool was called more than `threshold` times
-        consecutively — a potential injection/replay pattern.
+        consecutively: a potential injection/replay pattern.
         """
         if not self.records:
             return False
@@ -73,7 +73,7 @@ class CallLog:
 
 
 # ---------------------------------------------------------------------------
-# SessionCallLog and CallLogEntry — richer per-call tracking for TRACE Claims
+# SessionCallLog and CallLogEntry: richer per-call tracking for TRACE Claims
 # ---------------------------------------------------------------------------
 
 #: Sentinel for the compliance_domain of calls where no catalog entry exists.
@@ -88,7 +88,7 @@ _HIGH_SENSITIVITY_DOMAINS: frozenset[str] = frozenset({"pii", "phi", "pci", "res
 class CallLogEntry:
     """One entry in the per-session call log (issue #94 spec).
 
-    Tracks temporal adjacency only — not data provenance.  Edges in the
+    Tracks temporal adjacency only: not data provenance.  Edges in the
     call graph represent "B was called immediately after A", not "B consumed
     A's output".
     """

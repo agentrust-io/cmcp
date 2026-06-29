@@ -210,7 +210,7 @@ def test_policy_store_keeps_current_on_reload_failure():
 # ── POLICY-007: agent_os_version pinning ─────────────────────────────────────
 
 def test_load_bundle_accepts_manifest_without_agent_os_version(bundle_dir):
-    """POLICY-007: agent_os_version is optional — bundles without it still load."""
+    """POLICY-007: agent_os_version is optional: bundles without it still load."""
     bundle = load_policy_bundle(str(bundle_dir))
     assert bundle.manifest.agent_os_version is None
 
