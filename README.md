@@ -124,7 +124,7 @@ from cmcp_gateway.config import TEEProvider
 # Explicit hardware selection
 # attestation.provider: sev-snp
 
-# Opaque Managed Runtime (explicit opt-in only)
+# OPAQUE Managed Runtime (explicit opt-in only)
 # OPAQUE_ATTESTATION_URL=https://... cmcp start --config cmcp-config.yaml
 ```
 
