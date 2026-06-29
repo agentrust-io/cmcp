@@ -9,7 +9,7 @@ description = "Hardware-attested MCP runtime, TEE-enforced policy and TRACE Clai
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "AgentTrust Contributors", email = "oss@agentrust.io" },
+    { name = "AgenTrust Contributors", email = "oss@agentrust.io" },
 ]
 keywords = ["mcp", "tee", "attestation", "security", "ai-agents", "cedar"]
 classifiers = [
