@@ -145,6 +145,7 @@ nav:
       - Call Graph: docs/spec/call-graph.md
       - Proxy Security: docs/spec/proxy-security.md
       - Verification Library: docs/spec/verification-library.md
+      - Embodied Action Evidence: docs/spec/embodied-action-evidence.md
       - Error Codes: docs/spec/error-codes.md
       - Failure Modes: docs/spec/failure-modes.md
       - Threat Model: docs/spec/threat-model.md
@@ -158,4 +159,3 @@ nav:
       - Contributing: CONTRIBUTING.md
       - Governance: GOVERNANCE.md
       - Roadmap: ROADMAP.md
-
