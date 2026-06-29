@@ -8,7 +8,7 @@ Stability: Unstable , expect breaking changes before v1.0
 
 ## Section 1 : Phase 2 Architecture Overview
 
-Phase 2 targets a different deployer than Phase 1. The Phase 1 deployer is an agent developer who runs a runtime in front of their own agents. The Phase 2 deployer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Those enterprise customers — Phase 1 deployers — eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.
+Phase 2 targets a different deployer than Phase 1. The Phase 1 deployer is an agent developer who runs a runtime in front of their own agents. The Phase 2 deployer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Those enterprise customers: Phase 1 deployers: eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.
 
 Phase 1 closes from the agent side: the runtime attests what the agent sent and what policy was applied. Phase 2 closes from the server side: the MCP server binary, its tool surface, and its egress behavior are all measured inside a TEE and published as a second TRACE Claim that any enterprise verifier can check without trusting the SaaS operator.
 

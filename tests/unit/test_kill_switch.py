@@ -128,7 +128,7 @@ class TestKillSwitchEvaluator:
         assert ev.is_blocked(_AGENT_ID) is True
         ev.unblock(_AGENT_ID)
         assert ev.is_blocked(_AGENT_ID) is False
-        # Events cleared — below min_calls after unblock
+        # Events cleared: below min_calls after unblock
         assert ev.evaluate(_AGENT_ID) is False
 
     def test_separate_agent_ids_are_independent(self) -> None:
@@ -179,7 +179,7 @@ class TestSessionManagerKillSwitch:
         )
         mgr = SessionManager(ctx)
         state, chain = mgr.create_session()
-        # 3 allows, 2 denies = 40% deny rate — below 90%
+        # 3 allows, 2 denies = 40% deny rate: below 90%
         for i in range(3):
             chain.append("tool_call", call_id=f"a{i}", tool_name="t", policy_decision="allow")
         for i in range(2):

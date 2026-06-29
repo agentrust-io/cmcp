@@ -155,7 +155,7 @@ def test_catalog_hash_changes_when_entry_changes(catalog_file):
 # ── POLICY-002: tool name must be lowercase ───────────────────────────────────
 
 def test_uppercase_tool_name_is_rejected(catalog_file):
-    """POLICY-002 — mixed-case tool names must be rejected at load time."""
+    """POLICY-002: mixed-case tool names must be rejected at load time."""
     entry = dict(ENTRY_1)
     entry["tool_name"] = "CRM.Query"
     with pytest.raises(ConfigError, match="lowercase"):

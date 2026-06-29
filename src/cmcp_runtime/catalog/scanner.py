@@ -1,5 +1,5 @@
 """
-Tool catalog security scanning via AGT MCPSecurityScanner — implements issue #58.
+Tool catalog security scanning via AGT MCPSecurityScanner: implements issue #58.
 
 AGT's MCPSecurityScanner provides:
   - SHA-256 tool fingerprinting (detects definition mutation / rug-pull P4.2)
@@ -65,13 +65,13 @@ class CatalogScanner:
                 self._available = True
                 logger.info("CatalogScanner: AGT MCPSecurityScanner active")
             except Exception as exc:
-                logger.warning("CatalogScanner: AGT init failed (%s) — running without security scan", exc)
+                logger.warning("CatalogScanner: AGT init failed (%s): running without security scan", exc)
                 self._scanner = None
                 self._available = False
         else:
             self._scanner = None
             self._available = False
-            logger.info("CatalogScanner: agent-os-kernel not installed — no catalog scanning")
+            logger.info("CatalogScanner: agent-os-kernel not installed: no catalog scanning")
 
     def scan_catalog(self, catalog: ToolCatalog) -> CatalogScanResult:
         """

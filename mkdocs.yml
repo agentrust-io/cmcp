@@ -1,5 +1,5 @@
 site_name: cMCP
-site_description: Confidential MCP Runtime — hardware-attested policy enforcement for MCP tool calls
+site_description: Confidential MCP Runtime, hardware-attested policy enforcement for MCP tool calls
 site_url: https://cmcp.agentrust-io.com
 repo_url: https://github.com/agentrust-io/cmcp
 repo_name: agentrust-io/cmcp

@@ -1,10 +1,10 @@
-﻿# cMCP Runtime — Latency Targets and Benchmarks
+﻿# cMCP Runtime: Latency Targets and Benchmarks
 
 ## Latest results
 
 Benchmark results are committed to [`benchmarks/`](https://github.com/agentrust-io/cmcp/tree/main/benchmarks) by the nightly CI workflow after each run on TEE hardware. Each result file covers one provider and reports p50/p95/p99 latency in microseconds.
 
-The directory is currently empty — results will appear after the first scheduled CI run on production TEE hardware. TEE hardware benchmarks are run on Azure DCasv5 (SEV-SNP) and GCP C3 Confidential VM (TDX).
+The directory is currently empty: results will appear after the first scheduled CI run on production TEE hardware. TEE hardware benchmarks are run on Azure DCasv5 (SEV-SNP) and GCP C3 Confidential VM (TDX).
 
 ---
 

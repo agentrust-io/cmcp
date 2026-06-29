@@ -1,5 +1,5 @@
 """
-SPIFFE/SPIRE Workload API client — implements issue #96.
+SPIFFE/SPIRE Workload API client: implements issue #96.
 
 Fetches X.509 SVIDs from a local SPIRE agent after TEE attestation succeeds.
 If SPIRE is not present or pyspiffe is not installed, falls back to
@@ -23,7 +23,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SOCKET = "/tmp/spire-agent/public/api.sock"  # nosec B108 — SPIRE Workload API standard socket path, not a temp file
+_DEFAULT_SOCKET = "/tmp/spire-agent/public/api.sock"  # nosec B108: SPIRE Workload API standard socket path, not a temp file
 _SPIRE_SOCKET_ENV = "CMCP_SPIRE_SOCKET"
 
 # Maximum time to wait for SPIRE agent to respond (seconds)
@@ -152,12 +152,12 @@ def fetch_svid(socket_path: str | None = None) -> SpiffeClientResult:
         )
     elif result.available:
         logger.warning(
-            "SPIRE agent reachable but SVID fetch failed: %s — falling back to self-signed TLS",
+            "SPIRE agent reachable but SVID fetch failed: %s: falling back to self-signed TLS",
             result.failure_reason,
         )
     else:
         logger.warning(
-            "SPIRE not available (%s) — falling back to self-signed TLS",
+            "SPIRE not available (%s): falling back to self-signed TLS",
             result.failure_reason,
         )
 

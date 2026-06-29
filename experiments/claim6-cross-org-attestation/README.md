@@ -12,13 +12,13 @@ In B2B AI tool access, enterprise (party A) uses a Phase 1 cMCP gateway and SaaS
 
 | Property | What it proves |
 |---|---|
-| P1 — Independent keys | Gateway and server have different TEE keypairs |
-| P2 — Session linkage | Both claims carry the same session_id |
-| P3 — Phase 1 nonce | SHA-256(gateway_key ∥ session_id) binds Phase 1 to session |
-| P4 — Phase 2 nonce | SHA-256(server_key ∥ session_id) binds Phase 2 to session |
-| P5 — Independent verify | Each claim verifiable against its own public key |
-| P6 — Tamper independence | Phase 1 tamper invalidates only Phase 1; Phase 2 unaffected |
-| P7 — Binary swap detection | Different server binary → different measurement → verifier rejects |
+| P1: Independent keys | Gateway and server have different TEE keypairs |
+| P2: Session linkage | Both claims carry the same session_id |
+| P3: Phase 1 nonce | SHA-256(gateway_key ∥ session_id) binds Phase 1 to session |
+| P4: Phase 2 nonce | SHA-256(server_key ∥ session_id) binds Phase 2 to session |
+| P5: Independent verify | Each claim verifiable against its own public key |
+| P6: Tamper independence | Phase 1 tamper invalidates only Phase 1; Phase 2 unaffected |
+| P7: Binary swap detection | Different server binary → different measurement → verifier rejects |
 
 ---
 

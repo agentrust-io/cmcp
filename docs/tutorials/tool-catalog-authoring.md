@@ -111,7 +111,7 @@ The gateway recomputes this at load time and rejects the catalog if any entry's 
 
 ### `compliance_domain`
 
-A string label grouping tools by their compliance context. Used by Cedar policies to write rules like "tools in domain `pii` require a PII handler principal attribute." Common values: `"pii"`, `"financial"`, `"phi"`, `"internal"`, `"external"`. The runtime does not validate the value — it is a policy input.
+A string label grouping tools by their compliance context. Used by Cedar policies to write rules like "tools in domain `pii` require a PII handler principal attribute." Common values: `"pii"`, `"financial"`, `"phi"`, `"internal"`, `"external"`. The runtime does not validate the value: it is a policy input.
 
 ### `requires_baa`
 
@@ -143,7 +143,7 @@ Controls what the gateway does when a tool call argument fails schema validation
 | `"strict"` | Reject the call with HTTP 422 if any argument fails validation |
 | `"log"` | Log the violation but pass through unchanged |
 
-Use `"strict"` for tools that handle sensitive data where unexpected fields could indicate an injection attempt. Use `"redact"` (the default) when agents may send extra fields the tool ignores. Use `"log"` only for baselining — it provides no enforcement.
+Use `"strict"` for tools that handle sensitive data where unexpected fields could indicate an injection attempt. Use `"redact"` (the default) when agents may send extra fields the tool ignores. Use `"log"` only for baselining: it provides no enforcement.
 
 ---
 
@@ -162,7 +162,7 @@ def compute_catalog_hash(entries: list[dict]) -> str:
 ```
 
 Steps:
-1. Sort entries by `tool_name` (ascending, case-sensitive — but tool names are always lowercase)
+1. Sort entries by `tool_name` (ascending, case-sensitive: but tool names are always lowercase)
 2. Canonical JSON: `sort_keys=True`, no spaces (`separators=(",", ":")`)
 3. SHA-256 of the UTF-8 bytes
 
@@ -262,7 +262,7 @@ Note that `kyc.verify` uses `"strict"` because unexpected fields in a KYC call c
 Compute and pin the catalog hash before starting the gateway:
 
 ```bash
-# Pin the catalog hash (required in production — see CMCP_CATALOG_HASH)
+# Pin the catalog hash (required in production: see CMCP_CATALOG_HASH)
 export CMCP_CATALOG_HASH="$(python -c "
 import hashlib, json
 entries = json.load(open('catalog.json'))
@@ -290,4 +290,4 @@ Both commands exit non-zero on any validation error without starting the gateway
 4. Use `"strict"` schema validation for high-sensitivity tools; `"redact"` is the safe default for others
 5. `sensitivity_level` feeds session tracking; `compliance_domain` feeds Cedar policy context
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — using `compliance_domain` and `sensitivity_level` in Cedar rules. [TLS pinning](./tls-pinning.md) — computing `tls_fingerprint` values.
+Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): using `compliance_domain` and `sensitivity_level` in Cedar rules. [TLS pinning](./tls-pinning.md): computing `tls_fingerprint` values.

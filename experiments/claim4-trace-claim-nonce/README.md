@@ -21,12 +21,12 @@ each enclave instance produces a distinct, fresh nonce. The session is bound thr
 
 | Property | Claim |
 |---|---|
-| P1 — Thumbprint determinism | Same key → same thumbprint, re-derivable from `cnf.jwk.x` |
-| P2 — Key binding | `report_data[:32]` equals the thumbprint |
-| P3 — Instance binding | Different TEE key → different thumbprint |
-| P4 — Freshness | Different salt → different nonce across startups |
-| P5 — Session binding | Replacing `session_id` in a signed claim breaks the Ed25519 signature |
-| P6 — Selective disclosure resistance | Removing one audit entry changes `bundle_hash`; export signature fails |
+| P1: Thumbprint determinism | Same key → same thumbprint, re-derivable from `cnf.jwk.x` |
+| P2: Key binding | `report_data[:32]` equals the thumbprint |
+| P3: Instance binding | Different TEE key → different thumbprint |
+| P4: Freshness | Different salt → different nonce across startups |
+| P5: Session binding | Replacing `session_id` in a signed claim breaks the Ed25519 signature |
+| P6: Selective disclosure resistance | Removing one audit entry changes `bundle_hash`; export signature fails |
 
 ---
 

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
-    """RFC 7638 §3 JWK Thumbprint — SHA-256(UTF-8(JSON of sorted required OKP members))."""
+    """RFC 7638 §3 JWK Thumbprint: SHA-256(UTF-8(JSON of sorted required OKP members))."""
     canonical = json.dumps(
         {"crv": "Ed25519", "kty": "OKP", "x": x_b64url},
         separators=(",", ":"),

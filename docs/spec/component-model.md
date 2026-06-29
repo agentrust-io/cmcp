@@ -1,7 +1,7 @@
 ﻿# MCP Component Model and Trust Boundaries
 
 !!! warning "Draft"
-    Status: Draft v0.1 · Stability: Unstable — expect breaking changes before v1.0
+    Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
 Defines the full component model, trust levels per phase, and the hardware vs. software trust boundary.
 

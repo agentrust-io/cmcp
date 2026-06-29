@@ -199,7 +199,7 @@ def test_verify_chain_fails_after_chain_substitution_via_session_manager():
     replacement = AuditChain(real_chain._session_id)  # type: ignore[attr-defined]
     replacement.append("tool_call", call_id="c1", tool_name="evil_tool", policy_decision="allow")
 
-    # Graft replacement entries — anchor is still the original root.
+    # Graft replacement entries: anchor is still the original root.
     real_chain._entries = replacement._entries  # type: ignore[attr-defined]
 
     assert real_chain.verify_chain() is False

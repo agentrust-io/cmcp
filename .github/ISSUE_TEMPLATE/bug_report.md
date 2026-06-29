@@ -39,4 +39,4 @@ assignees: ''
 
 ## Conformance test ID (if applicable)
 
-<!-- Prefix with ATTEST, POLICY, AUDIT, or TRACE — e.g. ATTEST-007, POLICY-003 -->
+<!-- Prefix with ATTEST, POLICY, AUDIT, or TRACE: e.g. ATTEST-007, POLICY-003 -->

@@ -26,7 +26,7 @@ def _make_attestation_report(*, stale: bool = False) -> MagicMock:
     report.measurement = "DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION"
     report.report_data = "aa" * 32
     report.raw_evidence = None
-    report.measurement_note = "software-only mode — not hardware-backed"
+    report.measurement_note = "software-only mode: not hardware-backed"
     report.attestation_validity_seconds = 86400
     if stale:
         # Set generated_at far in the past so the report is expired.

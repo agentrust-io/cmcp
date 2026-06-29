@@ -1,4 +1,4 @@
-"""Opaque Systems TEE provider stub — not yet implemented."""
+"""Opaque Systems TEE provider stub: not yet implemented."""
 
 from __future__ import annotations
 

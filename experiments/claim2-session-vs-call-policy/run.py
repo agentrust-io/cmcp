@@ -1,6 +1,6 @@
 """
-Experiment: Session-Level vs. Per-Call Policy — The Compliance Gap
-Claim 2 — Monotonic session sensitivity state for LLM data governance
+Experiment: Session-Level vs. Per-Call Policy: The Compliance Gap
+Claim 2: Monotonic session sensitivity state for LLM data governance
 
 Constructs a synthetic 5-call agent session with PHI contamination.
 Shows which cross-boundary violations per-call policy misses that session
@@ -79,7 +79,7 @@ TRACE: list[SyntheticCall] = [
         tool_name="slack.post_message",
         args={"channel": "#clinical-alerts", "message": "Patient summary ready for review."},
         response={"ok": True, "ts": "1750000000.000001"},
-        payload_contains_phi=False,  # payload itself is clean — per-call sees nothing
+        payload_contains_phi=False,  # payload itself is clean: per-call sees nothing
     ),
     SyntheticCall(
         tool_name="analytics.run_query",
@@ -115,7 +115,7 @@ TRACE: list[SyntheticCall] = [
 #   - If the outbound arguments contain an explicit PHI pattern, deny.
 #   - Otherwise allow.
 #
-# This is intentionally the BEST CASE per-call model — it even inspects
+# This is intentionally the BEST CASE per-call model: it even inspects
 # the outbound arguments for PHI. It still misses cross-boundary violations
 # because it cannot see what is in the agent's context window.
 # ---------------------------------------------------------------------------
@@ -182,8 +182,8 @@ def session_policy(
 
 def main() -> int:
     print("=" * 72)
-    print("Experiment: Session-Level vs. Per-Call Policy — The Compliance Gap")
-    print("Claim 2 — cMCP monotonic session sensitivity state")
+    print("Experiment: Session-Level vs. Per-Call Policy: The Compliance Gap")
+    print("Claim 2: cMCP monotonic session sensitivity state")
     print("=" * 72)
 
     catalog = load_catalog(str(FIXTURES / "catalog.json"))
@@ -220,7 +220,7 @@ def main() -> int:
         # Run per-call policy (before session state is updated)
         pc_verdict, pc_reason = per_call_policy(call.tool_name, entry, call)
 
-        # Run session policy (before session state is updated — pre-call check)
+        # Run session policy (before session state is updated: pre-call check)
         sess_verdict, sess_reason = session_policy(call.tool_name, entry, session.max_sensitivity)
 
         # Determine if this is a true violation

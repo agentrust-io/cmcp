@@ -85,7 +85,7 @@ def test_invalid_validity_seconds(config_file):
 
 
 def test_unknown_key_raises(config_file):
-    """CONF-001 — unknown config keys must fail closed, not silently ignore."""
+    """CONF-001: unknown config keys must fail closed, not silently ignore."""
     path = config_file("unknown_key: value\n")
     with pytest.raises(ConfigError, match="unknown_key"):
         load_config(path)
@@ -122,7 +122,7 @@ def test_empty_config_uses_defaults(config_file):
 
 
 def test_default_enforcement_mode_is_enforcing(config_file):
-    """POLICY-003 — omitting enforcement_mode must default to enforcing, not advisory."""
+    """POLICY-003: omitting enforcement_mode must default to enforcing, not advisory."""
     path = config_file("")
     cfg = load_config(path)
     assert cfg.attestation.enforcement_mode == EnforcementMode.ENFORCING

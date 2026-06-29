@@ -195,7 +195,7 @@ def test_startup_fails_on_missing_config(tmp_path):
 
 
 def test_startup_fails_on_no_tee_no_dev_mode(tmp_path):
-    """Conformance: ATTEST-001 — no hardware TEE + no dev mode → exit 1."""
+    """Conformance: ATTEST-001: no hardware TEE + no dev mode → exit 1."""
     config_path = tmp_path / "cmcp-config.yaml"
     policy_dir = tmp_path / "policy"
     policy_dir.mkdir()

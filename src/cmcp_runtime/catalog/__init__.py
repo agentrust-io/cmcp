@@ -1,1 +1,1 @@
-"""Catalog package — implemented in subsequent issues."""
+"""Catalog package: implemented in subsequent issues."""

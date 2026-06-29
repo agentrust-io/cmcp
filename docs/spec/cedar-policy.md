@@ -1,7 +1,7 @@
 ﻿# Cedar Policy Specification
 
 !!! warning "Draft"
-    Status: Draft v0.1 · Stability: Unstable — expect breaking changes before v1.0
+    Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
 This document specifies the Cedar policy bundle format, policy expression examples, enforcement modes, evaluation decision flow, and related governance features for the cMCP Runtime.
 

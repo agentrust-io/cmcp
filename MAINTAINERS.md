@@ -8,9 +8,9 @@
 
 ## Roles
 
-**Reviewer** — triages issues, reviews pull requests, and approves changes within their area of expertise.
+**Reviewer**: triages issues, reviews pull requests, and approves changes within their area of expertise.
 
-**Maintainer** — holds merge rights, participates in roadmap decisions, and is responsible for the health of the project.
+**Maintainer**: holds merge rights, participates in roadmap decisions, and is responsible for the health of the project.
 
 ## Becoming a Reviewer
 

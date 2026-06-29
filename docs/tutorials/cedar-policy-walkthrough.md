@@ -25,7 +25,7 @@ cMCP evaluates every tool call against Cedar policies using three entities:
 | Entity role | cMCP type | Example value |
 |---|---|---|
 | `principal` | `cMCP::Principal` | session that initiated the call |
-| `action` | `cMCP::Action::"call_tool"` | fixed — all tool calls use this action |
+| `action` | `cMCP::Action::"call_tool"` | fixed: all tool calls use this action |
 | `resource` | `cMCP::Resource` | the tool being called |
 
 The principal carries `session_id` and `workflow_id`. The resource carries `tool_name` and `server_domain`. Cedar also receives a `context` record with `session_max_sensitivity` and `workflow_id`.
@@ -103,7 +103,7 @@ when {
 };
 
 // Explicit default-deny: Cedar is default-deny already, but this makes it
-// auditable — the bundle hash changes if this rule is removed
+// auditable: the bundle hash changes if this rule is removed
 forbid (
   principal,
   action == cMCP::Action::"call_tool",
@@ -175,4 +175,4 @@ when {
 
 You wrote a minimal dev policy and a production policy with workflow scoping, a PII-triggered forbid, and an explicit default-deny. You tested both with the `cedar` CLI before loading them into the runtime. Any change to the policy bundle changes the `policy_bundle.hash` field in TRACE Claims, making the active policy tamper-evident.
 
-Related tutorials: [Verify a TRACE claim](./verifying-a-trace-claim.md) — confirm the policy hash in a produced claim matches what you deployed. [Multi-tenant deployment](./multi-tenant-config.md) — run per-tenant policy bundles with separate hashes.
+Related tutorials: [Verify a TRACE claim](./verifying-a-trace-claim.md): confirm the policy hash in a produced claim matches what you deployed. [Multi-tenant deployment](./multi-tenant-config.md): run per-tenant policy bundles with separate hashes.

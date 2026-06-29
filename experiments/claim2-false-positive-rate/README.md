@@ -11,7 +11,7 @@ The monotonic session sensitivity model blocks ALL external non-BAA calls once `
 
 This experiment quantifies that cost across five representative BFSI/healthcare workflow patterns using labeled ground-truth traces.
 
-**False positive (FP):** Session policy blocks an external non-BAA call where `phi_in_agent_context` is `false` — the agent demonstrably would not have transmitted PHI in this call.
+**False positive (FP):** Session policy blocks an external non-BAA call where `phi_in_agent_context` is `false`: the agent demonstrably would not have transmitted PHI in this call.
 
 **False positive rate (FPR) = FP / (FP + TP_blocked)**
 
@@ -84,6 +84,6 @@ If the agent SDK reports which prior call IDs are present in its context window 
 
 ## Ground truth labeling
 
-`phi_in_agent_context` in `fixtures/trace_corpus.json` is set by the experimenter, not computed by the gateway. It represents whether the agent's reasoning for a specific call references PHI from prior responses. This is the label the gateway *cannot* observe — which is exactly why the monotonic model exists.
+`phi_in_agent_context` in `fixtures/trace_corpus.json` is set by the experimenter, not computed by the gateway. It represents whether the agent's reasoning for a specific call references PHI from prior responses. This is the label the gateway *cannot* observe: which is exactly why the monotonic model exists.
 
 A value of `false` means: if this call had been allowed, the agent would not have transmitted PHI content. The PHI exists in the session context window (it was retrieved in an earlier call), but the agent's decision and arguments for this specific call are independent of that PHI content.

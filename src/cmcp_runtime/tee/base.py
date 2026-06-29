@@ -1,4 +1,4 @@
-"""TEE provider abstraction — implements issue #77."""
+"""TEE provider abstraction: implements issue #77."""
 
 from __future__ import annotations
 
@@ -116,5 +116,5 @@ class SoftwareOnlyProvider(TEEProvider):
             raw_evidence=None,
             attestation_generated_at=datetime.now(tz=UTC),
             attestation_validity_seconds=86400,
-            measurement_note="software-only mode — not hardware-backed",
+            measurement_note="software-only mode: not hardware-backed",
         )

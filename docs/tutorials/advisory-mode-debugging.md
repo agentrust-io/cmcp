@@ -1,6 +1,6 @@
 # Advisory Mode Debugging
 
-Run the gateway in `advisory` mode to understand which calls your Cedar policy would deny — without blocking any traffic. Use this to tune policy before switching to `enforcing`.
+Run the gateway in `advisory` mode to understand which calls your Cedar policy would deny: without blocking any traffic. Use this to tune policy before switching to `enforcing`.
 
 ## What you'll learn
 
@@ -27,7 +27,7 @@ The `enforcement_mode` field in `cmcp-config.yaml` has three valid values:
 | `advisory` | Call proceeds, `would_have_denied: true` set in `_cmcp` response |
 | `silent` | Policy is evaluated but nothing is logged or blocked |
 
-Default is `enforcing`. Silent mode gives you evaluation without any output — useful for baselining before you have policies written. Advisory is the useful middle ground: real traffic continues, but denials are fully visible.
+Default is `enforcing`. Silent mode gives you evaluation without any output: useful for baselining before you have policies written. Advisory is the useful middle ground: real traffic continues, but denials are fully visible.
 
 ---
 
@@ -75,7 +75,7 @@ When a call would have been denied, the `_cmcp` block in the response carries `w
 }
 ```
 
-`would_have_denied: true` means the Cedar policy matched at least one `forbid` rule for this call. The `advice` field, when present, contains annotations from the matched rule — this is operator-authored content from the policy bundle, not caller input.
+`would_have_denied: true` means the Cedar policy matched at least one `forbid` rule for this call. The `advice` field, when present, contains annotations from the matched rule: this is operator-authored content from the policy bundle, not caller input.
 
 When `would_have_denied: false`, the call was allowed by policy and no forbid rules matched.
 
@@ -224,4 +224,4 @@ In silent mode the policy runs but neither logs nor blocks. Use it only to confi
 
 `would_have_denied: true` in `_cmcp` is your per-call signal. `policy_decision: "advisory_deny"` in the audit chain is the durable record. Use both together: the response signal for real-time instrumentation, the audit chain for post-run analysis.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — writing the Cedar rules that produce these denials. [Connecting agent frameworks](./connecting-agent-frameworks.md) — how to read `_cmcp` metadata from your agent code.
+Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): writing the Cedar rules that produce these denials. [Connecting agent frameworks](./connecting-agent-frameworks.md): how to read `_cmcp` metadata from your agent code.

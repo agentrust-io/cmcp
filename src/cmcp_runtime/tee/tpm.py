@@ -1,4 +1,4 @@
-"""TPM 2.0 TEE provider — implements issue #83."""
+"""TPM 2.0 TEE provider: implements issue #83."""
 
 from __future__ import annotations
 

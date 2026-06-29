@@ -88,7 +88,7 @@ forbid (
 );
 ```
 
-`tenant-a/catalog.json` — includes only the two tools tenant A is allowed to call:
+`tenant-a/catalog.json`: includes only the two tools tenant A is allowed to call:
 
 ```json
 [
@@ -150,7 +150,7 @@ forbid (
 );
 ```
 
-`tenant-b/catalog.json` — includes only the analytics tools.
+`tenant-b/catalog.json`: includes only the analytics tools.
 
 ---
 
@@ -268,4 +268,4 @@ When you export the audit bundle for a session (`GET /audit/export`), the bundle
 
 Per-tenant isolation in cMCP is one gateway instance per tenant, each with its own config, Cedar bundle, catalog, and listener port. The policy bundle hash and catalog hash differ per tenant and are recorded in TRACE claims, making tenant identity tamper-evident to verifiers. Audit chains are session-scoped and process-isolated.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — writing the per-tenant Cedar policies. [Verify a TRACE claim](./verifying-a-trace-claim.md) — verifying tenant-specific claims with the correct approved hashes.
+Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): writing the per-tenant Cedar policies. [Verify a TRACE claim](./verifying-a-trace-claim.md): verifying tenant-specific claims with the correct approved hashes.

@@ -7,16 +7,16 @@
 
 ## What this measures
 
-MCP servers can modify tool descriptions after the enterprise security team completed its review — a rug-pull attack. The gateway pins cryptographic hashes of approved definitions at startup inside the TEE and re-hashes on every `tools/list_changed` notification. Any character-level change to a description changes the hash and blocks the tool.
+MCP servers can modify tool descriptions after the enterprise security team completed its review: a rug-pull attack. The gateway pins cryptographic hashes of approved definitions at startup inside the TEE and re-hashes on every `tools/list_changed` notification. Any character-level change to a description changes the hash and blocks the tool.
 
 This experiment verifies four properties without requiring a live MCP server:
 
 | Property | Claim |
 |---|---|
-| P1 — Determinism | Same definition → same hash, always |
-| P2 — Avalanche | One sentence added → 48% bit difference (SHA-256 avalanche) |
-| P3 — Aggregate binding | Catalog-level hash changes when any single definition changes |
-| P4 — Fail-closed | `CatalogHashMismatch` raised; gateway blocks the tool |
+| P1: Determinism | Same definition → same hash, always |
+| P2: Avalanche | One sentence added → 48% bit difference (SHA-256 avalanche) |
+| P3: Aggregate binding | Catalog-level hash changes when any single definition changes |
+| P4: Fail-closed | `CatalogHashMismatch` raised; gateway blocks the tool |
 
 ---
 

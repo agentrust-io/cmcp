@@ -1,4 +1,4 @@
-"""Ed25519 signing key management — implements issue #46."""
+"""Ed25519 signing key management: implements issue #46."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class SigningKey:
 
     @property
     def public_key_hex(self) -> str:
-        """32-byte Ed25519 public key, hex-encoded — included in every TRACE Claim."""
+        """32-byte Ed25519 public key, hex-encoded: included in every TRACE Claim."""
         return self._public_bytes.hex()
 
     @property
