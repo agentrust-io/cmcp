@@ -168,7 +168,7 @@ Environment variables:
 |---|---|
 | `CMCP_DEV_MODE=1` | Use software-only TEE provider; no hardware required |
 | `CMCP_BEARER_TOKEN` | Require this bearer token on all inbound requests |
-| `OPAQUE_ATTESTATION_URL` | Enable Opaque Managed Runtime attestation (explicit opt-in) |
+| `OPAQUE_ATTESTATION_URL` | Enable OPAQUE Managed Runtime attestation (explicit opt-in) |
 
 ---
 

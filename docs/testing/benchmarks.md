@@ -28,7 +28,7 @@ Attestation is a startup cost, not a per-call cost. It is not included in the pe
 | TPM             | < 500ms    | Hardware I/O bound; TPM attestation is slow        |
 | SEV-SNP         | < 100ms    | Azure DCasv5, AWS C6a Nitro                        |
 | TDX             | < 100ms    | Azure DCedsv5, GCP C3                              |
-| Opaque Managed  | < 50ms     | Opaque Managed Runtime, highest assurance          |
+| OPAQUE Managed  | < 50ms     | OPAQUE Managed Runtime, highest assurance          |
 
 ### Per-Call Runtime Overhead
 

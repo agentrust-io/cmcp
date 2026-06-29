@@ -177,7 +177,7 @@ TEE boots
 | TPM | PCR values | Platform Configuration Registers (PCR0-PCR7 minimum) contain hashed measurements of each boot component: firmware, bootloader, kernel, initrd. The SPIRE TPM plugin reads PCR values via the TPM2 TSS stack and verifies them against expected values. |
 | SEV-SNP | SEV measurement | A SHA-384 hash of the encrypted VM memory contents at launch time, produced by the AMD PSP. The measurement covers the initial memory pages loaded into the encrypted VM. The SPIRE SEV-SNP plugin submits the measurement to AMD attestation service (or a self-hosted equivalent) for verification. |
 | TDX | RTMR values | Runtime Measurement Registers (RTMR0-RTMR3) accumulate hashes of components loaded after the TD is created (analogous to TPM PCRs but for TDs). The SPIRE TDX plugin reads the RTMR values from the TD Quote and verifies them against expected values. |
-| Opaque | Opaque Managed Runtime measurement | The Opaque platform produces a composite measurement of the enclave and its configuration. The SPIRE plugin delegates to the Opaque attestation API. |
+| OPAQUE | OPAQUE Managed Runtime measurement | The OPAQUE platform produces a composite measurement of the enclave and its configuration. The SPIRE plugin delegates to the OPAQUE attestation API. |
 
 ### Validation Spike
 

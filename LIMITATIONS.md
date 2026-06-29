@@ -69,7 +69,7 @@ Attestation is a startup cost, not a per-call cost. Per-call gateway overhead co
 | TPM | less than 500ms (hardware I/O bound) |
 | SEV-SNP | less than 100ms (Azure DCasv5, AWS C6a Nitro) |
 | TDX | less than 100ms (Azure DCedsv5, GCP C3) |
-| Opaque Managed | less than 50ms |
+| OPAQUE Managed | less than 50ms |
 | software-only | negligible |
 
 ### Per-call gateway overhead

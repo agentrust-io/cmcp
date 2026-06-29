@@ -106,7 +106,7 @@ A conforming implementation passes all MUST-level tests. SHOULD-level tests indi
 | Term | Definition |
 |------|-----------|
 | TRACE Claim | The signed, hardware-attested proof artifact produced by the runtime per session |
-| TEE | Trusted Execution Environment (TPM, SEV-SNP, TDX, or Opaque Managed) |
+| TEE | Trusted Execution Environment (TPM, SEV-SNP, TDX, or OPAQUE Managed) |
 | SPIFFE SVID | Short-lived cryptographic identity issued by SPIRE after TEE attestation succeeds |
 | Cedar | The policy language used for tool call authorization |
 | Audit chain | The append-only hash-chained log of all runtime decisions, signed with a TEE-sealed key |

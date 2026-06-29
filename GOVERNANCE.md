@@ -16,7 +16,7 @@ The project lead is responsible for the technical direction of cMCP, final say o
 
 | Name | Affiliation | GitHub |
 |------|-------------|--------|
-| Imran Siddique | Opaque Systems | @imransiddique |
+| Imran Siddique | OPAQUE Systems | @imransiddique |
 
 The project lead role is subject to Foundation confirmation. Succession is decided by a 2/3 maintainer vote, ratified by the Foundation.
 

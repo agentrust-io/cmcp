@@ -31,7 +31,7 @@ The `provider` field in `cmcp-config.yaml` controls which TEE the runtime uses. 
 | `tpm` | TPM 2.0 chip present and accessible. |
 | `sev-snp` | AMD SEV-SNP hardware. Requires `/dev/sev-guest` (device path is hardcoded; no env var override). |
 | `tdx` | Intel TDX hardware. |
-| `opaque` | Opaque Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var. |
+| `opaque` | OPAQUE Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var. |
 | `software-only` | No hardware. Requires `CMCP_DEV_MODE=1`. |
 
 `software-only` is rejected at startup unless `CMCP_DEV_MODE=1` is set. Do not set `CMCP_DEV_MODE=1` in production.
