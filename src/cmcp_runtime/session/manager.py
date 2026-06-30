@@ -31,6 +31,7 @@ from cmcp_runtime.kill_switch import KillSwitchEvaluator
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
 from cmcp_runtime.session.state import SessionState
 from cmcp_runtime.startup import RuntimeContext
+from cmcp_runtime.tee.base import AttestationReport, make_audit_bound_nonce
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +62,18 @@ class SessionManager:
         """
         Create a new session. Returns (state, chain).
 
-        AUDIT-002: after constructing the chain, request a per-session TEE
-        attestation report whose nonce encodes the chain root.  This commits
-        the root into hardware-attested evidence so an attacker cannot silently
-        swap out the chain and pass verify_chain().  In dev / Level-0 mode
-        (software-only provider) the anchor is still set so that verify_chain()
-        performs the root comparison - the security guarantee is limited to what
-        a software TEE provides, and a warning is emitted.
+        AUDIT-002 / AUDIT-006: after constructing the chain, request a per-session
+        TEE attestation report whose nonce commits the chain root.  The nonce is
+        jwk_thumbprint(key) || SHA-256(chain_root) so the hardware-signed
+        report_data binds BOTH the gateway key (report_data[:32]) and this chain's
+        root (report_data[32:64]).  This report is stored on the chain and used to
+        build the claim in close_session(), so the chain root reaches the verifier
+        inside the attested report_data - not just as an unbound advisory field.
+        A rogue operator who rebuilds a fresh, internally-consistent chain gets a
+        different root that no longer matches report_data[32:64], so verification
+        fails.  In dev / Level-0 mode (software-only provider) the anchor is still
+        set and the report is still stored so the binding is exercised - the
+        security guarantee is limited to what a software TEE provides.
         """
         # Kill switch: reject sessions for blocked agent identities before allocating resources.
         binding = getattr(self._ctx, "agent_manifest", None)
@@ -82,27 +88,41 @@ class SessionManager:
         state = SessionState(session_id=session_id)
         chain = AuditChain(session_id=session_id, store=self._ctx.audit_store)
 
-        # AUDIT-002: derive a per-session nonce that encodes the chain root so
-        # the TEE report binds this specific chain to the attestation evidence.
-        # nonce = SHA-256(chain_root_bytes || session_id_bytes)
+        # AUDIT-006: derive a per-session nonce that commits the chain root into
+        # report_data, then KEEP the resulting report so close_session() builds the
+        # claim from it.  nonce = jwk_thumbprint(key) || SHA-256(chain_root):
+        #   report_data[:32]   -> gateway key (unchanged key binding, CRYPTO-001)
+        #   report_data[32:64] -> SHA-256(chain_root) (new chain-root commitment)
         chain_root = chain.chain_root
-        nonce = hashlib.sha256(
-            bytes.fromhex(chain_root) + session_id.encode()
-        ).digest()
 
         try:
-            self._ctx.tee_provider.get_attestation_report(nonce)
-            # The report itself is not stored here - the startup-time report in
-            # ctx.attestation_report already covers the gateway instance.  What
-            # matters is that the nonce (containing chain_root) was submitted to
-            # the TEE, making chain_root part of the attested evidence.
+            nonce = make_audit_bound_nonce(
+                self._ctx.signing_key.public_key_bytes, chain_root
+            )
+            report = self._ctx.tee_provider.get_attestation_report(nonce)
+            # AUDIT-006: store the report so its report_data (committing chain_root)
+            # is the one surfaced in the claim, not the shared startup report.
+            # Guard on the concrete type so a provider that returns something
+            # malformed cannot displace the well-formed startup report.
+            if isinstance(report, AttestationReport):
+                chain.set_session_report(report)
+            else:
+                logger.warning(
+                    "AUDIT-006: per-session TEE provider returned a %s, not an "
+                    "AttestationReport - chain root is not hardware-bound into "
+                    "report_data. session_id=%s",
+                    type(report).__name__,
+                    session_id,
+                )
         except Exception as exc:
             # Non-fatal: log and continue.  The anchor is still set so that
-            # internal chain-substitution detection works.  In production,
-            # callers should validate that the TEE provider is not software-only.
+            # internal chain-substitution detection works.  The claim falls back
+            # to the shared startup report (no chain-root commitment) and the
+            # verifier will flag the missing binding.  In production, callers
+            # should validate that the TEE provider is not software-only.
             logger.warning(
-                "AUDIT-002: per-session TEE attestation call failed - "
-                "chain root is not hardware-anchored. session_id=%s error=%s",
+                "AUDIT-006: per-session TEE attestation call failed - "
+                "chain root is not hardware-bound into report_data. session_id=%s error=%s",
                 session_id,
                 exc,
             )
@@ -134,7 +154,12 @@ class SessionManager:
         )
 
         ctx = self._ctx
-        report = ctx.attestation_report
+        # AUDIT-006: prefer the per-session report whose report_data commits this
+        # chain's root.  Fall back to the shared startup report only if the
+        # per-session TEE call failed at create_session() time (a warning was
+        # already emitted there); in that case the chain root is not bound into
+        # report_data and a strict verifier will reject the claim.
+        report = chain.session_report or ctx.attestation_report
 
         # Convert AttestationReport (datetime) to AttestationReportInfo (str).
         generated_at_str = report.attestation_generated_at.isoformat()

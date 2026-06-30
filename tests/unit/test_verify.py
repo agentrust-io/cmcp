@@ -37,11 +37,14 @@ AGENT_ID = "spiffe://factory.example/agent/material-movement/dev"
 MANIFEST_ID = "0197739a-8c00-7000-8000-000000000001"
 
 
-def _make_nonce_for_key(key: SigningKey) -> str:
-    """Build a report_data hex string matching the CRYPTO-001 format.
+def _make_nonce_for_key(key: SigningKey, chain_root_hex: str | None = None) -> str:
+    """Build a report_data hex string matching the AUDIT-006 / CRYPTO-001 format.
 
     First 32 bytes: RFC 7638 JWK Thumbprint (SHA-256 of sorted OKP members) -- verifiable key fingerprint.
-    Next 32 bytes: random salt -- session uniqueness (CRYPTO-002).
+    Next 32 bytes: SHA-256(chain_root_bytes) -- the audit-chain root commitment (AUDIT-006).
+        When chain_root_hex is None (legacy callers exercising only key binding) a
+        random salt is used instead, which the AUDIT-006 binding check will reject
+        for hardware providers.
     """
     x_b64 = base64.urlsafe_b64encode(key.public_key_bytes).rstrip(b"=").decode()
     jwk_json = json.dumps(
@@ -50,8 +53,11 @@ def _make_nonce_for_key(key: SigningKey) -> str:
         sort_keys=True,
     ).encode()
     fingerprint = hashlib.sha256(jwk_json).digest()
-    salt = secrets.token_bytes(32)
-    return (fingerprint + salt).hex()
+    if chain_root_hex is not None:
+        second_half = hashlib.sha256(bytes.fromhex(chain_root_hex)).digest()
+    else:
+        second_half = secrets.token_bytes(32)
+    return (fingerprint + second_half).hex()
 
 
 def _make_signed_claim(
@@ -63,8 +69,13 @@ def _make_signed_claim(
     key = SigningKey()
     chain = AuditChain("test-session")
     measurement = "DEVELOPMENT_ONLY" if provider == "software-only" else "ab" * 32
-    # Use proper CRYPTO-001 report_data for hardware providers; software-only ignores it.
-    report_data = _make_nonce_for_key(key) if provider != "software-only" else "00" * 32
+    # Bind both the key (report_data[:32]) and the chain root (report_data[32:64],
+    # AUDIT-006) for hardware providers; software-only ignores report_data here.
+    report_data = (
+        _make_nonce_for_key(key, chain.chain_root)
+        if provider != "software-only"
+        else "00" * 32
+    )
 
     claim = generate_trace_claim(
         session_id="test-session",
@@ -382,7 +393,7 @@ def test_tee_key_binding_happy_path():
     """CRYPTO-001 -- valid key with correct fingerprint in nonce passes binding check."""
     key = SigningKey()
     chain = AuditChain("test-session")
-    report_data = _make_nonce_for_key(key)
+    report_data = _make_nonce_for_key(key, chain.chain_root)
 
     claim = generate_trace_claim(
         session_id="test-session",
@@ -600,3 +611,170 @@ def test_no_trusted_key_for_software_only_is_not_penalized():
     result = verify_trace_claim(claim_dict, _approved())
     assert "public_key_binding" not in result.unverified_fields
     assert "public_key_binding" not in result.verified_fields
+
+
+# -- AUDIT-006: audit-chain root binding into report_data ---------------------
+
+
+def test_audit_chain_binding_happy_path_verifies():
+    """(c) A claim whose report_data commits the chain root passes the binding check."""
+    key = SigningKey()
+    chain = AuditChain("test-session")
+    report_data = _make_nonce_for_key(key, chain.chain_root)
+
+    # Re-build with the matching key so cnf.jwk and report_data[:32] agree.
+    claim = generate_trace_claim(
+        session_id="test-session",
+        signing_key=key,
+        attestation_report=AttestationReportInfo(
+            provider="sev-snp",
+            measurement="ab" * 32,
+            report_data=report_data,
+            attestation_generated_at=datetime.now(tz=UTC).isoformat(),
+            attestation_validity_seconds=86400,
+        ),
+        policy_bundle=PolicyBundleInfo(
+            hash=POLICY_HASH, enforcement_mode="enforcing", policy_version="1.0.0"
+        ),
+        tool_catalog=ToolCatalogInfo(hash=CATALOG_HASH),
+        call_summary=CallSummary(
+            tool_calls_total=0,
+            tool_calls_allowed=0,
+            tool_calls_denied=0,
+            tool_calls_faulted=0,
+            tools_invoked=[],
+            session_max_sensitivity="public",
+            call_graph_summary=CallGraphSummary(
+                compliance_domains_touched=[], cross_boundary_events=[]
+            ),
+        ),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        do_sign=True,
+    )
+    claim_dict = _to_dict(claim)
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+    )
+    assert "audit_chain_binding" in result.verified_fields, result.details
+    assert "audit_chain_binding" not in result.unverified_fields
+    assert result.failure_reason != VerificationError.CHAIN_ROOT_NOT_BOUND
+
+
+def test_audit_chain_binding_rejects_unbound_root():
+    """(a) A claim whose chain_root does not match report_data[32:64] is REJECTED.
+
+    report_data[32:64] is a random salt (the legacy/unbound construction), not
+    SHA-256(chain_root), so the binding check fails closed.
+    """
+    key = SigningKey()
+    chain = AuditChain("test-session")
+    # No chain_root passed -> second half is a random salt, not the commitment.
+    report_data = _make_nonce_for_key(key, chain_root_hex=None)
+
+    claim = generate_trace_claim(
+        session_id="test-session",
+        signing_key=key,
+        attestation_report=AttestationReportInfo(
+            provider="sev-snp",
+            measurement="ab" * 32,
+            report_data=report_data,
+            attestation_generated_at=datetime.now(tz=UTC).isoformat(),
+            attestation_validity_seconds=86400,
+        ),
+        policy_bundle=PolicyBundleInfo(
+            hash=POLICY_HASH, enforcement_mode="enforcing", policy_version="1.0.0"
+        ),
+        tool_catalog=ToolCatalogInfo(hash=CATALOG_HASH),
+        call_summary=CallSummary(
+            tool_calls_total=0,
+            tool_calls_allowed=0,
+            tool_calls_denied=0,
+            tool_calls_faulted=0,
+            tools_invoked=[],
+            session_max_sensitivity="public",
+            call_graph_summary=CallGraphSummary(
+                compliance_domains_touched=[], cross_boundary_events=[]
+            ),
+        ),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        do_sign=True,
+    )
+    claim_dict = _to_dict(claim)
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+    )
+    assert "audit_chain_binding" in result.unverified_fields, result.details
+    assert result.failure_reason == VerificationError.CHAIN_ROOT_NOT_BOUND
+
+
+def test_audit_chain_binding_rejects_rebuilt_chain():
+    """(b) A chain rebuilt with different entries (different root) no longer verifies
+    against an unchanged report_data.
+
+    The operator binds report_data to the ORIGINAL chain root, then swaps in a
+    fresh chain (different session_start -> different root) and re-signs the claim.
+    report_data[32:64] still commits the original root, so the new root mismatches.
+    """
+    key = SigningKey()
+    original_chain = AuditChain("test-session")
+    # report_data commits the ORIGINAL chain root.
+    report_data = _make_nonce_for_key(key, original_chain.chain_root)
+
+    # Operator rebuilds a fresh, internally-consistent chain with a different root.
+    rebuilt_chain = AuditChain("test-session")
+    rebuilt_chain.append(
+        "tool_call", call_id="c1", tool_name="evil_tool", policy_decision="allow"
+    )
+    assert rebuilt_chain.chain_root != original_chain.chain_root
+
+    claim = generate_trace_claim(
+        session_id="test-session",
+        signing_key=key,
+        attestation_report=AttestationReportInfo(
+            provider="sev-snp",
+            measurement="ab" * 32,
+            report_data=report_data,  # unchanged: still binds the original root
+            attestation_generated_at=datetime.now(tz=UTC).isoformat(),
+            attestation_validity_seconds=86400,
+        ),
+        policy_bundle=PolicyBundleInfo(
+            hash=POLICY_HASH, enforcement_mode="enforcing", policy_version="1.0.0"
+        ),
+        tool_catalog=ToolCatalogInfo(hash=CATALOG_HASH),
+        call_summary=CallSummary(
+            tool_calls_total=1,
+            tool_calls_allowed=1,
+            tool_calls_denied=0,
+            tool_calls_faulted=0,
+            tools_invoked=["evil_tool"],
+            session_max_sensitivity="public",
+            call_graph_summary=CallGraphSummary(
+                compliance_domains_touched=[], cross_boundary_events=[]
+            ),
+        ),
+        audit_chain_root=rebuilt_chain.chain_root,  # the substituted root
+        audit_chain_tip=rebuilt_chain.chain_tip,
+        audit_chain_length=rebuilt_chain.length,
+        do_sign=True,
+    )
+    claim_dict = _to_dict(claim)
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+    )
+    assert "audit_chain_binding" in result.unverified_fields, result.details
+    assert result.failure_reason == VerificationError.CHAIN_ROOT_NOT_BOUND
+
+
+def test_audit_chain_binding_software_only_not_applicable():
+    """software-only claims carry no runtime.nonce, so the chain-root binding is
+    reported as not-applicable (no credit, no penalty) -- consistent with how the
+    key binding treats dev mode. The hardware path is where the binding is fatal.
+    """
+    claim_dict, _ = _make_signed_claim(provider="software-only")
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "audit_chain_binding" not in result.verified_fields
+    assert "audit_chain_binding" not in result.unverified_fields

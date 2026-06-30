@@ -12,6 +12,7 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from cmcp_runtime.audit.store import SqliteAuditStore
+    from cmcp_runtime.tee.base import AttestationReport
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,12 @@ class AuditChain:
         self._store = store
         # AUDIT-002: TEE-anchored chain root.  None until set_tee_anchor() is called.
         self._tee_anchor: str | None = None
+        # AUDIT-006: per-session attestation report whose report_data commits the
+        # chain root (report_data[32:64] == SHA-256(chain_root)).  None until
+        # set_session_report() is called.  When present, the claim is built from
+        # this report instead of the shared startup report, so the hardware-signed
+        # report_data carries this session's chain-root commitment.
+        self._session_report: AttestationReport | None = None
         self._append_session_start()
 
     def _append_session_start(self) -> None:
@@ -150,6 +157,25 @@ class AuditChain:
     def tee_anchor(self) -> str | None:
         """The TEE-committed chain root, or None if not yet anchored (dev/Level-0 mode)."""
         return self._tee_anchor
+
+    def set_session_report(self, report: AttestationReport) -> None:
+        """
+        AUDIT-006: record the per-session attestation report whose report_data
+        commits this chain's root.
+
+        The caller produces this report at session start by submitting a nonce of
+        the form jwk_thumbprint(key) || SHA-256(chain_root) to the TEE (see
+        tee.base.make_audit_bound_nonce).  close_session() then builds the claim
+        from this report so the hardware-signed report_data surfaced in the claim
+        binds the chain root.  If never set (TEE call failed / dev fallback), the
+        claim falls back to the shared startup report and a warning is emitted.
+        """
+        self._session_report = report
+
+    @property
+    def session_report(self) -> AttestationReport | None:
+        """The per-session chain-root-committing attestation report, or None."""
+        return self._session_report
 
     def append(
         self,

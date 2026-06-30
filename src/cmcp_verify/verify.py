@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import re
@@ -91,6 +92,7 @@ class VerificationError(StrEnum):
     CATALOG_HASH_MISMATCH = "CATALOG_HASH_MISMATCH"
     ATTESTATION_STALE = "ATTESTATION_STALE"
     CHAIN_BROKEN = "CHAIN_BROKEN"
+    CHAIN_ROOT_NOT_BOUND = "CHAIN_ROOT_NOT_BOUND"
     CLAIM_MALFORMED = "CLAIM_MALFORMED"
     HARDWARE_ATTESTATION_FAILED = "HARDWARE_ATTESTATION_FAILED"
     AGENT_MANIFEST_MISMATCH = "AGENT_MANIFEST_MISMATCH"
@@ -265,6 +267,95 @@ def _check_audit_chain(claim: dict[str, Any]) -> tuple[bool, str | None]:
         return False, "gateway.audit_chain.root or .tip is empty"
     if length < 1:
         return False, "gateway.audit_chain.length is 0"
+    return True, None
+
+
+def _check_audit_chain_binding(
+    claim: dict[str, Any],
+    *,
+    is_sw_only: bool,
+) -> tuple[bool | None, str | None]:
+    """
+    AUDIT-006: verify that the audit-chain root is committed to the hardware-signed
+    report_data, not merely carried as an unauthenticated advisory field.
+
+    The gateway submits a per-session attestation nonce of the form
+
+        jwk_thumbprint(key) (32) || SHA-256(chain_root_bytes) (32)
+
+    so the TEE commits SHA-256(chain_root) into report_data[32:64].  The nonce is
+    surfaced as trace.runtime.nonce (base64url of the full 64-byte value).
+
+    The verifier re-derives SHA-256(SHA-256-hex-decode(gateway.audit_chain.root))
+    and compares it constant-time against nonce[32:64].  A mismatch means the chain
+    root in the claim is NOT the one attested by the hardware: a rogue operator who
+    rebuilt a fresh, internally-consistent chain (different root) re-signed the claim
+    with the in-enclave key but could not forge the TEE-committed report_data.  This
+    is FATAL.
+
+    Returns:
+        (True,  None)          -- chain root commitment matches report_data[32:64]
+        (False, reason)        -- mismatch / missing commitment; reject (fail closed)
+        (None,  warning_msg)   -- software-only / Level-0 mode; not hardware-backed
+    """
+    root = claim.get("gateway", {}).get("audit_chain", {}).get("root", "")
+    if not root:
+        # _check_audit_chain already reports the empty-root failure; nothing to bind.
+        return False, "gateway.audit_chain.root is empty -- cannot verify chain-root binding"
+
+    # The chain root may carry a "sha256:" prefix in some serializations; the bytes
+    # committed to the TEE are those of the bare hex digest (the entry_hash).
+    root_hex = root.removeprefix("sha256:").removeprefix("sha384:")
+    try:
+        root_bytes = bytes.fromhex(root_hex)
+    except ValueError as exc:
+        return False, f"gateway.audit_chain.root is not valid hex: {exc}"
+    expected_commitment = hashlib.sha256(root_bytes).digest()
+
+    nonce_b64 = claim.get("trace", {}).get("runtime", {}).get("nonce", "")
+    if not nonce_b64:
+        if is_sw_only:
+            return None, "software-only mode -- chain-root binding not applicable"
+        return False, (
+            "trace.runtime.nonce is absent -- attestation report_data does not "
+            "commit the audit-chain root"
+        )
+
+    try:
+        padding = 4 - (len(nonce_b64) % 4)
+        padded = nonce_b64 + ("=" * padding if padding != 4 else "")
+        nonce_bytes = base64.urlsafe_b64decode(padded)
+    except Exception as exc:
+        return False, f"cannot decode trace.runtime.nonce: {exc}"
+
+    if len(nonce_bytes) < 64:
+        if is_sw_only:
+            return None, (
+                "software-only mode -- report_data does not carry a chain-root "
+                "commitment in bytes [32:64]"
+            )
+        return False, (
+            f"trace.runtime.nonce is too short ({len(nonce_bytes)} bytes); "
+            "expected 64 bytes (key fingerprint || chain-root commitment)"
+        )
+
+    actual_commitment = nonce_bytes[32:64]
+    if not hmac.compare_digest(actual_commitment, expected_commitment):
+        # A mismatch is always fatal, including in software-only mode: the chain
+        # root presented in the claim is not the one bound into report_data.
+        return False, (
+            "gateway.audit_chain.root does not match report_data[32:64] -- the "
+            "audit-chain root was not committed to this attestation report; the "
+            "chain may have been substituted after attestation"
+        )
+
+    if is_sw_only:
+        logger.warning(
+            "AUDIT-006: software-only (dev) mode -- chain-root commitment matches "
+            "but provides no hardware provenance guarantee"
+        )
+        return None, "software-only mode -- chain-root binding not hardware-backed"
+
     return True, None
 
 
@@ -472,6 +563,7 @@ def verify_trace_claim(
        issuer keys are provided.
     6. Attestation freshness check
     7. Audit chain consistency check
+    7b. AUDIT-006: audit-chain root binding -- report_data[32:64] commits SHA-256(chain_root)
     8. Platform-specific attestation verification (dispatched per-platform)
 
     Returns VerificationResult with status and details.
@@ -645,6 +737,29 @@ def verify_trace_claim(
             failure = VerificationError.CHAIN_BROKEN
         if chain_err:
             details["chain_error"] = chain_err
+
+    # Step 7b: AUDIT-006 -- audit-chain root binding into report_data.
+    # The chain root must be committed to the hardware-signed report_data
+    # (report_data[32:64] == SHA-256(chain_root)), not merely asserted in the
+    # advisory gateway.audit_chain.root field.  A mismatch is FATAL: it means a
+    # rogue operator rebuilt the chain and re-signed the claim but could not forge
+    # the TEE-committed commitment.  Only attempted when the chain is well-formed.
+    if chain_ok:
+        root_binding, root_binding_msg = _check_audit_chain_binding(
+            claim_json, is_sw_only=_is_sw_only
+        )
+        if root_binding is True:
+            verified.append("audit_chain_binding")
+        elif root_binding is False:
+            unverified.append("audit_chain_binding")
+            failure = failure or VerificationError.CHAIN_ROOT_NOT_BOUND
+            details["audit_chain_binding"] = (
+                root_binding_msg or "audit-chain root binding verification failed"
+            )
+        else:
+            # software-only / Level-0 mode: not hardware-backed, no penalty/credit.
+            if root_binding_msg:
+                details["audit_chain_binding"] = root_binding_msg
 
     # Step 8: Platform-specific attestation
     platform = _runtime.get("platform", "")
