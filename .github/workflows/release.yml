@@ -57,7 +57,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install package and AGT
-        run: python -m pip install --upgrade pip && pip install -e "." agent-governance-toolkit-core
+        run: python -m pip install --upgrade pip && pip install -e "." "agent-governance-toolkit>=4.1" "agent-governance-toolkit-core>=4.1"
 
       - name: Generate evidence file
         run: python scripts/gen_agt_evidence.py
