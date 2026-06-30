@@ -291,11 +291,59 @@ def test_missing_audit_chain_root_fails():
 
 
 def test_software_only_provider_is_partially_verified():
-    """software-only attestation is never fully VERIFIED."""
+    """software-only attestation is never fully VERIFIED, even when otherwise self-consistent.
+
+    Without hardware-backed attestation the claim must fail closed to
+    PARTIALLY_VERIFIED (see LIMITATIONS.md), never VERIFIED.
+    """
     claim_dict, _ = _make_signed_claim()
     result = verify_trace_claim(claim_dict, _approved())
-    assert result.status in (VerificationStatus.PARTIALLY_VERIFIED, VerificationStatus.VERIFIED)
     assert "hardware_attestation" in result.unverified_fields
+    assert result.status == VerificationStatus.PARTIALLY_VERIFIED
+
+
+def test_hardware_backed_happy_path_is_verified(monkeypatch):
+    """A hardware-backed claim whose attestation verifies is fully VERIFIED.
+
+    The software-only fail-closed rule must not downgrade a genuine
+    hardware-backed claim that has no failures.
+    """
+    import cmcp_verify.tdx as tdx_mod
+    from cmcp_verify.tdx import TDXVerificationResult
+
+    def _passing_tdx(*args, **kwargs):
+        return TDXVerificationResult(
+            verified=True,
+            verified_fields=["measurement", "report_data"],
+        )
+
+    monkeypatch.setattr(tdx_mod, "verify_tdx_measurement", _passing_tdx)
+
+    claim_dict, key = _make_signed_claim(provider="tdx")
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+    )
+    assert result.failure_reason is None, result.details
+    assert "hardware_attestation" in result.verified_fields
+    assert "hardware_attestation" not in result.unverified_fields
+    assert result.status == VerificationStatus.VERIFIED
+
+
+def test_real_failure_is_not_downgraded_to_partial():
+    """A genuine failure keeps its failure status; the software-only rule never
+    flips a real failure (here, a mismatched policy hash) to PARTIALLY_VERIFIED
+    in a way that hides it."""
+    claim_dict, _ = _make_signed_claim()
+    approved = ApprovedHashes(
+        policy_bundle_hash="sha256:" + "f" * 64, tool_catalog_hash=CATALOG_HASH
+    )
+    result = verify_trace_claim(claim_dict, approved)
+    assert result.failure_reason is not None
+    assert "policy_bundle.hash" in result.unverified_fields
+    assert result.status in (
+        VerificationStatus.PARTIALLY_VERIFIED,
+        VerificationStatus.UNVERIFIED,
+    )
 
 
 def test_all_software_only_verified_fields_are_present():

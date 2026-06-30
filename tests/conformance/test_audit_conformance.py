@@ -441,6 +441,10 @@ class TestExternalExecutionEvidence301:
         assert any("signature is invalid" in f for f in result.failures)
 
     def test_linked_call_id_mismatch_fails(self):
+        # A receipt that is internally self-consistent (correctly signed over its
+        # own fields) but bound to a different call_id must be rejected, and the
+        # verifier must short-circuit so the misbound receipt is never also
+        # reported as signature-valid.
         priv, pub, key_id = _ed25519_keypair()
         chain = AuditChain("sess-301-d")
         chain.append(
@@ -457,6 +461,10 @@ class TestExternalExecutionEvidence301:
         )
         assert not result.verified
         assert any("linked_call_id" in f for f in result.failures)
+        # The signature check must not run after the binding mismatch: there must
+        # be no signature-validity outcome recorded for the misbound receipt.
+        assert not any("signature is invalid" in f for f in result.failures)
+        assert not any("could not be verified" in f for f in result.failures)
 
     def test_unknown_issuer_key_fails(self):
         priv, _, key_id = _ed25519_keypair()

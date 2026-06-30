@@ -65,23 +65,30 @@ def claim_and_bundle(tmp_path):
     return claim_file, bundle_file, claim, bundle
 
 
-def test_verify_passes_on_genuine_claim(claim_and_bundle):
+def test_verify_software_only_is_partially_verified(claim_and_bundle):
+    # The fixture is a software-only (dev mode) claim: every cryptographic check
+    # passes, but with no hardware-backed attestation the verifier fails closed
+    # to partially_verified, so the CLI reports FAIL and exits non-zero.
     claim_file, _, _, _ = claim_and_bundle
     result = CliRunner().invoke(main, ["verify", str(claim_file)])
-    assert result.exit_code == 0, result.output
-    assert "RESULT: PASS" in result.output
-    assert "signature" in result.output
+    assert result.exit_code == 1, result.output
+    assert "RESULT: FAIL (partially_verified)" in result.output
+    assert "signature                PASS" in result.output
+    assert "hardware_attestation     FAIL" in result.output
     assert "not pinned" in result.output  # hashes unpinned by default
 
 
-def test_verify_passes_with_pinned_hashes(claim_and_bundle):
+def test_verify_pinned_hashes_still_partial_without_hardware(claim_and_bundle):
+    # Pinning the hashes does not grant a software-only claim a full pass; it is
+    # still partially_verified because hardware attestation is absent.
     claim_file, _, claim, _ = claim_and_bundle
     result = CliRunner().invoke(main, [
         "verify", str(claim_file),
         "--policy-hash", claim["trace"]["policy"]["bundle_hash"],
         "--catalog-hash", claim["gateway"]["catalog"]["hash"],
     ])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
+    assert "RESULT: FAIL (partially_verified)" in result.output
 
 
 def test_verify_fails_with_wrong_pinned_hash(claim_and_bundle):
@@ -106,12 +113,15 @@ def test_verify_fails_on_tampered_claim(claim_and_bundle, tmp_path):
 
 
 def test_verify_audit_bundle_passes(claim_and_bundle):
+    # The audit bundle itself verifies (PASS), but the software-only claim is
+    # only partially_verified, so the overall CLI result is still FAIL.
     claim_file, bundle_file, _, _ = claim_and_bundle
     result = CliRunner().invoke(main, [
         "verify", str(claim_file), "--audit-bundle", str(bundle_file),
     ])
-    assert result.exit_code == 0, result.output
-    assert "audit_bundle" in result.output
+    assert result.exit_code == 1, result.output
+    assert "audit_bundle             PASS" in result.output
+    assert "RESULT: FAIL (partially_verified)" in result.output
 
 
 def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):

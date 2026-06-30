@@ -347,6 +347,9 @@ def verify_audit_bundle(
                         "the entry call_id",
                     )
                 )
+                # Fail closed: a receipt bound to a different call_id must never
+                # also be reported as signature-valid. Stop processing this entry.
+                continue
             key_id = ev.get("issuer_key_id", "")
             if not isinstance(key_id, str) or not _ISSUER_KEY_ID_RE.match(key_id):
                 failures.append(
@@ -747,7 +750,14 @@ def verify_trace_claim(
 
     # Determine overall status
     if failure is None:
-        status = VerificationStatus.VERIFIED
+        # Fail closed: a claim with no hardware-backed attestation (software-only
+        # or any non-hardware-backed path) is never fully VERIFIED, even when it is
+        # otherwise self-consistent. See LIMITATIONS.md. A real failure below still
+        # takes precedence and is not downgraded to partial.
+        if "hardware_attestation" in unverified:
+            status = VerificationStatus.PARTIALLY_VERIFIED
+        else:
+            status = VerificationStatus.VERIFIED
     elif verified:
         status = VerificationStatus.PARTIALLY_VERIFIED
     else:
