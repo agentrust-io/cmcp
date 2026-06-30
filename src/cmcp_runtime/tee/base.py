@@ -92,6 +92,35 @@ def make_nonce(tee_public_key: bytes, salt: bytes) -> bytes:
     return jwk_thumbprint(tee_public_key) + salt
 
 
+def audit_root_commitment(chain_root_hex: str) -> bytes:
+    """SHA-256 over the audit-chain root bytes: the 32-byte commitment bound into
+    the attestation report's second nonce half (AUDIT-006).
+
+    chain_root_hex is the hex-encoded chain root (the hash of the session_start
+    entry, immutable for the session's lifetime). A verifier re-derives this from
+    gateway.audit_chain.root and compares it against report_data[32:64].
+    """
+    return hashlib.sha256(bytes.fromhex(chain_root_hex)).digest()
+
+
+def make_audit_bound_nonce(tee_public_key: bytes, chain_root_hex: str) -> bytes:
+    """Compute the per-session attestation nonce that commits the audit-chain root.
+
+    Layout (64 bytes, AUDIT-006):
+
+        jwk_thumbprint(pubkey) (32) || SHA-256(chain_root_bytes) (32)
+
+    The first 32 bytes keep the existing key binding intact (report_data[:32] is
+    the RFC 7638 thumbprint, re-derivable from cnf.jwk.x). The second 32 bytes
+    commit the audit-chain root into the hardware-signed report_data so a rogue
+    operator who rebuilds a fresh, internally-consistent chain produces a
+    different root that no longer matches report_data[32:64]. Freshness is
+    preserved because the chain root is unique per session (it hashes the
+    session_id and the session_start timestamp).
+    """
+    return jwk_thumbprint(tee_public_key) + audit_root_commitment(chain_root_hex)
+
+
 class SoftwareOnlyProvider(TEEProvider):
     """
     Software-only attestation stub for CI and local development.
