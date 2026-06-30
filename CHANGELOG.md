@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tool_transcript.entries`: privacy-preserving per-call view in the TRACE Claim (one entry per tool call with `tool_name`, `data_class` from the catalog, and the policy `decision`), derived from the audit chain so no raw parameters or response bodies are exposed. `tool_transcript.hash` continues to bind the full transcript to the audit-chain tip. Adds `transcript_entries_hash()` for offline recomputation. (#126)
 
+## [0.3.0] - 2026-06-30
+
+### Security
+
+- Software-only (non-hardware-backed) claims now return `partially_verified` instead of `verified` (fail-closed); a real verification failure is never downgraded.
+- An external-execution receipt whose `linked_call_id` does not match the entry is no longer reported signature-valid (short-circuits).
+
 ## [0.2.0] - 2026-06-12
 
 ### Added
@@ -35,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cmcp-verify` standalone verifier for validating TRACE Claims offline
 - Audit chain with Ed25519 signing for tamper-evident log integrity
 
-[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/agentrust-io/cmcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentrust-io/cmcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/agentrust-io/cmcp/releases/tag/v0.1.0
