@@ -1,0 +1,28 @@
+# cMCP
+
+> Confidential MCP Runtime, hardware-attested policy enforcement for MCP tool calls
+
+cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment (TEE). Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine the governed process cannot reach. The Cedar bundle hash is measured into the hardware attestation report before any code runs, and each session produces a signed, hardware-attested TRACE Claim that a verifier checks without trusting the operator. Supports TPM, AMD SEV-SNP, Intel TDX, and OPAQUE providers, with enforcing, advisory, and silent modes.
+
+## Getting started
+
+- [Home](https://cmcp.agentrust-io.com/index.md)
+- [Quick Start](https://cmcp.agentrust-io.com/docs/quickstart/index.md)
+- [How It Works](https://cmcp.agentrust-io.com/docs/concepts/index.md)
+- [Configuration](https://cmcp.agentrust-io.com/docs/configuration/index.md)
+
+## Specification
+
+- [Overview](https://cmcp.agentrust-io.com/docs/SPEC/index.md)
+- [Cedar Policy](https://cmcp.agentrust-io.com/docs/spec/cedar-policy/index.md)
+- [Attestation](https://cmcp.agentrust-io.com/docs/spec/attestation/index.md)
+- [Threat Model](https://cmcp.agentrust-io.com/docs/spec/threat-model/index.md)
+- [Verification Library](https://cmcp.agentrust-io.com/docs/spec/verification-library/index.md)
+
+## Tutorials
+
+- [Connecting agent frameworks](https://cmcp.agentrust-io.com/docs/tutorials/connecting-agent-frameworks/index.md)
+- [Cedar policy walkthrough](https://cmcp.agentrust-io.com/docs/tutorials/cedar-policy-walkthrough/index.md)
+- [Verify a TRACE claim](https://cmcp.agentrust-io.com/docs/tutorials/verifying-a-trace-claim/index.md)
+- [TEE attestation](https://cmcp.agentrust-io.com/docs/tutorials/tee-attestation/index.md)
+
