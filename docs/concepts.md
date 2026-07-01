@@ -1,3 +1,7 @@
+---
+description: How cMCP works. The four design ideas behind hardware-attested MCP tool-call governance: tamper-evident audit, TRACE Claims as evidence, TEE-measured Cedar policy, and operator-independent verification.
+---
+
 # How cMCP Works
 
 This page explains the four core design ideas behind cMCP. The [quickstart](quickstart.md) shows you how to run it; this page explains why it works.

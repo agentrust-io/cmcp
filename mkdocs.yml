@@ -27,6 +27,7 @@ exclude_docs: |
 
 theme:
   name: material
+  custom_dir: overrides
   logo: docs/assets/icon.svg
   favicon: docs/assets/icon.svg
   palette:
@@ -64,6 +65,35 @@ theme:
 
 plugins:
   - search
+  - llmstxt:
+      full_output: llms-full.txt
+      markdown_description: >-
+        cMCP (Confidential MCP Runtime) is an open-source gateway that enforces
+        MCP tool-call policy inside a hardware Trusted Execution Environment
+        (TEE). Every tool call is intercepted, evaluated against a Cedar policy
+        bundle, and enforced by a policy engine the governed process cannot
+        reach. The Cedar bundle hash is measured into the hardware attestation
+        report before any code runs, and each session produces a signed,
+        hardware-attested TRACE Claim that a verifier checks without trusting the
+        operator. Supports TPM, AMD SEV-SNP, Intel TDX, and OPAQUE providers,
+        with enforcing, advisory, and silent modes.
+      sections:
+        Getting started:
+          - README.md
+          - docs/quickstart.md
+          - docs/concepts.md
+          - docs/configuration.md
+        Specification:
+          - docs/SPEC.md
+          - docs/spec/cedar-policy.md
+          - docs/spec/attestation.md
+          - docs/spec/threat-model.md
+          - docs/spec/verification-library.md
+        Tutorials:
+          - docs/tutorials/connecting-agent-frameworks.md
+          - docs/tutorials/cedar-policy-walkthrough.md
+          - docs/tutorials/verifying-a-trace-claim.md
+          - docs/tutorials/tee-attestation.md
   - minify:
       minify_html: true
   - mkdocstrings:

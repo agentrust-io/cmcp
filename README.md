@@ -26,6 +26,10 @@
 
 > **Developer Preview** - launching at Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0.
 
+**cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment (TEE).** Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced where the process it governs cannot reach it. Each session produces a signed, hardware-attested TRACE Claim that a verifier checks without trusting the operator.
+
+> **TL;DR** - Point your agent at the cMCP Gateway. It evaluates every tool call against a Cedar policy inside a TEE, blocks or redacts what the policy denies, and emits a tamper-evident TRACE Claim as proof. Run `pip install cmcp-runtime` and start in software mode with no hardware required.
+
 Your agent calls Snowflake, Salesforce, a dozen APIs. What stops it from leaking a customer's data on one of those calls? If a regulator asks, could you prove it didn't?
 
 ---
@@ -238,6 +242,73 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and response SLAs. Se
 | [docs/spec/threat-model.md](docs/spec/threat-model.md) | STRIDE analysis, adversary model, residual risks |
 | [docs/spec/cedar-policy.md](docs/spec/cedar-policy.md) | Cedar policy language reference and schema |
 | [docs/testing/benchmarks.md](docs/testing/benchmarks.md) | Latency and throughput benchmarks per TEE provider |
+
+---
+
+## FAQ
+
+### What is cMCP?
+
+cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment. It intercepts each tool call, evaluates it against a Cedar policy bundle, enforces the decision (allow, deny, or redact), and records the call in a hardware-sealed audit chain.
+
+### How is cMCP different from software-only MCP governance?
+
+Software-only governance runs the policy engine in the same OS an operator or a supply-chain CVE can reach, so it cannot prove the policy that ran was the approved one or that the decision was not flipped in memory. cMCP runs the policy engine inside a TEE and measures the Cedar bundle hash into the hardware attestation report before any code runs, so the control plane cannot be reached by the process it governs.
+
+### Do I need special hardware to try it?
+
+No. Set `CMCP_DEV_MODE=1` to use the software-only TEE provider and run the full quickstart without a hardware TEE. Hardware providers (TPM, AMD SEV-SNP, Intel TDX, OPAQUE) are used in production.
+
+### What is a TRACE Claim?
+
+A TRACE Claim (a `GatewayClaim`) is a signed, hardware-attested artifact produced per session. It records which tools ran, which policy decided each call, the Cedar bundle hash, and the audit chain, and it is signed with an Ed25519 key that never leaves the TEE. A verifier checks it with the `cmcp_verify` library without trusting the operator.
+
+### Which TEE providers are supported?
+
+TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is SEV-SNP, then TDX, then TPM, then software.
+
+### What license is cMCP under?
+
+MIT.
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is cMCP?",
+      "acceptedAnswer": { "@type": "Answer", "text": "cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment. It intercepts each tool call, evaluates it against a Cedar policy bundle, enforces the decision (allow, deny, or redact), and records the call in a hardware-sealed audit chain." }
+    },
+    {
+      "@type": "Question",
+      "name": "How is cMCP different from software-only MCP governance?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Software-only governance runs the policy engine in the same OS an operator or a supply-chain CVE can reach, so it cannot prove the policy that ran was the approved one. cMCP runs the policy engine inside a TEE and measures the Cedar bundle hash into the hardware attestation report before any code runs, so the control plane cannot be reached by the process it governs." }
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need special hardware to try cMCP?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. Set CMCP_DEV_MODE=1 to use the software-only TEE provider and run the full quickstart without a hardware TEE. Hardware providers (TPM, AMD SEV-SNP, Intel TDX, OPAQUE) are used in production." }
+    },
+    {
+      "@type": "Question",
+      "name": "What is a TRACE Claim?",
+      "acceptedAnswer": { "@type": "Answer", "text": "A TRACE Claim (a GatewayClaim) is a signed, hardware-attested artifact produced per session. It records which tools ran, which policy decided each call, the Cedar bundle hash, and the audit chain, and it is signed with an Ed25519 key that never leaves the TEE. A verifier checks it with the cmcp_verify library without trusting the operator." }
+    },
+    {
+      "@type": "Question",
+      "name": "Which TEE providers does cMCP support?",
+      "acceptedAnswer": { "@type": "Answer", "text": "TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is SEV-SNP, then TDX, then TPM, then software." }
+    },
+    {
+      "@type": "Question",
+      "name": "What license is cMCP under?",
+      "acceptedAnswer": { "@type": "Answer", "text": "MIT." }
+    }
+  ]
+}
+</script>
 
 ---
 
