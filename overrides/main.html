@@ -18,10 +18,15 @@
   <meta property="og:title" content="{% if page and page.title and not page.is_homepage %}{{ page.title }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
   <meta property="og:description" content="{{ page_desc }}">
   <meta property="og:url" content="{{ page_url }}">
+  <meta property="og:image" content="https://cmcp.agentrust-io.com/docs/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="cMCP: an AgenTrust open standard">
 
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{% if page and page.title and not page.is_homepage %}{{ page.title }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
   <meta name="twitter:description" content="{{ page_desc }}">
+  <meta name="twitter:image" content="https://cmcp.agentrust-io.com/docs/assets/og.png">
 
   <script type="application/ld+json">
   {
@@ -37,12 +42,12 @@
         "softwareHelp": "{{ config.site_url }}",
         "license": "https://opensource.org/licenses/MIT",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-        "author": { "@type": "Organization", "name": "AgentTrust", "url": "https://agentrust-io.com" },
+        "author": { "@type": "Organization", "name": "AgenTrust", "url": "https://agentrust-io.com" },
         "codeRepository": "{{ config.repo_url }}"
       },
       {
         "@type": "Organization",
-        "name": "AgentTrust",
+        "name": "AgenTrust",
         "url": "https://agentrust-io.com",
         "sameAs": [
           "https://github.com/agentrust-io",
