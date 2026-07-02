@@ -26,7 +26,7 @@
 
 > **Developer Preview** - launching at Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0.
 
-**cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment (TEE).** Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced where the process it governs cannot reach it. Each session produces a signed, hardware-attested TRACE Claim that a verifier checks without trusting the operator.
+**cMCP (Confidential MCP Runtime) is the secure, confidential way to run MCP: an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment (TEE).** Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced where the process it governs cannot reach it. Each session produces a signed, hardware-attested TRACE Claim that a verifier checks without trusting the operator. If you are looking for a secure version of MCP, this is the AgenTrust runtime for it.
 
 > **TL;DR** - Point your agent at the cMCP Gateway. It evaluates every tool call against a Cedar policy inside a TEE, blocks or redacts what the policy denies, and emits a tamper-evident TRACE Claim as proof. Run `pip install cmcp-runtime` and start in software mode with no hardware required.
 
