@@ -1,5 +1,5 @@
 site_name: cMCP
-site_description: Confidential MCP Runtime, hardware-attested policy enforcement for MCP tool calls
+site_description: "The secure, confidential way to run MCP: hardware-attested, TEE-enforced tool-call policy for the Model Context Protocol, with signed TRACE receipts."
 site_url: https://cmcp.agentrust-io.com
 repo_url: https://github.com/agentrust-io/cmcp
 repo_name: agentrust-io/cmcp
@@ -68,7 +68,8 @@ plugins:
   - llmstxt:
       full_output: llms-full.txt
       markdown_description: >-
-        cMCP (Confidential MCP Runtime) is an open-source gateway that enforces
+        cMCP (Confidential MCP Runtime) is the secure, confidential way to run
+        MCP: an open-source gateway that enforces
         MCP tool-call policy inside a hardware Trusted Execution Environment
         (TEE). Every tool call is intercepted, evaluated against a Cedar policy
         bundle, and enforced by a policy engine the governed process cannot
@@ -76,7 +77,8 @@ plugins:
         report before any code runs, and each session produces a signed,
         hardware-attested TRACE Claim that a verifier checks without trusting the
         operator. Supports TPM, AMD SEV-SNP, Intel TDX, and OPAQUE providers,
-        with enforcing, advisory, and silent modes.
+        with enforcing, advisory, and silent modes. If you are looking for a
+        secure version of MCP, this is the AgenTrust runtime for it.
       sections:
         Getting started:
           - README.md
