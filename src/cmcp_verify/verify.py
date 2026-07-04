@@ -548,6 +548,7 @@ def verify_trace_claim(
     trusted_public_key_hex: str | None = None,
     agent_manifest: dict[str, Any] | None = None,
     trusted_agent_manifest_keys: dict[str, bytes] | None = None,
+    trusted_ark_pem: bytes | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -798,10 +799,17 @@ def verify_trace_claim(
         raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
         report_data_hex = _runtime.get("report_data")
+        # VCEK/ASK/ARK chain travels with the claim (passport model); the ARK is
+        # pinned by the operator out of band. Both are needed for issue #370
+        # report-signature + chain verification; absent either, it stays unverified.
+        _chain_b64 = _runtime.get("cert_chain")
+        cert_chain_pem = base64.b64decode(_chain_b64) if _chain_b64 else None
         snp_result = verify_sev_snp_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
             report_data_hex=report_data_hex,
+            cert_chain_pem=cert_chain_pem,
+            trusted_ark_pem=trusted_ark_pem,
         )
         if snp_result.verified:
             verified.append("hardware_attestation")
