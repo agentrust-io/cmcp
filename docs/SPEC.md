@@ -258,11 +258,12 @@ Across the four problems and 13 shapes, Phase 1 covers 11 outright and partially
 | tdx | Intel TDX (Azure DCedsv5, GCP C3) | High |
 | opaque | OPAQUE Managed Runtime (opt-in; not yet implemented) | n/a |
 
-Auto-detection probe order: `tpm -> sev-snp -> tdx -> opaque`. The first provider whose
-`detect()` succeeds is selected. `opaque` is a placeholder whose `detect()` currently returns
-`False`, so it is never auto-selected until it is implemented. If no hardware provider is
-detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only
-fallback) and otherwise refuses to start. Default `enforcement_mode` is `enforcing`.
+Auto-detection probe order: `tpm -> sev-snp -> tdx`. The first provider whose `detect()`
+succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from
+auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather
+than falling through silently. If no hardware provider is detected, the gateway starts only
+under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to
+start. Default `enforcement_mode` is `enforcing`.
 
 ---
 

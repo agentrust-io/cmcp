@@ -115,15 +115,15 @@ Agent -> cMCP Runtime -> Cedar Policy Engine (TEE) -> Tool
 | `sev-snp` | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High | AMD KDS |
 | `tdx` | Intel TDX (Azure DCedsv5, GCP C3) | High | Intel PCS |
 | `gpu-cc` _(v0.2)_ | NVIDIA H100/H200/Blackwell (CC mode) | High | NVIDIA Remote Attestation Service (NRAS) |
-| `opaque` _(opt-in)_ | OPAQUE Confidential Runtime | n/a _(not yet implemented)_ | Placeholder: `detect()` returns `False`, so it is never auto-selected until implemented |
+| `opaque` _(opt-in)_ | OPAQUE Confidential Runtime | n/a _(not yet implemented)_ | Placeholder: excluded from auto-detect; selecting it explicitly raises a not-implemented error |
 
-Provider auto-detect probe order: `tpm -> sev-snp -> tdx -> opaque` — the first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder and is never auto-selected. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
+Provider auto-detect probe order: `tpm -> sev-snp -> tdx` — the first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
 
 ```python
 from cmcp_runtime.config import TEEProvider
 
 # Auto-detect (default)
-# attestation.provider: auto  ->  tpm -> sev-snp -> tdx -> opaque
+# attestation.provider: auto  ->  tpm -> sev-snp -> tdx
 # (software-only is used only under CMCP_DEV_MODE=1)
 
 # Explicit hardware selection

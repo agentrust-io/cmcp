@@ -9,7 +9,10 @@ import pytest
 
 from cmcp_runtime.config import Config
 from cmcp_runtime.config import TEEProvider as TEEProviderEnum
-from cmcp_runtime.errors import AttestationProviderUnsupported
+from cmcp_runtime.errors import (
+    AttestationProviderNotImplemented,
+    AttestationProviderUnsupported,
+)
 from cmcp_runtime.tee.base import SoftwareOnlyProvider, jwk_thumbprint, make_nonce
 from cmcp_runtime.tee.detect import detect_provider
 
@@ -136,6 +139,21 @@ def test_detect_explicit_software_only_with_dev_mode(dev_config):
     dev_config.attestation.provider = TEEProviderEnum.SOFTWARE_ONLY
     provider = detect_provider(dev_config)
     assert isinstance(provider, SoftwareOnlyProvider)
+
+
+def test_detect_explicit_opaque_raises_not_implemented(dev_config):
+    """Explicitly selecting the opaque provider raises an explicit not-implemented error,
+    not a silent fall-through or a generic 'unsupported'."""
+    dev_config.attestation.provider = TEEProviderEnum.OPAQUE
+    with pytest.raises(AttestationProviderNotImplemented):
+        detect_provider(dev_config)
+
+
+def test_opaque_excluded_from_auto_probe_order():
+    """The not-yet-implemented opaque provider must never be in the auto-detect order."""
+    from cmcp_runtime.tee.detect import _PROBE_ORDER
+
+    assert "opaque" not in _PROBE_ORDER
 
 
 # ── HW-001: AttestationReport provider validation ────────────────────────────
