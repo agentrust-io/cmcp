@@ -15,7 +15,7 @@ Automatically block a rogue agent identity when its deny rate exceeds a threshol
 pip install cmcp-runtime
 ```
 
-An [Agent Manifest](../../docs/spec/component-model.md) must be bound to the gateway so the runtime has a per-agent SPIFFE URI to track. Anonymous sessions (no manifest) are never blocked.
+An [Agent Manifest](../spec/component-model.md) must be bound to the gateway so the runtime has a per-agent SPIFFE URI to track. Anonymous sessions (no manifest) are never blocked.
 
 ---
 
