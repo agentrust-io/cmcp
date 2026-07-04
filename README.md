@@ -4,7 +4,7 @@
 
 # cMCP: Confidential MCP Runtime
 
-### Enforce MCP tool policy where it cannot be tampered with
+### Enforce MCP tool policy inside a TEE, where the agent it governs cannot reach it
 
 <p align="center">
   <a href="https://agentrust-io.github.io/cmcp">
@@ -24,7 +24,7 @@
 
 [![CI](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agentrust-io/cmcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/cmcp-runtime)](https://pypi.org/project/cmcp-runtime/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/agentrust-io/cmcp/badge)](https://scorecard.dev/viewer/?uri=github.com/agentrust-io/cmcp) [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white&style=flat)](https://discord.gg/grgzFEHgkj)
 
-> **Developer Preview** - launching at Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0.
+> **Developer Preview** - launched at the Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0. See [STATUS.md](STATUS.md) for exactly what ships today versus what is on the roadmap.
 
 **cMCP (Confidential MCP Runtime) is the secure, confidential way to run MCP: an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment (TEE).** Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced where the process it governs cannot reach it. Each session produces a signed, hardware-attested TRACE Claim that a verifier checks without trusting the operator. If you are looking for a secure version of MCP, this is the AgenTrust runtime for it.
 
@@ -63,7 +63,7 @@ Create `cmcp-config.yaml`:
 ```yaml
 attestation:
   provider: auto
-  enforcement_mode: advisory
+  enforcement_mode: advisory   # advisory eases first-run tuning; the default is `enforcing`
 policy_bundle_path: ./policies/
 catalog_path: ./catalog.json
 ```
@@ -115,20 +115,21 @@ Agent -> cMCP Runtime -> Cedar Policy Engine (TEE) -> Tool
 | `sev-snp` | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High | AMD KDS |
 | `tdx` | Intel TDX (Azure DCedsv5, GCP C3) | High | Intel PCS |
 | `gpu-cc` _(v0.2)_ | NVIDIA H100/H200/Blackwell (CC mode) | High | NVIDIA Remote Attestation Service (NRAS) |
-| `opaque` _(explicit opt-in)_ | OPAQUE Confidential Runtime | High | Set `OPAQUE_ATTESTATION_URL`; not in auto-detect chain (stub: detect() returns False, not yet implemented) |
+| `opaque` _(opt-in)_ | OPAQUE Confidential Runtime | n/a _(not yet implemented)_ | Placeholder: `detect()` returns `False`, so it is never auto-selected until implemented |
 
-Provider auto-detects: `SEV-SNP -> TDX -> TPM -> software`. `opaque` is explicit opt-in via `OPAQUE_ATTESTATION_URL` and is never selected automatically.
+Provider auto-detect probe order: `tpm -> sev-snp -> tdx -> opaque` — the first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder and is never auto-selected. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
 
 ```python
-from cmcp_gateway.config import TEEProvider
+from cmcp_runtime.config import TEEProvider
 
 # Auto-detect (default)
-# attestation.provider: auto  ->  sev-snp -> tdx -> tpm -> software
+# attestation.provider: auto  ->  tpm -> sev-snp -> tdx -> opaque
+# (software-only is used only under CMCP_DEV_MODE=1)
 
 # Explicit hardware selection
 # attestation.provider: sev-snp
 
-# OPAQUE Managed Runtime (explicit opt-in only)
+# OPAQUE Managed Runtime (opt-in only; not yet implemented)
 # OPAQUE_ATTESTATION_URL=https://... cmcp start --config cmcp-config.yaml
 ```
 
@@ -196,12 +197,15 @@ A `GatewayClaim` is the unit of proof handed to an auditor, regulator, or downst
 | `trace.runtime` | TEE platform and hardware measurement recorded at enclave boot |
 | `trace.policy.bundle_hash` | SHA-256 of the Cedar bundle loaded at startup; changing any policy file changes this value |
 | `trace.cnf.jwk` | Ed25519 public key bound to the TEE signing key |
+| `trace.tool_transcript` | Audit-chain-derived per-call view: `hash` (binds to the audit chain tip), `call_count`, and privacy-preserving `entries` (tool name, data class, decision) |
 | `gateway.audit_chain` | Hash-chained audit log root and tip; verifiable without replaying individual entries |
 | `signature` | Ed25519 over canonical JSON of the full claim body (RFC 8785) |
 
+(This table is a summary of the most-used fields.)
+
 Verification with the `cmcp_verify` library does not require trusting the operator. The verifier checks the signature against the TEE-bound key, the policy bundle hash against the approved value, and the audit chain for internal consistency.
 
-See [docs/spec/verification-library.md](docs/spec/verification-library.md) and the [TRACE specification](https://trace.agentrust-io.com) for the full verification protocol.
+The normative schema is [`schemas/trace-claim.schema.json`](schemas/trace-claim.schema.json), and [docs/quickstart.md](docs/quickstart.md) shows a complete example. See [docs/spec/verification-library.md](docs/spec/verification-library.md) and the [TRACE specification](https://trace.agentrust-io.com) for the full verification protocol.
 
 ---
 

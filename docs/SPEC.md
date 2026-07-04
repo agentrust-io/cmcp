@@ -127,45 +127,68 @@ Network position: sits between agent host and MCP servers. The gateway is the on
 
 ## 5. TRACE Claim Schema
 
-The unit of proof handed to an auditor. Produced per-session or per-call (configurable).
+The unit of proof handed to an auditor, produced per session (or per call, configurable).
+The normative schema is [`schemas/trace-claim.schema.json`](../schemas/trace-claim.schema.json),
+and a full worked example is in [the quickstart](quickstart.md). The envelope is a
+`GatewayClaim`: canonical TRACE v0.1 fields live under `trace`, cMCP-specific addenda live
+under `gateway`, and `signature` is detached (computed over every other field).
 
 ```json
 {
-  "trace_version": "1.0",
-  "session_id": "<uuid>",
-  "timestamp_utc": "<ISO 8601>",
-  "tee_public_key": "<hex>",
-  "attestation_report": {
-    "provider": "sev-snp | tdx | tpm | opaque",
-    "measurement": "<PCR values or SEV measurement>",
-    "report_data": "<nonce binding key to report>"
+  "cmcp_version": "1.0",
+  "trace": {
+    "eat_profile": "tag:agentrust.io,2026:trace-v0.1",
+    "iat": 1730000000,
+    "subject": "spiffe://cmcp.gateway/tee/<key-prefix>",
+    "runtime": {
+      "platform": "amd-sev-snp | intel-tdx | tpm2 | software-only",
+      "measurement": "sha256:<hex>",
+      "nonce": "<base64url nonce binding the report to this session>"
+    },
+    "policy": {
+      "bundle_hash": "sha256:<hex>",
+      "enforcement_mode": "enforce | advisory | silent",
+      "version": "<semver>"
+    },
+    "data_class": "<highest sensitivity reached this session>",
+    "tool_transcript": {
+      "hash": "sha256:<audit chain tip>",
+      "call_count": 42,
+      "entries": [
+        { "tool_name": "salesforce.query", "data_class": "pii", "decision": "allow" }
+      ]
+    },
+    "cnf": { "jwk": { "kty": "OKP", "crv": "Ed25519", "x": "<base64url>", "kid": "cmcp-<id>" } }
   },
-  "policy_bundle": {
-    "hash": "<sha256>",
-    "enforcement_mode": "enforcing | advisory | silent",
-    "policy_version": "<semver>"
+  "gateway": {
+    "session_id": "<uuid>",
+    "sequence_number": 1,
+    "audit_chain": { "root": "sha256:<hex>", "tip": "sha256:<hex>", "length": 43 },
+    "call_summary": {
+      "tool_calls_total": 42,
+      "tool_calls_allowed": 40,
+      "tool_calls_denied": 2,
+      "tool_calls_faulted": 0,
+      "tools_invoked": ["salesforce.query", "snowflake.read"],
+      "session_max_sensitivity": "pii",
+      "call_graph_summary": { "compliance_domains_touched": [], "cross_boundary_events": [] }
+    },
+    "catalog": { "hash": "sha256:<hex>", "drift_detected": false },
+    "attestation_generated_at": "<ISO 8601>",
+    "attestation_validity_seconds": 86400,
+    "attestation_stale": false,
+    "catalog_exceptions": []
   },
-  "tool_catalog": {
-    "hash": "<sha256 of approved catalog at startup>"
-  },
-  "call_summary": {
-    "tool_calls_total": 42,
-    "tool_calls_allowed": 40,
-    "tool_calls_denied": 2,
-    "tools_invoked": ["salesforce.query", "snowflake.read"]
-  },
-  "audit_chain_root": "<sha256 of first entry>",
-  "audit_chain_tip": "<sha256 of last entry>",
-  "signature": "<TEE-sealed key signature over canonical JSON>"
+  "signature": "<base64url Ed25519 over the canonical JSON of every field except signature>"
 }
 ```
 
 Verification (no operator trust required):
-1. Verify tee_public_key against attestation_report (hardware-rooted)
-2. Verify signature using tee_public_key
-3. Check policy_bundle.hash against the approved hash on record
-4. Check tool_catalog.hash against the approved catalog hash on record
-5. Walk audit_chain_root to audit_chain_tip for call-level detail
+1. Verify the `trace.cnf.jwk` public key against `trace.runtime` (hardware-rooted attestation)
+2. Verify `signature` using that key
+3. Check `trace.policy.bundle_hash` against the approved bundle hash on record
+4. Check `gateway.catalog.hash` against the approved catalog hash on record
+5. Recompute `trace.tool_transcript.hash` and walk `gateway.audit_chain` root to tip for call-level detail
 
 ---
 
@@ -233,9 +256,13 @@ Across the four problems and 13 shapes, Phase 1 covers 11 outright and partially
 | tpm | TPM 2.0 / vTPM | Medium |
 | sev-snp | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High |
 | tdx | Intel TDX (Azure DCedsv5, GCP C3) | High |
-| opaque | OPAQUE Managed Runtime | Highest |
+| opaque | OPAQUE Managed Runtime (opt-in; not yet implemented) | n/a |
 
-Auto-detection: tpm -> sev-snp -> tdx -> opaque. Default enforcement_mode: advisory.
+Auto-detection probe order: `tpm -> sev-snp -> tdx -> opaque`. The first provider whose
+`detect()` succeeds is selected. `opaque` is a placeholder whose `detect()` currently returns
+`False`, so it is never auto-selected until it is implemented. If no hardware provider is
+detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only
+fallback) and otherwise refuses to start. Default `enforcement_mode` is `enforcing`.
 
 ---
 
@@ -259,12 +286,12 @@ In scope:
 - Session-context sensitivity tagging and bleed detection
 - Tool catalog binding (tool name to specific upstream server identity)
 - TRACE Claim generation and signing
-- Hardware attestation: TPM, SEV-SNP, TDX, OPAQUE Managed
+- Hardware attestation: TPM, SEV-SNP, TDX (OPAQUE Managed is an opt-in placeholder, not yet implemented)
 - Enforcement modes: enforcing, advisory, silent
 - Egress policy: allow/deny/redact per tool and per field
 - Per-session TRACE Claim with call summary
 - Agent-side verification library (cmcp-verify)
-- Python SDK (cmcp-gateway), config file (cmcp-config.yaml)
+- Python SDK (cmcp-runtime), config file (cmcp-config.yaml)
 
 Not in Phase 1:
 - MCP server-side attestation (Phase 2)
