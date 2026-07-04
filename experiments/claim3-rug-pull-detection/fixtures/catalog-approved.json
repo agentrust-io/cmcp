@@ -1,0 +1,27 @@
+[
+  {
+    "tool_name": "ehr.get_patient",
+    "compliance_domain": "hipaa_phi",
+    "requires_baa": true,
+    "sensitivity_level": "hipaa_phi",
+    "added_at": "2026-06-01T00:00:00Z",
+    "approved_by": "security-lead@example.com",
+    "server": {
+      "display_name": "EHR System",
+      "url": "https://ehr.internal/mcp",
+      "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "transport": "http-sse"
+    },
+    "approved_definition": {
+      "description": "Returns patient demographics and active clinical diagnoses for the given patient ID.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "patient_id": {"type": "string", "description": "Patient unique identifier"}
+        },
+        "required": ["patient_id"]
+      }
+    },
+    "definition_hash": "sha256:7f45ac8405c6727c2cd8075036e99b26e5423615474c8f936031709fd5845065"
+  }
+]

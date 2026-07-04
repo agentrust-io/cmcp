@@ -27,7 +27,7 @@ The quickstart `catalog.json` uses this fingerprint value:
 "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 ```
 
-This is a sentinel, not a real certificate pin. When the runtime encounters this placeholder it logs a one-time warning and falls back to standard CA verification — the connection proceeds but peer identity is verified by CA trust only, not pinned to the catalog. The audit chain records `evidence_class: "hash-only"` for every call to that server.
+This is a sentinel, not a real certificate pin. When the runtime encounters this placeholder it logs a one-time warning and falls back to standard CA verification: the connection proceeds but peer identity is verified by CA trust only, not pinned to the catalog. The audit chain records `evidence_class: "hash-only"` for every call to that server.
 
 Replace it with the real SHA-256 fingerprint of your upstream server's certificate before setting `enforcement_mode: enforcing`.
 
@@ -89,7 +89,7 @@ The runtime verifies this fingerprint on every outbound connection to the tool s
 
 After updating `catalog.json`, recompute the catalog hash and set `CMCP_CATALOG_HASH`.
 
-The runtime computes the hash over the canonical JSON of the catalog entries sorted by `tool_name` — not over the raw file bytes. The snippet below replicates that computation exactly:
+The runtime computes the hash over the canonical JSON of the catalog entries sorted by `tool_name`: not over the raw file bytes. The snippet below replicates that computation exactly:
 
 ```bash
 python3 -c "
@@ -150,4 +150,4 @@ If the upstream server rotates its certificate, you must update `catalog.json`, 
 
 You replaced the development sentinel fingerprint with a real SHA-256 certificate pin, updated the catalog hash, and confirmed that audit entries record `evidence_class: "tls-pinned"` for verified connections. TLS pinning prevents server substitution attacks but does not extend to individual response non-repudiation.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — the catalog is also covered by the attestation measurement. [Verify a TRACE claim](./verifying-a-trace-claim.md) — the catalog hash in the TRACE claim must match the catalog you pinned.
+Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): the catalog is also covered by the attestation measurement. [Verify a TRACE claim](./verifying-a-trace-claim.md): the catalog hash in the TRACE claim must match the catalog you pinned.

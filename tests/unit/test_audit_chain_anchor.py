@@ -143,35 +143,42 @@ def test_create_session_sets_tee_anchor():
 
 
 def test_create_session_calls_tee_provider_with_chain_root_nonce():
-    """create_session must pass a nonce derived from the chain root to the TEE provider."""
+    """create_session must pass the AUDIT-006 audit-bound nonce to the TEE provider.
+
+    nonce = jwk_thumbprint(key) (32) || SHA-256(chain_root) (32) = 64 bytes.
+    """
     ctx = _make_ctx_with_tee()
     mgr = SessionManager(ctx)
     _, chain = mgr.create_session()
 
-    # The nonce is SHA-256(chain_root_bytes || session_id_bytes).
-    # We can verify the TEE provider was called (exactly once) with a 32-byte nonce.
     ctx.tee_provider.get_attestation_report.assert_called_once()
     call_args = ctx.tee_provider.get_attestation_report.call_args
     nonce_arg = call_args[0][0]
     assert isinstance(nonce_arg, bytes)
-    assert len(nonce_arg) == 32
+    assert len(nonce_arg) == 64
 
 
 def test_create_session_anchor_nonce_encodes_chain_root():
-    """Verify that the nonce passed to TEE matches SHA-256(chain_root_bytes || session_id_bytes)."""
+    """AUDIT-006: report_data[32:64] must equal SHA-256(chain_root_bytes).
+
+    The first 32 bytes are the RFC 7638 JWK thumbprint of the gateway key (key
+    binding, unchanged); the second 32 bytes commit the chain root.
+    """
+    from cmcp_runtime.tee.base import jwk_thumbprint
+
     ctx = _make_ctx_with_tee()
     mgr = SessionManager(ctx)
-    state, chain = mgr.create_session()
+    _, chain = mgr.create_session()
 
-    # Re-derive the expected nonce.
     chain_root = chain.chain_root
-    session_id = state.session_id
-    expected_nonce = hashlib.sha256(
-        bytes.fromhex(chain_root) + session_id.encode()
-    ).digest()
+    expected_nonce = (
+        jwk_thumbprint(ctx.signing_key.public_key_bytes)
+        + hashlib.sha256(bytes.fromhex(chain_root)).digest()
+    )
 
     actual_nonce = ctx.tee_provider.get_attestation_report.call_args[0][0]
     assert actual_nonce == expected_nonce
+    assert actual_nonce[32:64] == hashlib.sha256(bytes.fromhex(chain_root)).digest()
 
 
 def test_verify_chain_passes_after_create_session():
@@ -199,7 +206,7 @@ def test_verify_chain_fails_after_chain_substitution_via_session_manager():
     replacement = AuditChain(real_chain._session_id)  # type: ignore[attr-defined]
     replacement.append("tool_call", call_id="c1", tool_name="evil_tool", policy_decision="allow")
 
-    # Graft replacement entries — anchor is still the original root.
+    # Graft replacement entries: anchor is still the original root.
     real_chain._entries = replacement._entries  # type: ignore[attr-defined]
 
     assert real_chain.verify_chain() is False
@@ -215,4 +222,4 @@ def test_tee_provider_failure_still_sets_anchor(caplog):
         _, chain = mgr.create_session()
 
     assert chain.tee_anchor is not None
-    assert "chain root is not hardware-anchored" in caplog.text
+    assert "chain root is not hardware-bound into report_data" in caplog.text

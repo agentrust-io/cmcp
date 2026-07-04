@@ -233,7 +233,7 @@ Across the four problems and 13 shapes, Phase 1 covers 11 outright and partially
 | tpm | TPM 2.0 / vTPM | Medium |
 | sev-snp | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High |
 | tdx | Intel TDX (Azure DCedsv5, GCP C3) | High |
-| opaque | Opaque Managed Runtime | Highest |
+| opaque | OPAQUE Managed Runtime | Highest |
 
 Auto-detection: tpm -> sev-snp -> tdx -> opaque. Default enforcement_mode: advisory.
 
@@ -259,7 +259,7 @@ In scope:
 - Session-context sensitivity tagging and bleed detection
 - Tool catalog binding (tool name to specific upstream server identity)
 - TRACE Claim generation and signing
-- Hardware attestation: TPM, SEV-SNP, TDX, Opaque Managed
+- Hardware attestation: TPM, SEV-SNP, TDX, OPAQUE Managed
 - Enforcement modes: enforcing, advisory, silent
 - Egress policy: allow/deny/redact per tool and per field
 - Per-session TRACE Claim with call summary

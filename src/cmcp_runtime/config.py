@@ -39,6 +39,14 @@ class StalenessPolicy(StrEnum):
 
 
 @dataclass
+class KillSwitchConfig:
+    enabled: bool = False
+    window_seconds: int = 300
+    deny_rate_threshold: float = 0.9
+    min_calls: int = 10
+
+
+@dataclass
 class AttestationConfig:
     provider: TEEProvider = TEEProvider.AUTO
     enforcement_mode: EnforcementMode = EnforcementMode.ENFORCING
@@ -58,6 +66,7 @@ class AgentManifestConfig:
 class Config:
     attestation: AttestationConfig = field(default_factory=AttestationConfig)
     agent_manifest: AgentManifestConfig = field(default_factory=AgentManifestConfig)
+    kill_switch: KillSwitchConfig = field(default_factory=KillSwitchConfig)
     policy_bundle_path: str = "policy/"
     catalog_path: str = "catalog.json"
     listen_addr: str = "0.0.0.0:8443"
@@ -71,12 +80,19 @@ class Config:
 _KNOWN_TOP_KEYS = {
     "attestation",
     "agent_manifest",
+    "kill_switch",
     "policy_bundle_path",
     "catalog_path",
     "listen_addr",
     "max_response_size_bytes",
     "policy_reload_interval_seconds",
     "audit_db_path",
+}
+_KNOWN_KILL_SWITCH_KEYS = {
+    "enabled",
+    "window_seconds",
+    "deny_rate_threshold",
+    "min_calls",
 }
 _KNOWN_ATTEST_KEYS = {
     "provider",
@@ -144,6 +160,29 @@ def load_config(path: str) -> Config:
                 "Unknown agent_manifest key "
                 f"'{key}'. Valid keys: {sorted(_KNOWN_AGENT_MANIFEST_KEYS)}"
             )
+
+    ks_raw = raw.get("kill_switch", {})
+    if ks_raw is None:
+        ks_raw = {}
+    if not isinstance(ks_raw, dict):
+        raise ConfigError("'kill_switch' must be a mapping")
+    for key in ks_raw:
+        if key not in _KNOWN_KILL_SWITCH_KEYS:
+            raise ConfigError(
+                f"Unknown kill_switch key '{key}'. Valid keys: {sorted(_KNOWN_KILL_SWITCH_KEYS)}"
+            )
+    ks_enabled = ks_raw.get("enabled", False)
+    if not isinstance(ks_enabled, bool):
+        raise ConfigError("kill_switch.enabled must be a boolean")
+    ks_window = ks_raw.get("window_seconds", 300)
+    if not isinstance(ks_window, int) or ks_window <= 0:
+        raise ConfigError("kill_switch.window_seconds must be a positive integer")
+    ks_threshold = ks_raw.get("deny_rate_threshold", 0.9)
+    if not isinstance(ks_threshold, int | float) or not (0.0 < ks_threshold <= 1.0):
+        raise ConfigError("kill_switch.deny_rate_threshold must be a float in (0, 1]")
+    ks_min_calls = ks_raw.get("min_calls", 10)
+    if not isinstance(ks_min_calls, int) or ks_min_calls <= 0:
+        raise ConfigError("kill_switch.min_calls must be a positive integer")
 
     try:
         provider = TEEProvider(attest_raw.get("provider", "auto"))
@@ -221,6 +260,12 @@ def load_config(path: str) -> Config:
             path=agent_manifest_path,
             trust_anchor_path=trust_anchor_path,
             authenticated_subject=authenticated_subject,
+        ),
+        kill_switch=KillSwitchConfig(
+            enabled=ks_enabled,
+            window_seconds=ks_window,
+            deny_rate_threshold=float(ks_threshold),
+            min_calls=ks_min_calls,
         ),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,

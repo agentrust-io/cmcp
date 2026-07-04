@@ -45,7 +45,7 @@ def test_dev_mode_constant_not_changed_by_later_env_mutation(monkeypatch):
     mod = _reload_config_with_env(monkeypatch, "0")
     assert mod.DEV_MODE is False
 
-    # Now set the env var — simulates an attacker injecting it at runtime.
+    # Now set the env var: simulates an attacker injecting it at runtime.
     monkeypatch.setenv("CMCP_DEV_MODE", "1")
 
     # The constant on the already-imported module must remain False.
@@ -58,7 +58,7 @@ def test_dev_mode_constant_not_cleared_by_later_env_removal(monkeypatch):
     mod = _reload_config_with_env(monkeypatch, "1")
     assert mod.DEV_MODE is True
 
-    # Remove the env var — the constant must stay True.
+    # Remove the env var: the constant must stay True.
     monkeypatch.delenv("CMCP_DEV_MODE", raising=False)
     assert mod.DEV_MODE is True
 

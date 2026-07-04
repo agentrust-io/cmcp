@@ -55,7 +55,7 @@ measurement = SHA-256(PCR0 || PCR1 || PCR2 || PCR3 || PCR4 || PCR5 || PCR6 || PC
 
 Each PCR value is the raw 32-byte SHA-256 digest read from the TPM. Concatenation is in bank index order (0 through 7), no separators. The result is a 32-byte SHA-256 digest encoded as lowercase hex. The PCR bank used is SHA-256. If the platform only offers a SHA-1 bank, the runtime logs a warning and uses SHA-1 PCR values zero-extended to 32 bytes before hashing; this is noted in `attestation_report.measurement_note: "sha1-bank-fallback"`.
 
-Quote generation: the gateway calls `TPM2_Quote` with the nonce set to `SHA-256(tee_public_key || session_id)` (see Section 3.3). The quote and its signature are stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use.
+Quote generation: the gateway calls `TPM2_Quote` with `qualifying_data` set to the first 32 bytes of the §3.3 nonce: the `JWK_thumbprint(tee_public_key)`: because TPM `qualifying_data` carries a single digest. A verifier re-derives the thumbprint from `cnf.jwk.x` and checks it against the quote's `qualifying_data`. The quote and its signature are stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use.
 
 #### SEV-SNP (High Assurance)
 
@@ -69,7 +69,7 @@ What goes in `attestation_report.measurement`:
 measurement = SNP_REPORT.measurement
 ```
 
-`SNP_REPORT.measurement` is the 48-byte launch measurement field from the AMD SEV-SNP attestation report, encoded as lowercase hex (96 characters). It is obtained by calling `ioctl(fd, SNP_GET_REPORT, &req)` on `/dev/sev-guest` with the `report_data` field set to `SHA-256(tee_public_key || session_id)` (zero-padded to 64 bytes as required by the SNP interface).
+`SNP_REPORT.measurement` is the 48-byte launch measurement field from the AMD SEV-SNP attestation report, encoded as lowercase hex (96 characters). It is obtained by calling `ioctl(fd, SNP_GET_REPORT, &req)` on `/dev/sev-guest` with the 64-byte `report_data` field set to the §3.3 nonce (`JWK_thumbprint(tee_public_key) || random_salt`, which fills the field exactly).
 
 The full SNP report structure is stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use.
 
@@ -91,18 +91,18 @@ measurement = {
 }
 ```
 
-Each value is a 48-byte SHA-384 digest encoded as lowercase hex (96 characters). `MRTD` is the measurement of the initial TD contents. `RTMR0`-`RTMR3` are the runtime measurement registers. The TD report is obtained via `ioctl(fd, TDX_CMD_GET_REPORT0, &req)` with `reportdata` set to `SHA-256(tee_public_key || session_id)` zero-padded to 64 bytes.
+Each value is a 48-byte SHA-384 digest encoded as lowercase hex (96 characters). `MRTD` is the measurement of the initial TD contents. `RTMR0`-`RTMR3` are the runtime measurement registers. The TD report is obtained via `ioctl(fd, TDX_CMD_GET_REPORT0, &req)` with the 64-byte `reportdata` set to the §3.3 nonce (`JWK_thumbprint(tee_public_key) || random_salt`, which fills the field exactly).
 
 The full TD report and quote are stored in `attestation_report.raw_evidence` for verifier use.
 
-#### Opaque (Highest Assurance)
+#### OPAQUE (Highest Assurance)
 
 Detection conditions:
 - The environment variable `OPAQUE_RUNTIME_ENDPOINT` is set and non-empty.
 
 What goes in `attestation_report.measurement`:
 
-The Opaque Managed Runtime provides a dedicated attestation API. The runtime calls `GET $OPAQUE_RUNTIME_ENDPOINT/v1/attestation` with the nonce `SHA-256(tee_public_key || session_id)` as a query parameter. The response includes an Opaque-specific measurement blob and a signed attestation certificate chain rooted in Opaque's hardware root of trust. The measurement field is set to the `measurement` field from the Opaque attestation response (format defined by the Opaque Runtime SDK; currently a 32-byte SHA-256 encoded as lowercase hex). The full response is stored in `attestation_report.raw_evidence`.
+The OPAQUE Managed Runtime provides a dedicated attestation API. The runtime calls `GET $OPAQUE_RUNTIME_ENDPOINT/v1/attestation` with the §3.3 nonce (`JWK_thumbprint(tee_public_key) || random_salt`) as a query parameter. The response includes an OPAQUE-specific measurement blob and a signed attestation certificate chain rooted in OPAQUE's hardware root of trust. The measurement field is set to the `measurement` field from the OPAQUE attestation response (format defined by the OPAQUE Runtime SDK; currently a 32-byte SHA-256 encoded as lowercase hex). The full response is stored in `attestation_report.raw_evidence`.
 
 ### 1.3 Software-Only Development Fallback
 
@@ -132,7 +132,7 @@ Rules:
 
 At enclave startup, before accepting any connections:
 
-1. Generate an ephemeral Ed25519 keypair inside the TEE using a CSPRNG seeded from the hardware entropy source (TPM `TPM2_GetRandom`, SEV-SNP `RDRAND` + kernel `/dev/urandom` mix-in, TDX equivalent, or Opaque runtime entropy API).
+1. Generate an ephemeral Ed25519 keypair inside the TEE using a CSPRNG seeded from the hardware entropy source (TPM `TPM2_GetRandom`, SEV-SNP `RDRAND` + kernel `/dev/urandom` mix-in, TDX equivalent, or OPAQUE runtime entropy API).
 2. The private key is held only in enclave memory (or equivalent protected region). It is never written to disk, never logged, never exported via any API.
 3. The public key is encoded as a 32-byte Ed25519 public key in base64url (no padding). This value is placed in the `tee_public_key` field of every TRACE Claim issued by this runtime instance.
 4. When the enclave exits (graceful shutdown or crash), the private key is zeroed from memory via a secure-erase routine before the memory region is released.
@@ -249,7 +249,7 @@ If this check fails, the TRACE Claim is considered stale. Verifiers must reject 
 
 Attestation refresh without service interruption:
 
-1. While the enclave is running, call the TEE's attestation API again with a fresh timestamp and the same nonce (`SHA-256(tee_public_key || session_id)`).
+1. While the enclave is running, call the TEE's attestation API again with a fresh timestamp and the same §3.3 nonce (`JWK_thumbprint(tee_public_key) || random_salt`).
 2. Replace `attestation_report` in the runtime's in-memory state with the new report.
 3. Update `attestation_generated_at` to the current UTC timestamp.
 4. All subsequent TRACE Claims use the new `attestation_report` and new `attestation_generated_at`.
@@ -267,25 +267,31 @@ Sessions cannot outlive the attestation. If a session reaches `max_session_durat
 
 ### 3.3 Replay Prevention
 
-The `attestation_report.report_data` field contains a nonce that binds the hardware-generated report to a specific key and session:
+The `attestation_report.report_data` field contains a 64-byte nonce that binds the hardware-generated report to the gateway's TEE key:
 
 ```
-nonce = SHA-256(tee_public_key_bytes || session_id_bytes)
+nonce = JWK_thumbprint(tee_public_key) (32 bytes) || random_salt (32 bytes)
 ```
 
-- `tee_public_key_bytes`: the raw 32-byte Ed25519 public key.
-- `session_id_bytes`: the UTF-8 encoding of the session UUID (36 bytes including hyphens).
-- The resulting 32-byte SHA-256 digest is passed as the `report_data` / `user_data` / `nonce` field when requesting the hardware attestation report. The exact field name varies by provider but the semantic is the same: a caller-supplied value that is included in the signed measurement.
+- `JWK_thumbprint(tee_public_key)`: the RFC 7638 JWK Thumbprint of the Ed25519 public key: SHA-256 over the canonical JSON of the required OKP members in lexicographic order (`crv`, `kty`, `x`). This is re-derivable by any verifier from `cnf.jwk.x`.
+- `random_salt`: 32 random bytes generated once per enclave startup, so two enclave instances produce distinct nonces even with the same key (e.g. blue-green deploy).
+- The 64-byte value is passed as the `report_data` / `user_data` / `reportdata` / `qualifying_data` field when requesting the hardware attestation report. The field name varies by provider; the semantic is the same: a caller-supplied value included in the signed measurement.
 
-Verifier check:
+Verifier check (key binding, CRYPTO-001):
 
 ```
-expected_nonce = SHA-256(tee_public_key_bytes || session_id_bytes)
-actual_nonce = base64url_decode(attestation_report.report_data)
-assert expected_nonce == actual_nonce
+expected_fingerprint = JWK_thumbprint(base64url_decode(cnf.jwk.x))
+actual_nonce = base64url_decode(trace.runtime.nonce)
+assert actual_nonce[:32] == expected_fingerprint
 ```
 
-A TRACE Claim replayed from a different session (different `session_id`) or from a different enclave instance (different `tee_public_key`) fails this check because the `report_data` in the hardware-signed attestation report will not match the recomputed nonce. This prevents an attacker from reusing a valid attestation report across sessions or keys.
+A TRACE Claim whose `cnf.jwk` public key was substituted after attestation fails this check, because the embedded `report_data` (hardware-signed) will not match the re-derived thumbprint. A claim produced by a different enclave instance carries a different key (and salt), so it fails too.
+
+**Session binding** is carried separately, by `gateway.session_id` inside the Ed25519-signed claim body: not by the nonce. The hardware report is generated once per enclave instance at startup, before any session exists, so it cannot bind a specific `session_id`. Because the signature covers `session_id`, a claim cannot be presented under a different session without breaking verification. See §3.3.1.
+
+#### 3.3.1 Session binding
+
+The signed claim body includes `gateway.session_id`. Any change to it invalidates the Ed25519 signature, so a valid claim for session A cannot be replayed as session B. For the cross-organizational case (Phase 2), the gateway and server TEEs each produce a claim carrying the **same** `session_id`; the shared identifier links the two independently-signed, independently-key-bound claims.
 
 ---
 
@@ -312,7 +318,7 @@ Because the public key is embedded in the claim and attested by the hardware rep
 
 For use cases requiring long-lived keys (e.g., participation in a key transparency log, or runtime restarts without breaking verifier trust):
 
-- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation; Opaque sealing via Opaque's key management API).
+- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation; OPAQUE sealing via OPAQUE's key management API).
 - The sealed key blob is stored on disk. On restart, the enclave unseals the key. Unsealing succeeds only if the enclave's current measurement matches the measurement policy used when sealing.
 - Rotation: updating the enclave's code or configuration changes its measurement. The old sealed key cannot be unsealed by the new measurement. The new enclave generates a fresh keypair and seals it to its own measurement. Old TRACE Claims remain verifiable via their embedded public key. New claims use the new key.
 - A key rotation event should be logged in the operator's change management system.
@@ -467,7 +473,7 @@ Full set of fields relevant to attestation:
   "attestation_report": {
     "provider": "<'tpm' | 'sev-snp' | 'tdx' | 'opaque' | 'software-only'>",
     "measurement": "<provider-specific, see Section 1>",
-    "report_data": "<base64url nonce = SHA-256(tee_public_key || session_id)>",
+    "report_data": "<base64url nonce = JWK_thumbprint(tee_public_key) || random_salt>",
     "raw_evidence": "<base64url, full hardware attestation report>"
   },
   "attestation_assurance": "<'medium' | 'high' | 'highest' | 'none'>",
@@ -504,7 +510,7 @@ A relying party verifying a TRACE Claim must perform all of the following checks
 1. Parse and validate the JSON structure against the TRACE Claim schema.
 2. Verify `signature`: compute `SHA-256(canonical_json(claim_without_signature))`, verify Ed25519 signature using `tee_public_key`.
 3. Verify attestation freshness: `now - attestation_generated_at < attestation_validity_seconds`.
-4. Verify nonce binding: `SHA-256(tee_public_key_bytes || session_id_bytes) == base64url_decode(attestation_report.report_data)`.
+4. Verify key binding: `JWK_thumbprint(base64url_decode(cnf.jwk.x)) == base64url_decode(trace.runtime.nonce)[:32]`. Session linkage is checked separately via the signed `gateway.session_id` (§3.3.1).
 5. Verify hardware report: validate `attestation_report.raw_evidence` using the provider's verification SDK (e.g., AMD SEV-SNP `snp-validate`, Intel TDX `tdx-attest`, TPM quote verification via TSS2). Confirm the report's `report_data` field matches the nonce from step 4.
 6. Check `attestation_assurance` is acceptable for the use case (e.g., compliance use requires `"high"` or `"highest"`; reject `"none"`).
 7. Verify `policy_bundle.hash` matches the policy bundle the verifier expects was in use.

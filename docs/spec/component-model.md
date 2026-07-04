@@ -1,7 +1,7 @@
 ﻿# MCP Component Model and Trust Boundaries
 
 !!! warning "Draft"
-    Status: Draft v0.1 · Stability: Unstable — expect breaking changes before v1.0
+    Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
 Defines the full component model, trust levels per phase, and the hardware vs. software trust boundary.
 
@@ -56,7 +56,7 @@ Closes #43.
 
 **Owned by**: Enterprise deployer (Phase 1) or SaaS vendor (Phase 2, provider-side).
 
-**Trust level**: Hardware-rooted. The runtime runs inside a TEE (TPM, SEV-SNP, TDX, or Opaque). Its identity is a SPIFFE SVID issued only after TEE attestation succeeds. Its signing key is sealed to the TEE and never exported. Its behavior is covered by the hardware measurement.
+**Trust level**: Hardware-rooted. The runtime runs inside a TEE (TPM, SEV-SNP, TDX, or OPAQUE). Its identity is a SPIFFE SVID issued only after TEE attestation succeeds. Its signing key is sealed to the TEE and never exported. Its behavior is covered by the hardware measurement.
 
 **Responsibilities**:
 - Terminates mTLS connections from agent hosts (verifying SPIFFE SVIDs).

@@ -1,5 +1,5 @@
 """
-Conformance test suite for the cMCP runtime — 22-case GTC Berlin demo spec.
+Conformance test suite for the cMCP runtime: 22-case GTC Berlin demo spec.
 
 Uses starlette.testclient.TestClient (synchronous) against an in-process
 MCPServer so no asyncio/anyio machinery is needed in test code.
@@ -110,7 +110,7 @@ def _make_proxy(*, allowed: bool = True) -> MagicMock:
 
 @pytest.fixture()
 def client() -> TestClient:
-    """Minimal MCPServer with a single mock_tool — used by most conformance tests."""
+    """Minimal MCPServer with a single mock_tool: used by most conformance tests."""
     proxy = _make_proxy(allowed=True)
     server = MCPServer(proxy=proxy)
     return TestClient(server.app)
@@ -249,7 +249,7 @@ def test_tools_list_via_mcp(client: TestClient) -> None:
 
 def test_trace_claim_not_found_returns_404(client: TestClient) -> None:
     """GET /sessions/nonexistent/trace-claim returns 404 when session_manager configured."""
-    # client fixture has no session_manager — returns 501
+    # client fixture has no session_manager: returns 501
     # We need a client with a session_manager that returns None for unknown sessions.
     session_mgr = MagicMock()
     session_mgr.get_trace_claim.return_value = None

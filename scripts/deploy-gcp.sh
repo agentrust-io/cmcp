@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-gcp.sh — provision a GCP Confidential VM and install cMCP
+# deploy-gcp.sh: provision a GCP Confidential VM and install cMCP
 #
 # Usage:
 #   ./scripts/deploy-gcp.sh [tdx|sev-snp]    (default: tdx)

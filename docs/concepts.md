@@ -1,3 +1,7 @@
+---
+description: How cMCP works. The four design ideas behind hardware-attested MCP tool-call governance: tamper-evident audit, TRACE Claims as evidence, TEE-measured Cedar policy, and operator-independent verification.
+---
+
 # How cMCP Works
 
 This page explains the four core design ideas behind cMCP. The [quickstart](quickstart.md) shows you how to run it; this page explains why it works.
@@ -25,8 +29,8 @@ The key difference:
 | | Log | TRACE Claim |
 |---|---|---|
 | Who produces it | Agent process or operator | TEE firmware + cMCP runtime |
-| Can it be edited post-hoc? | Yes | No — signature would fail |
-| Can the operator forge it? | Yes | No — signing key never leaves the TEE |
+| Can it be edited post-hoc? | Yes | No: signature would fail |
+| Can the operator forge it? | Yes | No: signing key never leaves the TEE |
 | Who can verify it? | Anyone with read access | Anyone with the public key (no trust in operator) |
 
 A TRACE Claim is a [TRACE Trust Record](https://trace.agentrust-io.com) with a `GatewayClaim` envelope. The envelope adds the session summary and audit chain. The inner trust record follows the TRACE v0.1 spec.
@@ -44,7 +48,7 @@ Every cMCP TRACE Claim makes four categories of assertion:
 
 ## Hardware attestation: why the claim is trustworthy
 
-The signing key for a cMCP TRACE Claim is generated inside the TEE and never leaves it. The TEE also measures its own state at boot — recording a SHA-384 digest of the firmware, the Cedar policy bundle, and the tool catalog into a PCR/measurement register.
+The signing key for a cMCP TRACE Claim is generated inside the TEE and never leaves it. The TEE also measures its own state at boot: recording a SHA-384 digest of the firmware, the Cedar policy bundle, and the tool catalog into a PCR/measurement register.
 
 This means:
 
@@ -85,7 +89,7 @@ The TRACE Claim records `audit_chain.root` (the first entry hash) and `audit_cha
 
 **Why this matters:** An auditor who has the individual audit log entries can recompute the chain tip and verify it matches the TRACE Claim. If any entry was modified, deleted, or reordered, the recomputed tip will not match. The audit log is self-certifying.
 
-The audit chain does not need to be stored on-chain or in a third-party system. The signed TRACE Claim is sufficient to detect tampering after the fact — as long as the claim itself was not forged (which the hardware attestation prevents).
+The audit chain does not need to be stored on-chain or in a third-party system. The signed TRACE Claim is sufficient to detect tampering after the fact: as long as the claim itself was not forged (which the hardware attestation prevents).
 
 See [Spec: Call Graph](spec/call-graph.md) for the full chain construction.
 
@@ -95,11 +99,11 @@ See [Spec: Call Graph](spec/call-graph.md) for the full chain construction.
 
 Cedar is an authorization policy language designed to be auditable. cMCP uses it for three reasons:
 
-**1. The policy is versioned and hash-bound.** The SHA-256 of the policy bundle is measured into the TEE at startup. Every TRACE Claim carries that hash. An auditor can compare the hash in a claim to the policy bundle in the repository and prove which policy was active for a given session — even if the policy was later changed.
+**1. The policy is versioned and hash-bound.** The SHA-256 of the policy bundle is measured into the TEE at startup. Every TRACE Claim carries that hash. An auditor can compare the hash in a claim to the policy bundle in the repository and prove which policy was active for a given session: even if the policy was later changed.
 
 **2. Policy effects are data, not code.** Cedar policies are declarative and cannot execute arbitrary code. A `forbid` rule can block a tool call; it cannot read files or make network requests. This means policy review is tractable: the policy file is the complete specification of what the agent is allowed to do.
 
-**3. Cedar supports fine-grained context conditions.** Policies can condition on session attributes like `session_max_sensitivity`, `workflow_id`, or `data_class`. This enables dynamic policy enforcement without code changes — the same binary can enforce different rules for different tenant configurations.
+**3. Cedar supports fine-grained context conditions.** Policies can condition on session attributes like `session_max_sensitivity`, `workflow_id`, or `data_class`. This enables dynamic policy enforcement without code changes: the same binary can enforce different rules for different tenant configurations.
 
 Example: this policy blocks `salesforce.contacts` once PII has entered the session:
 
@@ -152,8 +156,8 @@ The signed claim ties together: hardware identity (attestation), policy version 
 
 ## Next steps
 
-- [Quickstart](quickstart.md) — run a cMCP gateway locally in under 30 minutes
-- [Configuration](configuration.md) — full configuration reference
-- [Tutorial: Cedar policy walkthrough](tutorials/cedar-policy-walkthrough.md) — write and test policies
-- [Tutorial: Verify a TRACE claim](tutorials/verifying-a-trace-claim.md) — verify a claim without trusting the operator
-- [Spec: Component Model](spec/component-model.md) — detailed architecture
+- [Quickstart](quickstart.md): run a cMCP gateway locally in under 30 minutes
+- [Configuration](configuration.md): full configuration reference
+- [Tutorial: Cedar policy walkthrough](tutorials/cedar-policy-walkthrough.md): write and test policies
+- [Tutorial: Verify a TRACE claim](tutorials/verifying-a-trace-claim.md): verify a claim without trusting the operator
+- [Spec: Component Model](spec/component-model.md): detailed architecture

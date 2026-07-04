@@ -26,7 +26,7 @@ def _make_attestation_report(*, stale: bool = False) -> MagicMock:
     report.measurement = "DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION"
     report.report_data = "aa" * 32
     report.raw_evidence = None
-    report.measurement_note = "software-only mode — not hardware-backed"
+    report.measurement_note = "software-only mode: not hardware-backed"
     report.attestation_validity_seconds = 86400
     if stale:
         # Set generated_at far in the past so the report is expired.
@@ -287,3 +287,79 @@ def test_audit_bundle_broken_chain_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="integrity check failed"):
         mgr.get_audit_bundle(state.session_id, chain)
+
+
+# ── AUDIT-006: chain-root binding into the attested report_data ────────────────
+
+
+def test_close_session_uses_per_session_report_committing_chain_root() -> None:
+    """AUDIT-006 end-to-end: a TEE that returns a per-session report whose
+    report_data commits the chain root makes close_session() build the claim from
+    THAT report, and the resulting claim passes the verifier's chain-root binding.
+    """
+    from cmcp_runtime.tee.base import AttestationReport
+    from cmcp_verify.verify import (
+        ApprovedHashes,
+        VerificationError,
+        verify_trace_claim,
+    )
+
+    ctx = _make_ctx()
+
+    def _report_from_nonce(nonce: bytes) -> AttestationReport:
+        # Tagged sev-snp so the nonce is surfaced as trace.runtime.nonce and the
+        # verifier runs the AUDIT-006 binding check (software-only drops the nonce).
+        return AttestationReport(
+            provider="sev-snp",
+            measurement="ab" * 32,
+            report_data=nonce.hex(),
+            raw_evidence=None,
+            attestation_generated_at=datetime.now(UTC),
+            attestation_validity_seconds=86400,
+        )
+
+    ctx.tee_provider.get_attestation_report.side_effect = _report_from_nonce
+
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    assert chain.session_report is not None
+    assert chain.session_report is not ctx.attestation_report
+
+    claim = mgr.close_session(state.session_id, state, chain)
+
+    # report_data[32:64] in the claim commits the chain root.
+    nonce_b64 = claim["trace"]["runtime"]["nonce"]
+    pad = 4 - (len(nonce_b64) % 4)
+    nonce_bytes = base64.urlsafe_b64decode(
+        nonce_b64 + ("=" * pad if pad != 4 else "")
+    )
+    assert nonce_bytes[32:64] == hashlib.sha256(
+        bytes.fromhex(chain.chain_root)
+    ).digest()
+
+    approved = ApprovedHashes(
+        policy_bundle_hash=ctx.policy_bundle.bundle.bundle_hash,
+        tool_catalog_hash=ctx.catalog.catalog_hash,
+    )
+    result = verify_trace_claim(
+        claim, approved, trusted_public_key_hex=ctx.signing_key.public_key_hex
+    )
+    assert "audit_chain_binding" in result.verified_fields, result.details
+    assert result.failure_reason != VerificationError.CHAIN_ROOT_NOT_BOUND
+
+
+def test_close_session_falls_back_to_startup_report_when_tee_fails() -> None:
+    """If the per-session TEE call fails, close_session() falls back to the shared
+    startup report (no chain-root commitment) and the chain still anchors locally.
+    """
+    ctx = _make_ctx()
+    ctx.tee_provider.get_attestation_report.side_effect = RuntimeError("TEE down")
+
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    assert chain.session_report is None
+    assert chain.tee_anchor == chain.chain_root
+
+    claim = mgr.close_session(state.session_id, state, chain)
+    # Falls back to the startup (software-only) report.
+    assert claim["trace"]["runtime"]["platform"] == "software-only"

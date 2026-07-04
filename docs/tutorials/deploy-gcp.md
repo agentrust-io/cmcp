@@ -197,7 +197,7 @@ Expected startup log on a real TDX VM:
 cMCP Runtime starting: TEE: tdx, listen: 0.0.0.0:8443
 ```
 
-The TEE field reads `tdx`. If it reads `software-only`, the TDX device was not found — confirm the instance type and that `/dev/tdx_guest` exists.
+The TEE field reads `tdx`. If it reads `software-only`, the TDX device was not found: confirm the instance type and that `/dev/tdx_guest` exists.
 
 ---
 
@@ -273,7 +273,7 @@ gcloud compute firewall-rules delete allow-cmcp --quiet
 
 ## Next steps
 
-- [Azure deployment](./deploy-azure.md) — AMD SEV-SNP and TDX on Azure DCasv5 / DCedsv5
-- [TEE attestation](./tee-attestation.md) — detailed explanation of what each provider proves
-- [Verify a TRACE claim](./verifying-a-trace-claim.md) — full verification protocol
-- [Multi-tenant deployment](./multi-tenant-config.md) — one gateway instance per tenant
+- [Azure deployment](./deploy-azure.md): AMD SEV-SNP and TDX on Azure DCasv5 / DCedsv5
+- [TEE attestation](./tee-attestation.md): detailed explanation of what each provider proves
+- [Verify a TRACE claim](./verifying-a-trace-claim.md): full verification protocol
+- [Multi-tenant deployment](./multi-tenant-config.md): one gateway instance per tenant

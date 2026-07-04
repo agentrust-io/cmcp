@@ -40,7 +40,7 @@ az vm list-skus --location eastus --size dc --output table
 ### SEV-SNP (DCasv5)
 
 ```bash
-# Set your target region — verify DCasv5 is available first:
+# Set your target region: verify DCasv5 is available first:
 # az vm list-skus --location <region> --size Standard_DC2as_v5 --output table
 LOCATION=eastus
 
@@ -206,7 +206,7 @@ Expected startup log on a real SEV-SNP VM:
 cMCP Runtime starting: TEE: sev-snp, listen: 0.0.0.0:8443
 ```
 
-The TEE field reads `sev-snp` (not `software-only`). If it reads `software-only`, the VM does not have an accessible SEV-SNP device — confirm the VM SKU and that `/dev/sev-guest` exists.
+The TEE field reads `sev-snp` (not `software-only`). If it reads `software-only`, the VM does not have an accessible SEV-SNP device: confirm the VM SKU and that `/dev/sev-guest` exists.
 
 ---
 
@@ -280,7 +280,7 @@ az group delete --name cmcp-rg --yes --no-wait
 
 ## Next steps
 
-- [GCP deployment](./deploy-gcp.md) — Intel TDX on GCP C3 Confidential VMs
-- [TEE attestation](./tee-attestation.md) — detailed explanation of what each provider proves
-- [Verify a TRACE claim](./verifying-a-trace-claim.md) — full verification protocol
-- [Multi-tenant deployment](./multi-tenant-config.md) — one gateway instance per tenant
+- [GCP deployment](./deploy-gcp.md): Intel TDX on GCP C3 Confidential VMs
+- [TEE attestation](./tee-attestation.md): detailed explanation of what each provider proves
+- [Verify a TRACE claim](./verifying-a-trace-claim.md): full verification protocol
+- [Multi-tenant deployment](./multi-tenant-config.md): one gateway instance per tenant

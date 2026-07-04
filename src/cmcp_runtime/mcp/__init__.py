@@ -1,1 +1,1 @@
-"""Mcp package — implemented in subsequent issues."""
+"""Mcp package: implemented in subsequent issues."""

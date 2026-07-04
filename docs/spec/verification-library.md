@@ -1,7 +1,7 @@
 ﻿# cmcp-verify: Verification Library Interface Spec
 
 !!! warning "Draft"
-    Status: Draft v0.1 · Stability: Unstable — expect breaking changes before v1.0
+    Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
 This document is the interface specification for the `cmcp-verify` Python library. Implementation is separate from this spec. All type stubs below define the public interface that the implementation must satisfy.
 
@@ -148,11 +148,11 @@ If any external evidence check fails, the audit bundle result is `verified=False
 5. Confirm TD_REPORT.MRTD || RTMR0 || RTMR1 || RTMR2 || RTMR3 == attestation_report.measurement (concatenated).
 6. If all checks pass: TEE identity is verified for TDX.
 
-### Opaque Managed Verification
+### OPAQUE Managed Verification
 
-1. Call the Opaque attestation verification endpoint (provided at deployment time) with the attestation_report.raw_evidence as the request body.
+1. Call the OPAQUE attestation verification endpoint (provided at deployment time) with the attestation_report.raw_evidence as the request body.
 2. The endpoint returns: {verified: true|false, measurement_matched: true|false, error?: string}.
-3. If verified and measurement_matched: TEE identity is verified for Opaque Managed.
+3. If verified and measurement_matched: TEE identity is verified for OPAQUE Managed.
 
 ## What "partially_verified" means
 
@@ -177,7 +177,7 @@ VerificationError enum:
 
 ## Phase 1 support matrix
 
-Phase 1 must support TPM and SEV-SNP at minimum. TDX is high priority for the first release. Opaque is handled by the managed runtime and does not require a separate implementation path.
+Phase 1 must support TPM and SEV-SNP at minimum. TDX is high priority for the first release. OPAQUE is handled by the managed runtime and does not require a separate implementation path.
 
 `SOFTWARE_ONLY` is a valid enum value for local development and CI environments. A claim with `provider: software-only` must always return `VerificationStatus.PARTIALLY_VERIFIED` with `failure_reason` set, never `VERIFIED`.
 

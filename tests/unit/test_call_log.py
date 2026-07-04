@@ -124,5 +124,5 @@ def test_suspicious_reset_mid_sequence():
     assert log.suspicious_sequence(threshold=3) is True
     log.record(_rec("y"))       # breaks run
     log.record(_rec("x"))
-    # now x has run of 1 — still overall suspicious because earlier 4-run is in history
+    # now x has run of 1: still overall suspicious because earlier 4-run is in history
     assert log.suspicious_sequence(threshold=3) is True

@@ -109,7 +109,7 @@ def test_record_call_empty_response_sensitivity_tags_by_default():
 
 
 # ---------------------------------------------------------------------------
-# get_call_graph_summary — compliance_domains_touched
+# get_call_graph_summary: compliance_domains_touched
 # ---------------------------------------------------------------------------
 
 
@@ -145,7 +145,7 @@ def test_summary_domains_deduplicated():
 
 
 # ---------------------------------------------------------------------------
-# get_call_graph_summary — cross_boundary_events
+# get_call_graph_summary: cross_boundary_events
 # ---------------------------------------------------------------------------
 
 

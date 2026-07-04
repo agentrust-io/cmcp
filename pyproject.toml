@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cmcp-runtime"
-version = "0.2.1"
-description = "Hardware-attested MCP runtime — TEE-enforced policy and TRACE Claim generation"
+version = "0.3.0"
+description = "Hardware-attested MCP runtime, TEE-enforced policy and TRACE Claim generation"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "AgentTrust Contributors", email = "oss@agentrust.io" },
+    { name = "AgenTrust Contributors", email = "oss@agentrust.io" },
 ]
 keywords = ["mcp", "tee", "attestation", "security", "ai-agents", "cedar"]
 classifiers = [
@@ -62,6 +62,7 @@ Documentation = "https://github.com/agentrust-io/cmcp/tree/main/docs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cmcp_runtime", "src/cmcp_verify"]
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

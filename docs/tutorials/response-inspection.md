@@ -21,12 +21,12 @@ pip install cmcp-runtime
 
 Response inspection runs after the upstream tool server returns a response, before the response is delivered to the agent. Cedar policy evaluation runs before the call; inspection runs after. The two stages are complementary: Cedar controls what calls are allowed, inspection controls what responses reach the agent.
 
-The pipeline has four stages that run in sequence. All stages run even if an earlier stage would deny — this produces a complete audit record rather than stopping at first failure:
+The pipeline has four stages that run in sequence. All stages run even if an earlier stage would deny: this produces a complete audit record rather than stopping at first failure:
 
-1. **Size check** — reject responses over `max_response_size_bytes` (default 2 MB)
-2. **Schema validation** — check response against the tool's `output_schema` in the catalog; strip or reject surplus fields
-3. **Sensitivity classification** — tag the response with sensitivity labels (`pii`, `hipaa_phi`, etc.) from catalog annotations and field-level schema tags
-4. **Injection detection** — scan response content for patterns that resemble injected instructions
+1. **Size check**: reject responses over `max_response_size_bytes` (default 2 MB)
+2. **Schema validation**: check response against the tool's `output_schema` in the catalog; strip or reject surplus fields
+3. **Sensitivity classification**: tag the response with sensitivity labels (`pii`, `hipaa_phi`, etc.) from catalog annotations and field-level schema tags
+4. **Injection detection**: scan response content for patterns that resemble injected instructions
 
 A response denied at any stage is not delivered to the agent. Session sensitivity state is updated regardless of whether the response was denied.
 
@@ -53,7 +53,7 @@ These patterns are matched against the full response body as a UTF-8 string.
 
 The patterns `xml-context-tag` and `persona-hijack` carry documented false-positive risk. A CRM tool that returns contact roles ("Account Executive") can match `persona-hijack`. A data API that returns XML with `<context>` elements will match `xml-context-tag`.
 
-The pattern list is compiled into the binary from `patterns_v1.json`. There is no runtime config key to disable individual patterns or add custom patterns in the current release — customization requires rebuilding with a modified patterns file.
+The pattern list is compiled into the binary from `patterns_v1.json`. There is no runtime config key to disable individual patterns or add custom patterns in the current release: customization requires rebuilding with a modified patterns file.
 
 ---
 
@@ -63,7 +63,7 @@ When an injection pattern matches a response:
 
 1. The response is denied. It is not delivered to the agent.
 2. The audit entry records `response_inspection_result: "injection_detected"` and `injection_pattern_matched: "<pattern_name>"`.
-3. A 50-character window centered on the match location is logged for investigation. The full response payload is not logged — it may contain sensitive data. The full response hash is available as `response_payload_hash` in the audit entry.
+3. A 50-character window centered on the match location is logged for investigation. The full response payload is not logged: it may contain sensitive data. The full response hash is available as `response_payload_hash` in the audit entry.
 4. Session sensitivity state is updated even for the denied response.
 5. The gateway returns a structured error to the agent.
 
@@ -135,4 +135,4 @@ if result.failures:
 
 The response inspection pipeline runs four stages after every tool call returns. Injection detection in Stage 4 matches the full response body against the patterns in `patterns_v1.json`. When a pattern fires, the response is blocked and the audit chain records the pattern name and a location window. Monitor for injection events by filtering exported audit bundles on `response_inspection_result: "deny"`.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — Cedar `advice` blocks in policy rules instruct the inspection pipeline to redact named fields from the response. [Verify a TRACE claim](./verifying-a-trace-claim.md) — the audit chain that inspection writes to is verified as part of TRACE claim verification.
+Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): Cedar `advice` blocks in policy rules instruct the inspection pipeline to redact named fields from the response. [Verify a TRACE claim](./verifying-a-trace-claim.md): the audit chain that inspection writes to is verified as part of TRACE claim verification.

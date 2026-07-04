@@ -42,3 +42,34 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+
+  governance-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # upload release assets
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install package and AGT
+        run: python -m pip install --upgrade pip && pip install -e "." "agent-governance-toolkit>=4.1" "agent-governance-toolkit-core>=4.1"
+
+      - name: Generate evidence file
+        run: python scripts/gen_agt_evidence.py
+
+      - name: AGT governance verify (strict)
+        run: agt verify --evidence agt-evidence.json
+
+      - name: Save attestation JSON
+        run: agt --json verify --evidence agt-evidence.json > agt-attestation.json
+
+      - name: Attach evidence to release
+        if: github.event_name == 'release'
+        run: gh release upload ${{ github.ref_name }} agt-evidence.json agt-attestation.json
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

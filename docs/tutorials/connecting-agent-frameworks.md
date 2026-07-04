@@ -1,6 +1,6 @@
 # Connecting Agent Frameworks
 
-Wire a real agent — LangChain, LlamaIndex, or a plain HTTP client — to the cMCP gateway so every tool call passes through policy enforcement.
+Wire a real agent: LangChain, LlamaIndex, or a plain HTTP client: to the cMCP gateway so every tool call passes through policy enforcement.
 
 ## What you'll learn
 
@@ -62,7 +62,7 @@ curl -s -X POST http://localhost:8443/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-The response lists only tools in the attested catalog — any tool not in `catalog.json` cannot be called regardless of what the agent requests.
+The response lists only tools in the attested catalog: any tool not in `catalog.json` cannot be called regardless of what the agent requests.
 
 ---
 
@@ -296,7 +296,7 @@ When a call is denied by policy, the gateway returns HTTP 403:
 }
 ```
 
-`error_code` is either `POLICY_DENY` (a Cedar forbid rule matched) or `TOOL_NOT_IN_CATALOG` (the tool name is not in the approved catalog). The `advice` field, when present, carries annotations from the policy rule — these come from the hash-pinned policy bundle, not from caller input, so they are safe to log and act on.
+`error_code` is either `POLICY_DENY` (a Cedar forbid rule matched) or `TOOL_NOT_IN_CATALOG` (the tool name is not in the approved catalog). The `advice` field, when present, carries annotations from the policy rule: these come from the hash-pinned policy bundle, not from caller input, so they are safe to log and act on.
 
 ---
 
@@ -310,4 +310,4 @@ When a call is denied by policy, the gateway returns HTTP 403:
 
 Every tool call that passes through the gateway produces an `audit_entry_hash`. After the session ends, retrieve the full audit bundle at `GET /audit/export?session_id=<id>` and verify it with `GET /sessions/<id>/trace-claim`.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — writing the policies that govern these calls. [Tool catalog authoring](./tool-catalog-authoring.md) — what goes in `catalog.json` and how definition hashes are computed.
+Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): writing the policies that govern these calls. [Tool catalog authoring](./tool-catalog-authoring.md): what goes in `catalog.json` and how definition hashes are computed.

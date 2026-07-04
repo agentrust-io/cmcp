@@ -4,13 +4,13 @@
 
 | Name | GitHub | Affiliation | Role |
 |------|--------|-------------|------|
-| Imran Siddique | @imransiddique | Opaque Systems | Project Lead |
+| Imran Siddique | @imransiddique | OPAQUE Systems | Project Lead |
 
 ## Roles
 
-**Reviewer** — triages issues, reviews pull requests, and approves changes within their area of expertise.
+**Reviewer**: triages issues, reviews pull requests, and approves changes within their area of expertise.
 
-**Maintainer** — holds merge rights, participates in roadmap decisions, and is responsible for the health of the project.
+**Maintainer**: holds merge rights, participates in roadmap decisions, and is responsible for the health of the project.
 
 ## Becoming a Reviewer
 

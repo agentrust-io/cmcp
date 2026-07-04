@@ -1,0 +1,26 @@
+# Default-deny governance policy descriptor for the cMCP gateway.
+# This YAML document is consumed by `agt verify --evidence` to establish that
+# cMCP enforces deny-by-default semantics at the MCP tool-call boundary.
+deny_by_default: true
+default_action: deny
+
+name: cmcp-gateway-governance
+version: "1.0"
+description: >
+  cMCP enforces default-deny Cedar policy on all MCP tool calls at the gateway
+  boundary inside a TEE. The Cedar policy bundle is measured into hardware at
+  startup, any tool call not matching an explicit permit rule is denied without
+  any code path the operator can override at runtime.
+
+enforcement_model: cedar
+enforcement_point: tee-gateway
+hardware_roots:
+  - amd-sev-snp
+  - intel-tdx
+  - tpm2
+
+owasp_coverage:
+  ASI-01: PromptInjectionDetector, blocks injected instructions in tool responses
+  ASI-02: catalog + Cedar permit rules, enforces approved tool list
+  ASI-03: Cedar scope boundary, agent cannot call tools outside explicit permit
+  ASI-06: hash-chained audit inside TEE, tamper-evident call log per session

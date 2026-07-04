@@ -1,5 +1,5 @@
 """
-Reference MCP server for soak testing — exposes echo, get_data, and delay tools.
+Reference MCP server for soak testing: exposes echo, get_data, and delay tools.
 
 Runs as a standalone Starlette/uvicorn process or in-process via TestClient.
 """

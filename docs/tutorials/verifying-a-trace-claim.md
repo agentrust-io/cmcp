@@ -37,7 +37,7 @@ The approved hashes are the SHA-256 values printed by the gateway at startup:
 [cmcp] catalog loaded: 3 tools, sha256:def456...
 ```
 
-In production, these values come from your deployment pipeline — not from the operator. The point of verification is to confirm the runtime loaded what your organization approved, without trusting the operator's assertion. Store the hashes in your CI artifact registry or secrets manager at bundle-build time and retrieve them at verification time.
+In production, these values come from your deployment pipeline: not from the operator. The point of verification is to confirm the runtime loaded what your organization approved, without trusting the operator's assertion. Store the hashes in your CI artifact registry or secrets manager at bundle-build time and retrieve them at verification time.
 
 ---
 
@@ -114,7 +114,7 @@ Attestation fresh:True
 Details:          {'hardware_attestation': 'software-only mode - not hardware-backed'}
 ```
 
-`hardware_attestation` is in `unverified_fields` but no `failure_reason` is set for it in isolation — the status rolls up to `partially_verified` because other fields were verified. On a real TEE host, `hardware_attestation` moves to `verified_fields` and status becomes `verified`.
+`hardware_attestation` is in `unverified_fields` but no `failure_reason` is set for it in isolation: the status rolls up to `partially_verified` because other fields were verified. On a real TEE host, `hardware_attestation` moves to `verified_fields` and status becomes `verified`.
 
 `unverified` (with no verified fields at all) means the claim is either malformed, signature-invalid, or the hashes do not match. Treat this as a hard rejection.
 
@@ -151,7 +151,7 @@ def verify_session_claim(claim_path: str) -> None:
         if not result.is_attestation_fresh:
             print(f"CLAIM STALE: age={result.attestation_age_seconds}s", file=sys.stderr)
             sys.exit(1)
-        print(f"WARNING: partially verified — {result.unverified_fields}")
+        print(f"WARNING: partially verified: {result.unverified_fields}")
 
     print(f"Claim verified. Tools called: {claim['gateway']['call_summary']['tools_invoked']}")
 ```
@@ -162,4 +162,4 @@ def verify_session_claim(claim_path: str) -> None:
 
 You called `verify_trace_claim` with `ApprovedHashes` sourced from your deployment pipeline (not from the operator), read `VerificationResult` fields to distinguish full verification from partial (dev-mode) verification, and integrated the check at pipeline entry. A claim that returns `unverified` must be rejected before any downstream processing uses the session output.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md) — the policy bundle hash you verify here is the hash of the Cedar bundle loaded at runtime. [TEE attestation](./tee-attestation.md) — switching from software-only to a real TEE makes `hardware_attestation` move from `unverified_fields` to `verified_fields`.
+Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): the policy bundle hash you verify here is the hash of the Cedar bundle loaded at runtime. [TEE attestation](./tee-attestation.md): switching from software-only to a real TEE makes `hardware_attestation` move from `unverified_fields` to `verified_fields`.

@@ -1,6 +1,6 @@
 # cMCP Roadmap
 
-## v0.1 — Initial Release (June 2026)
+## v0.1: Initial Release (June 2026)
 
 Scope: Minimal viable trust layer for MCP servers, sufficient for early adopters to evaluate the attestation and policy model.
 
@@ -9,7 +9,7 @@ Scope: Minimal viable trust layer for MCP servers, sufficient for early adopters
 - TRACE Claim generation from attestation evidence
 - Standalone verifier CLI for offline claim inspection
 
-## v0.2 — Released (June 2026)
+## v0.2: Released (June 2026)
 
 Provider-specific attestation verification:
 - TPM2 quote verification
@@ -27,7 +27,7 @@ Observability:
 Transparency:
 - Transparency log integration for TRACE Claim anchoring (write and lookup)
 
-## v1.0 — Stable Targets
+## v1.0: Stable Targets
 
 - Stable `GatewayClaim` schema with documented versioning guarantees
 - Full RATS/EAT conformance (RFC 9334, draft-ietf-rats-eat)

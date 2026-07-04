@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import struct
 from datetime import UTC, datetime
 
@@ -147,43 +146,38 @@ def test_raw_evidence_empty_fails_gracefully() -> None:
 
 
 def test_qualifying_data_verified_when_correct() -> None:
-    pub_key_hex = "aa" * 32
-    session = "test-session-123"
-    expected_qd = hashlib.sha256(bytes.fromhex(pub_key_hex) + session.encode()).digest()
+    """qualifying_data matching the expected key thumbprint verifies."""
+    expected_qd = b"\x5a" * 32  # stands in for JWK_thumbprint(tee_public_key)
     blob = _make_tpm2b_attest(qualifying_data=expected_qd)
 
     result = verify_tpm_measurement(
         measurement=VALID_MEASUREMENT,
         raw_evidence=blob,
-        tee_public_key_hex=pub_key_hex,
-        session_id=session,
+        expected_qualifying_data=expected_qd,
     )
     assert "qualifying_data" in result.verified_fields
     assert "qualifying_data" not in result.unverified_fields
 
 
 def test_qualifying_data_mismatch_is_unverified() -> None:
-    pub_key_hex = "aa" * 32
-    session = "test-session-123"
+    """A quote committing a different value than the expected thumbprint is rejected."""
     blob = _make_tpm2b_attest(qualifying_data=b"\xff" * 32)
 
     result = verify_tpm_measurement(
         measurement=VALID_MEASUREMENT,
         raw_evidence=blob,
-        tee_public_key_hex=pub_key_hex,
-        session_id=session,
+        expected_qualifying_data=b"\x5a" * 32,
     )
     assert "qualifying_data" in result.unverified_fields
     assert "qualifying_data" not in result.verified_fields
 
 
-def test_no_keys_qualifying_data_unverified() -> None:
+def test_no_expected_qualifying_data_unverified() -> None:
     blob = _make_tpm2b_attest()
     result = verify_tpm_measurement(
         measurement=VALID_MEASUREMENT,
         raw_evidence=blob,
-        tee_public_key_hex=None,
-        session_id=None,
+        expected_qualifying_data=None,
     )
     assert "qualifying_data" in result.unverified_fields
 
@@ -195,6 +189,7 @@ def _make_tpm2_claim(
     measurement: str = VALID_MEASUREMENT,
     firmware_version: str = "2.0-production",
     raw_evidence_b64: str | None = None,
+    key: SigningKey | None = None,
 ) -> dict:
     """Build a signed claim with tpm2 platform.
 
@@ -202,7 +197,7 @@ def _make_tpm2_claim(
     after signing, since AttestationReportInfo does not carry those fields and
     verify_trace_claim reads them from the raw dict.
     """
-    key = SigningKey()
+    key = key or SigningKey()
     chain = AuditChain("tpm-session")
 
     # Use a valid sha256 measurement for claim generation so Pydantic accepts it
@@ -323,3 +318,30 @@ def test_tpm2_with_valid_raw_evidence_parses() -> None:
     result = verify_trace_claim(claim_dict, _approved())
     # pcr_format should be verified since magic is correct
     assert "pcr_format" in result.verified_fields
+
+
+def test_tpm2_qualifying_data_verifies_with_key_thumbprint() -> None:
+    """End to end: a quote committing the key's JWK thumbprint verifies through the claim path.
+
+    Regression test for the verifier bug where qualifying_data was checked against
+    SHA-256(pubkey||session_id) instead of the implemented JWK thumbprint (§3.3).
+    """
+    from cmcp_runtime.tee.base import jwk_thumbprint
+
+    key = SigningKey()
+    blob = _make_tpm2b_attest(qualifying_data=jwk_thumbprint(key.public_key_bytes))
+    claim_dict = _make_tpm2_claim(raw_evidence_b64=base64.b64encode(blob).decode(), key=key)
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "qualifying_data" in result.verified_fields
+    assert "qualifying_data" not in result.unverified_fields
+
+
+def test_tpm2_qualifying_data_rejected_on_key_substitution() -> None:
+    """A quote bound to a different key fails the qualifying_data check."""
+    from cmcp_runtime.tee.base import jwk_thumbprint
+
+    other_key = SigningKey()
+    blob = _make_tpm2b_attest(qualifying_data=jwk_thumbprint(other_key.public_key_bytes))
+    claim_dict = _make_tpm2_claim(raw_evidence_b64=base64.b64encode(blob).decode(), key=SigningKey())
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "qualifying_data" in result.unverified_fields

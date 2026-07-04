@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "authored_at": "2026-06-01T00:00:00Z",
+  "author_identity": "security-team@example.com",
+  "commit_sha": "abc1234",
+  "approval_chain": [
+    {"approver": "security-lead@example.com", "approved_at": "2026-06-01T12:00:00Z"}
+  ]
+}

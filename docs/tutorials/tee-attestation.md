@@ -31,7 +31,7 @@ The `provider` field in `cmcp-config.yaml` controls which TEE the runtime uses. 
 | `tpm` | TPM 2.0 chip present and accessible. |
 | `sev-snp` | AMD SEV-SNP hardware. Requires `/dev/sev-guest` (device path is hardcoded; no env var override). |
 | `tdx` | Intel TDX hardware. |
-| `opaque` | Opaque Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var. |
+| `opaque` | OPAQUE Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var. |
 | `software-only` | No hardware. Requires `CMCP_DEV_MODE=1`. |
 
 `software-only` is rejected at startup unless `CMCP_DEV_MODE=1` is set. Do not set `CMCP_DEV_MODE=1` in production.
@@ -63,7 +63,7 @@ In `software-only` mode:
 On a real TEE host:
 
 - `trace.runtime.platform` reflects the hardware: `"amd-sev-snp"`, `"tpm2"`, `"intel-tdx"`, etc.
-- `trace.runtime.measurement` is the real hardware measurement — a non-zero hash specific to the loaded workload
+- `trace.runtime.measurement` is the real hardware measurement: a non-zero hash specific to the loaded workload
 - `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`
 
 The measurement value is deterministic for a given workload binary and startup config. If the workload binary changes (e.g., an update to `cmcp-runtime`) the measurement changes, and verifiers who pinned the previous measurement will see a mismatch.
@@ -153,4 +153,4 @@ Software-only mode leaves all four threat classes open. The audit chain and poli
 
 You configured cMCP for AMD SEV-SNP, confirmed the `trace.runtime.platform` and `trace.runtime.measurement` fields reflect real hardware values, and pinned the expected measurement in config. On a real TEE host, `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`, providing hardware-backed assurance that the workload was not tampered with.
 
-Related tutorials: [Verify a TRACE claim](./verifying-a-trace-claim.md) — hardware attestation is one of the verification steps that determines overall status. [Multi-tenant deployment](./multi-tenant-config.md) — each tenant's policy bundle hash is separate; the hardware measurement is shared across tenants on the same host.
+Related tutorials: [Verify a TRACE claim](./verifying-a-trace-claim.md): hardware attestation is one of the verification steps that determines overall status. [Multi-tenant deployment](./multi-tenant-config.md): each tenant's policy bundle hash is separate; the hardware measurement is shared across tenants on the same host.

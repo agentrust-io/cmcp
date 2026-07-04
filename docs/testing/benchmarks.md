@@ -1,10 +1,10 @@
-﻿# cMCP Runtime — Latency Targets and Benchmarks
+﻿# cMCP Runtime: Latency Targets and Benchmarks
 
 ## Latest results
 
 Benchmark results are committed to [`benchmarks/`](https://github.com/agentrust-io/cmcp/tree/main/benchmarks) by the nightly CI workflow after each run on TEE hardware. Each result file covers one provider and reports p50/p95/p99 latency in microseconds.
 
-The directory is currently empty — results will appear after the first scheduled CI run on production TEE hardware. TEE hardware benchmarks are run on Azure DCasv5 (SEV-SNP) and GCP C3 Confidential VM (TDX).
+The directory is currently empty: results will appear after the first scheduled CI run on production TEE hardware. TEE hardware benchmarks are run on Azure DCasv5 (SEV-SNP) and GCP C3 Confidential VM (TDX).
 
 ---
 
@@ -28,7 +28,7 @@ Attestation is a startup cost, not a per-call cost. It is not included in the pe
 | TPM             | < 500ms    | Hardware I/O bound; TPM attestation is slow        |
 | SEV-SNP         | < 100ms    | Azure DCasv5, AWS C6a Nitro                        |
 | TDX             | < 100ms    | Azure DCedsv5, GCP C3                              |
-| Opaque Managed  | < 50ms     | Opaque Managed Runtime, highest assurance          |
+| OPAQUE Managed  | < 50ms     | OPAQUE Managed Runtime, highest assurance          |
 
 ### Per-Call Runtime Overhead
 

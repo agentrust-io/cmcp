@@ -1,4 +1,4 @@
-"""Session sensitivity state machine — implements issue #84."""
+"""Session sensitivity state machine: implements issue #84."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import uuid4
 
-# Sensitivity level ordering — monotonically increasing only.
+# Sensitivity level ordering: monotonically increasing only.
 # hipaa_phi, mnpi, trade_secret are all at level 3 (equal highest).
 SENSITIVITY_ORDER: dict[str, int] = {
     "public": 0,
@@ -37,7 +37,7 @@ class SessionState:
     """
     Per-session sensitivity state machine.
 
-    State transitions are monotonically increasing — sensitivity can only rise,
+    State transitions are monotonically increasing: sensitivity can only rise,
     never fall automatically. A session reset (operator-only, issue #92) is the
     only way to lower sensitivity.
 
@@ -56,6 +56,7 @@ class SessionState:
     suspicious_sequences: int = 0
     attestation_stale: bool = False
     catalog_drift: bool = False
+    kill_switch_triggered: bool = False
     # AUTH-002: guards concurrent mutations from tool-call coroutines and session-reset requests
     mutation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False, compare=False)
 
@@ -64,7 +65,7 @@ class SessionState:
         call_id: str,
         sensitivity_tags: list[str],
         injection_detected: bool,
-        response_allowed: bool,  # noqa: ARG002 — logged for future use
+        response_allowed: bool,  # noqa: ARG002 (logged for future use)
     ) -> None:
         """
         Update session state from an inspection result.
@@ -109,7 +110,7 @@ class SessionState:
         """
         Rotate the session token when attestation upgrades (e.g. software-only → hardware TEE).
 
-        Unlike reset(), session sensitivity state is preserved — the ongoing session
+        Unlike reset(), session sensitivity state is preserved: the ongoing session
         continues at its current sensitivity level. Only the session_id is rotated so
         that any trust assertions cached against the old ID are invalidated.
 

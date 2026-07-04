@@ -116,7 +116,7 @@ def test_update_highest_tag_wins_per_update():
 # ── AUTH-002: asyncio.Lock guards concurrent mutations ────────────────────────
 
 def test_session_state_has_mutation_lock():
-    """AUTH-002 — SessionState must expose an asyncio.Lock for concurrent-mutation protection."""
+    """AUTH-002: SessionState must expose an asyncio.Lock for concurrent-mutation protection."""
     import asyncio
     state = SessionState(session_id="s-lock")
     assert isinstance(state.mutation_lock, asyncio.Lock)
@@ -124,7 +124,7 @@ def test_session_state_has_mutation_lock():
 
 @pytest.mark.asyncio
 async def test_concurrent_update_and_reset_do_not_corrupt_state():
-    """AUTH-002 — concurrent update_from_inspection and reset must not leave state inconsistent."""
+    """AUTH-002: concurrent update_from_inspection and reset must not leave state inconsistent."""
     state = SessionState(session_id="s-concurrent")
 
     async def _update():
