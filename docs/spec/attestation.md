@@ -19,8 +19,10 @@ The cMCP Runtime produces TRACE Claims: signed, hardware-attested proof artifact
 At runtime startup, the process probes for TEE providers in the following fixed order. The first provider whose conditions are satisfied is selected. Only one provider is active per runtime instance.
 
 ```
-probe_order = ["tpm", "sev-snp", "tdx", "opaque"]
+probe_order = ["tpm", "sev-snp", "tdx"]
 ```
+
+The `opaque` (OPAQUE managed-runtime) provider is a recognized but not-yet-implemented placeholder. It is intentionally excluded from `probe_order`, so it is never auto-selected. Selecting it explicitly (`attestation.provider: opaque`) raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than reporting itself as "not detected".
 
 The detection loop:
 
@@ -97,7 +99,12 @@ The full TD report and quote are stored in `attestation_report.raw_evidence` for
 
 #### OPAQUE (Highest Assurance)
 
-Detection conditions:
+> **Not yet implemented.** This subsection describes the intended design. The current
+> `OpaqueProvider` is a placeholder: it is excluded from auto-detect and raises
+> `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` when selected explicitly. The conditions below
+> are the planned detection behavior, not shipped behavior.
+
+Detection conditions (planned):
 - The environment variable `OPAQUE_RUNTIME_ENDPOINT` is set and non-empty.
 
 What goes in `attestation_report.measurement`:
