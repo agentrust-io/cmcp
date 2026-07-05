@@ -340,6 +340,33 @@ def test_hardware_backed_happy_path_is_verified(monkeypatch):
     assert result.status == VerificationStatus.VERIFIED
 
 
+def test_snp_report_without_verified_chain_stays_partial(monkeypatch):
+    """Issues #370/#372: an SNP report whose measurement/report_data check out but
+    whose VCEK chain is unverified must never be VERIFIED, only PARTIALLY_VERIFIED."""
+    import cmcp_verify.sev_snp as snp_mod
+    from cmcp_verify.sev_snp import SNPVerificationResult
+
+    def _snp_ok_but_chain_unverified(*args, **kwargs):
+        return SNPVerificationResult(
+            verified=True,
+            verified_fields=["measurement", "report_data"],
+            unverified_fields=["vcek_cert_chain"],
+        )
+
+    monkeypatch.setattr(
+        snp_mod, "verify_sev_snp_measurement", _snp_ok_but_chain_unverified
+    )
+
+    claim_dict, key = _make_signed_claim(provider="sev-snp")
+    result = verify_trace_claim(
+        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+    )
+    assert result.failure_reason is None, result.details
+    assert "hardware_attestation" in result.unverified_fields
+    assert "hardware_attestation" not in result.verified_fields
+    assert result.status == VerificationStatus.PARTIALLY_VERIFIED
+
+
 def test_real_failure_is_not_downgraded_to_partial():
     """A genuine failure keeps its failure status; the software-only rule never
     flips a real failure (here, a mismatched policy hash) to PARTIALLY_VERIFIED
