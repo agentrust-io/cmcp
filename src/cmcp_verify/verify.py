@@ -63,6 +63,12 @@ _KNOWN_PLATFORMS = {
     "software-only",
 }
 
+# Trusted AMD root certificate(s) (ARK) used to root the SEV-SNP VCEK chain.
+# MUST be populated from verifier configuration, never from the claim. Empty by
+# default => an SNP VCEK chain cannot be rooted, so such a claim fails closed to
+# PARTIALLY_VERIFIED rather than VERIFIED. See issue #384.
+_TRUSTED_AMD_ROOTS: list = []
+
 
 def _is_software_only(runtime: dict[str, Any]) -> bool:
     """True for dev-mode (non-attested) records.
@@ -793,19 +799,38 @@ def verify_trace_claim(
         unverified.extend(tpm_result.unverified_fields)
         details.update(tpm_result.details)
     elif platform == "amd-sev-snp":
-        from cmcp_verify.sev_snp import verify_sev_snp_measurement
+        from cmcp_verify.sev_snp import (
+            load_vcek_chain_from_evidence,
+            verify_sev_snp_measurement,
+        )
 
         raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
         report_data_hex = _runtime.get("report_data")
+        # The VCEK leaf chain may be supplied as evidence; trusted AMD roots come
+        # from verifier config (_TRUSTED_AMD_ROOTS), never from the claim.
+        vcek_chain = load_vcek_chain_from_evidence(_runtime.get("vcek_chain"))
         snp_result = verify_sev_snp_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
             report_data_hex=report_data_hex,
+            vcek_chain=vcek_chain,
+            trusted_roots=_TRUSTED_AMD_ROOTS,
         )
-        if snp_result.verified:
+        chain_ok = "vcek_cert_chain" not in snp_result.unverified_fields
+        if snp_result.verified and chain_ok:
             verified.append("hardware_attestation")
             verified.extend(snp_result.verified_fields)
+        elif snp_result.verified and not chain_ok:
+            # Report parsed and measurement/report_data matched, but the hardware
+            # root of trust (VCEK->ASK->ARK chain + report signature) was not
+            # established: never fully VERIFIED, only partial.
+            verified.extend(snp_result.verified_fields)
+            unverified.append("hardware_attestation")
+            details["hardware_attestation"] = (
+                "SNP report checked but VCEK chain/signature not verified "
+                "(configure trusted AMD roots and supply vcek_chain)"
+            )
         else:
             unverified.append("hardware_attestation")
             failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED

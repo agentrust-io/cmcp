@@ -137,7 +137,9 @@ def test_report_data_match_adds_verified_field():
     assert "report_data" in result.verified_fields
 
 
-def test_report_data_mismatch_not_fatal():
+def test_report_data_mismatch_is_fatal():
+    """A report_data mismatch must fail closed: report_data carries the
+    confirmation-key binding / freshness nonce (issue #384)."""
     raw_m = b"\x55" * 48
     report = make_snp_report(version=2, measurement_bytes=raw_m, report_data=b"\x22" * 64)
     measurement = "sha384:" + hashlib.sha384(raw_m).hexdigest()
@@ -145,9 +147,9 @@ def test_report_data_mismatch_not_fatal():
     result = verify_sev_snp_measurement(
         measurement, raw_evidence=report, report_data_hex=wrong_report_data.hex()
     )
-    assert result.verified is True
+    assert result.verified is False
+    assert result.failure_reason == "report_data_mismatch"
     assert "report_data" not in result.verified_fields
-    assert result.failure_reason is None
 
 
 def test_truncated_report_is_parse_error():
@@ -181,10 +183,113 @@ def test_vcek_cert_chain_always_unverified_with_matching_report():
     report = make_snp_report(version=2, measurement_bytes=raw_m)
     result = verify_sev_snp_measurement(measurement, raw_evidence=report)
     assert "vcek_cert_chain" in result.unverified_fields
-    assert result.details["vcek_chain"] == "requires_amd_kds_lookup"
+    assert "not provided" in result.details["vcek_chain"]
 
 
 def test_vcek_cert_chain_unverified_on_format_failure():
     bad = "sha256:" + "z" * 64
     result = verify_sev_snp_measurement(bad, raw_evidence=None)
     assert "vcek_cert_chain" in result.unverified_fields
+
+
+# -- VCEK -> ASK -> ARK chain + report signature (issue #384) -----------------
+
+import datetime as _dt  # noqa: E402
+
+from cryptography import x509  # noqa: E402
+from cryptography.hazmat.primitives import hashes as _hashes  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec as _ec  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.utils import (  # noqa: E402
+    decode_dss_signature,
+)
+from cryptography.x509.oid import NameOID  # noqa: E402
+
+_SIG_OFFSET = _SnpAttestationReport.signature.offset
+_SIG_ALGO_OFFSET = _SnpAttestationReport.sig_algo.offset
+
+
+def _mk_cert(subject_cn, subject_key, issuer_cn, issuer_key):
+    now = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
+    return (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject_cn)]))
+        .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer_cn)]))
+        .public_key(subject_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + _dt.timedelta(days=3650))
+        .sign(issuer_key, _hashes.SHA384())
+    )
+
+
+def _build_chain():
+    ark_key = _ec.generate_private_key(_ec.SECP384R1())
+    ask_key = _ec.generate_private_key(_ec.SECP384R1())
+    vcek_key = _ec.generate_private_key(_ec.SECP384R1())
+    ark = _mk_cert("ARK", ark_key, "ARK", ark_key)          # self-signed root
+    ask = _mk_cert("ASK", ask_key, "ARK", ark_key)          # issued by ARK
+    vcek = _mk_cert("VCEK", vcek_key, "ASK", ask_key)       # issued by ASK
+    return [vcek, ask, ark], ark, vcek_key
+
+
+def _make_signed_report(measurement_bytes, report_data, vcek_key):
+    buf = bytearray(make_snp_report(version=2, measurement_bytes=measurement_bytes,
+                                    report_data=report_data))
+    struct.pack_into("<I", buf, _SIG_ALGO_OFFSET, 1)  # ECDSA-P384-SHA384
+    signed_body = bytes(buf[:0x2A0])
+    der = vcek_key.sign(signed_body, _ec.ECDSA(_hashes.SHA384()))
+    r, s = decode_dss_signature(der)
+    buf[_SIG_OFFSET : _SIG_OFFSET + 48] = r.to_bytes(48, "little")
+    buf[_SIG_OFFSET + 72 : _SIG_OFFSET + 120] = s.to_bytes(48, "little")
+    return bytes(buf)
+
+
+def test_chain_and_signature_verify_success():
+    chain, ark, vcek_key = _build_chain()
+    raw_m = b"\x66" * 48
+    rd = b"\x21" * 64
+    report = _make_signed_report(raw_m, rd, vcek_key)
+    measurement = "sha384:" + hashlib.sha384(raw_m).hexdigest()
+    result = verify_sev_snp_measurement(
+        measurement, raw_evidence=report, report_data_hex=rd.hex(),
+        vcek_chain=chain, trusted_roots=[ark],
+    )
+    assert result.verified is True, result.details
+    assert "vcek_cert_chain" in result.verified_fields
+    assert "report_signature" in result.verified_fields
+    assert "vcek_cert_chain" not in result.unverified_fields
+
+
+def test_chain_untrusted_root_fails():
+    chain, _ark, vcek_key = _build_chain()
+    raw_m = b"\x66" * 48
+    rd = b"\x21" * 64
+    report = _make_signed_report(raw_m, rd, vcek_key)
+    measurement = "sha384:" + hashlib.sha384(raw_m).hexdigest()
+    # A different, untrusted root.
+    _other_chain, other_root, _ = _build_chain()
+    result = verify_sev_snp_measurement(
+        measurement, raw_evidence=report, report_data_hex=rd.hex(),
+        vcek_chain=chain, trusted_roots=[other_root],
+    )
+    assert result.verified is False
+    assert result.failure_reason == "vcek_chain_verification_failed"
+    assert "vcek_cert_chain" in result.unverified_fields
+
+
+def test_report_signature_tampered_fails():
+    chain, ark, vcek_key = _build_chain()
+    raw_m = b"\x66" * 48
+    rd = b"\x21" * 64
+    report = bytearray(_make_signed_report(raw_m, rd, vcek_key))
+    # Tamper with the measurement AFTER signing; recompute the claimed measurement
+    # so the measurement check passes and we reach signature verification.
+    tampered_m = b"\x99" * 48
+    report[_MEASUREMENT_OFFSET : _MEASUREMENT_OFFSET + 48] = tampered_m
+    measurement = "sha384:" + hashlib.sha384(tampered_m).hexdigest()
+    result = verify_sev_snp_measurement(
+        measurement, raw_evidence=bytes(report), report_data_hex=rd.hex(),
+        vcek_chain=chain, trusted_roots=[ark],
+    )
+    assert result.verified is False
+    assert result.failure_reason == "vcek_chain_verification_failed"
