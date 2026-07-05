@@ -549,6 +549,7 @@ def verify_trace_claim(
     agent_manifest: dict[str, Any] | None = None,
     trusted_agent_manifest_keys: dict[str, bytes] | None = None,
     trusted_ark_pem: bytes | None = None,
+    trusted_intel_root_pem: bytes | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -827,10 +828,18 @@ def verify_trace_claim(
         raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
         report_data_hex = _runtime.get("report_data")
+        # The DCAP quote (with its embedded PCK cert chain) travels with the claim
+        # (passport model); the Intel SGX/TDX root CA is pinned by the operator out
+        # of band. Both are needed for issue #370 quote-signature verification;
+        # absent either, quote verification stays unverified.
+        _quote_b64 = _runtime.get("raw_quote")
+        raw_quote = base64.b64decode(_quote_b64) if _quote_b64 else None
         tdx_result = verify_tdx_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
             report_data_hex=report_data_hex,
+            raw_quote=raw_quote,
+            trusted_intel_root_pem=trusted_intel_root_pem,
         )
         if tdx_result.verified:
             verified.append("hardware_attestation")
