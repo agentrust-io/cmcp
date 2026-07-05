@@ -1,268 +1,121 @@
-# cMCP: Confidential MCP Runtime
+# cMCP Spec
 
-### Enforce MCP tool policy where it cannot be tampered with
+cMCP Runtime is a hardware-attested MCP (Model Context Protocol) runtime. Every MCP tool call an agent makes passes through a TEE-isolated gateway that evaluates it against a Cedar policy bundle and produces a TRACE Claim: a signed, hardware-attested proof artifact a verifier can check without trusting the operator.
 
-**[Quick Start](#quick-start) · [Architecture](#how-it-works) · [Configuration](#configuration) · [CLI](#cli-reference) · [Changelog](https://cmcp.agentrust-io.com/CHANGELOG.md)**
+Phase 1 attests the agent-to-tool boundary on the consumer side (the runtime). Phase 2 attests it on the provider side (the server). Together they close the proof gap that software-only runtimes leave open: "prove that the policy you describe in documents is the policy that actually ran on your traffic."
 
-> **Developer Preview** - launching at Confidential Computing Summit, June 23 2026. May have breaking changes before v1.0.
-
-**cMCP (Confidential MCP Runtime) is the secure, confidential way to run MCP: an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment (TEE).** Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced where the process it governs cannot reach it. Each session produces a signed, hardware-attested TRACE Claim that a verifier checks without trusting the operator. If you are looking for a secure version of MCP, this is the AgenTrust runtime for it.
-
-> **TL;DR** - Point your agent at the cMCP Gateway. It evaluates every tool call against a Cedar policy inside a TEE, blocks or redacts what the policy denies, and emits a tamper-evident TRACE Claim as proof. Run `pip install cmcp-runtime` and start in software mode with no hardware required.
-
-Your agent calls Snowflake, Salesforce, a dozen APIs. What stops it from leaking a customer's data on one of those calls? If a regulator asks, could you prove it didn't?
+This repository contains the product specification. Implementation lives in a separate repo.
 
 ______________________________________________________________________
 
-## The problem
+## Start here
 
-An agent calls a tool. The policy engine says allow. The tool call goes through.
+**Understanding the problem space:** Read SPEC.md. It defines the four problems (P1 data leakage, P2 unsanctioned tools, P3 provable governance, P4 supply chain), the 13 threat shapes, and the coverage matrix showing what Phase 1 closes vs. what Phase 2 closes.
 
-None of that proves the policy engine itself was not compromised. Software-only MCP governance cannot guarantee:
+**Implementing the runtime (Phase 1):** Read in this order:
 
-- The Cedar policy on disk is the one that ran. A rogue admin can swap the bundle after approval; the hash check runs inside the same OS the admin controls.
-- The allow/deny decision was not flipped in memory. A supply chain CVE in the evaluator runs in the same address space as the attacker.
-- The audit log reflects what actually happened. Any party holding the software signing key can reconstruct a valid audit chain after the fact.
+1. SPEC.md : problem context and scope
+1. docs/spec/component-model.md : what you are building and where trust boundaries are
+1. docs/spec/transport.md : how the runtime intercepts MCP traffic
+1. docs/spec/attestation.md : how TEE attestation works and how to produce TRACE Claims
+1. docs/spec/cedar-policy.md : the policy engine, bundle format, and enforcement modes
+1. docs/spec/failure-modes.md : what happens when things go wrong
+1. schemas/ : machine-readable schemas to validate your outputs against
 
-The control plane that governs tool calls must run where it cannot be reached by the process it governs.
-
-Hardware-attested policy enforcement for MCP tool calls. Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine running inside a Trusted Execution Environment (TEE). The policy bundle hash is measured into the hardware attestation report before any code runs.
-
-Unlike tunnel-based connectivity solutions, the cMCP Runtime processes tool-call payloads inside the TEE. The connectivity provider sees ciphertext, not plaintext. The only thing that leaves the enclave is the signed TRACE claim.
-
-______________________________________________________________________
-
-## Quick Start
-
-```
-pip install cmcp-runtime
-```
-
-Create `cmcp-config.yaml`:
-
-```
-attestation:
-  provider: auto
-  enforcement_mode: advisory
-policy_bundle_path: ./policies/
-catalog_path: ./catalog.json
-```
-
-Start the gateway:
-
-```
-CMCP_DEV_MODE=1 cmcp start --config cmcp-config.yaml
-```
-
-Make a tool call:
-
-```
-curl -X POST http://localhost:8443/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"salesforce.contacts","arguments":{"query":"Acme Corp"},"_cmcp":{"session_id":"s1","workflow_id":"demo-agent"}}}'
-```
-
-See [docs/quickstart.md](https://cmcp.agentrust-io.com/docs/quickstart/index.md) for the full walkthrough: Cedar policy, tool catalog, first TRACE Claim, and verification (no hardware TEE required).
+**Contributing to the spec:** Issues in this repo track spec decisions, not implementation bugs. Each issue corresponds to a specific design question. When a spec file resolves an issue, the issue is closed with a reference to the relevant file. To propose a change, open an issue describing the problem with the current spec, then submit a PR.
 
 ______________________________________________________________________
 
-## How it works
+## Spec File Index
 
-1. The agent sends every tool call to the cMCP Gateway instead of directly to MCP servers.
-1. At startup the gateway measures the Cedar policy bundle hash into the hardware attestation report. No code runs before this measurement.
-1. Each incoming tool call is evaluated by the Cedar policy engine running inside the TEE. The result is allow, deny, or redact. The call and its decision are appended to the hardware-sealed audit chain.
-1. At the end of the session the gateway produces a TRACE Claim: a signed, hardware-attested artifact that records which tools ran, which policy decided each call, and the full audit chain. A verifier checks this without trusting the operator.
+| File                              | Covers                                                                        | Phase | Status     | Issues                  |
+| --------------------------------- | ----------------------------------------------------------------------------- | ----- | ---------- | ----------------------- |
+| docs/SPEC.md                      | Problem taxonomy, coverage matrix, Phase 1/2 scope                            | 1+2   | Draft v0.1 | -                       |
+| docs/spec/component-model.md      | All MCP components, trust levels, hardware vs. software boundaries            | 1+2   | Draft v0.1 | #43                     |
+| docs/spec/transport.md            | HTTP/SSE scope, stdio gap, SPIFFE-to-TEE binding spike                        | 1     | Draft v0.1 | #20, #21                |
+| docs/spec/attestation.md          | TEE provider detection, audit chain, key management, catalog pinning          | 1     | Draft v0.1 | #5, #6, #23, #33, #38   |
+| docs/spec/cedar-policy.md         | Policy bundle format, Cedar examples, enforcement modes, provenance           | 1     | Draft v0.1 | #4, #7, #26, #39, #41   |
+| docs/spec/tool-identity.md        | Server identity binding, catalog schema, collision detection                  | 1     | Draft v0.1 | #40                     |
+| docs/spec/failure-modes.md        | Runtime failure scenarios, decision table, log formats                        | 1     | Draft v0.1 | #22                     |
+| docs/spec/call-graph.md           | Tag-propagation model, observability limits, cross-boundary policy            | 1     | Draft v0.1 | #35                     |
+| docs/spec/session-policy.md       | Session sensitivity state machine, egress policy, session reset               | 1     | Draft v0.1 | #36                     |
+| docs/spec/response-inspection.md  | 4-stage response inspection pipeline, injection patterns                      | 1     | Draft v0.1 | #37                     |
+| docs/spec/error-codes.md          | Central error code registry for all runtime and verification errors           | 1+2   | Draft v0.1 | -                       |
+| docs/spec/threat-model.md         | Assets, adversaries, STRIDE analysis per component                            | 1     | Draft v0.1 | #18, #24                |
+| docs/spec/verification-library.md | cmcp-verify Python library interface and per-provider verification steps      | 1     | Draft v0.1 | #25                     |
+| docs/spec/mcp-spec-strategy.md    | MCP spec monitoring and attestation extension contribution window             | 1+2   | Draft v0.1 | #30                     |
+| docs/spec/proxy-security.md       | Phase 2 proxy parser fuzzing DoD                                              | 2     | Draft v0.1 | #34                     |
+| docs/spec/phase2-server.md        | Provider-side attestation, 5 unique properties, streaming proxy, multi-tenant | 2     | Draft v0.1 | #17, #28, #29, #32, #42 |
+| docs/testing/benchmarks.md        | Latency targets and benchmark methodology                                     | 1     | Draft v0.1 | #27                     |
+| docs/testing/soak-test.md         | 72-hour soak test plan                                                        | 1     | Draft v0.1 | #31                     |
+
+______________________________________________________________________
+
+## Schema Files
+
+Machine-readable schemas in `schemas/` let implementations validate their outputs before shipping.
+
+| File                              | What it validates                         | Use with                                   |
+| --------------------------------- | ----------------------------------------- | ------------------------------------------ |
+| schemas/trace-claim.schema.json   | TRACE Claim JSON (draft-07)               | jsonschema, ajv, any JSON Schema validator |
+| schemas/audit-entry.schema.json   | Single audit chain entry                  | jsonschema, ajv                            |
+| schemas/catalog-entry.schema.json | Tool catalog entry                        | jsonschema, ajv                            |
+| schemas/cedar-schema.cedarschema  | Cedar entity types and context attributes | cedar-policy CLI: `cedar validate`         |
+
+To validate a TRACE Claim:
 
 ```
-Agent -> cMCP Runtime -> Cedar Policy Engine (TEE) -> Tool
-                     |
-               GatewayClaim (TRACE Profile)
-               +-- trace.eat_profile
-               +-- trace.runtime.platform + measurement
-               +-- trace.policy.bundle_hash
-               +-- trace.cnf.jwk  (Ed25519 confirmation key)
-               +-- gateway.audit_chain (root/tip/length)
-               +-- signature (Ed25519 over canonical JSON)
+ajv validate -s schemas/trace-claim.schema.json -d your-trace-claim.json
+```
+
+To validate Cedar policies:
+
+```
+cedar validate --schema schemas/cedar-schema.cedarschema --policies policies/
 ```
 
 ______________________________________________________________________
 
-## Hardware providers
+## Conformance Tests
 
-| Provider                     | Platform                                        | Assurance | Notes                                                                                                      |
-| ---------------------------- | ----------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------- |
-| `tpm`                        | TPM 2.0 / vTPM (Azure, AWS, GCP Trusted Launch) | Medium    | Local TPM quote                                                                                            |
-| `sev-snp`                    | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro)       | High      | AMD KDS                                                                                                    |
-| `tdx`                        | Intel TDX (Azure DCedsv5, GCP C3)               | High      | Intel PCS                                                                                                  |
-| `gpu-cc` *(v0.2)*            | NVIDIA H100/H200/Blackwell (CC mode)            | High      | NVIDIA Remote Attestation Service (NRAS)                                                                   |
-| `opaque` *(explicit opt-in)* | OPAQUE Confidential Runtime                     | High      | Set `OPAQUE_ATTESTATION_URL`; not in auto-detect chain (stub: detect() returns False, not yet implemented) |
+`tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
 
-Provider auto-detects: `SEV-SNP -> TDX -> TPM -> software`. `opaque` is explicit opt-in via `OPAQUE_ATTESTATION_URL` and is never selected automatically.
+- Input conditions
+- Expected behavior (pass/fail, error code, field values)
+- The spec section it validates
 
-```
-from cmcp_gateway.config import TEEProvider
-
-# Auto-detect (default)
-# attestation.provider: auto  ->  sev-snp -> tdx -> tpm -> software
-
-# Explicit hardware selection
-# attestation.provider: sev-snp
-
-# OPAQUE Managed Runtime (explicit opt-in only)
-# OPAQUE_ATTESTATION_URL=https://... cmcp start --config cmcp-config.yaml
-```
-
-______________________________________________________________________
-
-## Enforcement modes
-
-| Mode        | Behavior                                             | Use case                        |
-| ----------- | ---------------------------------------------------- | ------------------------------- |
-| `enforcing` | Policy denies return HTTP 403; call is not forwarded | Production                      |
-| `advisory`  | Policy denies are logged; call proceeds              | First deployment, policy tuning |
-| `silent`    | Policy is evaluated but nothing is logged or blocked | Baselining                      |
-
-Default is `enforcing`. Set `enforcement_mode: advisory` in `cmcp-config.yaml` to use advisory mode.
-
-______________________________________________________________________
-
-## Configuration
-
-`cmcp-config.yaml` full reference:
-
-```
-attestation:
-  provider: auto                    # auto | tpm | sev-snp | tdx | opaque | software-only
-  enforcement_mode: enforcing       # enforcing | advisory | silent
-  validity_seconds: 86400           # attestation freshness window (default: 24 hours)
-  staleness_policy: fail_closed     # fail_closed | warn_only
-  expected_measurement: ~           # pin a specific PCR/measurement (optional)
-
-policy_bundle_path: policy/         # directory containing .cedar files and manifest.json
-catalog_path: catalog.json          # approved tool catalog
-
-listen_addr: "0.0.0.0:8443"
-max_response_size_bytes: 2097152    # 2 MB default
-policy_reload_interval_seconds: 0   # 0 = disabled; restart required to update policy
-```
-
-Environment variables:
-
-| Variable                 | Effect                                                      |
-| ------------------------ | ----------------------------------------------------------- |
-| `CMCP_DEV_MODE=1`        | Use software-only TEE provider; no hardware required        |
-| `CMCP_BEARER_TOKEN`      | Require this bearer token on all inbound requests           |
-| `OPAQUE_ATTESTATION_URL` | Enable OPAQUE Managed Runtime attestation (explicit opt-in) |
-
-______________________________________________________________________
-
-## CLI reference
-
-| Command                | Flags                                                                      | Description                                  |
-| ---------------------- | -------------------------------------------------------------------------- | -------------------------------------------- |
-| `cmcp start`           | `--config PATH` (required)                                                 | Start the gateway                            |
-| `cmcp validate-config` | `--config PATH` (required)                                                 | Validate `cmcp-config.yaml` without starting |
-| `cmcp validate-bundle` | `--bundle-path PATH` (required), `--expected-hash sha256:<hex>` (required) | Verify a Cedar bundle hash before deployment |
-
-______________________________________________________________________
-
-## TRACE Claims
-
-A `GatewayClaim` is the unit of proof handed to an auditor, regulator, or downstream verifier. It is produced per session (or per call, configurable) and signed with a key that never leaves the TEE.
-
-| Field                      | Description                                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------ |
-| `trace.eat_profile`        | EAT profile URI: `tag:agentrust.io,2026:trace-v0.1`                                        |
-| `trace.runtime`            | TEE platform and hardware measurement recorded at enclave boot                             |
-| `trace.policy.bundle_hash` | SHA-256 of the Cedar bundle loaded at startup; changing any policy file changes this value |
-| `trace.cnf.jwk`            | Ed25519 public key bound to the TEE signing key                                            |
-| `gateway.audit_chain`      | Hash-chained audit log root and tip; verifiable without replaying individual entries       |
-| `signature`                | Ed25519 over canonical JSON of the full claim body (RFC 8785)                              |
-
-Verification with the `cmcp_verify` library does not require trusting the operator. The verifier checks the signature against the TEE-bound key, the policy bundle hash against the approved value, and the audit chain for internal consistency.
-
-See [docs/spec/verification-library.md](https://cmcp.agentrust-io.com/docs/spec/verification-library/index.md) and the [TRACE specification](https://trace.agentrust-io.com) for the full verification protocol.
-
-______________________________________________________________________
-
-## Standards alignment
-
-| Standard                | Coverage                                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| OWASP Agentic AI Top 10 | MCP10 (data leakage via tool calls), MCP02 (unsanctioned tools), MCP08 (provable governance), MCP04 (supply chain) |
-| NIST SP 800-207         | Policy decision point inside TEE; no implicit trust in workload identity                                           |
-| EU AI Act Art. 12, 15   | Per-decision audit records (Art. 12); TEE-backed cybersecurity controls (Art. 15)                                  |
-| DORA Art. 9             | Attestation chain; audit log retention via `gateway.audit_chain`                                                   |
-| RATS/EAT RFC 9711       | `GatewayClaim` is an EAT; `eat_profile` field identifies the TRACE profile                                         |
-
-______________________________________________________________________
-
-## Security
-
-| Tool              | What it checks                                 |
-| ----------------- | ---------------------------------------------- |
-| ruff              | Style and import linting on every PR           |
-| bandit            | Python security linting on every PR            |
-| pip-audit         | Dependency vulnerability scan on every PR      |
-| mypy              | Static type checking on every PR               |
-| CodeQL            | Python SAST, security-extended queries, weekly |
-| OpenSSF Scorecard | Weekly scoring, SARIF upload                   |
-
-See [SECURITY.md](https://cmcp.agentrust-io.com/SECURITY.md) for vulnerability reporting and response SLAs. See [LIMITATIONS.md](https://cmcp.agentrust-io.com/LIMITATIONS/index.md) for explicit scope boundaries, including residual risks for APM payload capture, runtime config injection, and P4.1 supply chain (typosquat) that Phase 1 does not close.
-
-______________________________________________________________________
-
-## Documentation
-
-| Page                                                                                         | Description                                                            |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [docs/quickstart.md](https://cmcp.agentrust-io.com/docs/quickstart/index.md)                 | From zero to first TRACE Claim in under 30 minutes                     |
-| [docs/configuration.md](https://cmcp.agentrust-io.com/docs/configuration/index.md)           | Full config reference with all fields and defaults                     |
-| [docs/SPEC.md](https://cmcp.agentrust-io.com/docs/SPEC/index.md)                             | Product specification: problem taxonomy, architecture, coverage matrix |
-| [docs/spec/threat-model.md](https://cmcp.agentrust-io.com/docs/spec/threat-model/index.md)   | STRIDE analysis, adversary model, residual risks                       |
-| [docs/spec/cedar-policy.md](https://cmcp.agentrust-io.com/docs/spec/cedar-policy/index.md)   | Cedar policy language reference and schema                             |
-| [docs/testing/benchmarks.md](https://cmcp.agentrust-io.com/docs/testing/benchmarks/index.md) | Latency and throughput benchmarks per TEE provider                     |
-
-______________________________________________________________________
-
-## FAQ
-
-### What is cMCP?
-
-cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment. It intercepts each tool call, evaluates it against a Cedar policy bundle, enforces the decision (allow, deny, or redact), and records the call in a hardware-sealed audit chain.
-
-### How is cMCP different from software-only MCP governance?
-
-Software-only governance runs the policy engine in the same OS an operator or a supply-chain CVE can reach, so it cannot prove the policy that ran was the approved one or that the decision was not flipped in memory. cMCP runs the policy engine inside a TEE and measures the Cedar bundle hash into the hardware attestation report before any code runs, so the control plane cannot be reached by the process it governs.
-
-### Do I need special hardware to try it?
-
-No. Set `CMCP_DEV_MODE=1` to use the software-only TEE provider and run the full quickstart without a hardware TEE. Hardware providers (TPM, AMD SEV-SNP, Intel TDX, OPAQUE) are used in production.
-
-### What is a TRACE Claim?
-
-A TRACE Claim (a `GatewayClaim`) is a signed, hardware-attested artifact produced per session. It records which tools ran, which policy decided each call, the Cedar bundle hash, and the audit chain, and it is signed with an Ed25519 key that never leaves the TEE. A verifier checks it with the `cmcp_verify` library without trusting the operator.
-
-### Which TEE providers are supported?
-
-TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is SEV-SNP, then TDX, then TPM, then software.
-
-### What license is cMCP under?
-
-MIT.
+A conforming implementation passes all MUST-level tests. SHOULD-level tests indicate higher-quality conformance.
 
 ______________________________________________________________________
 
 ## Contributing
 
-[CONTRIBUTING.md](https://cmcp.agentrust-io.com/CONTRIBUTING/index.md) · [GOVERNANCE.md](https://cmcp.agentrust-io.com/GOVERNANCE/index.md) · [Discussions](https://github.com/agentrust-io/cmcp/discussions)
+**Spec versioning:** All files use `Status: Draft/Review/Accepted/Superseded` plus a version number (e.g. `v0.1`). Stability is `Unstable` until v1.0.
 
-Join the community on [Discord](https://discord.gg/grgzFEHgkj).
+**Process:**
 
-Using cMCP in production? Add your organization to [ADOPTERS.md](https://cmcp.agentrust-io.com/ADOPTERS.md).
+1. Open an issue describing the spec gap or design question
+1. Discuss in the issue : the issue body captures the decision context
+1. Submit a PR with the spec change, referencing the issue
+1. PR is merged when the spec change is accepted
+
+**Scope:** This repo is spec-only. Implementation bugs go in the implementation repo (link TBD). Spec issues are about design decisions, not code behavior.
 
 ______________________________________________________________________
 
-## License
+## Glossary
 
-MIT - see [LICENSE](https://cmcp.agentrust-io.com/LICENSE).
+| Term                | Definition                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| TRACE Claim         | The signed, hardware-attested proof artifact produced by the runtime per session                   |
+| TEE                 | Trusted Execution Environment (TPM, SEV-SNP, TDX, or OPAQUE Managed)                               |
+| SPIFFE SVID         | Short-lived cryptographic identity issued by SPIRE after TEE attestation succeeds                  |
+| Cedar               | The policy language used for tool call authorization                                               |
+| Audit chain         | The append-only hash-chained log of all runtime decisions, signed with a TEE-sealed key            |
+| Session sensitivity | The maximum sensitivity level seen in any tool response within the current session                 |
+| Tag-propagation     | The runtime's mechanism for tracking sensitivity across calls based on observable events           |
+| Catalog entry       | The runtime's approved record for one tool: name, server identity, approved definition             |
+| Attestation report  | The hardware-produced evidence that a specific binary ran in a specific TEE at a specific time     |
+| policy_bundle_hash  | SHA-256 of the canonical Cedar policy bundle, measured into the TEE at startup                     |
+| tool_catalog_hash   | SHA-256 of the canonical tool catalog, measured into the TEE at startup                            |
+| Call graph          | Per-session record of tool calls and temporal adjacency edges (approximation, not data provenance) |
