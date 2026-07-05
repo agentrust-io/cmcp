@@ -48,22 +48,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Assemble docs build directory
-        run: |
-          BUILD=.docs_build
-          mkdir -p $BUILD
-
-          if [ -d docs ]; then cp -r docs $BUILD/docs; fi
-
-          for fname in README.md CHANGELOG.md CONTRIBUTING.md GOVERNANCE.md ROADMAP.md LIMITATIONS.md CNAME robots.txt; do
-            if [ -f "$fname" ]; then cp "$fname" "$BUILD/$fname"; fi
-          done
-
-          echo "Build dir contains $(find $BUILD -type f | wc -l) files"
-
-      - name: Generate build config
-        run: |
-          sed 's|^docs_dir: \.$|docs_dir: .docs_build|' mkdocs.yml > .mkdocs_build.yml
-
       - name: Build and deploy to GitHub Pages
-        run: mkdocs gh-deploy --force --clean --config-file .mkdocs_build.yml
+        run: mkdocs gh-deploy --force --clean
