@@ -179,9 +179,13 @@ def test_vcek_cert_chain_always_unverified_with_matching_report():
     raw_m = b"\x33" * 48
     measurement = "sha384:" + hashlib.sha384(raw_m).hexdigest()
     report = make_snp_report(version=2, measurement_bytes=raw_m)
+    # With no cert chain / pinned ARK supplied, the chain stays unverified.
+    # (When a chain + trusted_ark_pem are supplied, verify_sev_snp_measurement now
+    # verifies the report signature and VCEK->ASK->ARK chain; see
+    # test_snp_signature_verify.py.)
     result = verify_sev_snp_measurement(measurement, raw_evidence=report)
     assert "vcek_cert_chain" in result.unverified_fields
-    assert result.details["vcek_chain"] == "requires_amd_kds_lookup"
+    assert result.details["vcek_chain"] == "cert chain and/or pinned ARK not supplied"
 
 
 def test_vcek_cert_chain_unverified_on_format_failure():
