@@ -142,9 +142,12 @@ def test_report_data_mismatch_fails() -> None:
 )
 def test_real_azure_tdx_quote() -> None:
     d = os.environ["CMCP_TDX_FIXTURE_DIR"]
-    quote = open(os.path.join(d, "tdx_quote.bin"), "rb").read()
-    root = open(os.path.join(d, "collateral", "intel_root_ca.pem"), "rb").read()
-    expected_rd = open(os.path.join(d, "report_data.hex")).read().strip()
+    with open(os.path.join(d, "tdx_quote.bin"), "rb") as f:
+        quote = f.read()
+    with open(os.path.join(d, "collateral", "intel_root_ca.pem"), "rb") as f:
+        root = f.read()
+    with open(os.path.join(d, "report_data.hex")) as f:
+        expected_rd = f.read().strip()
     r = verify_tdx_quote(quote, root, expected_rd)
     assert r.verified, r.failure_reason
     # confirms the report_data offset used by parse_td_quote is correct (issue #371)

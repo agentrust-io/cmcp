@@ -279,14 +279,21 @@ def parse_td_quote(quote: bytes) -> _ParsedQuote:
     if len(sig_data) < 64 + 64 + _QE_REPORT_LEN + 64 + 2:
         raise ValueError("signature data truncated")
     p = 0
-    quote_sig = sig_data[p:p + 64]; p += 64
-    att_pubkey_raw = sig_data[p:p + 64]; p += 64
-    qe_report = sig_data[p:p + _QE_REPORT_LEN]; p += _QE_REPORT_LEN
-    qe_report_sig = sig_data[p:p + 64]; p += 64
-    qe_auth_len = int.from_bytes(sig_data[p:p + 2], "little"); p += 2
-    qe_auth_data = sig_data[p:p + qe_auth_len]; p += qe_auth_len
+    quote_sig = sig_data[p:p + 64]
+    p += 64
+    att_pubkey_raw = sig_data[p:p + 64]
+    p += 64
+    qe_report = sig_data[p:p + _QE_REPORT_LEN]
+    p += _QE_REPORT_LEN
+    qe_report_sig = sig_data[p:p + 64]
+    p += 64
+    qe_auth_len = int.from_bytes(sig_data[p:p + 2], "little")
+    p += 2
+    qe_auth_data = sig_data[p:p + qe_auth_len]
+    p += qe_auth_len
     p += 2  # cert_data_type
-    cert_size = int.from_bytes(sig_data[p:p + 4], "little"); p += 4
+    cert_size = int.from_bytes(sig_data[p:p + 4], "little")
+    p += 4
     pck_chain_pem = sig_data[p:p + cert_size]
     return _ParsedQuote(signed_region, report_data, quote_sig, att_pubkey_raw,
                         qe_report, qe_report_sig, qe_auth_data, pck_chain_pem)
@@ -345,7 +352,9 @@ def verify_tdx_quote(
         return fail(f"intel_root_parse_error: {exc}")
     if not _cert_signed_by(root, root):
         return fail("intel_root_not_self_signed")
-    for child, issuer in zip([*certs, root], [*certs[1:], root]):
+    # Verify each cert is signed by the next in the chain, with the last PCK cert
+    # signed by the pinned root (which was checked self-signed above).
+    for child, issuer in zip(certs, [*certs[1:], root], strict=True):
         if not _cert_signed_by(child, issuer):
             return fail("pck_chain_invalid")
 
