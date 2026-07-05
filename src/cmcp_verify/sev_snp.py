@@ -20,10 +20,7 @@ from dataclasses import dataclass, field
 
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
-from cryptography.hazmat.primitives.asymmetric.utils import (
-    decode_dss_signature,
-    encode_dss_signature,
-)
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.hashes import SHA384
 
 # The SNP report is signed over its leading bytes; the 512-byte signature field
