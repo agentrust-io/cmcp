@@ -137,7 +137,9 @@ def test_report_data_match_adds_verified_field():
     assert "report_data" in result.verified_fields
 
 
-def test_report_data_mismatch_not_fatal():
+def test_report_data_mismatch_is_fatal():
+    """A report_data mismatch must fail closed (issue #371): report_data carries
+    the confirmation-key binding / freshness nonce."""
     raw_m = b"\x55" * 48
     report = make_snp_report(version=2, measurement_bytes=raw_m, report_data=b"\x22" * 64)
     measurement = "sha384:" + hashlib.sha384(raw_m).hexdigest()
@@ -145,9 +147,9 @@ def test_report_data_mismatch_not_fatal():
     result = verify_sev_snp_measurement(
         measurement, raw_evidence=report, report_data_hex=wrong_report_data.hex()
     )
-    assert result.verified is True
+    assert result.verified is False
+    assert result.failure_reason == "report_data_mismatch"
     assert "report_data" not in result.verified_fields
-    assert result.failure_reason is None
 
 
 def test_truncated_report_is_parse_error():

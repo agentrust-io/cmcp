@@ -220,7 +220,7 @@ def verify_sev_snp_measurement(
     - measurement string format (sha384:<96 hex chars>)
     - SNP report version (must be 2 or 3)
     - measurement field in report matches the claimed measurement
-    - report_data (nonce) if provided (mismatch is not fatal)
+    - report_data binding: if provided, a mismatch is FATAL (issue #371)
 
     When cert_chain_pem (a VCEK/ASK/ARK PEM bundle) and trusted_ark_pem (the
     operator-pinned AMD ARK) are both provided, the SNP report signature and the
@@ -283,7 +283,10 @@ def verify_sev_snp_measurement(
                 result.details["vcek_chain"] = "requires_amd_kds_lookup"
                 return result
 
-            # Check report_data (nonce) using named struct access -- mismatch is not fatal
+            # Check report_data binding -- a mismatch is FATAL (issue #371).
+            # report_data carries the confirmation-key binding / freshness nonce;
+            # silently ignoring a mismatch would accept an SNP report for a
+            # different enclave whose measurement happens to match.
             if report_data_hex is not None:
                 extracted_rd = bytes(report.report_data)
                 expected_rd = bytes.fromhex(report_data_hex[:128])
@@ -292,6 +295,11 @@ def verify_sev_snp_measurement(
                     expected_rd = expected_rd + b"\x00" * (64 - len(expected_rd))
                 if extracted_rd == expected_rd:
                     result.verified_fields.append("report_data")
+                else:
+                    result.verified = False
+                    result.failure_reason = "report_data_mismatch"
+                    result.unverified_fields.append("vcek_cert_chain")
+                    return result
 
         except Exception:  # noqa: BLE001
             result.verified = False

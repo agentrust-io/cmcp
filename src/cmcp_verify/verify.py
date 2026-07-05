@@ -812,9 +812,20 @@ def verify_trace_claim(
             cert_chain_pem=cert_chain_pem,
             trusted_ark_pem=trusted_ark_pem,
         )
-        if snp_result.verified:
+        # The VCEK chain is the SNP hardware root of trust. Even when the report
+        # parses and the measurement matches, a claim whose chain is unverified
+        # must never be reported as fully VERIFIED (issues #370/#372) -- it stays
+        # PARTIALLY_VERIFIED.
+        chain_ok = "vcek_cert_chain" not in snp_result.unverified_fields
+        if snp_result.verified and chain_ok:
             verified.append("hardware_attestation")
             verified.extend(snp_result.verified_fields)
+        elif snp_result.verified and not chain_ok:
+            verified.extend(snp_result.verified_fields)
+            unverified.append("hardware_attestation")
+            details["hardware_attestation"] = (
+                "SNP report checked but VCEK chain/signature not verified"
+            )
         else:
             unverified.append("hardware_attestation")
             failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
