@@ -14,6 +14,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write       # keyless cosign signing + provenance attestation (OIDC)
+      attestations: write   # actions/attest-build-provenance
 
     steps:
       - name: Checkout
@@ -31,6 +33,7 @@ jobs:
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -38,3 +41,18 @@ jobs:
           tags: |
             ghcr.io/agentrust-io/cmcp-gateway:${{ steps.tag.outputs.tag }}
             ghcr.io/agentrust-io/cmcp-gateway:latest
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the image (keyless, by digest)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes ghcr.io/agentrust-io/cmcp-gateway@${DIGEST}
+
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/agentrust-io/cmcp-gateway
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
