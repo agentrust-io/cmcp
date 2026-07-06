@@ -91,6 +91,7 @@ plugins:
           - spec/attestation.md
           - spec/threat-model.md
           - spec/verification-library.md
+          - spec/embodied-action-evidence.md
         Tutorials:
           - tutorials/connecting-agent-frameworks.md
           - tutorials/cedar-policy-walkthrough.md
@@ -177,6 +178,7 @@ nav:
       - Call Graph: spec/call-graph.md
       - Proxy Security: spec/proxy-security.md
       - Verification Library: spec/verification-library.md
+      - Embodied Action Evidence: spec/embodied-action-evidence.md
       - Error Codes: spec/error-codes.md
       - Failure Modes: spec/failure-modes.md
       - Threat Model: spec/threat-model.md
