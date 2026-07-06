@@ -548,6 +548,8 @@ def verify_trace_claim(
     trusted_public_key_hex: str | None = None,
     agent_manifest: dict[str, Any] | None = None,
     trusted_agent_manifest_keys: dict[str, bytes] | None = None,
+    trusted_ark_pem: bytes | None = None,
+    trusted_intel_root_pem: bytes | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -798,14 +800,32 @@ def verify_trace_claim(
         raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
         report_data_hex = _runtime.get("report_data")
+        # VCEK/ASK/ARK chain travels with the claim (passport model); the ARK is
+        # pinned by the operator out of band. Both are needed for issue #370
+        # report-signature + chain verification; absent either, it stays unverified.
+        _chain_b64 = _runtime.get("cert_chain")
+        cert_chain_pem = base64.b64decode(_chain_b64) if _chain_b64 else None
         snp_result = verify_sev_snp_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
             report_data_hex=report_data_hex,
+            cert_chain_pem=cert_chain_pem,
+            trusted_ark_pem=trusted_ark_pem,
         )
-        if snp_result.verified:
+        # The VCEK chain is the SNP hardware root of trust. Even when the report
+        # parses and the measurement matches, a claim whose chain is unverified
+        # must never be reported as fully VERIFIED (issues #370/#372) -- it stays
+        # PARTIALLY_VERIFIED.
+        chain_ok = "vcek_cert_chain" not in snp_result.unverified_fields
+        if snp_result.verified and chain_ok:
             verified.append("hardware_attestation")
             verified.extend(snp_result.verified_fields)
+        elif snp_result.verified and not chain_ok:
+            verified.extend(snp_result.verified_fields)
+            unverified.append("hardware_attestation")
+            details["hardware_attestation"] = (
+                "SNP report checked but VCEK chain/signature not verified"
+            )
         else:
             unverified.append("hardware_attestation")
             failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
@@ -819,10 +839,18 @@ def verify_trace_claim(
         raw_ev = _runtime.get("raw_evidence")
         raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
         report_data_hex = _runtime.get("report_data")
+        # The DCAP quote (with its embedded PCK cert chain) travels with the claim
+        # (passport model); the Intel SGX/TDX root CA is pinned by the operator out
+        # of band. Both are needed for issue #370 quote-signature verification;
+        # absent either, quote verification stays unverified.
+        _quote_b64 = _runtime.get("raw_quote")
+        raw_quote = base64.b64decode(_quote_b64) if _quote_b64 else None
         tdx_result = verify_tdx_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
             report_data_hex=report_data_hex,
+            raw_quote=raw_quote,
+            trusted_intel_root_pem=trusted_intel_root_pem,
         )
         if tdx_result.verified:
             verified.append("hardware_attestation")

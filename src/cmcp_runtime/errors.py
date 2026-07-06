@@ -19,6 +19,19 @@ class AttestationProviderUnsupported(CMCPError):
     http_status = 500
 
 
+class AttestationProviderNotImplemented(AttestationProviderUnsupported):
+    """A recognized provider was explicitly selected but is not yet implemented.
+
+    Distinct from AttestationProviderUnsupported (hardware simply not present):
+    this signals a known placeholder provider (e.g. ``opaque``) so an operator who
+    selects it gets an explicit error instead of a silent fall-through. Subclasses
+    AttestationProviderUnsupported so the gateway still refuses to start.
+    """
+
+    code = "ATTESTATION_PROVIDER_NOT_IMPLEMENTED"
+    http_status = 501
+
+
 class PolicyHashMismatch(CMCPError):
     code = "POLICY_HASH_MISMATCH"
     http_status = 500

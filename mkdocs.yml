@@ -3,8 +3,8 @@ site_description: "The secure, confidential way to run MCP: hardware-attested, T
 site_url: https://cmcp.agentrust-io.com
 repo_url: https://github.com/agentrust-io/cmcp
 repo_name: agentrust-io/cmcp
-edit_uri: edit/main/
-docs_dir: .
+edit_uri: edit/main/docs/
+docs_dir: docs
 exclude_docs: |
   .github/
   node_modules/
@@ -28,8 +28,8 @@ exclude_docs: |
 theme:
   name: material
   custom_dir: overrides
-  logo: docs/assets/icon.svg
-  favicon: docs/assets/icon.svg
+  logo: assets/icon.svg
+  favicon: assets/icon.svg
   palette:
     - scheme: slate
       primary: custom
@@ -82,21 +82,21 @@ plugins:
       sections:
         Getting started:
           - README.md
-          - docs/quickstart.md
-          - docs/concepts.md
-          - docs/configuration.md
+          - quickstart.md
+          - concepts.md
+          - configuration.md
         Specification:
-          - docs/SPEC.md
-          - docs/spec/cedar-policy.md
-          - docs/spec/attestation.md
-          - docs/spec/threat-model.md
-          - docs/spec/verification-library.md
-          - docs/spec/embodied-action-evidence.md
+          - SPEC.md
+          - spec/cedar-policy.md
+          - spec/attestation.md
+          - spec/threat-model.md
+          - spec/verification-library.md
+          - spec/embodied-action-evidence.md
         Tutorials:
-          - docs/tutorials/connecting-agent-frameworks.md
-          - docs/tutorials/cedar-policy-walkthrough.md
-          - docs/tutorials/verifying-a-trace-claim.md
-          - docs/tutorials/tee-attestation.md
+          - tutorials/connecting-agent-frameworks.md
+          - tutorials/cedar-policy-walkthrough.md
+          - tutorials/verifying-a-trace-claim.md
+          - tutorials/tee-attestation.md
   - minify:
       minify_html: true
   - mkdocstrings:
@@ -146,49 +146,50 @@ extra:
   generator: false
 
 extra_css:
-  - docs/stylesheets/extra.css
+  - stylesheets/extra.css
 
 nav:
   - Home: README.md
-  - Quick Start: docs/quickstart.md
-  - How It Works: docs/concepts.md
-  - Configuration: docs/configuration.md
+  - Quick Start: quickstart.md
+  - How It Works: concepts.md
+  - Configuration: configuration.md
   - Tutorials:
-      - Connecting agent frameworks: docs/tutorials/connecting-agent-frameworks.md
-      - Tool catalog authoring: docs/tutorials/tool-catalog-authoring.md
-      - Cedar policy walkthrough: docs/tutorials/cedar-policy-walkthrough.md
-      - Advisory mode debugging: docs/tutorials/advisory-mode-debugging.md
-      - TLS pinning: docs/tutorials/tls-pinning.md
-      - Verify a TRACE claim: docs/tutorials/verifying-a-trace-claim.md
-      - TEE attestation: docs/tutorials/tee-attestation.md
-      - Deploy on Azure: docs/tutorials/deploy-azure.md
-      - Deploy on GCP: docs/tutorials/deploy-gcp.md
-      - Multi-tenant deployment: docs/tutorials/multi-tenant-config.md
-      - Response inspection: docs/tutorials/response-inspection.md
-      - AGT SRE kill switch: docs/tutorials/kill-switch.md
+      - Connecting agent frameworks: tutorials/connecting-agent-frameworks.md
+      - Tool catalog authoring: tutorials/tool-catalog-authoring.md
+      - Cedar policy walkthrough: tutorials/cedar-policy-walkthrough.md
+      - Advisory mode debugging: tutorials/advisory-mode-debugging.md
+      - TLS pinning: tutorials/tls-pinning.md
+      - Verify a TRACE claim: tutorials/verifying-a-trace-claim.md
+      - TEE attestation: tutorials/tee-attestation.md
+      - Deploy on Azure: tutorials/deploy-azure.md
+      - Deploy on GCP: tutorials/deploy-gcp.md
+      - Multi-tenant deployment: tutorials/multi-tenant-config.md
+      - Response inspection: tutorials/response-inspection.md
+      - AGT SRE kill switch: tutorials/kill-switch.md
   - Specification:
-      - Overview: docs/SPEC.md
-      - Component Model: docs/spec/component-model.md
-      - Cedar Policy: docs/spec/cedar-policy.md
-      - Attestation: docs/spec/attestation.md
-      - Transport: docs/spec/transport.md
-      - Session Policy: docs/spec/session-policy.md
-      - Tool Identity: docs/spec/tool-identity.md
-      - Response Inspection: docs/spec/response-inspection.md
-      - Call Graph: docs/spec/call-graph.md
-      - Proxy Security: docs/spec/proxy-security.md
-      - Verification Library: docs/spec/verification-library.md
-      - Embodied Action Evidence: docs/spec/embodied-action-evidence.md
-      - Error Codes: docs/spec/error-codes.md
-      - Failure Modes: docs/spec/failure-modes.md
-      - Threat Model: docs/spec/threat-model.md
-      - Phase 2 Server: docs/spec/phase2-server.md
+      - Overview: SPEC.md
+      - Component Model: spec/component-model.md
+      - Cedar Policy: spec/cedar-policy.md
+      - Attestation: spec/attestation.md
+      - Transport: spec/transport.md
+      - Session Policy: spec/session-policy.md
+      - Tool Identity: spec/tool-identity.md
+      - Response Inspection: spec/response-inspection.md
+      - Call Graph: spec/call-graph.md
+      - Proxy Security: spec/proxy-security.md
+      - Verification Library: spec/verification-library.md
+      - Embodied Action Evidence: spec/embodied-action-evidence.md
+      - Error Codes: spec/error-codes.md
+      - Failure Modes: spec/failure-modes.md
+      - Threat Model: spec/threat-model.md
+      - Phase 2 Server: spec/phase2-server.md
   - Testing:
-      - Benchmarks: docs/testing/benchmarks.md
-      - Soak Test: docs/testing/soak-test.md
+      - Benchmarks: testing/benchmarks.md
+      - Soak Test: testing/soak-test.md
   - Project:
-      - Limitations: LIMITATIONS.md
-      - Changelog: CHANGELOG.md
-      - Contributing: CONTRIBUTING.md
-      - Governance: GOVERNANCE.md
-      - Roadmap: ROADMAP.md
+      - Limitations: https://github.com/agentrust-io/cmcp/blob/main/LIMITATIONS.md
+      - Changelog: https://github.com/agentrust-io/cmcp/blob/main/CHANGELOG.md
+      - Contributing: https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md
+      - Governance: https://github.com/agentrust-io/cmcp/blob/main/GOVERNANCE.md
+      - Roadmap: https://github.com/agentrust-io/cmcp/blob/main/ROADMAP.md
+

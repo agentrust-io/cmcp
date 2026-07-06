@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cmcp_runtime.errors import AttestationProviderNotImplemented
 from cmcp_runtime.tee.opaque import OpaqueProvider
 from cmcp_runtime.tee.sev_snp import SEVSNPProvider, _SnpAttestationReport
 from cmcp_runtime.tee.tdx import TDXProvider, _TdxReportReq
@@ -18,12 +19,13 @@ from cmcp_runtime.tee.tpm import TPMProvider
 
 # ── OpaqueProvider ─────────────────────────────────────────────────────────────
 
-def test_opaque_detect_returns_false() -> None:
-    assert OpaqueProvider().detect() is False
+def test_opaque_detect_raises_not_implemented() -> None:
+    with pytest.raises(AttestationProviderNotImplemented):
+        OpaqueProvider().detect()
 
 
-def test_opaque_get_report_raises() -> None:
-    with pytest.raises(NotImplementedError):
+def test_opaque_get_report_raises_not_implemented() -> None:
+    with pytest.raises(AttestationProviderNotImplemented):
         OpaqueProvider().get_attestation_report(b"\x00" * 32)
 
 
