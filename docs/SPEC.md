@@ -128,7 +128,7 @@ Network position: sits between agent host and MCP servers. The gateway is the on
 ## 5. TRACE Claim Schema
 
 The unit of proof handed to an auditor, produced per session (or per call, configurable).
-The normative schema is [`schemas/trace-claim.schema.json`](../schemas/trace-claim.schema.json),
+The normative schema is `schemas/trace-claim.schema.json`,
 and a full worked example is in [the quickstart](quickstart.md). The envelope is a
 `GatewayClaim`: canonical TRACE v0.1 fields live under `trace`, cMCP-specific addenda live
 under `gateway`, and `signature` is detached (computed over every other field).

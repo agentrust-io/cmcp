@@ -82,6 +82,22 @@ class AuditBundleResult:
     entry_count: int
     failures: list[str]
 
+class ReceiptState(Enum):
+    ABSENT = "absent"
+    UNTRUSTED = "untrusted"
+    INVALID = "invalid"
+    STALE = "stale"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+@dataclass
+class EmbodiedActionEvidenceResult:
+    verified: bool
+    receipt_state: ReceiptState
+    verified_fields: list[str]
+    failures: list[str]
+    warnings: list[str]
+
 def verify_audit_bundle(
     bundle_json: dict,
     claim_json: Optional[dict] = None,
@@ -92,6 +108,24 @@ def verify_audit_bundle(
     Verify an exported audit bundle. When external_evidence_keys is supplied,
     each key is issuer_key_id -> raw 32-byte Ed25519 public key. issuer_key_id
     is lowercase hex SHA-256(public_key_bytes).
+    """
+    ...
+
+def verify_embodied_action_evidence(
+    audit_entry: dict,
+    detached_payload: dict,
+    claim_json: Optional[dict] = None,
+    *,
+    require_receipt: bool = False,
+) -> EmbodiedActionEvidenceResult:
+    """
+    Verify the detached payload for the embodied action evidence profile.
+
+    This helper assumes verify_audit_bundle() has already been used when
+    issuer signature verification is required. It checks profile-specific
+    binding between the audit entry, external_execution_evidence.evidence_hash,
+    action_ref, governance decision, optional TRACE Claim context, ROS 2 action
+    binding fields when present, and receipt classification.
     """
     ...
 ```
@@ -115,6 +149,13 @@ The verifier computes the receipt signing input as canonical JSON over the recei
 5. The Ed25519 signature verifies over the canonical receipt signing input.
 
 If any external evidence check fails, the audit bundle result is `verified=False` and the failure string includes `EXTERNAL_EVIDENCE_VERIFICATION_FAILED`.
+
+`verify_embodied_action_evidence()` is the profile-aware follow-up for detached
+payloads that use `cmcp.embodied_action_evidence.v0`. It does not replace
+`verify_audit_bundle()`: callers still use the base bundle verifier for audit-chain
+integrity and external issuer signatures, then use the profile helper to classify
+payload-level evidence such as missing receipts, mismatched ROS 2 goal IDs, and
+unsupported physical-completion claims.
 
 ## Per-Provider Verification Steps
 

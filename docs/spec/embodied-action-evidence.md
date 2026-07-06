@@ -223,10 +223,36 @@ Profile-aware verifiers SHOULD classify receipt state as:
 | `accepted` | Receipt verifies and issuer verdict is accepted. |
 | `rejected` | Receipt verifies and issuer verdict is rejected. |
 
-The v0.1 cMCP verifier already validates the evidence envelope signature and
-`linked_call_id` when `external_evidence_keys` are provided. A future
-profile-aware verifier can add detached-payload checks without changing the base
-audit bundle verification contract.
+The base cMCP audit bundle verifier validates the evidence envelope signature and
+`linked_call_id` when `external_evidence_keys` are provided. The profile-aware
+`verify_embodied_action_evidence()` helper adds detached-payload checks without
+changing the base audit bundle verification contract.
+
+## ROS 2 Action Fixture
+
+The repository includes a ROS 2 Kilted `rclpy` fixture at
+`tests/fixtures/embodied-action-evidence/ros2-fibonacci-aborted.json`.
+
+The fixture is based on a tutorial-scope `example_interfaces/action/Fibonacci`
+action run where:
+
+- the client-side and server-side serialized goal preimage hashes matched;
+- the ROS action goal UUID matched on both sides;
+- the server reported a terminal `aborted` outcome;
+- the receipt uses `physical_completion_claim: none`.
+
+The fixture exercises profile fields for:
+
+- `ros2.goal_uuid`;
+- `ros2.goal_preimage_hash`;
+- `ros2.goal_preimage_method`;
+- ROS distribution and RMW implementation;
+- terminal controller state;
+- receipt issuer role and issuer independence.
+
+It is intentionally a binding fixture, not a live ROS dependency in CI. It does
+not prove physical completion, controller honesty, functional safety,
+cross-RMW stability, or arbitrary ROS interface compatibility.
 
 ## Verifier Flow
 
