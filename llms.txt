@@ -18,6 +18,7 @@ cMCP (Confidential MCP Runtime) is the secure, confidential way to run MCP: an o
 - [Attestation](https://cmcp.agentrust-io.com/spec/attestation/index.md)
 - [Threat Model](https://cmcp.agentrust-io.com/spec/threat-model/index.md)
 - [Verification Library](https://cmcp.agentrust-io.com/spec/verification-library/index.md)
+- [Embodied Action Evidence](https://cmcp.agentrust-io.com/spec/embodied-action-evidence/index.md)
 
 ## Tutorials
 
