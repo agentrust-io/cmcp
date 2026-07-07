@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import sys
 from typing import TYPE_CHECKING
 
 import click
@@ -63,6 +66,13 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
 @click.version_option(__version__, prog_name="cmcp")
 def main() -> None:
     """cMCP Runtime: hardware-attested MCP runtime."""
+    # Ensure the CLI status glyphs print regardless of the ambient console
+    # encoding (e.g. Windows cp1252, which cannot encode the check/cross
+    # marks and would otherwise raise UnicodeEncodeError). See #396.
+    for _stream in (sys.stdout, sys.stderr):
+        if isinstance(_stream, io.TextIOWrapper):
+            with contextlib.suppress(ValueError):
+                _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 @main.command()
