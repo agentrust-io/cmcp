@@ -1,0 +1,80 @@
+{
+  "audit_entry": {
+    "call_id": "01986d7c-6b2f-7c68-9ff8-3e2f9d0db337",
+    "external_execution_evidence": {
+      "evidence_hash": "sha256:a0ab9c8b8c9faef21ae5f691aad71fb649d85d69ebd7b0dacc03947f32218da7",
+      "evidence_type": "controller-execution-receipt/v1",
+      "issuer": "spiffe://factory.example/controller/ros2/abort-fibonacci",
+      "issuer_key_id": "10ba682c8ad13513971e8b56881aab8bd702bb807796eca81932c735a94d6e6d",
+      "linked_call_id": "01986d7c-6b2f-7c68-9ff8-3e2f9d0db337",
+      "signature": "HO6mi1LpnQeGWIGM9IyBa9n-lpT1td2lK_w82a5s8ibQqzdGa-PeA2op7sNm3cghgf9DIqS1uXq-w5CA6pgBDA"
+    },
+    "policy_decision": "allow"
+  },
+  "description": "ROS 2 Kilted rclpy Fibonacci action fixture with matching goal hash and terminal aborted outcome.",
+  "detached_payload": {
+    "action_ref": "sha256:c2e97956de8b86d825780fcecea601a6eea02616855e6f0aa19d10bd351fe034",
+    "action_scope": "/abort_fibonacci_process",
+    "action_timestamp": "2026-07-06T15:22:13Z",
+    "action_type": "ros2.action.example_interfaces/Fibonacci",
+    "agent_id": "spiffe://factory.example/agent/ros2-fibonacci/dev",
+    "call_id": "01986d7c-6b2f-7c68-9ff8-3e2f9d0db337",
+    "controller_target": "spiffe://factory.example/controller/ros2/abort-fibonacci",
+    "governance_decision": "allow",
+    "handoff_timestamp": "2026-07-06T15:22:13Z",
+    "limitations": [
+      "receipt binds a ROS 2 action goal and terminal server outcome",
+      "receipt does not prove physical completion or safety certification",
+      "fixture is based on a tutorial-scope rclpy action run"
+    ],
+    "policy_bundle_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "profile": "cmcp.embodied_action_evidence.v0",
+    "receipt": {
+      "action_ref": "sha256:c2e97956de8b86d825780fcecea601a6eea02616855e6f0aa19d10bd351fe034",
+      "call_id": "01986d7c-6b2f-7c68-9ff8-3e2f9d0db337",
+      "completeness_claim": "not_proven",
+      "goal_preimage_hash": "sha256:8076970a7e5a672e4a22ec446626938d4ef8d16569a0050ccf38496578a92d24",
+      "goal_uuid": "379f9292500049849c17762d15bee166",
+      "issuer_independence": "separate_process_test_fixture",
+      "outcome_issuer_role": "action_server_process",
+      "physical_completion_claim": "none",
+      "receipt_hash": "sha256:86ff346a51a7412404d1df29f7a0a7de29f272c70ceb4c2becea765b3151b002",
+      "receipt_type": "controller-execution-receipt/v1",
+      "terminal_state": "aborted",
+      "verdict": "rejected"
+    },
+    "request_receipt_hash": "sha256:c1f8a101c3d210a943b615e3cedf603eef230f7cb7fdb1a2706d3a3a763a9a01",
+    "ros2": {
+      "action_name": "/abort_fibonacci_process",
+      "action_type": "example_interfaces/action/Fibonacci",
+      "distribution": "kilted",
+      "goal_preimage_hash": "sha256:8076970a7e5a672e4a22ec446626938d4ef8d16569a0050ccf38496578a92d24",
+      "goal_preimage_len": 8,
+      "goal_preimage_method": "rclpy type-support serialization of example_interfaces/action/Fibonacci.Goal",
+      "goal_uuid": "379f9292500049849c17762d15bee166",
+      "rmw_implementation": "rmw_fastrtps_cpp-default"
+    },
+    "tool_catalog_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "expected": {
+    "physical_completion_claim": "none",
+    "receipt_state": "rejected"
+  },
+  "name": "ros2-fibonacci-aborted",
+  "trace_claim": {
+    "gateway": {
+      "agent_identity": {
+        "agent_id": "spiffe://factory.example/agent/ros2-fibonacci/dev"
+      },
+      "catalog": {
+        "hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "trace": {
+      "policy": {
+        "bundle_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  "trusted_issuer_public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+}
