@@ -127,7 +127,7 @@ ______________________________________________________________________
 
 ## 5. TRACE Claim Schema
 
-The unit of proof handed to an auditor, produced per session (or per call, configurable). The normative schema is [`schemas/trace-claim.schema.json`](https://cmcp.agentrust-io.com/schemas/trace-claim.schema.json), and a full worked example is in [the quickstart](https://cmcp.agentrust-io.com/quickstart/index.md). The envelope is a `GatewayClaim`: canonical TRACE v0.1 fields live under `trace`, cMCP-specific addenda live under `gateway`, and `signature` is detached (computed over every other field).
+The unit of proof handed to an auditor, produced per session (or per call, configurable). The normative schema is `schemas/trace-claim.schema.json`, and a full worked example is in [the quickstart](https://cmcp.agentrust-io.com/quickstart/index.md). The envelope is a `GatewayClaim`: canonical TRACE v0.1 fields live under `trace`, cMCP-specific addenda live under `gateway`, and `signature` is detached (computed over every other field).
 
 ```
 {

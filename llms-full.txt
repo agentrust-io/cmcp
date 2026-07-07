@@ -960,7 +960,7 @@ ______________________________________________________________________
 
 ## 5. TRACE Claim Schema
 
-The unit of proof handed to an auditor, produced per session (or per call, configurable). The normative schema is [`schemas/trace-claim.schema.json`](https://cmcp.agentrust-io.com/schemas/trace-claim.schema.json), and a full worked example is in [the quickstart](https://cmcp.agentrust-io.com/quickstart/index.md). The envelope is a `GatewayClaim`: canonical TRACE v0.1 fields live under `trace`, cMCP-specific addenda live under `gateway`, and `signature` is detached (computed over every other field).
+The unit of proof handed to an auditor, produced per session (or per call, configurable). The normative schema is `schemas/trace-claim.schema.json`, and a full worked example is in [the quickstart](https://cmcp.agentrust-io.com/quickstart/index.md). The envelope is a `GatewayClaim`: canonical TRACE v0.1 fields live under `trace`, cMCP-specific addenda live under `gateway`, and `signature` is detached (computed over every other field).
 
 ```
 {
@@ -2241,6 +2241,22 @@ class AuditBundleResult:
     entry_count: int
     failures: list[str]
 
+class ReceiptState(Enum):
+    ABSENT = "absent"
+    UNTRUSTED = "untrusted"
+    INVALID = "invalid"
+    STALE = "stale"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+@dataclass
+class EmbodiedActionEvidenceResult:
+    verified: bool
+    receipt_state: ReceiptState
+    verified_fields: list[str]
+    failures: list[str]
+    warnings: list[str]
+
 def verify_audit_bundle(
     bundle_json: dict,
     claim_json: Optional[dict] = None,
@@ -2251,6 +2267,24 @@ def verify_audit_bundle(
     Verify an exported audit bundle. When external_evidence_keys is supplied,
     each key is issuer_key_id -> raw 32-byte Ed25519 public key. issuer_key_id
     is lowercase hex SHA-256(public_key_bytes).
+    """
+    ...
+
+def verify_embodied_action_evidence(
+    audit_entry: dict,
+    detached_payload: dict,
+    claim_json: Optional[dict] = None,
+    *,
+    require_receipt: bool = False,
+) -> EmbodiedActionEvidenceResult:
+    """
+    Verify the detached payload for the embodied action evidence profile.
+
+    This helper assumes verify_audit_bundle() has already been used when
+    issuer signature verification is required. It checks profile-specific
+    binding between the audit entry, external_execution_evidence.evidence_hash,
+    action_ref, governance decision, optional TRACE Claim context, ROS 2 action
+    binding fields when present, and receipt classification.
     """
     ...
 ```
@@ -2270,6 +2304,8 @@ The verifier computes the receipt signing input as canonical JSON over the recei
 1. The Ed25519 signature verifies over the canonical receipt signing input.
 
 If any external evidence check fails, the audit bundle result is `verified=False` and the failure string includes `EXTERNAL_EVIDENCE_VERIFICATION_FAILED`.
+
+`verify_embodied_action_evidence()` is the profile-aware follow-up for detached payloads that use `cmcp.embodied_action_evidence.v0`. It does not replace `verify_audit_bundle()`: callers still use the base bundle verifier for audit-chain integrity and external issuer signatures, then use the profile helper to classify payload-level evidence such as missing receipts, mismatched ROS 2 goal IDs, and unsupported physical-completion claims.
 
 ## Per-Provider Verification Steps
 
@@ -2546,7 +2582,29 @@ Profile-aware verifiers SHOULD classify receipt state as:
 | `accepted`  | Receipt verifies and issuer verdict is accepted.                                                                |
 | `rejected`  | Receipt verifies and issuer verdict is rejected.                                                                |
 
-The v0.1 cMCP verifier already validates the evidence envelope signature and `linked_call_id` when `external_evidence_keys` are provided. A future profile-aware verifier can add detached-payload checks without changing the base audit bundle verification contract.
+The base cMCP audit bundle verifier validates the evidence envelope signature and `linked_call_id` when `external_evidence_keys` are provided. The profile-aware `verify_embodied_action_evidence()` helper adds detached-payload checks without changing the base audit bundle verification contract.
+
+## ROS 2 Action Fixture
+
+The repository includes a ROS 2 Kilted `rclpy` fixture at `tests/fixtures/embodied-action-evidence/ros2-fibonacci-aborted.json`.
+
+The fixture is based on a tutorial-scope `example_interfaces/action/Fibonacci` action run where:
+
+- the client-side and server-side serialized goal preimage hashes matched;
+- the ROS action goal UUID matched on both sides;
+- the server reported a terminal `aborted` outcome;
+- the receipt uses `physical_completion_claim: none`.
+
+The fixture exercises profile fields for:
+
+- `ros2.goal_uuid`;
+- `ros2.goal_preimage_hash`;
+- `ros2.goal_preimage_method`;
+- ROS distribution and RMW implementation;
+- terminal controller state;
+- receipt issuer role and issuer independence.
+
+It is intentionally a binding fixture, not a live ROS dependency in CI. It does not prove physical completion, controller honesty, functional safety, cross-RMW stability, or arbitrary ROS interface compatibility.
 
 ## Verifier Flow
 
