@@ -51,7 +51,7 @@ jobs:
         run: cosign sign --yes ghcr.io/agentrust-io/cmcp-gateway@${DIGEST}
 
       - name: Attest build provenance (SLSA)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/agentrust-io/cmcp-gateway
           subject-digest: ${{ steps.build.outputs.digest }}
