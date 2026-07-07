@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from typing import TYPE_CHECKING
 
@@ -68,10 +69,8 @@ def main() -> None:
     # encoding (e.g. Windows cp1252, which cannot encode the check/cross
     # marks and would otherwise raise UnicodeEncodeError). See #396.
     for _stream in (sys.stdout, sys.stderr):
-        try:
+        with contextlib.suppress(AttributeError, ValueError):
             _stream.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, ValueError):
-            pass
 
 
 @main.command()
