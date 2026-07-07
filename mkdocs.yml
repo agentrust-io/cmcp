@@ -193,3 +193,6 @@ nav:
       - Governance: https://github.com/agentrust-io/cmcp/blob/main/GOVERNANCE.md
       - Roadmap: https://github.com/agentrust-io/cmcp/blob/main/ROADMAP.md
 
+extra_javascript:
+  # Shared cross-project top navigation (TRACE / Manifest / cMCP / cA2A / ...)
+  - https://agentrust-io.com/supernav.js
