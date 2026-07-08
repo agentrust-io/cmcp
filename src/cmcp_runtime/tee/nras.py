@@ -183,6 +183,12 @@ def try_appraise(report: AttestationReport) -> AppraisalResult | None:
     get_attestation_report() succeeds. It must never raise -- a missing or
     failed appraisal is non-fatal per issue #125.
 
+    Layering: this in-tree appraisal is the standalone fallback for deployments
+    with no attested-TLS (aTLS) peer. When cMCP is composed with a platform that
+    performs attestation in the aTLS handshake, the platform verdict is
+    authoritative and this path stands down -- it is a fallback, not the primary
+    gate. Do not wire it up as the enforcing check.
+
     Phase 2 / v0.2 -- implements issue #125.
     """
     api_key = os.environ.get(_ENV_API_KEY)
