@@ -200,16 +200,14 @@ If you change any field in `approved_definition`, rerun the command and update `
 CMCP_DEV_MODE=1 cmcp start --config cmcp-config.yaml
 ```
 
-In dev mode the runtime uses a software-only TEE provider (no hardware required). The startup log prints:
+In dev mode the runtime uses a software-only TEE provider (no hardware required). The startup log ends with the listen address:
 
 ```
-[cmcp] provider=software-only enforcement_mode=advisory
-[cmcp] policy bundle loaded: sha256:<bundle_hash>
-[cmcp] catalog loaded: 1 tools, sha256:<catalog_hash>
-[cmcp] listening on 0.0.0.0:8443
+cMCP Runtime starting: TEE: software-only, listen: 0.0.0.0:8443
+INFO:     Uvicorn running on http://0.0.0.0:8443 (Press CTRL+C to quit)
 ```
 
-Copy both hash values. You will need them for verification.
+The gateway is now listening and blocks the terminal, so open a second terminal for the next steps. The policy-bundle and tool-catalog hashes are recorded inside the TRACE Claim you retrieve below (`trace.policy.bundle_hash` and `gateway.catalog.hash`), so there is no need to copy them from the log.
 
 ---
 
@@ -241,12 +239,19 @@ The runtime intercepts the call, evaluates the Cedar policy (rule 1 matches beca
 
 ## Get the TRACE Claim
 
-After at least one tool call, retrieve the TRACE Claim for the session:
+The TRACE Claim is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID) — not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. Read that id from the audit export, then close the session:
 
 ```bash
-curl http://localhost:8443/session/demo-session-001/claim \
+# 1. Look up the session's internal id
+SESSION_UUID=$(curl -s "http://localhost:8443/audit/export?session_id=demo-session-001" \
+  | python3 -c "import sys, json; print(json.load(sys.stdin)['entries'][0]['session_id'])")
+
+# 2. Close the session; this returns the signed TRACE Claim
+curl -s -X POST "http://localhost:8443/sessions/$SESSION_UUID/close" \
   | python3 -m json.tool > claim.json
 ```
+
+The closed session's claim stays available at `GET /sessions/$SESSION_UUID/trace-claim`.
 
 The response is a signed `GatewayClaim`. It looks like:
 
@@ -316,43 +321,36 @@ The response is a signed `GatewayClaim`. It looks like:
 
 ## Verify
 
-Use the `cmcp_verify` library to verify the claim without trusting the runtime operator. Replace the hash values with those printed at gateway startup:
-
-```python
-# verify.py
-import json
-from cmcp_verify import verify_trace_claim, ApprovedHashes
-
-with open("claim.json") as f:
-    claim = json.load(f)
-
-approved = ApprovedHashes(
-    policy_bundle_hash="sha256:<bundle_hash from startup log>",
-    tool_catalog_hash="sha256:<catalog_hash from startup log>",
-)
-
-result = verify_trace_claim(claim, approved)
-print(f"Status:          {result.status.value}")
-print(f"Verified fields: {result.verified_fields}")
-print(f"Attestation age: {result.attestation_age_seconds}s")
-if result.details:
-    print(f"Details:         {result.details}")
-```
+Verify the claim with the bundled `cmcp verify` command — no code required. It checks the Ed25519 signature, schema, attestation freshness, and audit-chain consistency without trusting the runtime operator:
 
 ```bash
-python3 verify.py
+cmcp verify claim.json
 ```
 
 Expected output in dev mode:
 
 ```
-Status:          partially_verified
-Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain']
-Attestation age: 12s
-Details:         {'hardware_attestation': 'software-only mode - not hardware-backed'}
+[cmcp verify] schema                PASS
+[cmcp verify] signature             PASS
+[cmcp verify] policy_bundle.hash    PASS  (not pinned - pass --policy-hash to pin)
+[cmcp verify] tool_catalog.hash     PASS  (not pinned - pass --catalog-hash to pin)
+[cmcp verify] attestation_freshness PASS
+[cmcp verify] audit_chain           PASS
+[cmcp verify] hardware_attestation  FAIL  software-only mode - not hardware-backed
+[cmcp verify] RESULT: FAIL (partially_verified)
 ```
 
-`partially_verified` is expected in dev mode - hardware attestation is not present. All cryptographic fields (`signature`, `policy_bundle.hash`, `tool_catalog.hash`, `audit_chain`) are verified. On a real TEE host the status becomes `verified`.
+`partially_verified` is expected in dev mode: every cryptographic field verifies, but there is no hardware attestation to bind them to. To pin the policy and catalog hashes, read them from the claim (`trace.policy.bundle_hash`, `gateway.catalog.hash`) and pass them explicitly:
+
+```bash
+cmcp verify claim.json \
+  --policy-hash "$(python3 -c "import json; print(json.load(open('claim.json'))['trace']['policy']['bundle_hash'])")" \
+  --catalog-hash "$(python3 -c "import json; print(json.load(open('claim.json'))['gateway']['catalog']['hash'])")"
+```
+
+On a real TEE host the `hardware_attestation` check passes and the overall result becomes `verified`.
+
+The `cmcp_verify` Python library is also available for programmatic checks (`from cmcp_verify import verify_trace_claim, ApprovedHashes`).
 
 ---
 
