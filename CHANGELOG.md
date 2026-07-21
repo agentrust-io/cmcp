@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Attestation crypto now delegates to agent-manifest's shared verification library (`agent-manifest>=0.5`) instead of cMCP's own copies: the SEV-SNP report signature (`verify_snp_signature`) and the VCEK/PCK certificate-chain verification (the generic `verify_cert_chain`) are shared across the org rather than duplicated. cMCP keeps its own DCAP quote parser, `*VerificationResult` shapes, TR-field semantics, and report_data/qualifying-data bindings; behavior is unchanged (all tests pass unchanged). cMCP's TPM verifier stays local (Phase-1 parse-only: no AK signature/chain to share).
+
 ### Added
 
 - Azure confidential-VM attestation (`cmcp_runtime.tee.azure_cvm.AzureCVMProvider` + `cmcp_verify.azure_cvm`), **hardware-validated on live Azure SEV-SNP silicon**. Azure runs SNP behind a Hyper-V paravisor with no `/dev/sev-guest`; the SNP report is read from the vTPM NV index `0x01400001` and the guest cannot control `REPORT_DATA` (the paravisor binds the vTPM AK there). cMCP's nonce (`jwk_thumbprint || audit-root`) is therefore committed into an AK-signed TPM quote's qualifying data, with the AK rooted in silicon via the SNP report (`REPORT_DATA == sha256(runtime_data)`) and the VCEK→ASK→ARK chain (reusing `cmcp_verify.sev_snp`). Auto-detected first (before TPM/SEV-SNP) since Azure exposes no `/dev/sev-guest`. Carries its own `runtime.platform` value `azure-cvm-sev-snp` (requires `agentrust-trace>=0.4`) so a consumer keying on `runtime.platform` knows the root of trust is vTPM-rooted, not a guest-controlled SNP `report_data`.

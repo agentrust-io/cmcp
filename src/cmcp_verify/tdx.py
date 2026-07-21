@@ -234,19 +234,6 @@ def _verify_p256(pub: ec.EllipticCurvePublicKey, sig64: bytes, data: bytes) -> b
         return False
 
 
-def _cert_signed_by(child: x509.Certificate, issuer: x509.Certificate) -> bool:
-    # PCK chain certs are ECDSA P-256.
-    pub = issuer.public_key()
-    if not isinstance(pub, ec.EllipticCurvePublicKey):
-        return False
-    try:
-        pub.verify(child.signature, child.tbs_certificate_bytes,
-                   ec.ECDSA(child.signature_hash_algorithm))
-        return True
-    except (InvalidSignature, ValueError):
-        return False
-
-
 @dataclass
 class _ParsedQuote:
     signed_region: bytes
@@ -350,13 +337,14 @@ def verify_tdx_quote(
         root = x509.load_pem_x509_certificate(trusted_intel_root_pem)
     except ValueError as exc:
         return fail(f"intel_root_parse_error: {exc}")
-    if not _cert_signed_by(root, root):
-        return fail("intel_root_not_self_signed")
-    # Verify each cert is signed by the next in the chain, with the last PCK cert
-    # signed by the pinned root (which was checked self-signed above).
-    for child, issuer in zip(certs, [*certs[1:], root], strict=True):
-        if not _cert_signed_by(child, issuer):
-            return fail("pck_chain_invalid")
+    # PCK chain (leaf..intermediates) up to the pinned Intel root, via the shared
+    # generic cert-chain verifier (agent-manifest) instead of a local copy.
+    from agent_manifest import verify_cert_chain
+
+    try:
+        verify_cert_chain([*certs, root], [root])
+    except Exception:  # noqa: BLE001  (CertChainError etc. -> fail closed)
+        return fail("pck_chain_invalid")
 
     result = TDXVerificationResult(verified=True)
     result.verified_fields.extend(["dcap_quote_signature", "pck_chain"])

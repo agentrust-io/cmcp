@@ -20,8 +20,7 @@ from dataclasses import dataclass, field
 
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
-from cryptography.hazmat.primitives.hashes import SHA384
+from cryptography.hazmat.primitives.serialization import Encoding
 
 # The SNP report is signed over its leading bytes; the 512-byte signature field
 # occupies the tail. sizeof(report) == 0x4A0, signature == 0x200, so the signed
@@ -92,27 +91,18 @@ class SNPVerificationResult:
     details: dict[str, str] = field(default_factory=dict)
 
 
-def _snp_report_signature_der(raw_report: bytes) -> bytes:
-    """Extract the ECDSA-P384 signature from an SNP report and DER-encode it.
-
-    R and S are stored as little-endian 72-byte fields; P-384 uses 48 bytes each.
-    """
-    sig_field = raw_report[_SNP_SIG_OFFSET : _SNP_SIG_OFFSET + 2 * _SNP_SIG_COMPONENT_LEN]
-    r_le = sig_field[:_SNP_SIG_COMPONENT_LEN]
-    s_le = sig_field[_SNP_SIG_COMPONENT_LEN : 2 * _SNP_SIG_COMPONENT_LEN]
-    r = int.from_bytes(r_le[:_P384_COMPONENT_LEN], "little")
-    s = int.from_bytes(s_le[:_P384_COMPONENT_LEN], "little")
-    return encode_dss_signature(r, s)
-
-
 def verify_snp_report_signature(
     raw_report: bytes, vcek_cert: x509.Certificate
 ) -> tuple[bool, str | None]:
     """Verify the SNP report is signed by the VCEK (ECDSA P-384 / SHA-384).
 
-    Returns (True, None) on a valid signature, (False, reason) otherwise. Fails
-    closed on any parse or verification error.
+    The cryptographic check is delegated to agent-manifest's shared verifier
+    (`agent_manifest.verify_snp_signature`) so the org shares one implementation;
+    the format pre-checks below keep cmcp's specific failure reasons. Returns
+    (True, None) on a valid signature, (False, reason) otherwise. Fails closed.
     """
+    from agent_manifest import parse_snp_report, verify_snp_signature
+
     if len(raw_report) < _SNP_SIG_OFFSET + 2 * _SNP_SIG_COMPONENT_LEN:
         return False, "report too short to contain a signature"
     try:
@@ -126,42 +116,13 @@ def verify_snp_report_signature(
     if not isinstance(pub, ec.EllipticCurvePublicKey) or pub.curve.name != "secp384r1":
         return False, "VCEK public key is not EC P-384"
 
-    signed_region = raw_report[:_SNP_SIGNED_LEN]
     try:
-        der_sig = _snp_report_signature_der(raw_report)
-        pub.verify(der_sig, signed_region, ec.ECDSA(SHA384()))
-    except Exception:  # noqa: BLE001  (InvalidSignature and malformed r/s both fail closed)
+        ok = verify_snp_signature(parse_snp_report(raw_report), vcek_cert.public_bytes(Encoding.DER))
+    except Exception:  # noqa: BLE001  (fail closed on any parse/verify error)
+        return False, "SNP report signature does not verify against the VCEK"
+    if not ok:
         return False, "SNP report signature does not verify against the VCEK"
     return True, None
-
-
-def _cert_signed_by(child: x509.Certificate, issuer: x509.Certificate) -> bool:
-    """True iff `child` carries a valid signature from `issuer`'s public key.
-
-    Handles both AMD's RSA-PSS cert signatures (ARK/ASK) and EC signatures by
-    reading the signature parameters off the certificate, so we do not hand-roll
-    fragile PSS parameters.
-    """
-    issuer_pub = issuer.public_key()
-    try:
-        if isinstance(issuer_pub, rsa.RSAPublicKey):
-            issuer_pub.verify(
-                child.signature,
-                child.tbs_certificate_bytes,
-                child.signature_algorithm_parameters,
-                child.signature_hash_algorithm,
-            )
-        elif isinstance(issuer_pub, ec.EllipticCurvePublicKey):
-            issuer_pub.verify(
-                child.signature,
-                child.tbs_certificate_bytes,
-                ec.ECDSA(child.signature_hash_algorithm),
-            )
-        else:
-            return False
-        return True
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def load_snp_cert_chain(
@@ -193,17 +154,18 @@ def verify_vcek_chain(
 ) -> tuple[bool, str | None]:
     """Verify VCEK -> ASK -> ARK, with ARK pinned to a caller-trusted AMD root.
 
-    Returns (True, None) or (False, reason). Fails closed.
+    Returns (True, None) or (False, reason). Fails closed. Delegates to
+    agent-manifest's generic, algorithm-agnostic chain verifier (shared across
+    the org) which honors each certificate's own signature algorithm and pins
+    the root by fingerprint.
     """
-    if ark.fingerprint(SHA384()) != trusted_ark.fingerprint(SHA384()):
-        return False, "chain ARK does not match the pinned trusted AMD ARK"
-    if not _cert_signed_by(ark, ark):
-        return False, "ARK is not validly self-signed"
-    if not _cert_signed_by(ask, ark):
-        return False, "ASK is not signed by the ARK"
-    if not _cert_signed_by(vcek, ask):
-        return False, "VCEK is not signed by the ASK"
-    return True, None
+    from agent_manifest import verify_cert_chain
+
+    try:
+        verify_cert_chain([vcek, ask, ark], [trusted_ark])
+        return True, None
+    except Exception as exc:  # noqa: BLE001  (CertChainError + any parse error → fail closed)
+        return False, str(exc)
 
 
 def verify_sev_snp_measurement(
