@@ -4,9 +4,9 @@ Status: Draft v0.1 | Closes #36 | Related: [response-inspection.md](response-ins
 
 ## Overview
 
-Individual call policy - Cedar evaluated before each tool call - is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.
+Individual call policy, Cedar evaluated before each tool call, is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.
 
-Phase 1.5 introduces session sensitivity tracking to close this gap. Once a session has handled data at a given sensitivity level, outbound calls to destinations that are not approved for that sensitivity level are denied - even if each individual call would pass pre-call Cedar policy in isolation. The session sensitivity state is monotonically increasing within a session: it can only go up, never down, short of an explicit operator-authorized reset.
+Phase 1.5 introduces session sensitivity tracking to close this gap. Once a session has handled data at a given sensitivity level, outbound calls to destinations that are not approved for that sensitivity level are denied, even if each individual call would pass pre-call Cedar policy in isolation. The session sensitivity state is monotonically increasing within a session: it can only go up, never down, short of an explicit operator-authorized reset.
 
 ## Session Sensitivity State Machine
 
@@ -22,7 +22,7 @@ public < pii < confidential < hipaa_phi = mnpi = trade_secret
 
 ### State Transitions
 
-State is **monotonically increasing** within a session. It never decreases automatically. The only way to return to a lower state is an explicit operator-authorized session reset (see below).
+State is monotonically increasing within a session. It never decreases automatically. The only way to return to a lower state is an explicit operator-authorized session reset (see below).
 
 The transition trigger is the `update_from_inspection` call made by the response inspection pipeline after every tool call. See [response-inspection.md](response-inspection.md) for when and how that call is made.
 
@@ -56,13 +56,13 @@ def update_from_inspection(
         })
 ```
 
-Note that `response_allowed` is recorded in injection events but does not affect state transition logic. A denied response that carried high-sensitivity tags still raises `max_sensitivity` - the agent is aware the call was attempted.
+`response_allowed` is recorded in injection events but does not affect state transition logic. A denied response that carried high-sensitivity tags still raises `max_sensitivity`: the agent is aware the call was attempted.
 
 ## Cedar Egress Policy Using Session State
 
 Cedar evaluates pre-call policy with session state available as a context attribute. Three representative policies:
 
-**Policy 1: Block PHI egress to uncovered external destinations**
+Policy 1: Block PHI egress to uncovered external destinations
 
 ```cedar
 forbid(
@@ -77,7 +77,7 @@ when {
 };
 ```
 
-**Policy 2: Block MNPI egress to communication tools**
+Policy 2: Block MNPI egress to communication tools
 
 ```cedar
 forbid(
@@ -91,7 +91,7 @@ when {
 };
 ```
 
-**Policy 3: Block any high-sensitivity session from writing to public channels**
+Policy 3: Block any high-sensitivity session from writing to public channels
 
 ```cedar
 forbid(
@@ -109,11 +109,11 @@ In Policy 3, `sensitivity_level_int` is a derived integer attribute on the sessi
 
 ## Session Reset Protocol
 
-**Endpoint:** `POST /session/reset`
+Endpoint: `POST /session/reset`
 
-**Credential required:** Operator credential. Agent credentials are not accepted. This is intentional - see below.
+Credential required: Operator credential. Agent credentials are not accepted. This is intentional, see below.
 
-**Effect:**
+Effect:
 - `max_sensitivity` is reset to `"public"`
 - A new `session_id` is generated; the old session ID is retired
 - An audit chain entry of type `"session_reset"` is written:
@@ -129,7 +129,7 @@ In Policy 3, `sensitivity_level_int` is a derived integer attribute on the sessi
 }
 ```
 
-**When reset is not possible or not yet called:** If the runtime is in enforcement mode and `max_sensitivity` is `"hipaa_phi"`, `"mnpi"`, or `"trade_secret"`, outbound calls to non-covered or non-approved destinations are denied by Cedar egress policy (see above). The agent cannot unblock itself. There is no agent-callable override endpoint.
+When reset is not possible or not yet called: If the runtime is in enforcement mode and `max_sensitivity` is `"hipaa_phi"`, `"mnpi"`, or `"trade_secret"`, outbound calls to non-covered or non-approved destinations are denied by Cedar egress policy (see above). The agent cannot unblock itself. There is no agent-callable override endpoint.
 
 This is intentional. The agent is an LLM: it is non-deterministic, and the runtime cannot trust agent assertions about what is or is not in its context window. Once a session has handled high-sensitivity data, the only entity that can attest "this session is now clean" is a human operator who has verified the agent's context. The reset endpoint is the mechanism for that attestation.
 
@@ -137,11 +137,11 @@ If an operator reset is not available (e.g., the runtime is processing automated
 
 ## Session Lifetime and Attestation Validity
 
-A session's maximum duration is bounded by the attestation validity period of the agent's TRACE token. When the TRACE token expires, the session must end - the gateway cannot continue to enforce session-level policy for an agent whose identity and configuration are no longer attested.
+A session's maximum duration is bounded by the attestation validity period of the agent's TRACE token. When the TRACE token expires, the session must end: the gateway cannot continue to enforce session-level policy for an agent whose identity and configuration are no longer attested.
 
 In practice: session `max_duration_seconds` is set to `min(configured_session_max, trace_token_ttl_remaining)` at session creation. A session that is still active when its TRACE token would expire is terminated by the runtime with an audit entry of type `"session_expired"`.
 
-This means a long-running agent that handles high-sensitivity data early in its session will face increasingly tight call restrictions as the session progresses - both because `max_sensitivity` is monotonically increasing and because the TRACE token TTL is monotonically decreasing. Deployments should size TRACE token lifetimes to match expected task durations.
+This means a long-running agent that handles high-sensitivity data early in its session will face increasingly tight call restrictions as the session progresses, both because `max_sensitivity` is monotonically increasing and because the TRACE token TTL is monotonically decreasing. Deployments should size TRACE token lifetimes to match expected task durations.
 
 ## Agent Manifest Identity Binding
 
