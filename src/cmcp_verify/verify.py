@@ -53,6 +53,7 @@ _EXTERNAL_EVIDENCE_TYPES = frozenset({
 
 _KNOWN_PLATFORMS = {
     "amd-sev-snp",
+    "azure-cvm-sev-snp",
     "intel-tdx",
     "tpm2",
     "nvidia-h100",
@@ -62,22 +63,6 @@ _KNOWN_PLATFORMS = {
     "google-confidential-space",
     "software-only",
 }
-
-
-def _is_azure_cvm_evidence(raw_evidence_b64: str | None) -> bool:
-    """True if raw_evidence is the Azure CVM JSON envelope (vs a raw SNP report).
-
-    The AzureCVMProvider emits a JSON object ({"v":1,...}); a bare-metal SNP
-    report is a binary blob starting with its version field. Base64 of a JSON
-    object begins with 'ey' (i.e. '{"'); this cheap prefix check routes the
-    amd-sev-snp platform to the vTPM-rooted verifier without a new platform id.
-    """
-    if not raw_evidence_b64:
-        return False
-    try:
-        return base64.b64decode(raw_evidence_b64)[:1] == b"{"
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def _is_software_only(runtime: dict[str, Any]) -> bool:
@@ -810,14 +795,13 @@ def verify_trace_claim(
                 details["tpm_failure"] = tpm_result.failure_reason
         unverified.extend(tpm_result.unverified_fields)
         details.update(tpm_result.details)
-    elif platform == "amd-sev-snp" and _is_azure_cvm_evidence(_runtime.get("raw_evidence")):
+    elif platform == "azure-cvm-sev-snp":
         # Azure confidential VM: SEV-SNP behind a Hyper-V paravisor, vTPM-rooted.
         # The guest cannot control SNP REPORT_DATA (the paravisor binds the vTPM AK
         # there), so cMCP's nonce is committed into an AK-signed TPM quote's extraData
         # and the AK is rooted in silicon by the SNP report (REPORT_DATA ==
-        # sha256(runtime_data)). Distinguished from a bare-metal SNP report by the JSON
-        # evidence envelope AzureCVMProvider emits. Chain travels in the envelope; the
-        # ARK is pinned out of band. Hardware-validated on live Azure SEV-SNP.
+        # sha256(runtime_data)). The VCEK chain travels in the JSON evidence envelope;
+        # the ARK is pinned out of band. Hardware-validated on live Azure SEV-SNP.
         from cmcp_verify.azure_cvm import verify_azure_cvm_measurement
 
         raw_bytes = base64.b64decode(_runtime["raw_evidence"])
