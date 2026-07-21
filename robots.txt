@@ -3,6 +3,8 @@
 
 User-agent: *
 Allow: /
+# Cloudflare email-obfuscation endpoint: not real pages, only 404s to crawlers
+Disallow: /cdn-cgi/
 
 # AI and answer-engine crawlers (explicitly welcomed)
 User-agent: GPTBot
