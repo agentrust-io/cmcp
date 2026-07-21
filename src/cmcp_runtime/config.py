@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
+from ipaddress import ip_address
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -102,6 +103,59 @@ _KNOWN_ATTEST_KEYS = {
     "expected_measurement",
 }
 _KNOWN_AGENT_MANIFEST_KEYS = {"path", "trust_anchor_path", "authenticated_subject"}
+
+
+def parse_listen_addr(value: str) -> tuple[str, int]:
+    """Parse a listen address into a host and port."""
+
+    if not isinstance(value, str):
+        raise ConfigError("listen_addr must be a string")
+
+    address = value.strip()
+    if not address:
+        raise ConfigError("listen_addr must not be empty")
+
+    if address.startswith("["):
+        closing_bracket = address.find("]")
+        if closing_bracket == -1 or address[closing_bracket + 1 : closing_bracket + 2] != ":":
+            raise ConfigError(
+                "listen_addr must use the format '[IPv6]:port'"
+            )
+
+        host = address[1:closing_bracket]
+        port_text = address[closing_bracket + 2 :]
+    else:
+        host, separator, port_text = address.rpartition(":")
+        if not separator:
+            raise ConfigError(
+                "listen_addr must use the format 'host:port'"
+            )
+
+    if not host:
+        raise ConfigError("listen_addr host must not be empty")
+
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise ConfigError("listen_addr port must be an integer") from exc
+
+    if not 1 <= port <= 65535:
+        raise ConfigError("listen_addr port must be between 1 and 65535")
+
+    return host, port
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Return whether a host is explicitly local-only."""
+
+    if host.casefold() == "localhost":
+        return True
+
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        # Hostnames other than localhost are not guaranteed to remain local.
+        return False
 
 
 def _check_no_traversal(field_name: str, path_str: str) -> None:
@@ -221,6 +275,21 @@ def load_config(path: str) -> Config:
     dev_mode = DEV_MODE  # TEE-002: use the frozen constant, never re-read from env
     bearer_token = os.environ.get("CMCP_BEARER_TOKEN") or None
 
+    default_listen_addr = (
+        "127.0.0.1:8443"
+        if dev_mode and bearer_token is None
+        else "0.0.0.0:8443"
+    )
+    listen_addr = raw.get("listen_addr", default_listen_addr)
+    listen_host, _ = parse_listen_addr(listen_addr)
+
+    if dev_mode and bearer_token is None and not _is_loopback_host(listen_host):
+        raise ConfigError(
+            "Tokenless development mode may only bind to a loopback address. "
+            "Use 127.0.0.1:<port>, localhost:<port>, or [::1]:<port>, "
+            "or configure CMCP_BEARER_TOKEN for non-loopback access."
+        )
+
     policy_bundle_path = raw.get("policy_bundle_path", "policy/")
     catalog_path = raw.get("catalog_path", "catalog.json")
     audit_db_path = raw.get("audit_db_path", "audit.db")
@@ -269,7 +338,7 @@ def load_config(path: str) -> Config:
         ),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,
-        listen_addr=raw.get("listen_addr", "0.0.0.0:8443"),
+        listen_addr=listen_addr,
         max_response_size_bytes=max_bytes,
         policy_reload_interval_seconds=policy_reload_interval,
         audit_db_path=audit_db_path,

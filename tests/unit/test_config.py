@@ -219,3 +219,100 @@ def test_expected_measurement_non_string_rejected(config_file):
     path = config_file("attestation:\n  expected_measurement: 12345\n")
     with pytest.raises(ConfigError, match="expected_measurement"):
         load_config(path)
+
+
+def test_tokenless_dev_mode_defaults_to_loopback(config_file, monkeypatch):
+    import cmcp_runtime.config as config_module
+
+    monkeypatch.setattr(config_module, "DEV_MODE", True)
+    monkeypatch.delenv("CMCP_BEARER_TOKEN", raising=False)
+
+    cfg = load_config(config_file(""))
+
+    assert cfg.listen_addr == "127.0.0.1:8443"
+
+
+@pytest.mark.parametrize(
+    "listen_addr",
+    [
+        "127.0.0.1:8443",
+        "localhost:8443",
+        "::1:8443",
+        "[::1]:8443",
+    ],
+)
+def test_tokenless_dev_mode_allows_loopback(
+    config_file,
+    monkeypatch,
+    listen_addr,
+):
+    import cmcp_runtime.config as config_module
+
+    monkeypatch.setattr(config_module, "DEV_MODE", True)
+    monkeypatch.delenv("CMCP_BEARER_TOKEN", raising=False)
+
+    path = config_file(f'listen_addr: "{listen_addr}"\n')
+    cfg = load_config(path)
+
+    assert cfg.listen_addr == listen_addr
+
+
+@pytest.mark.parametrize(
+    "listen_addr",
+    [
+        "0.0.0.0:8443",
+        "[::]:8443",
+        "192.168.1.20:8443",
+        "example.com:8443",
+    ],
+)
+def test_tokenless_dev_mode_rejects_non_loopback(
+    config_file,
+    monkeypatch,
+    listen_addr,
+):
+    import cmcp_runtime.config as config_module
+
+    monkeypatch.setattr(config_module, "DEV_MODE", True)
+    monkeypatch.delenv("CMCP_BEARER_TOKEN", raising=False)
+
+    path = config_file(f'listen_addr: "{listen_addr}"\n')
+
+    with pytest.raises(ConfigError, match="loopback"):
+        load_config(path)
+
+
+@pytest.mark.parametrize(
+    "listen_addr",
+    [
+        "0.0.0.0:8443",
+        "[::]:8443",
+        "192.168.1.20:8443",
+    ],
+)
+def test_dev_mode_with_bearer_token_allows_non_loopback(
+    config_file,
+    monkeypatch,
+    listen_addr,
+):
+    import cmcp_runtime.config as config_module
+
+    monkeypatch.setattr(config_module, "DEV_MODE", True)
+    monkeypatch.setenv("CMCP_BEARER_TOKEN", "test-secret-token")
+
+    path = config_file(f'listen_addr: "{listen_addr}"\n')
+    cfg = load_config(path)
+
+    assert cfg.listen_addr == listen_addr
+    assert cfg.bearer_token == "test-secret-token"
+
+
+def test_non_dev_mode_preserves_wildcard_default(config_file, monkeypatch):
+    import cmcp_runtime.config as config_module
+
+    monkeypatch.setattr(config_module, "DEV_MODE", False)
+    monkeypatch.delenv("CMCP_BEARER_TOKEN", raising=False)
+
+    cfg = load_config(config_file(""))
+
+    assert cfg.listen_addr == "0.0.0.0:8443"

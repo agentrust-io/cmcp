@@ -58,6 +58,7 @@ attestation:
   enforcement_mode: advisory
 policy_bundle_path: ./policies/
 catalog_path: ./catalog.json
+listen_addr: "127.0.0.1:8443"
 ```
 
 - `provider: auto` detects hardware TEE if present; falls back to software-only when `CMCP_DEV_MODE=1`
@@ -203,9 +204,11 @@ CMCP_DEV_MODE=1 cmcp start --config cmcp-config.yaml
 In dev mode the runtime uses a software-only TEE provider (no hardware required). The startup log ends with the listen address:
 
 ```
-cMCP Runtime starting: TEE: software-only, listen: 0.0.0.0:8443
-INFO:     Uvicorn running on http://0.0.0.0:8443 (Press CTRL+C to quit)
+cMCP Runtime starting: TEE: software-only, listen: 127.0.0.1:8443
+INFO:     Uvicorn running on http://127.0.0.1:8443 (Press CTRL+C to quit)
 ```
+
+**Note**: Tokenless development mode is local-only. Non-loopback access requires setting a `CMCP_BEARER_TOKEN`. This protects developers from accidentally exposing an unauthenticated gateway to LAN, container, or cloud networks.
 
 The gateway is now listening and blocks the terminal, so open a second terminal for the next steps. The policy-bundle and tool-catalog hashes are recorded inside the TRACE Claim you retrieve below (`trace.policy.bundle_hash` and `gateway.catalog.hash`), so there is no need to copy them from the log.
 

@@ -32,7 +32,7 @@ curl http://localhost:8443/health
 
 ## How the gateway looks to an agent
 
-The gateway runs at `listen_addr` (default `0.0.0.0:8443`) and exposes a standard MCP over HTTP/SSE transport. Two endpoints matter for agent frameworks:
+The gateway runs at `listen_addr` (default `127.0.0.1:8443` in dev mode, otherwise `0.0.0.0:8443`) and exposes a standard MCP over HTTP/SSE transport. Two endpoints matter for agent frameworks:
 
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
