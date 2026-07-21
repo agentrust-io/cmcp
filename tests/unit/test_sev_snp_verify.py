@@ -105,14 +105,26 @@ def test_version3_matching_measurement_verified():
     assert result.details["snp_report_version"] == "3"
 
 
-def test_version5_report_fails():
+def test_version5_matching_measurement_verified():
+    """Real Milan hardware (GCP N2D) emits report version 5; it must be accepted."""
+    raw_m = b"\x00" * 48
+    expected = "sha384:" + hashlib.sha384(raw_m).hexdigest()
+    report = make_snp_report(version=5, measurement_bytes=raw_m)
+    result = verify_sev_snp_measurement(expected, raw_evidence=report)
+    assert result.verified is True
+    assert "measurement" in result.verified_fields
+    assert result.details["snp_report_version"] == "5"
+
+
+def test_version1_report_fails():
+    """Pre-release version 1 (below the v2 field-layout baseline) is rejected."""
     raw_m = b"\x00" * 48
     measurement = "sha384:" + hashlib.sha384(raw_m).hexdigest()
-    report = make_snp_report(version=5, measurement_bytes=raw_m)
+    report = make_snp_report(version=1, measurement_bytes=raw_m)
     result = verify_sev_snp_measurement(measurement, raw_evidence=report)
     assert result.verified is False
     assert result.failure_reason == "invalid_snp_report_version"
-    assert result.details["snp_report_version"] == "5"
+    assert result.details["snp_report_version"] == "1"
 
 
 def test_measurement_mismatch_fails():

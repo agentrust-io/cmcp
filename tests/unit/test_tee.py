@@ -207,56 +207,36 @@ def test_sevsnp_stores_expected_measurement():
 
 def test_sevsnp_rejects_mismatched_expected_measurement(monkeypatch):
     """HW-002: measurement mismatch raises RuntimeError before returning the report."""
-    import struct
-    import sys
-    from unittest.mock import MagicMock
-
+    from cmcp_runtime.tee import sev_snp as snp_mod
     from cmcp_runtime.tee.sev_snp import (
         _SNP_MEASUREMENT_END,
         _SNP_MEASUREMENT_OFFSET,
         _SNP_REPORT_SIZE,
-        _SNP_RESP_HEADER_SIZE,
         SEVSNPProvider,
     )
 
-    # Build a fake ioctl response with a known measurement
+    # Build a raw SNP report (as the configfs-TSM outblob) with a known measurement.
     measurement_bytes = b"\xab" * (_SNP_MEASUREMENT_END - _SNP_MEASUREMENT_OFFSET)
     raw_evidence = bytearray(_SNP_REPORT_SIZE)
     raw_evidence[_SNP_MEASUREMENT_OFFSET:_SNP_MEASUREMENT_END] = measurement_bytes
-
-    resp_buf = bytearray(_SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE)
-    struct.pack_into("<I", resp_buf, 0, 0)  # status = 0
-    resp_buf[_SNP_RESP_HEADER_SIZE:] = raw_evidence
-
-    def fake_ioctl(fd, req, buf):
-        buf[:] = resp_buf
-
-    mock_fcntl = MagicMock()
-    mock_fcntl.ioctl.side_effect = fake_ioctl
-    monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
-    monkeypatch.setattr("cmcp_runtime.tee.sev_snp.sys.platform", "linux")
+    monkeypatch.setattr(snp_mod, "_tsm_get_report", lambda report_data: bytes(raw_evidence))
 
     wrong_expected = "sha384:" + "0" * 96
     provider = SEVSNPProvider(expected_measurement=wrong_expected)
 
-    with patch("builtins.open", MagicMock(
-        return_value=MagicMock(__enter__=lambda s: MagicMock(), __exit__=lambda s, *a: False)
-    )), pytest.raises(RuntimeError, match="measurement mismatch"):
+    with pytest.raises(RuntimeError, match="measurement mismatch"):
         provider.get_attestation_report(b"\x00" * 32)
 
 
 def test_sevsnp_accepts_matching_expected_measurement(monkeypatch):
     """HW-002: when expected_measurement matches, report is returned without error."""
     import hashlib
-    import struct
-    import sys
-    from unittest.mock import MagicMock
 
+    from cmcp_runtime.tee import sev_snp as snp_mod
     from cmcp_runtime.tee.sev_snp import (
         _SNP_MEASUREMENT_END,
         _SNP_MEASUREMENT_OFFSET,
         _SNP_REPORT_SIZE,
-        _SNP_RESP_HEADER_SIZE,
         SEVSNPProvider,
     )
 
@@ -265,27 +245,15 @@ def test_sevsnp_accepts_matching_expected_measurement(monkeypatch):
 
     raw_evidence = bytearray(_SNP_REPORT_SIZE)
     raw_evidence[_SNP_MEASUREMENT_OFFSET:_SNP_MEASUREMENT_END] = measurement_bytes
+    monkeypatch.setattr(snp_mod, "_tsm_get_report", lambda report_data: bytes(raw_evidence))
 
-    resp_buf = bytearray(_SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE)
-    struct.pack_into("<I", resp_buf, 0, 0)
-    resp_buf[_SNP_RESP_HEADER_SIZE:] = raw_evidence
-
-    def fake_ioctl(fd, req, buf):
-        buf[:] = resp_buf
-
-    mock_fcntl = MagicMock()
-    mock_fcntl.ioctl.side_effect = fake_ioctl
-    monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
-    monkeypatch.setattr("cmcp_runtime.tee.sev_snp.sys.platform", "linux")
-
+    nonce = b"\x00" * 32
     provider = SEVSNPProvider(expected_measurement=expected)
-
-    with patch("builtins.open", MagicMock(
-        return_value=MagicMock(__enter__=lambda s: MagicMock(), __exit__=lambda s, *a: False)
-    )):
-        report = provider.get_attestation_report(b"\x00" * 32)
+    report = provider.get_attestation_report(nonce)
 
     assert report.measurement == expected
+    assert report.report_data == nonce.hex()
+    assert report.raw_evidence == bytes(raw_evidence)
 
 
 def test_detect_provider_passes_expected_measurement_to_snp(dev_config):

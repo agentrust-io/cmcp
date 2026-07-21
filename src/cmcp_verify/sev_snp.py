@@ -261,7 +261,12 @@ def verify_sev_snp_measurement(
             # Parse via ctypes struct for named field access (HW-006)
             report = _SnpAttestationReport.from_buffer_copy(raw_evidence[:_SNP_REPORT_MIN_SIZE])
 
-            if report.version not in (2, 3):
+            # Accept report version >= 2. The fields we read (report_data 0x50,
+            # measurement 0x90, reported_tcb 0x180, chip_id 0x1a0, signature 0x2a0)
+            # are layout-stable across v2..v5; later firmware only appends. Real
+            # Milan hardware (GCP N2D) emits v5, which the old (2, 3) allowlist
+            # wrongly rejected. The VCEK signature check below is the real gate.
+            if report.version < 2:
                 result.verified = False
                 result.failure_reason = "invalid_snp_report_version"
                 result.details["snp_report_version"] = str(report.version)
