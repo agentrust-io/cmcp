@@ -24,6 +24,10 @@ except importlib.metadata.PackageNotFoundError:
 
 _PROVIDER_MAP: dict[str, str] = {
     "sev-snp": "amd-sev-snp",
+    # Azure CVM is SEV-SNP (vTPM-rooted behind a paravisor); it maps to the same
+    # canonical platform. The verifier distinguishes it by evidence shape (a JSON
+    # envelope vs a raw SNP report), so no new platform literal is required.
+    "azure-cvm-sev-snp": "amd-sev-snp",
     "tdx": "intel-tdx",
     "opaque": "intel-tdx",
     "tpm": "tpm2",

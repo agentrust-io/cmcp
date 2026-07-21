@@ -17,11 +17,20 @@ logger = logging.getLogger(__name__)
 # Detection probe order from docs/spec/attestation.md §1.1. The `opaque` provider is
 # intentionally excluded: it is a not-yet-implemented placeholder, so it is never
 # auto-selected. Selecting it explicitly raises AttestationProviderNotImplemented.
-_PROBE_ORDER: list[str] = ["tpm", "sev-snp", "tdx"]
+# azure-cvm is probed first: Azure confidential VMs run SNP behind a paravisor,
+# expose no /dev/sev-guest, and would otherwise fall through to a plain TPM quote
+# that loses the SNP silicon root.
+_PROBE_ORDER: list[str] = ["azure-cvm", "tpm", "sev-snp", "tdx"]
 
 
 def _get_provider_impl(name: str, config: Config | None = None) -> TEEProvider | None:
     """Import and return a provider implementation by name, or None if not found."""
+    if name == "azure-cvm":
+        try:
+            from cmcp_runtime.tee.azure_cvm import AzureCVMProvider
+            return AzureCVMProvider()
+        except ImportError:
+            return None
     if name == "tpm":
         try:
             from cmcp_runtime.tee.tpm import TPMProvider
