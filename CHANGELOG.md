@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Azure confidential-VM attestation (`cmcp_runtime.tee.azure_cvm.AzureCVMProvider` + `cmcp_verify.azure_cvm`), **hardware-validated on live Azure SEV-SNP silicon**. Azure runs SNP behind a Hyper-V paravisor with no `/dev/sev-guest`; the SNP report is read from the vTPM NV index `0x01400001` and the guest cannot control `REPORT_DATA` (the paravisor binds the vTPM AK there). cMCP's nonce (`jwk_thumbprint || audit-root`) is therefore committed into an AK-signed TPM quote's qualifying data, with the AK rooted in silicon via the SNP report (`REPORT_DATA == sha256(runtime_data)`) and the VCEK→ASK→ARK chain (reusing `cmcp_verify.sev_snp`). Auto-detected first (before TPM/SEV-SNP) since Azure exposes no `/dev/sev-guest`. Carries its own `runtime.platform` value `azure-cvm-sev-snp` (requires `agentrust-trace>=0.4`) so a consumer keying on `runtime.platform` knows the root of trust is vTPM-rooted, not a guest-controlled SNP `report_data`.
 - `tool_transcript.entries`: privacy-preserving per-call view in the TRACE Claim (one entry per tool call with `tool_name`, `data_class` from the catalog, and the policy `decision`), derived from the audit chain so no raw parameters or response bodies are exposed. `tool_transcript.hash` continues to bind the full transcript to the audit-chain tip. Adds `transcript_entries_hash()` for offline recomputation. (#126)
 
+### Fixed
+
+- Bare-metal `SEVSNPProvider` now obtains the SNP report via the kernel configfs-TSM interface (`/sys/kernel/config/tsm/report`) instead of a `/dev/sev-guest` ioctl. The previous ioctl number and inline request ABI were incorrect and failed on real hardware with `ENOTTY` ("inappropriate ioctl for device"). **Hardware-validated on a non-paravisor SEV-SNP guest (GCP N2D, AMD Milan):** the guest-supplied nonce lands in the report's `REPORT_DATA` and the report verifies against the AMD VCEK.
+- SNP report-version check in `cmcp_verify.sev_snp` now accepts version `>= 2` (was `(2, 3)` only). Real Milan hardware emits report version 5, which the old allowlist wrongly rejected as `invalid_snp_report_version`; the field offsets read are layout-stable across v2..v5 and the VCEK signature is the real gate.
+
 ## [0.3.0] - 2026-06-30
 
 ### Security

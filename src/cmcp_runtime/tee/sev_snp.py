@@ -1,11 +1,21 @@
-"""AMD SEV-SNP TEE provider -- implements issue #89."""
+"""AMD SEV-SNP TEE provider -- implements issue #89.
+
+Uses the kernel configfs-TSM interface (`/sys/kernel/config/tsm/report`,
+Linux 6.7+) to obtain the SNP attestation report. This supersedes the earlier
+`/dev/sev-guest` ioctl path, which used an incorrect ioctl number and an inline
+request ABI and failed on real hardware with ENOTTY ("inappropriate ioctl for
+device"); the live kernel ABI passes pointers to separate request/response
+structs. The configfs-TSM interface was hardware-validated on a real
+non-paravisor SEV-SNP guest (GCP N2D, AMD Milan): the guest-supplied nonce lands
+in the report's REPORT_DATA field and the report verifies against the AMD VCEK.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import hashlib
 import hmac
-import struct
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,16 +24,11 @@ from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 
 _SEV_GUEST_DEVICE = Path("/dev/sev-guest")
 
-# SNP_GET_REPORT ioctl number: 0xC0A01181
-# Derived from: _IOWR(0x11, 0x01, struct snp_report_req) where req is 0xA0 bytes.
-_SNP_GET_REPORT = 0xC0A01181
-
-# Request structure: 96-byte user_data + 4-byte vmpl + 28-byte reserved = 128 bytes total
-_SNP_REQ_USER_DATA_SIZE = 96
-_SNP_REQ_SIZE = 128
-
-# Response structure: 4-byte status + 4-byte report_size + 24-byte reserved + report
-_SNP_RESP_HEADER_SIZE = 32
+# Kernel configfs-TSM report interface (Linux 6.7+). A caller writes up to 64
+# bytes of report data to `inblob` and reads the raw platform report back from
+# `outblob`; `provider` names the backend (expected "sev_guest" here).
+_TSM_REPORT_DIR = Path("/sys/kernel/config/tsm/report")
+_TSM_ENTRY = "cmcp"
 
 
 class _SnpAttestationReport(ctypes.LittleEndianStructure):
@@ -72,16 +77,48 @@ assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0, (
 )
 
 _SNP_REPORT_SIZE = ctypes.sizeof(_SnpAttestationReport)
-_SNP_RESP_SIZE = _SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE
 
-# Byte range of the measurement field within the raw SNP report blob.
-# Derived from the ctypes struct so they stay in sync with the field layout.
-_SNP_MEASUREMENT_OFFSET: int = _SnpAttestationReport.measurement.offset
-_SNP_MEASUREMENT_END: int = _SNP_MEASUREMENT_OFFSET + _SnpAttestationReport.measurement.size
+
+def _tsm_get_report(report_data: bytes) -> bytes:
+    """Fetch a raw SNP attestation report via the configfs-TSM interface.
+
+    Writes *report_data* (<=64 bytes) to a fresh report entry's ``inblob`` and
+    reads the raw report from ``outblob``. Requires root (configfs) and a
+    registered ``sev_guest`` TSM provider. Returns the raw report bytes.
+    """
+    if not _TSM_REPORT_DIR.is_dir():
+        raise RuntimeError(
+            f"SEV-SNP attestation failed: configfs-TSM interface not present at "
+            f"{_TSM_REPORT_DIR} (needs Linux 6.7+ with the sev-guest driver loaded)."
+        )
+    entry = _TSM_REPORT_DIR / _TSM_ENTRY
+    try:
+        entry.mkdir(exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f"SEV-SNP attestation failed: cannot create TSM report entry {entry}: {exc} "
+            "(no TSM provider registered, or not root)."
+        ) from exc
+    try:
+        (entry / "inblob").write_bytes(report_data)
+        provider = (entry / "provider").read_text().strip()
+        if provider and provider != "sev_guest":
+            raise RuntimeError(
+                f"SEV-SNP attestation failed: TSM provider is {provider!r}, not 'sev_guest'."
+            )
+        outblob = (entry / "outblob").read_bytes()
+    finally:
+        with contextlib.suppress(OSError):
+            entry.rmdir()
+    if len(outblob) < _SNP_REPORT_SIZE:
+        raise RuntimeError(
+            f"SEV-SNP attestation failed: TSM outblob too short ({len(outblob)} bytes)."
+        )
+    return outblob[:_SNP_REPORT_SIZE]
 
 
 class SEVSNPProvider(TEEProvider):
-    """AMD SEV-SNP attestation provider using the /dev/sev-guest ioctl interface."""
+    """AMD SEV-SNP attestation provider using the kernel configfs-TSM interface."""
 
     def __init__(self, expected_measurement: str | None = None) -> None:
         self._expected_measurement = expected_measurement
@@ -90,48 +127,28 @@ class SEVSNPProvider(TEEProvider):
         return "sev-snp"
 
     def detect(self) -> bool:
-        """Return True if /dev/sev-guest exists (Linux only)."""
+        """Return True on a Linux SNP guest exposing the report interface.
+
+        A genuine SEV-SNP guest exposes the sev-guest driver via the
+        configfs-TSM report directory and/or the /dev/sev-guest device.
+        """
         try:
             if sys.platform != "linux":
                 return False
-            return _SEV_GUEST_DEVICE.exists()
+            return _TSM_REPORT_DIR.is_dir() or _SEV_GUEST_DEVICE.exists()
         except Exception:  # noqa: BLE001
             return False
 
     def get_attestation_report(self, nonce: bytes) -> AttestationReport:
         """
-        Request an SNP attestation report via the SNP_GET_REPORT ioctl.
+        Request an SNP attestation report via configfs-TSM.
 
-        The nonce is placed in the 96-byte user_data field (first 64 bytes used,
-        zero-padded to 96).
+        The nonce is placed in the guest-controlled REPORT_DATA field (up to 64
+        bytes). On a genuine SNP guest the hardware signs it into the report, so
+        a verifier can bind the report to this nonce.
         """
-        try:
-            import fcntl  # available on Linux only
-        except ImportError as exc:
-            raise RuntimeError(f"SEV-SNP attestation failed: {exc}") from exc
-
-        # Build request: 96-byte user_data (nonce truncated/padded) + vmpl=0 + reserved
-        user_data = (nonce[:64] + b"\x00" * 96)[:96]
-        vmpl = 0
-        # struct: 96s user_data, I vmpl, 28s reserved
-        req = struct.pack("96sI28s", user_data, vmpl, b"\x00" * 28)
-
-        buf = bytearray(max(len(req), _SNP_RESP_SIZE))
-        buf[: len(req)] = req
-
-        try:
-            with open(_SEV_GUEST_DEVICE, "rb") as fd:
-                fcntl.ioctl(fd, _SNP_GET_REPORT, buf)  # type: ignore[attr-defined]
-        except OSError as exc:
-            raise RuntimeError(f"SEV-SNP attestation failed: {exc}") from exc
-
-        # Extract status (first 4 bytes)
-        status = struct.unpack_from("<I", buf, 0)[0]
-        if status != 0:
-            raise RuntimeError(f"SEV-SNP attestation failed: ioctl status={status:#x}")
-
-        # Report starts at offset _SNP_RESP_HEADER_SIZE
-        raw_evidence = bytes(buf[_SNP_RESP_HEADER_SIZE : _SNP_RESP_HEADER_SIZE + _SNP_REPORT_SIZE])
+        report_data = (nonce[:64] + b"\x00" * 64)[:64]
+        raw_evidence = _tsm_get_report(report_data)
 
         # Parse report via ctypes struct for named field access (HW-006)
         report = _SnpAttestationReport.from_buffer_copy(raw_evidence)
@@ -156,3 +173,8 @@ class SEVSNPProvider(TEEProvider):
             attestation_generated_at=datetime.now(tz=UTC),
             attestation_validity_seconds=86400,
         )
+
+
+# Retained for callers/tests that referenced the module-level constant.
+_SNP_MEASUREMENT_OFFSET: int = _SnpAttestationReport.measurement.offset
+_SNP_MEASUREMENT_END: int = _SNP_MEASUREMENT_OFFSET + _SnpAttestationReport.measurement.size

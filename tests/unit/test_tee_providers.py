@@ -87,27 +87,32 @@ def test_sev_snp_provider_name() -> None:
     assert SEVSNPProvider().provider_name() == "sev-snp"
 
 
-def test_sev_snp_get_report_raises_on_ioctl_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ioctl raising OSError must surface as RuntimeError."""
-    mock_fcntl = MagicMock()
-    mock_fcntl.ioctl = MagicMock(side_effect=OSError("ioctl failed"))
-    monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
+def test_sev_snp_get_report_raises_when_tsm_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A configfs-TSM failure (no interface / not root) must surface as RuntimeError."""
+    from cmcp_runtime.tee import sev_snp as snp_mod
 
-    mock_fd = MagicMock()
-    mock_fd.__enter__ = MagicMock(return_value=mock_fd)
-    mock_fd.__exit__ = MagicMock(return_value=False)
+    def boom(_report_data: bytes) -> bytes:
+        raise RuntimeError("SEV-SNP attestation failed: configfs-TSM interface not present")
 
-    with patch("builtins.open", return_value=mock_fd), pytest.raises(RuntimeError, match="SEV-SNP attestation failed"):
-        SEVSNPProvider().get_attestation_report(b"\x00" * 32)
-
-
-def test_sev_snp_get_report_raises_when_fcntl_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When fcntl is absent (non-Linux), get_attestation_report must raise RuntimeError."""
-    monkeypatch.setitem(sys.modules, "fcntl", None)  # type: ignore[arg-type]
+    monkeypatch.setattr(snp_mod, "_tsm_get_report", boom)
     with pytest.raises(RuntimeError, match="SEV-SNP attestation failed"):
         SEVSNPProvider().get_attestation_report(b"\x00" * 32)
+
+
+def test_sev_snp_get_report_success_via_tsm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_attestation_report parses the configfs-TSM outblob and binds the nonce."""
+    from cmcp_runtime.tee import sev_snp as snp_mod
+    from cmcp_runtime.tee.sev_snp import _SNP_REPORT_SIZE, _SnpAttestationReport
+
+    nonce = bytes(range(64))
+    raw = bytearray(_SNP_REPORT_SIZE)
+    raw[_SnpAttestationReport.report_data.offset:_SnpAttestationReport.report_data.offset + 64] = nonce
+    monkeypatch.setattr(snp_mod, "_tsm_get_report", lambda report_data: bytes(raw))
+
+    report = SEVSNPProvider().get_attestation_report(nonce)
+    assert report.provider == "sev-snp"
+    assert report.report_data == nonce.hex()
+    assert report.raw_evidence == bytes(raw)
 
 
 # ── TDXProvider struct layout (HW-007) ────────────────────────────────────────
