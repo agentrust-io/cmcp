@@ -127,15 +127,18 @@ class SEVSNPProvider(TEEProvider):
         return "sev-snp"
 
     def detect(self) -> bool:
-        """Return True on a Linux SNP guest exposing the report interface.
+        """Return True only on a genuine Linux SEV-SNP guest.
 
-        A genuine SEV-SNP guest exposes the sev-guest driver via the
-        configfs-TSM report directory and/or the /dev/sev-guest device.
+        Gate on the /dev/sev-guest device, which the sev-guest driver creates on
+        a real SNP guest (and which also registers the configfs-TSM provider used
+        for acquisition). The configfs-TSM report *directory* alone is NOT a valid
+        signal: it exists whenever tsm.ko is loaded (e.g. on ordinary CI runners)
+        with no provider registered, which would wrongly select this provider.
         """
         try:
             if sys.platform != "linux":
                 return False
-            return _TSM_REPORT_DIR.is_dir() or _SEV_GUEST_DEVICE.exists()
+            return _SEV_GUEST_DEVICE.exists()
         except Exception:  # noqa: BLE001
             return False
 
