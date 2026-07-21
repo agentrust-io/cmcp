@@ -83,6 +83,7 @@ def start(config: str, enforcement: str | None) -> None:
     """Start the cMCP Runtime."""
     import uvicorn
 
+    from cmcp_runtime.config import parse_listen_addr
     from cmcp_runtime.startup import run_startup
 
     ctx = run_startup(config)
@@ -94,8 +95,7 @@ def start(config: str, enforcement: str | None) -> None:
 
     server = build_server(ctx)
 
-    host, _, port_str = ctx.config.listen_addr.rpartition(":")
-    port = int(port_str)
+    host, port = parse_listen_addr(ctx.config.listen_addr)
 
     click.echo(
         f"cMCP Runtime starting: TEE: {ctx.attestation_report.provider},"
