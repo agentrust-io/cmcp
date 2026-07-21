@@ -129,6 +129,7 @@ def test_startup_succeeds_in_dev_mode(complete_setup):
     ctx = run_startup(complete_setup)
     assert isinstance(ctx, RuntimeContext)
     assert ctx.config.dev_mode is True
+    assert ctx.config.listen_addr == "127.0.0.1:8443"
     assert ctx.signing_key is not None
     assert ctx.policy_bundle is not None
     assert ctx.catalog is not None

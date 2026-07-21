@@ -63,6 +63,7 @@ attestation:
   enforcement_mode: enforcing
 policy_bundle_path: ./policies/
 catalog_path: ./catalog.json
+listen_addr: "127.0.0.1:8443"
 audit_db_path: ./audit.db
 ```
 
@@ -222,9 +223,11 @@ In dev mode the runtime uses a software-only TEE provider (no hardware required)
 No hardware TEE detected. Running in development mode: attestation is not hardware-backed. ...
 SPIFFE SVID not available (SPIRE agent socket not found ...) - gateway will use self-signed TLS for mTLS
 CMCP_NRAS_API_KEY is not set -- skipping NRAS post-attestation appraisal. ...
-cMCP Runtime starting: TEE: software-only, listen: 0.0.0.0:8443
-INFO:     Uvicorn running on http://0.0.0.0:8443 (Press CTRL+C to quit)
+cMCP Runtime starting: TEE: software-only, listen: 127.0.0.1:8443
+INFO:     Uvicorn running on http://127.0.0.1:8443 (Press CTRL+C to quit)
 ```
+
+Tokenless dev mode binds to loopback only. Reaching the gateway from a LAN, a container network, or the cloud requires setting `CMCP_BEARER_TOKEN`, so you never expose an unauthenticated gateway by accident.
 
 The gateway now holds this terminal open. Leave it running and open a **second terminal** for the next steps. In that second terminal, `cd` back into `cmcp-quickstart` (and re-activate your Python environment if you use one) so the commands run from the right place.
 
