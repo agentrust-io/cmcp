@@ -44,7 +44,9 @@ _TPM_GENERATED_VALUE = 0xFF544347
 # TPMT_SIGNATURE sigAlg values.
 _ALG_RSASSA = 0x0014
 _ALG_RSAPSS = 0x0016
-_ALG_HASH = {0x0004: hashes.SHA1(), 0x000B: hashes.SHA256(), 0x000C: hashes.SHA384()}
+# TPM hash-alg id -> hash. SHA1 is listed only to identify a quote's declared
+# alg; it is not chosen or used to secure anything here.
+_ALG_HASH = {0x0004: hashes.SHA1(), 0x000B: hashes.SHA256(), 0x000C: hashes.SHA384()}  # noqa: S303  # nosec B303
 
 
 @dataclass

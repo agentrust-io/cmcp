@@ -65,7 +65,7 @@ class AzureCVMProvider(TEEProvider):
                 return False
             if shutil.which("tpm2_nvreadpublic") is None:
                 return False
-            proc = subprocess.run(  # noqa: S603
+            proc = subprocess.run(  # noqa: S603  # nosec B603, B607
                 ["tpm2_nvreadpublic", _HCL_NV_INDEX],  # noqa: S607
                 capture_output=True,
                 timeout=15,
@@ -81,7 +81,7 @@ class AzureCVMProvider(TEEProvider):
         exe = shutil.which(args[0])
         if exe is None:
             raise RuntimeError(f"Azure CVM attestation failed: {args[0]} not found")
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(  # noqa: S603  # nosec B603
             [exe, *args[1:]], capture_output=True, timeout=30, check=False
         )
         if proc.returncode != 0:
@@ -147,8 +147,9 @@ class AzureCVMProvider(TEEProvider):
             )
 
             def _get(u: str) -> bytes:
-                req = urllib.request.Request(u, headers={"User-Agent": "cmcp"})  # noqa: S310
-                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                # URL is always the fixed https AMD KDS host; scheme is not user-controlled.
+                req = urllib.request.Request(u, headers={"User-Agent": "cmcp"})  # noqa: S310  # nosec B310
+                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310  # nosec B310
                     return resp.read()
 
             from cryptography import x509
