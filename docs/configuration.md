@@ -8,7 +8,7 @@
 # cmcp-config.yaml - annotated full example
 
 attestation:
-  # TEE provider. auto detects in order: tpm -> sev-snp -> tdx.
+  # TEE provider. auto detects in order: azure-cvm -> tpm -> sev-snp -> tdx.
   # opaque requires explicit opt-in via OPAQUE_ATTESTATION_URL env var.
   # Use software-only only with CMCP_DEV_MODE=1.
   provider: auto
@@ -76,7 +76,7 @@ policy_reload_interval_seconds: 0
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `provider` | string | `auto` | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `opaque`, `software-only`. `auto` detects in order: tpm then sev-snp then tdx. `opaque` requires `OPAQUE_ATTESTATION_URL` to be set. `software-only` requires `CMCP_DEV_MODE=1`. |
+| `provider` | string | `auto` | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `opaque`, `software-only`. `auto` detects in order: azure-cvm, then tpm, then sev-snp, then tdx. `opaque` requires `OPAQUE_ATTESTATION_URL` to be set. `software-only` requires `CMCP_DEV_MODE=1`. |
 | `enforcement_mode` | string | `enforcing` | Policy enforcement mode. Valid values: `enforcing`, `advisory`, `silent`. |
 | `validity_seconds` | integer | `86400` | Attestation report validity period in seconds. Must be a positive integer. At expiry, behavior is controlled by `staleness_policy`. |
 | `staleness_policy` | string | `fail_closed` | Action when attestation validity expires. Valid values: `fail_closed` (terminate sessions), `warn_only` (allow sessions, mark claims as stale). |
