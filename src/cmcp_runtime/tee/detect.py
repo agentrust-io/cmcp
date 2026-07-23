@@ -64,7 +64,7 @@ def detect_provider(config: Config) -> TEEProvider:
     Detect and return the active TEE provider.
 
     Follows the probe order from docs/spec/attestation.md §1.1:
-      tpm -> sev-snp -> tdx
+      azure-cvm -> tpm -> sev-snp -> tdx
 
     If no hardware provider is found:
     - CMCP_DEV_MODE=1: returns SoftwareOnlyProvider with a WARN log

@@ -219,6 +219,10 @@ class PolicyEvaluator:
         self._maybe_reload()
         context: dict[str, Any] = {
             "tool_name": tool_name,
+            # Same resource entity as ingress (see PolicyProxy._build_cedar_context)
+            # so a resource-scoped permit matches at egress too; without it an
+            # allowed tool response would be denied on the way back.
+            "resource": tool_name,
             "egress": True,
             "sensitivity_level": SENSITIVITY_ORDER.get(session.max_sensitivity, 0),
             "injection_events": len(session.injection_events),
