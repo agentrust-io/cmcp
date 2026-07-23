@@ -117,13 +117,13 @@ Agent -> cMCP Runtime -> Cedar Policy Engine (TEE) -> Tool
 | `gpu-cc` _(v0.2)_ | NVIDIA H100/H200/Blackwell (CC mode) | High | NVIDIA Remote Attestation Service (NRAS) |
 | `opaque` _(opt-in)_ | OPAQUE Confidential Runtime | n/a _(not yet implemented)_ | Placeholder: excluded from auto-detect; selecting it explicitly raises a not-implemented error |
 
-Provider auto-detect probe order: `tpm -> sev-snp -> tdx` — the first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
+Provider auto-detect probe order: `azure-cvm -> tpm -> sev-snp -> tdx` — the first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
 
 ```python
 from cmcp_runtime.config import TEEProvider
 
 # Auto-detect (default)
-# attestation.provider: auto  ->  tpm -> sev-snp -> tdx
+# attestation.provider: auto  ->  azure-cvm -> tpm -> sev-snp -> tdx
 # (software-only is used only under CMCP_DEV_MODE=1)
 
 # Explicit hardware selection
@@ -159,7 +159,7 @@ attestation:
   staleness_policy: fail_closed     # fail_closed | warn_only
   expected_measurement: ~           # pin a specific PCR/measurement (optional)
 
-policy_bundle_path: policy/         # directory containing .cedar files and manifest.json
+policy_bundle_path: policies/       # directory containing .cedar files and manifest.json
 catalog_path: catalog.json          # approved tool catalog
 
 listen_addr: "0.0.0.0:8443"
@@ -184,6 +184,7 @@ Environment variables:
 | `cmcp start` | `--config PATH` (required) | Start the gateway |
 | `cmcp validate-config` | `--config PATH` (required) | Validate `cmcp-config.yaml` without starting |
 | `cmcp validate-bundle` | `--bundle-path PATH` (required), `--expected-hash sha256:<hex>` (required) | Verify a Cedar bundle hash before deployment |
+| `cmcp verify` | `CLAIM_FILE` (required); `--policy-hash`, `--catalog-hash`, `--max-age`, `--trusted-key`, `--audit-bundle`, `--agent-manifest`, `--agent-manifest-trust-anchor` | Verify a signed TRACE Claim (signature, schema, freshness, audit chain, and pinned hashes) |
 
 ---
 
@@ -269,7 +270,7 @@ A TRACE Claim (a `GatewayClaim`) is a signed, hardware-attested artifact produce
 
 ### Which TEE providers are supported?
 
-TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is SEV-SNP, then TDX, then TPM, then software.
+TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is Azure confidential VM, then TPM 2.0 / vTPM, then AMD SEV-SNP, then Intel TDX; the software-only provider is used only under CMCP_DEV_MODE=1.
 
 ### What license is cMCP under?
 
@@ -303,7 +304,7 @@ MIT.
     {
       "@type": "Question",
       "name": "Which TEE providers does cMCP support?",
-      "acceptedAnswer": { "@type": "Answer", "text": "TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is SEV-SNP, then TDX, then TPM, then software." }
+      "acceptedAnswer": { "@type": "Answer", "text": "TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is Azure confidential VM, then TPM 2.0 / vTPM, then AMD SEV-SNP, then Intel TDX; the software-only provider is used only under CMCP_DEV_MODE=1." }
     },
     {
       "@type": "Question",
