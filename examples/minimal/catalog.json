@@ -4,19 +4,33 @@
     "server": {
       "display_name": "Echo MCP Server (mock)",
       "url": "http://localhost:9001/mcp",
-      "tls_fingerprint": "SHA256:REPLACE_WITH_REAL_FINGERPRINT",
-      "transport": "http-sse",
-      "rotation_mode": "key-pinned"
+      "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "transport": "http-sse"
     },
     "approved_definition": {
       "description": "Returns its input unchanged. For testing only.",
-      "input_schema": {"type": "object", "properties": {"message": {"type": "string"}}},
-      "output_schema": {"type": "object", "properties": {"message": {"type": "string"}}}
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      }
     },
     "compliance_domain": "public",
     "requires_baa": false,
     "sensitivity_level": "public",
     "added_at": "2026-06-04T00:00:00Z",
-    "approved_by": "developer@example.com"
+    "approved_by": "developer@example.com",
+    "definition_hash": "sha256:130436578985268754fd1925a01a7a12e2f94bcfd439f4f43050f816f866e8d6"
   }
 ]

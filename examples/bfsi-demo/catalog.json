@@ -4,25 +4,36 @@
     "server": {
       "display_name": "CRM MCP Server (mock)",
       "url": "http://localhost:9001/mcp",
-      "tls_fingerprint": "SHA256:REPLACE_WITH_REAL_FINGERPRINT_FROM_openssl_s_client",
-      "transport": "http-sse",
-      "rotation_mode": "key-pinned"
+      "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "transport": "http-sse"
     },
     "approved_definition": {
       "description": "Query CRM records by account ID or customer name",
       "input_schema": {
         "type": "object",
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "properties": {
-          "query": {"type": "string", "description": "SOQL-style query string"},
-          "max_records": {"type": "integer", "default": 100}
+          "query": {
+            "type": "string",
+            "description": "SOQL-style query string"
+          },
+          "max_records": {
+            "type": "integer",
+            "default": 100
+          }
         }
       },
       "output_schema": {
         "type": "object",
         "properties": {
-          "records": {"type": "array"},
-          "total_count": {"type": "integer"}
+          "records": {
+            "type": "array"
+          },
+          "total_count": {
+            "type": "integer"
+          }
         }
       }
     },
@@ -30,32 +41,51 @@
     "requires_baa": false,
     "sensitivity_level": "pii",
     "added_at": "2026-06-04T00:00:00Z",
-    "approved_by": "security-team@example.com"
+    "approved_by": "security-team@example.com",
+    "definition_hash": "sha256:1314112be140a3f895b573b51788408d627e218d96d72fba2c637024b77a6a24"
   },
   {
     "tool_name": "kyc.verify",
     "server": {
       "display_name": "KYC Verification MCP Server (mock)",
       "url": "http://localhost:9002/mcp",
-      "tls_fingerprint": "SHA256:REPLACE_WITH_REAL_FINGERPRINT",
-      "transport": "http-sse",
-      "rotation_mode": "key-pinned"
+      "tls_fingerprint": "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+      "transport": "http-sse"
     },
     "approved_definition": {
       "description": "Verify customer identity for KYC compliance. Returns PASS/FAIL with risk score.",
       "input_schema": {
         "type": "object",
-        "required": ["customer_id"],
+        "required": [
+          "customer_id"
+        ],
         "properties": {
-          "customer_id": {"type": "string"},
-          "check_level": {"type": "string", "enum": ["basic", "enhanced"]}
+          "customer_id": {
+            "type": "string"
+          },
+          "check_level": {
+            "type": "string",
+            "enum": [
+              "basic",
+              "enhanced"
+            ]
+          }
         }
       },
       "output_schema": {
         "type": "object",
         "properties": {
-          "result": {"type": "string", "enum": ["PASS", "FAIL", "REVIEW"]},
-          "risk_score": {"type": "number"}
+          "result": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "REVIEW"
+            ]
+          },
+          "risk_score": {
+            "type": "number"
+          }
         }
       }
     },
@@ -63,6 +93,7 @@
     "requires_baa": false,
     "sensitivity_level": "confidential",
     "added_at": "2026-06-04T00:00:00Z",
-    "approved_by": "security-team@example.com"
+    "approved_by": "security-team@example.com",
+    "definition_hash": "sha256:158652a9b5127c6567dd555bd7a3412a9eb31ffae61e33e84dc74d79f01413a1"
   }
 ]
