@@ -375,6 +375,12 @@ class CMCPProxy:
         entry = self._catalog.lookup(tool_name)
         ctx: dict[str, Any] = {
             "tool_name": tool_name,
+            # Cedar resource entity: the backend builds Resource::"<resource>" from
+            # this, so policies can match a tool by name, e.g.
+            #   forbid(principal, action, resource == Resource::"salesforce.contacts");
+            # Without it the resource defaults to Resource::"default" and no
+            # resource-scoped policy can ever match.
+            "resource": tool_name,
             "arguments": _cedar_safe(arguments),
             "server_identity": entry.server.url if entry else "",
             "compliance_domain": entry.compliance_domain if entry else "external",
