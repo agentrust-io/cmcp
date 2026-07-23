@@ -528,7 +528,15 @@ class MCPServer:
         session_id: str = request.path_params["session_id"]
         if session_id != self._session.session_id:
             return JSONResponse(
-                {"error": f"unknown or already closed session_id={session_id}"},
+                {
+                    "error": "session_not_found",
+                    "message": (
+                        f"No open session with id '{session_id}'. It may already be "
+                        "closed, or you passed the _cmcp.session_id label instead of "
+                        "the internal session id. Look up the internal id via "
+                        "GET /audit/export?session_id=<label>."
+                    ),
+                },
                 status_code=404,
             )
 

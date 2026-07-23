@@ -67,7 +67,7 @@ class Config:
     attestation: AttestationConfig = field(default_factory=AttestationConfig)
     agent_manifest: AgentManifestConfig = field(default_factory=AgentManifestConfig)
     kill_switch: KillSwitchConfig = field(default_factory=KillSwitchConfig)
-    policy_bundle_path: str = "policy/"
+    policy_bundle_path: str = "policies/"
     catalog_path: str = "catalog.json"
     listen_addr: str = "0.0.0.0:8443"
     max_response_size_bytes: int = 2 * 1024 * 1024  # 2MB
