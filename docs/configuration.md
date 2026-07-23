@@ -48,7 +48,7 @@ agent_manifest:
 # Path to the directory containing .cedar policy files and manifest.json.
 # Must not contain '..' components. Relative paths are resolved from the
 # working directory at startup.
-policy_bundle_path: policy/
+policy_bundle_path: policies/
 
 # Path to the JSON tool catalog file.
 # Must not contain '..' components.
@@ -96,7 +96,7 @@ All fields are optional as a group. If `path` is set, `trust_anchor_path` must a
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `policy_bundle_path` | string | `policy/` | Path to the Cedar policy bundle directory. Must contain `.cedar` files and a `manifest.json`. Path traversal (`..` components) is rejected. |
+| `policy_bundle_path` | string | `policies/` | Path to the Cedar policy bundle directory. Must contain `.cedar` files and a `manifest.json`. Path traversal (`..` components) is rejected. |
 | `catalog_path` | string | `catalog.json` | Path to the JSON tool catalog. Path traversal (`..` components) is rejected. |
 | `listen_addr` | string | `0.0.0.0:8443` | Address and port the gateway binds to. |
 | `max_response_size_bytes` | integer | `2097152` | Maximum tool response size in bytes (2MB). Must be a positive integer. Responses exceeding this limit are rejected before inspection. |
@@ -132,7 +132,7 @@ Environment variables control secrets and mode flags that must not appear in con
 attestation:
   provider: auto
   enforcement_mode: enforcing
-policy_bundle_path: policy/
+policy_bundle_path: policies/
 catalog_path: catalog.json
 ```
 
