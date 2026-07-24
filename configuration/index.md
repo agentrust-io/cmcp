@@ -55,6 +55,11 @@ policy_bundle_path: policies/
 catalog_path: catalog.json
 
 # Address and port the runtime listens on.
+# Effective defaults:
+# - tokenless CMCP_DEV_MODE=1: "127.0.0.1:8443"
+# - authenticated or production operation: "0.0.0.0:8443" (unless explicitly configured)
+# Tokenless development mode only accepts loopback addresses (e.g., 127.0.0.1:8443, localhost:8443, [::1]:8443).
+# Wildcard, LAN, public, and non-loopback hostname binds require CMCP_BEARER_TOKEN.
 listen_addr: "0.0.0.0:8443"
 
 # Maximum size of a tool response payload in bytes. Responses larger than
@@ -94,13 +99,13 @@ All fields are optional as a group. If `path` is set, `trust_anchor_path` must a
 
 ### top-level fields
 
-| Field                            | Type    | Default        | Description                                                                                                                                 |
-| -------------------------------- | ------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `policy_bundle_path`             | string  | `policies/`    | Path to the Cedar policy bundle directory. Must contain `.cedar` files and a `manifest.json`. Path traversal (`..` components) is rejected. |
-| `catalog_path`                   | string  | `catalog.json` | Path to the JSON tool catalog. Path traversal (`..` components) is rejected.                                                                |
-| `listen_addr`                    | string  | `0.0.0.0:8443` | Address and port the gateway binds to.                                                                                                      |
-| `max_response_size_bytes`        | integer | `2097152`      | Maximum tool response size in bytes (2MB). Must be a positive integer. Responses exceeding this limit are rejected before inspection.       |
-| `policy_reload_interval_seconds` | integer | `0`            | Interval in seconds between automatic Cedar bundle reloads. `0` disables automatic reload. See note in the full example above.              |
+| Field                            | Type    | Default        | Description                                                                                                                                                                                                                                                                                                     |
+| -------------------------------- | ------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `policy_bundle_path`             | string  | `policies/`    | Path to the Cedar policy bundle directory. Must contain `.cedar` files and a `manifest.json`. Path traversal (`..` components) is rejected.                                                                                                                                                                     |
+| `catalog_path`                   | string  | `catalog.json` | Path to the JSON tool catalog. Path traversal (`..` components) is rejected.                                                                                                                                                                                                                                    |
+| `listen_addr`                    | string  | `0.0.0.0:8443` | Address and port the gateway binds to. Default is `127.0.0.1:8443` in tokenless `CMCP_DEV_MODE=1`, otherwise `0.0.0.0:8443`. Tokenless dev mode requires loopback (e.g., `127.0.0.1:8443`, `localhost:8443`, `[::1]:8443`). Wildcard, LAN, public, and non-loopback hostname binds require `CMCP_BEARER_TOKEN`. |
+| `max_response_size_bytes`        | integer | `2097152`      | Maximum tool response size in bytes (2MB). Must be a positive integer. Responses exceeding this limit are rejected before inspection.                                                                                                                                                                           |
+| `policy_reload_interval_seconds` | integer | `0`            | Interval in seconds between automatic Cedar bundle reloads. `0` disables automatic reload. See note in the full example above.                                                                                                                                                                                  |
 
 ## Environment variables
 
@@ -109,7 +114,7 @@ Environment variables control secrets and mode flags that must not appear in con
 | Variable                 | Description                                                                                                                                                                                                                             | Overrides                                     |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | `CMCP_DEV_MODE=1`        | Enables software-only attestation. No hardware TEE required. TRACE Claims will show `partially_verified` status. Required when `provider` is `software-only`.                                                                           | `attestation.provider` (forces software-only) |
-| `CMCP_BEARER_TOKEN`      | Optional bearer token for runtime HTTP auth. If set, all requests to the runtime must include `Authorization: Bearer <token>`. If unset, no bearer auth is enforced.                                                                    | none                                          |
+| `CMCP_BEARER_TOKEN`      | Optional bearer token for runtime HTTP auth. If set, all requests to the runtime must include `Authorization: Bearer <token>`. If unset, no bearer auth is enforced. This token is required for non-loopback binds.                     | none                                          |
 | `OPAQUE_ATTESTATION_URL` | Enables the OPAQUE Managed Runtime provider. Must be set to the OPAQUE attestation service URL. Required when `provider` is `opaque` or `auto` on OPAQUE infrastructure.                                                                | enables `opaque` provider detection           |
 | `CMCP_POLICY_HASH`       | SHA-256 hash of the approved policy bundle. Required in non-dev mode and checked by startup before Agent Manifest binding. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (startup policy integrity check)         |
 | `CMCP_CATALOG_HASH`      | SHA-256 hash of the approved `catalog.json`. Required in non-dev mode. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`.                                                     | none (additional startup check)               |
