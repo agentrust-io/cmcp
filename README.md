@@ -276,45 +276,6 @@ TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computi
 
 MIT.
 
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "What is cMCP?",
-      "acceptedAnswer": { "@type": "Answer", "text": "cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool-call policy inside a hardware Trusted Execution Environment. It intercepts each tool call, evaluates it against a Cedar policy bundle, enforces the decision (allow, deny, or redact), and records the call in a hardware-sealed audit chain." }
-    },
-    {
-      "@type": "Question",
-      "name": "How is cMCP different from software-only MCP governance?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Software-only governance runs the policy engine in the same OS an operator or a supply-chain CVE can reach, so it cannot prove the policy that ran was the approved one. cMCP runs the policy engine inside a TEE and measures the Cedar bundle hash into the hardware attestation report before any code runs, so the control plane cannot be reached by the process it governs." }
-    },
-    {
-      "@type": "Question",
-      "name": "Do I need special hardware to try cMCP?",
-      "acceptedAnswer": { "@type": "Answer", "text": "No. Set CMCP_DEV_MODE=1 to use the software-only TEE provider and run the full quickstart without a hardware TEE. Hardware providers (TPM, AMD SEV-SNP, Intel TDX, OPAQUE) are used in production." }
-    },
-    {
-      "@type": "Question",
-      "name": "What is a TRACE Claim?",
-      "acceptedAnswer": { "@type": "Answer", "text": "A TRACE Claim (a GatewayClaim) is a signed, hardware-attested artifact produced per session. It records which tools ran, which policy decided each call, the Cedar bundle hash, and the audit chain, and it is signed with an Ed25519 key that never leaves the TEE. A verifier checks it with the cmcp_verify library without trusting the operator." }
-    },
-    {
-      "@type": "Question",
-      "name": "Which TEE providers does cMCP support?",
-      "acceptedAnswer": { "@type": "Answer", "text": "TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is Azure confidential VM, then TPM 2.0 / vTPM, then AMD SEV-SNP, then Intel TDX; the software-only provider is used only under CMCP_DEV_MODE=1." }
-    },
-    {
-      "@type": "Question",
-      "name": "What license is cMCP under?",
-      "acceptedAnswer": { "@type": "Answer", "text": "MIT." }
-    }
-  ]
-}
-</script>
-
 ---
 
 ## Contributing
