@@ -12,7 +12,7 @@ been verified end to end by `cmcp_verify`, and the run is recorded below.
 
 | Platform | Report parsing | Certificate chain | Report signature | Verified against real hardware evidence |
 |---|---|---|---|---|
-| AMD SEV-SNP (Azure CVM, vTPM-rooted) | Yes | Yes, to the real AMD ARK-Milan root | Yes | **Yes**, 2026-07-27, capture of 2026-07-20 |
+| AMD SEV-SNP (Azure CVM, vTPM-rooted) | Yes | Yes, to the real AMD ARK-Milan root | Yes | **Yes**, 2026-07-27, both from a stored capture and **live inside a running CVM** |
 | Intel TDX (GCP C3, non-paravisor) | Yes | Yes, to the pinned Intel SGX Root CA | Yes | **Yes**, 2026-07-27, capture of 2026-07-21 |
 | TPM 2.0 (Azure vTPM, Trusted Launch) | Yes | Not in Phase 1 (`ek_cert_chain` stays unverified) | Not in Phase 1 | **Partly**, 2026-07-27. Parse and freshness binding yes; signature and chain are out of Phase 1 scope |
 | NVIDIA GPU CC (H100/H200) | Not implemented | | | No |
@@ -52,6 +52,47 @@ The capture directory holds `hcl.bin`, `vcek.der` and `cert_chain.pem`. It is
 identifier. Zeroing it invalidates the signature, so a redacted vector cannot
 exercise the signature path, which is why this test is env-gated instead of
 running in CI.
+
+## Live run inside a SEV-SNP confidential VM
+
+The runs above appraise stored evidence. On 2026-07-27 the collector and the
+verifier were also run **inside** a real Azure confidential VM
+(`Standard_DC2ads_v5`, Ubuntu 24.04 CVM image, eastus; the guest reports
+`Detected confidential virtualization sev-snp` and `Memory Encryption Features
+active: AMD SEV`, with `SEV: Status: vTom` and no `/dev/sev-guest`, the expected
+paravisor shape).
+
+`AzureCVMProvider.detect()` returned true, the provider collected 13,004 bytes of
+live evidence under a caller nonce, and `verify_azure_cvm_measurement` returned
+`verified: true` with **no unverified fields**:
+
+| Verified field | What it establishes |
+|---|---|
+| `quote_nonce_binding` | The caller's nonce is in the AK-signed TPM quote's extraData |
+| `ak_binding` | The vTPM AK is bound into the SNP report's `REPORT_DATA` by the paravisor |
+| `runtime_data_binding` | `REPORT_DATA == sha256(runtime_data)` holds on the live report |
+| `measurement` | The launch measurement matches the collected report |
+| `vcek_cert_chain` | The VCEK fetched from AMD KDS for this CPU chains to `CN=ARK-Milan` |
+| `report_signature` | The SNP report signature verifies under that VCEK |
+
+A wrong nonce was rejected with `quote_nonce_mismatch`, so freshness is enforced
+rather than assumed.
+
+Two deployment facts this surfaced, both worth knowing before anyone repeats it:
+
+- The gateway process needs TPM device access. `AzureCVMProvider` shells out to
+  `tpm2_nvread` without elevation, so the service user must be in the `tss`
+  group (`/dev/tpmrm0` is `tss:tss`). Without it the provider fails with a TCTI
+  load error, not an attestation error, which reads as a broken TPM rather than
+  a permissions problem.
+- `verify_azure_cvm_measurement(..., trusted_ark_pem=...)` wants the ARK alone.
+  Passing AMD KDS's `cert_chain` endpoint output, which is the ASK **and** the
+  ARK, yields `vcek_chain_invalid`. Extract the self-signed root first.
+
+What this still does not establish: cMCP serving live MCP traffic from inside the
+enclave with a policy bundle measured at boot. This validates attestation
+collection and verification in situ, which is the part that was never exercised
+on hardware, not a production gateway deployment.
 
 ## Intel TDX, GCP C3 confidential VM
 
@@ -115,9 +156,10 @@ not fetchable from it.
   sibling [ca2a](https://github.com/agentrust-io/ca2a) verifier does check the AK
   signature and has now done so against this same real quote.
 - **NVIDIA GPU CC**: not implemented, planned for v0.2 via NRAS.
-- **cMCP running inside the TEE end to end**: these runs validate the verifier
-  against real evidence. A production gateway serving traffic from inside a CVM,
-  emitting TRACE Claims with live attestation, is a separate milestone.
+- **cMCP serving traffic from inside the TEE**: attestation collection and
+  verification now run in situ on a CVM (above). A production gateway serving
+  MCP traffic from inside the enclave, with the policy bundle measured at boot
+  and TRACE Claims emitted per session, is still a separate milestone.
 - **TCB appraisal**: TCB status and QE identity need Intel PCS collateral by
   FMSPC and are reported in `unverified_fields`. Do not read a `verified=True`
   TDX result as a full TCB appraisal.
