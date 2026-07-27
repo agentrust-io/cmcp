@@ -24,7 +24,8 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 | `GatewayClaim` (TRACE Claim) generation + signing | Shipped | Normative schema: [`schemas/trace-claim.schema.json`](schemas/trace-claim.schema.json). |
 | Offline verification (`cmcp_verify`) | Shipped | No operator trust required when the verifier independently checks the attestation report. |
 | Agent Manifest identity binding | Shipped | Optional; trust in the issuer key is an out-of-band PKI concern. |
-| Attestation verifiers: `tpm`, `sev-snp`, `tdx` | Partial | Report parsing + certificate-chain verification against real vendor roots; report-signature paths validated with synthetic vectors. End-to-end validation against a real hardware quote on a confidential VM is pending — do not describe as fully hardware-attested until then. |
+| Attestation verifiers: `sev-snp`, `tdx` | Shipped | Verified end to end against genuine hardware evidence: an Azure CVM SEV-SNP report (VCEK chain to the AMD ARK-Milan root, ECDSA-P384 report signature, paravisor `REPORT_DATA` binding) and a GCP C3 Intel TDX DCAP v4 quote (PCK chain to the pinned Intel SGX Root CA, QE binding, quote signature). Runs are recorded in [`docs/testing/hardware-validation.md`](docs/testing/hardware-validation.md). This validates the *verifier* against real quotes; quote generation still requires the corresponding hardware, and TCB status stays in `unverified_fields`. |
+| Attestation verifier: `tpm` | Partial | Report parsing + certificate-chain verification against a caller-supplied vendor root; signature path validated with synthetic vectors only. No real AK-signed quote has been run through it — do not describe TPM as hardware-validated until then. |
 | `opaque` provider | Not implemented | Opt-in placeholder; excluded from auto-detect. Selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. |
 | `gpu-cc` (NVIDIA H100/H200/Blackwell, via NRAS) | Planned (v0.2) | |
 | Transparency-log anchoring for TRACE Claims | v0.2 | Write and lookup. |
@@ -32,5 +33,7 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 | Real-time policy update without enclave restart | Not yet | `policy_reload_interval_seconds` is `0`; a policy change requires a restart. |
 | Full RATS/EAT conformance | v1.0 target | Claims are EAT-shaped today; full conformance is tracked for v1.0. |
 
-See [ROADMAP.md](ROADMAP.md) for version sequencing and [LIMITATIONS.md](LIMITATIONS.md) for
-what cMCP does not prevent.
+See [ROADMAP.md](ROADMAP.md) for version sequencing,
+[`docs/testing/hardware-validation.md`](docs/testing/hardware-validation.md) for what has been
+verified against real TEE hardware, and [LIMITATIONS.md](LIMITATIONS.md) for what cMCP does not
+prevent.

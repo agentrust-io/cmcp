@@ -3,9 +3,15 @@
 These exercise the verification LOGIC against a locally generated, synthetic TDX
 ECDSA v4 quote and a synthetic PCK chain (leaf -> intermediate -> root), so parsing
 and all four checks (quote signature, attestation-key binding, QE report signature,
-PCK chain to a pinned root) run end to end. The real-hardware test is marked skipped
-below and unblocks when an Azure TDX quote fixture lands (also settles the real
-report_data offset for #371).
+PCK chain to a pinned root) run end to end.
+
+The synthetic quote emits the real nested layout: the signature section carries a
+type-6 QE_REPORT_CERTIFICATION_DATA header wrapping the QE report and the type-5
+PCK chain. It used to emit the flat shape, which matched the parser's own mistake
+and let both pass CI while every genuine quote was rejected.
+
+Set ``CMCP_TDX_FIXTURE_DIR`` to a directory holding a real ``tdx_quote.bin`` to run
+the full-chain hardware tests at the bottom against the pinned Intel SGX Root CA.
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ from cmcp_verify.tdx import (
     _QUOTE_HEADER_LEN,
     _TD_BODY_REPORT_DATA_OFF,
     _TD_REPORT_BODY_LEN,
+    parse_td_quote,
     verify_tdx_quote,
 )
 
@@ -89,14 +96,22 @@ def _build_quote(*, report_data: bytes = _RD, qe_auth: bytes = b"") -> tuple[byt
     qe_report[_QE_REPORT_DATA_OFF:_QE_REPORT_DATA_OFF + 32] = bind
     qe_report_sig = _raw_sig(leaf_k, bytes(qe_report))
 
+    # Intel DCAP v4 nests the QE material: the bytes after the attestation key are
+    # a type-6 QE_REPORT_CERTIFICATION_DATA header wrapping the QE report, its PCK
+    # signature, the auth data and the type-5 PCK chain. Emitting the flat layout
+    # here is what let the six-byte-early parse pass CI while rejecting real quotes.
+    cert_data = bytearray()
+    cert_data += bytes(qe_report)
+    cert_data += qe_report_sig
+    cert_data += len(qe_auth).to_bytes(2, "little") + qe_auth
+    cert_data += (5).to_bytes(2, "little")        # cert_data_type (PCK chain)
+    cert_data += len(chain_pem).to_bytes(4, "little") + chain_pem
+
     sig = bytearray()
     sig += quote_sig
     sig += att_pub_raw
-    sig += bytes(qe_report)
-    sig += qe_report_sig
-    sig += len(qe_auth).to_bytes(2, "little") + qe_auth
-    sig += (5).to_bytes(2, "little")              # cert_data_type (PCK chain)
-    sig += len(chain_pem).to_bytes(4, "little") + chain_pem
+    sig += (6).to_bytes(2, "little")              # cert_data_type (QE report)
+    sig += len(cert_data).to_bytes(4, "little") + bytes(cert_data)
 
     quote = signed_region + len(sig).to_bytes(4, "little") + bytes(sig)
     return quote, root_pem
@@ -136,19 +151,69 @@ def test_report_data_mismatch_fails() -> None:
     assert r.failure_reason == "report_data_mismatch"
 
 
+def test_parse_rejects_flat_signature_layout() -> None:
+    """A quote without the type-6 QE wrapper must be rejected, not misread.
+
+    The flat layout is what the parser used to assume. Genuine DCAP v4 quotes
+    nest the QE material, so anything claiming the flat shape is malformed.
+    """
+    quote, _ = _build_quote()
+    off = _QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN + 4 + 128
+    flat = bytearray(quote)
+    flat[off:off + 2] = (5).to_bytes(2, "little")  # PCK chain where the QE report belongs
+    with pytest.raises(ValueError, match="certification data type"):
+        parse_td_quote(bytes(flat))
+
+
 @pytest.mark.skipif(
     not os.environ.get("CMCP_TDX_FIXTURE_DIR"),
-    reason="needs a real Azure TDX quote fixture (capture-tdx-azure.sh); set CMCP_TDX_FIXTURE_DIR",
+    reason="set CMCP_TDX_FIXTURE_DIR to a dir with a real tdx_quote.bin (see "
+    "docs/testing/hardware-validation.md) to run the full-chain hardware test",
 )
-def test_real_azure_tdx_quote() -> None:
+def test_real_tdx_quote() -> None:
+    """Full-chain verification of a genuine TDX quote, against the pinned Intel root.
+
+    Optional files in the fixture dir: ``collateral/intel_root_ca.pem`` overrides
+    the pinned root, ``report_data.hex`` adds the report_data binding assertion
+    (settles the offset in issue #371).
+    """
+    from agent_manifest._tdx_verify import INTEL_SGX_ROOT_CA_PEM
+
     d = os.environ["CMCP_TDX_FIXTURE_DIR"]
     with open(os.path.join(d, "tdx_quote.bin"), "rb") as f:
         quote = f.read()
-    with open(os.path.join(d, "collateral", "intel_root_ca.pem"), "rb") as f:
-        root = f.read()
-    with open(os.path.join(d, "report_data.hex")) as f:
-        expected_rd = f.read().strip()
+    root_path = os.path.join(d, "collateral", "intel_root_ca.pem")
+    root = INTEL_SGX_ROOT_CA_PEM
+    if os.path.exists(root_path):
+        with open(root_path, "rb") as f:
+            root = f.read()
+    rd_path = os.path.join(d, "report_data.hex")
+    expected_rd = None
+    if os.path.exists(rd_path):
+        with open(rd_path) as f:
+            expected_rd = f.read().strip()
+
     r = verify_tdx_quote(quote, root, expected_rd)
     assert r.verified, r.failure_reason
-    # confirms the report_data offset used by parse_td_quote is correct (issue #371)
-    assert "report_data" in r.verified_fields
+    assert "dcap_quote_signature" in r.verified_fields
+    assert "pck_chain" in r.verified_fields
+    if expected_rd is not None:
+        assert "report_data" in r.verified_fields
+
+
+@pytest.mark.skipif(
+    not os.environ.get("CMCP_TDX_FIXTURE_DIR"),
+    reason="set CMCP_TDX_FIXTURE_DIR to a dir with a real tdx_quote.bin",
+)
+def test_real_tdx_quote_agrees_with_agent_manifest() -> None:
+    """cMCP and the shared agent-manifest verifier must agree on a real quote.
+
+    Both carry the DCAP v4 layout until the shared parse is published; this pins
+    them together so they cannot drift apart silently again.
+    """
+    from agent_manifest import verify_tdx_quote as am_verify
+
+    d = os.environ["CMCP_TDX_FIXTURE_DIR"]
+    with open(os.path.join(d, "tdx_quote.bin"), "rb") as f:
+        quote = f.read()
+    assert am_verify(quote) is True
