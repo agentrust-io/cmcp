@@ -251,3 +251,25 @@ def test_signing_pre_image_delegates_to_agent_manifest_sdk(monkeypatch) -> None:
     )
 
     assert cmcp_agent_manifest.signing_pre_image(manifest) == b"sdk-pre-image"
+
+
+def test_post_quantum_manifest_without_pq_extra_fails_closed_cleanly() -> None:
+    # A peer can present a manifest declaring any registered algorithm. Before
+    # agent-manifest 0.6.1 an ML-DSA-65 declaration crashed the verifier with an
+    # uncaught RuntimeError on installs without the optional [pq] extra, so this
+    # path answered with a crash rather than a rejection. It must fail closed as
+    # a ConfigError, and the message must say the signature could not be checked
+    # rather than that it failed, since those need different operator responses.
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    manifest["crypto_profile"] = "post-quantum"
+    manifest["signature"]["algorithm"] = "ML-DSA-65"
+
+    with pytest.raises(ConfigError, match="could not be verified"):
+        verify_agent_manifest_binding(
+            manifest,
+            {key_id: pub},
+            authenticated_subject=AGENT_ID,
+            policy_bundle_hash=POLICY_HASH,
+            tool_catalog_hash=CATALOG_HASH,
+        )

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Raised the `agent-manifest` floor to `>=0.6.1` and made an unappraisable manifest fail closed with a diagnostic message. `verify_agent_manifest_binding` runs the SDK verifier over a peer-supplied manifest, and before 0.6.1 a manifest declaring `ML-DSA-65` or `hybrid-Ed25519-ML-DSA-65` crashed the SDK with an uncaught `RuntimeError` on any install without the optional `[pq]` extra, so this path answered a crash instead of a rejection. The SDK now returns `UNVERIFIABLE`, which cMCP already rejects; the `UNVERIFIABLE` message now distinguishes "could not be verified" (missing trusted key or unavailable algorithm) from "verification failed" (a bad signature) and surfaces the verifier's own reason, because those call for different operator responses.
+
 ### Changed
 
 - Attestation crypto now delegates to agent-manifest's shared verification library (`agent-manifest>=0.5`) instead of cMCP's own copies: the SEV-SNP report signature (`verify_snp_signature`) and the VCEK/PCK certificate-chain verification (the generic `verify_cert_chain`) are shared across the org rather than duplicated. cMCP keeps its own DCAP quote parser, `*VerificationResult` shapes, TR-field semantics, and report_data/qualifying-data bindings; behavior is unchanged (all tests pass unchanged). cMCP's TPM verifier stays local (Phase-1 parse-only: no AK signature/chain to share).

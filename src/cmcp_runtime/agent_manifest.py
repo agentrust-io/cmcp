@@ -139,7 +139,15 @@ def _raise_for_sdk_result(result: Any, *, require_runtime_artifacts: bool) -> No
     if result.result == agent_manifest_sdk.OverallResult.SIGNATURE_MISSING:
         raise ConfigError("Agent Manifest signature block is missing")
     if result.result == agent_manifest_sdk.OverallResult.UNVERIFIABLE:
-        raise ConfigError("Agent Manifest signature verification failed")
+        # UNVERIFIABLE is not a failed signature: the verifier could not appraise
+        # the signature at all, because it lacks the trusted key or (since
+        # agent-manifest 0.6.1) the algorithm. Both reject, but an operator needs
+        # to know which, so surface the verifier's own reason when it gives one.
+        reason = "; ".join(getattr(result, "warnings", None) or [])
+        detail = f": {reason}" if reason else ""
+        raise ConfigError(
+            f"Agent Manifest signature could not be verified{detail}"
+        )
     if result.result == agent_manifest_sdk.OverallResult.INCOMPATIBLE_VERSION:
         raise ConfigError("Agent Manifest version is not supported by the SDK verifier")
     if result.result == agent_manifest_sdk.OverallResult.INCOMPLETE:

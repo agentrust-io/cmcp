@@ -27,7 +27,11 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "agentrust-trace>=0.4",
-    "agent-manifest>=0.5",
+    # 0.6.1 is the floor, not merely a compatible version: verify_manifest()
+    # is called on a peer-supplied manifest below, and before 0.6.1 a manifest
+    # declaring ML-DSA-65 or hybrid crashed the verifier with an uncaught
+    # RuntimeError on any install without the optional [pq] extra.
+    "agent-manifest>=0.6.1",
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "httpx>=0.27",
