@@ -14,7 +14,7 @@ been verified end to end by `cmcp_verify`, and the run is recorded below.
 |---|---|---|---|---|
 | AMD SEV-SNP (Azure CVM, vTPM-rooted) | Yes | Yes, to the real AMD ARK-Milan root | Yes | **Yes**, 2026-07-27, capture of 2026-07-20 |
 | Intel TDX (GCP C3, non-paravisor) | Yes | Yes, to the pinned Intel SGX Root CA | Yes | **Yes**, 2026-07-27, capture of 2026-07-21 |
-| TPM 2.0 | Yes | Yes, to a caller-supplied vendor root | Yes | No. Synthetic vectors only |
+| TPM 2.0 (Azure vTPM, Trusted Launch) | Yes | Not in Phase 1 (`ek_cert_chain` stays unverified) | Not in Phase 1 | **Partly**, 2026-07-27. Parse and freshness binding yes; signature and chain are out of Phase 1 scope |
 | NVIDIA GPU CC (H100/H200) | Not implemented | | | No |
 
 "Verified against real hardware evidence" means the committed verifier accepted a
@@ -81,10 +81,39 @@ same flat layout, passed. Failure was closed, so this was a false negative
 rather than an unsound accept, but the TDX path had never worked against real
 evidence. Synthetic self-consistency is not validation.
 
+## TPM 2.0, Azure Trusted Launch vTPM
+
+Evidence: a `TPMS_ATTEST` quote over PCRs 0-7 (SHA-256) from a `Standard_D2s_v7`
+Ubuntu 24.04 VM with Trusted Launch, vTPM and secure boot enabled, taken under a
+fresh 32-byte nonce.
+
+What the run checks, within Phase 1's parse-only scope: parsing a real attest
+blob, the magic constant, the PCR digest matching the measurement field, and the
+qualifying-data binding equalling the nonce (with a different nonce correctly
+leaving `qualifying_data` unverified).
+
+```
+CMCP_TPM_FIXTURE_DIR=<capture dir> pytest tests/unit/test_tpm_verify.py
+```
+
+This run also surfaced an interop gap, fixed alongside it. The parser required
+the outer `TPM2B_ATTEST` two-byte size prefix, but `tpm2_quote -m` writes a bare
+`TPMS_ATTEST`, so every quote produced by the standard tooling was rejected with
+`TPM2B_ATTEST size field invalid`. Both framings are now accepted, told apart by
+the magic constant.
+
+Still out of scope for Phase 1 and unchanged by this run: the AK signature and
+the EK/AK certificate chain, which stay in `unverified_fields`. Note also that
+Azure's pre-provisioned AK certificate (vTPM NV index `0x01C101D0`, issuer
+`CN=Global Virtual TPM CA - 03`) certifies a different key than an in-guest
+`tpm2_createak` AK, and carries no AIA extension, so its issuing intermediate is
+not fetchable from it.
+
 ## Not yet validated
 
-- **TPM 2.0**: the verifier is implemented and synthetic-vector validated. It
-  needs a real AK-signed quote plus a vendor AK certificate chain.
+- **TPM signature and certificate chain**: out of Phase 1 scope here. The
+  sibling [ca2a](https://github.com/agentrust-io/ca2a) verifier does check the AK
+  signature and has now done so against this same real quote.
 - **NVIDIA GPU CC**: not implemented, planned for v0.2 via NRAS.
 - **cMCP running inside the TEE end to end**: these runs validate the verifier
   against real evidence. A production gateway serving traffic from inside a CVM,

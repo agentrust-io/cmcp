@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import os
+import pytest
 import struct
 from datetime import UTC, datetime
 
@@ -345,3 +347,40 @@ def test_tpm2_qualifying_data_rejected_on_key_substitution() -> None:
     claim_dict = _make_tpm2_claim(raw_evidence_b64=base64.b64encode(blob).decode(), key=SigningKey())
     result = verify_trace_claim(claim_dict, _approved())
     assert "qualifying_data" in result.unverified_fields
+
+
+# ── Real hardware fixture (env-gated; not committed) ────────────────────────────
+
+
+@pytest.mark.skipif(
+    not os.environ.get("CMCP_TPM_FIXTURE_DIR"),
+    reason="set CMCP_TPM_FIXTURE_DIR to a dir with quote.msg + nonce.hex (a real TPM "
+    "capture; see docs/testing/hardware-validation.md) to run the hardware test",
+)
+def test_real_tpm_quote() -> None:
+    """Parse a genuine Azure vTPM quote and check the qualifying-data binding.
+
+    Phase 1 is parse-only by design: no AK signature and no EK/AK chain, which
+    stay in unverified_fields. What this pins is that the parser and the
+    freshness binding work on real evidence rather than only on the synthetic
+    blobs above.
+    """
+    import pathlib
+
+    d = pathlib.Path(os.environ["CMCP_TPM_FIXTURE_DIR"])
+    attest = (d / "quote.msg").read_bytes()
+    nonce = bytes.fromhex((d / "nonce.hex").read_text().strip())
+
+    # the TPM's own reported digest for this quote, as the measurement field
+    measurement = "sha256:" + "461684441feb67717a22b7f43096ec2f92a6582f5987f82729b3749180fede61"
+
+    result = verify_tpm_measurement(measurement, attest, expected_qualifying_data=nonce)
+    assert result.verified, result.failure_reason
+    assert "pcr_format" in result.verified_fields
+    assert "qualifying_data" in result.verified_fields
+    # Phase 1 never claims the chain
+    assert "ek_cert_chain" in result.unverified_fields
+
+    # a different nonce must not satisfy the freshness binding
+    stale = verify_tpm_measurement(measurement, attest, expected_qualifying_data=bytes(32))
+    assert "qualifying_data" in stale.unverified_fields

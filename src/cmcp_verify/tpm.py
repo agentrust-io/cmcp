@@ -141,6 +141,12 @@ def _parse_tpm2b_attest(
       [0:2]  size (uint16 big-endian) - size of the following TPMS_ATTEST
       [2:]   TPMS_ATTEST
 
+    A bare TPMS_ATTEST with no TPM2B size prefix is also accepted, because that
+    is what `tpm2_quote -m` writes and what a real capture therefore looks like.
+    The two are told apart by the magic: a bare blob starts with 0xFF544347
+    where a wrapped one starts with a length. Rejecting the bare framing would
+    mean the verifier could not read quotes produced by the standard tooling.
+
     TPMS_ATTEST layout (big-endian):
       [0:4]  magic (uint32, must be 0xFF544347)
       [4:6]  type (uint16)
@@ -154,12 +160,15 @@ def _parse_tpm2b_attest(
         if len(data) < 2:
             return False, {"error": "TPM2B_ATTEST too short"}
 
-        # Skip the outer TPM2B size field
-        tpms_size = struct.unpack_from(">H", data, 0)[0]
-        if tpms_size == 0 or len(data) < 2 + tpms_size:
-            return False, {"error": "TPM2B_ATTEST size field invalid"}
-
-        attest = data[2 : 2 + tpms_size]
+        if len(data) >= 4 and struct.unpack_from(">I", data, 0)[0] == _TPM_GENERATED_VALUE:
+            # Bare TPMS_ATTEST (tpm2_quote -m output): no outer TPM2B size field.
+            attest = data
+        else:
+            # Skip the outer TPM2B size field
+            tpms_size = struct.unpack_from(">H", data, 0)[0]
+            if tpms_size == 0 or len(data) < 2 + tpms_size:
+                return False, {"error": "TPM2B_ATTEST size field invalid"}
+            attest = data[2 : 2 + tpms_size]
 
         if len(attest) < 6:
             return False, {"error": "TPMS_ATTEST too short for magic+type"}
