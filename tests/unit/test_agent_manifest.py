@@ -46,7 +46,7 @@ def _signed_manifest(
     expires_at: str = "2099-09-10T00:00:00Z",
 ) -> dict:
     manifest = {
-        "@context": "https://agentmanifest.agentrust.io/v0.1/context.json",
+        "@context": "https://agentmanifest.agentrust-io.com/v0.1/context.json",
         "@type": "AgentManifest",
         "manifest_id": "0197739a-8c00-7000-8000-000000000001",
         "agent_id": agent_id,

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Moved every `agentrust.io` identifier to `agentrust-io.com`: the JSON Schema `$id` values for `trace-claim`, `audit-entry`, and `catalog-entry`, the `@context` URL in test fixtures, and the maintainer email. `agentrust.io` is not ours and resolves to parked AWS addresses, so these identifiers pointed at a domain we do not control. They never resolved, so nothing that worked stops working. The `tag:agentrust.io,2026:trace-v0.1` EAT profile identifier is deliberately unchanged; it is a cross-repo identifier inside signed payloads and needs a transition decision, not a rename.
+
+### Fixed
+
+- README no longer claims hardware attestation unconditionally. "Each session produces a signed, hardware-attested TRACE Claim" contradicted the TL;DR two paragraphs below it, which tells you to `pip install cmcp-runtime` and start in software mode with no hardware. It now reads "hardware-attested when the gateway runs in a TEE and signed-only in software mode", which is what the runtime actually does.
+
 ### Fixed
 
 - Raised the `agent-manifest` floor to `>=0.6.1` and made an unappraisable manifest fail closed with a diagnostic message. `verify_agent_manifest_binding` runs the SDK verifier over a peer-supplied manifest, and before 0.6.1 a manifest declaring `ML-DSA-65` or `hybrid-Ed25519-ML-DSA-65` crashed the SDK with an uncaught `RuntimeError` on any install without the optional `[pq]` extra, so this path answered a crash instead of a rejection. The SDK now returns `UNVERIFIABLE`, which cMCP already rejects; the `UNVERIFIABLE` message now distinguishes "could not be verified" (missing trusted key or unavailable algorithm) from "verification failed" (a bad signature) and surfaces the verifier's own reason, because those call for different operator responses.

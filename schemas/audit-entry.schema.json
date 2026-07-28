@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://cmcp.agentrust.io/schemas/audit-entry.schema.json",
+  "$id": "https://cmcp.agentrust-io.com/schemas/audit-entry.schema.json",
   "title": "cMCP Audit Chain Entry",
   "description": "A single entry in the append-only audit chain maintained inside the cMCP Gateway TEE.",
   "type": "object",

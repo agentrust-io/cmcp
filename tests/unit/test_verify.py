@@ -126,7 +126,7 @@ def _b64url(data: bytes) -> str:
 
 def _signed_manifest(priv: Ed25519PrivateKey, key_id: str) -> dict:
     manifest = {
-        "@context": "https://agentmanifest.agentrust.io/v0.1/context.json",
+        "@context": "https://agentmanifest.agentrust-io.com/v0.1/context.json",
         "@type": "AgentManifest",
         "manifest_id": MANIFEST_ID,
         "agent_id": AGENT_ID,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cmcp.agentrust.io/schemas/trace-claim.schema.json",
+  "$id": "https://cmcp.agentrust-io.com/schemas/trace-claim.schema.json",
   "title": "cMCP GatewayClaim",
   "description": "TRACE profile envelope emitted by the cMCP Gateway TEE at session close. The 'trace' sub-object contains canonical TRACE v0.1 fields; 'gateway' contains cmcp-specific addenda.",
   "type": "object",

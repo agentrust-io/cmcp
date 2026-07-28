@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://cmcp.agentrust.io/schemas/catalog-entry.schema.json",
+  "$id": "https://cmcp.agentrust-io.com/schemas/catalog-entry.schema.json",
   "title": "cMCP Catalog Entry",
   "description": "A single entry in the cMCP Gateway approved tool catalog, representing one tool from one MCP server.",
   "type": "object",
