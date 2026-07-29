@@ -117,7 +117,7 @@ Agent -> cMCP Runtime -> Cedar Policy Engine (TEE) -> Tool
 | `gpu-cc` _(v0.2)_ | NVIDIA H100/H200/Blackwell (CC mode) | High | NVIDIA Remote Attestation Service (NRAS) |
 | `opaque` _(opt-in)_ | OPAQUE Confidential Runtime | n/a _(not yet implemented)_ | Placeholder: excluded from auto-detect; selecting it explicitly raises a not-implemented error |
 
-Provider auto-detect probe order: `azure-cvm -> tpm -> sev-snp -> tdx` — the first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
+Provider auto-detect probe order: `azure-cvm -> tpm -> sev-snp -> tdx`. The first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
 
 ```python
 from cmcp_runtime.config import TEEProvider
