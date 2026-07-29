@@ -26,7 +26,7 @@ from cmcp_runtime.audit.trace_claim import (
     generate_trace_claim,
 )
 from cmcp_runtime.config import KillSwitchConfig
-from cmcp_runtime.errors import KillSwitchTripped
+from cmcp_runtime.errors import KillSwitchTripped, TeeFault
 from cmcp_runtime.kill_switch import KillSwitchEvaluator
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
 from cmcp_runtime.session.state import SessionState
@@ -158,7 +158,23 @@ class SessionManager:
         # chain's root.  Fall back to the shared startup report only if the
         # per-session TEE call failed at create_session() time (a warning was
         # already emitted there); in that case the chain root is not bound into
-        # report_data and a strict verifier will reject the claim.
+        # report_data.
+        #
+        # #372: on a hardware platform that fallback report carries no
+        # chain-root commitment, and the verifier fail-closes on it anyway - so
+        # issuing the claim only misleads a caller who does not run the
+        # verifier's stricter check.  Refuse to issue it here instead.  In
+        # software-only (dev) mode the per-session binding is best-effort by
+        # design (see create_session()'s docstring), so the fallback is not a
+        # regression there and is left to succeed as before.
+        if chain.session_report is None and ctx.attestation_report.provider != "software-only":
+            raise TeeFault(
+                f"Refusing to issue a TRACE Claim for session {session_id}: the "
+                "per-session TEE attestation call failed, so the claim would fall "
+                "back to the startup report, which carries no chain-root "
+                "commitment. A hardware-attested claim must not be issued unbound.",
+                detail=session_id,
+            )
         report = chain.session_report or ctx.attestation_report
 
         # Convert AttestationReport (datetime) to AttestationReportInfo (str).

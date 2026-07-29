@@ -13,6 +13,7 @@ import pytest
 from cmcp_runtime.agent_manifest import AgentManifestBinding
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
+from cmcp_runtime.errors import TeeFault
 from cmcp_runtime.session.manager import SessionManager
 from cmcp_runtime.session.state import SessionState
 
@@ -349,8 +350,10 @@ def test_close_session_uses_per_session_report_committing_chain_root() -> None:
 
 
 def test_close_session_falls_back_to_startup_report_when_tee_fails() -> None:
-    """If the per-session TEE call fails, close_session() falls back to the shared
-    startup report (no chain-root commitment) and the chain still anchors locally.
+    """In software-only (dev) mode, a per-session TEE failure falls back to the
+    shared startup report (no chain-root commitment) and the chain still anchors
+    locally. The dev-mode binding is best-effort by design, so this is not a
+    regression and close_session() must still succeed (see #372).
     """
     ctx = _make_ctx()
     ctx.tee_provider.get_attestation_report.side_effect = RuntimeError("TEE down")
@@ -363,3 +366,21 @@ def test_close_session_falls_back_to_startup_report_when_tee_fails() -> None:
     claim = mgr.close_session(state.session_id, state, chain)
     # Falls back to the startup (software-only) report.
     assert claim["trace"]["runtime"]["platform"] == "software-only"
+
+
+def test_close_session_fails_closed_on_hardware_platform_when_tee_fails() -> None:
+    """#372: on a hardware platform, a per-session TEE failure must NOT fall
+    through to issuing a claim off the startup report. That report carries no
+    chain-root commitment, so the runtime must refuse to issue it instead of
+    handing the caller a claim the verifier will reject anyway.
+    """
+    ctx = _make_ctx()
+    ctx.attestation_report.provider = "sev-snp"
+    ctx.tee_provider.get_attestation_report.side_effect = RuntimeError("TEE down")
+
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    assert chain.session_report is None
+
+    with pytest.raises(TeeFault, match="chain-root commitment"):
+        mgr.close_session(state.session_id, state, chain)
