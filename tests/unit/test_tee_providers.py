@@ -245,10 +245,12 @@ def test_tpm_sha1_fallback_subprocess_produces_software_only_provider(
     assert report.measurement.startswith("sha256:")
 
 
-def test_tpm_sha256_success_subprocess_keeps_tpm_provider(
+def test_tpm_sha256_subprocess_downgrades_without_quote_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When SHA-256 PCR bank is available, provider must remain 'tpm'."""
+    """The subprocess path reads PCRs but cannot produce a quote, so the report has no
+    signature and nothing binds it to a TPM. It must not present as hardware-attested,
+    even though the SHA-256 bank was available."""
     monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
 
     sha256_pcr_output = "\n".join(
@@ -266,5 +268,18 @@ def test_tpm_sha256_success_subprocess_keeps_tpm_provider(
 
     report = TPMProvider().get_attestation_report(b"\x00" * 32)
 
-    assert report.provider == "tpm"
-    assert report.measurement_note is None
+    assert report.provider == "software-only"
+    assert report.measurement_note == "tpm-pcr-read-unsigned"
+    assert report.measurement.startswith("sha256:")
+
+
+def test_downgrade_note_keeps_hardware_tier_when_quote_evidence_is_present() -> None:
+    assert TPMProvider._downgrade_note(None, b"\xffTCG-quote-bytes") is None
+
+
+def test_downgrade_note_marks_an_unsigned_pcr_read() -> None:
+    assert TPMProvider._downgrade_note(None, None) == "tpm-pcr-read-unsigned"
+
+
+def test_downgrade_note_preserves_the_sha1_fallback_note() -> None:
+    assert TPMProvider._downgrade_note("sha1-bank-fallback", None) == "sha1-bank-fallback"

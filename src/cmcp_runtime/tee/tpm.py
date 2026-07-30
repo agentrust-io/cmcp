@@ -118,8 +118,9 @@ class TPMProvider(TEEProvider):
                 )
                 raw_evidence = None
 
+        measurement_note = self._downgrade_note(measurement_note, raw_evidence)
         effective_provider = (
-            "software-only" if measurement_note == "sha1-bank-fallback" else self.provider_name()
+            self.provider_name() if measurement_note is None else "software-only"
         )
         return AttestationReport(
             provider=effective_provider,
@@ -130,6 +131,25 @@ class TPMProvider(TEEProvider):
             attestation_validity_seconds=3600,
             measurement_note=measurement_note,
         )
+
+    @staticmethod
+    def _downgrade_note(measurement_note: str | None, raw_evidence: bytes | None) -> str | None:
+        """
+        Return the note that decides whether this report may present as hardware-attested.
+
+        A PCR read on its own carries no signature and nothing binds it to a TPM, so a
+        report without quote evidence is reported as software-only. This mirrors the
+        existing SHA-1 bank downgrade rather than inventing a second policy.
+        """
+        if measurement_note is not None:
+            return measurement_note
+        if raw_evidence is None:
+            logger.warning(
+                "TPM PCR read produced no quote evidence. Downgrading attestation to "
+                "software-only. TRACE Claim will not present as hardware-attested."
+            )
+            return "tpm-pcr-read-unsigned"
+        return None
 
     # ── subprocess fallback ───────────────────────────────────────────────────
 
@@ -178,8 +198,9 @@ class TPMProvider(TEEProvider):
         concatenated = b"".join(pcr_values[:8])
         measurement = "sha256:" + hashlib.sha256(concatenated).hexdigest()
 
+        measurement_note = self._downgrade_note(measurement_note, None)
         effective_provider = (
-            "software-only" if measurement_note == "sha1-bank-fallback" else self.provider_name()
+            self.provider_name() if measurement_note is None else "software-only"
         )
         return AttestationReport(
             provider=effective_provider,
