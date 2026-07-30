@@ -1,7 +1,7 @@
 # TPM Security Model on Non-Confidential-Compute Devices
 
 **Status:** Draft, awaiting approval
-**Approvers required:** @podcastinator, @AaronRoeF
+**Approvers required:** @podcastinator, @AaronRoeF, @katy-gordon
 **Tracking issues:** #429, #430, #431, #432, #433, #434, #435, #436
 **Supersedes nothing. Complements** [attestation.md](attestation.md) and [threat-model.md](threat-model.md).
 
@@ -9,9 +9,9 @@
 
 ## 1. Purpose
 
-cMCP runs a policy enforcement broker inline between an agent and the tools it calls. On a confidential VM the trust story is straightforward: the workload runs in an encrypted, measured VM and the CPU vendor signs evidence of that. On an AI PC or any standard machine there is no confidential compute, only a TPM, and the story is materially different.
+cMCP runs a policy enforcement broker inline between an agent and the tools it calls. On a confidential VM the trust story is straightforward: the workload runs in an encrypted, measured VM and the CPU vendor signs evidence of that. On a consumer or workstation device there is no confidential compute, only a TPM, and the story is materially different.
 
-This document states what the TPM path guarantees today, what it does not, and the target model. It exists because partners evaluating the AI PC deployment ask exactly one question first: what integrity claims can you make with a TPM on a non-CC device. The answer needs to be precise rather than reassuring.
+This document states what the TPM path guarantees today, what it does not, and the target model. Anyone evaluating a deployment on a device without confidential compute asks the same question first: what integrity claims can be made with only a TPM. The answer needs to be precise rather than reassuring, and it is not written down anywhere else.
 
 ## 2. Current implementation
 
@@ -37,7 +37,7 @@ The gateway observed a platform boot state, expressed as a digest over PCRs 0 th
 
 Compounding this, the quote is called with `object_handle=ectx.get_capability(TPM2_ALG.NULL)`, which is a capability query rather than a loaded key handle. The call raises, a bare `except` sets `raw_evidence = None`, and the provider degrades silently. The quote path is effectively dead code.
 
-Consequence: any code executing in the gateway process can synthesise attestation data with arbitrary PCR values and the expected nonce, and it verifies. Local code execution is the primary adversary on an AI PC, so this removes the security value of the TPM path.
+Consequence: any code executing in the gateway process can synthesise attestation data with arbitrary PCR values and the expected nonce, and it verifies. Local code execution is the primary adversary on a device without confidential compute, so this removes the security value of the TPM path.
 
 ### 4.2 There is no attestation key identity (#431)
 
@@ -59,9 +59,11 @@ No TCG event log is collected or replayed. A verifier can tell that state differ
 
 `_parse_tpm2_pcrread_output` removed the `0x` prefix with `lstrip("0x")`, which strips a character set rather than a prefix. An all-zero PCR collapsed to one byte, a value beginning `0x0A` became odd-length and was dropped, and every later PCR shifted index. The subprocess path therefore produced a measurement over a misaligned seven-entry list whenever any PCR had a leading zero, which is the normal case. Stable per machine, so it looked correct, but not a digest of the actual PCR values.
 
-### 4.7 Claim tiering (#436, fixed in #437)
+### 4.7 Claim tiering (#436, proposed)
 
-Unsigned PCR reads reported `provider="tpm"` and presented downstream as hardware-attested. They now downgrade to `software-only` with note `tpm-pcr-read-unsigned`, matching the SHA-1 policy.
+Unsigned PCR reads report `provider="tpm"` and present downstream as hardware-attested. The proposal is to downgrade them to `software-only` with note `tpm-pcr-read-unsigned`, matching the existing SHA-1 policy rather than inventing a second one.
+
+This is a behaviour change, not a bug fix: `tests/unit/test_tee_providers.py` currently asserts the opposite, that the subprocess path keeps `provider == "tpm"`. It therefore ships separately and depends on the decision in section 8.
 
 ## 5. Target model
 
@@ -85,13 +87,13 @@ Important caveat that changes the design. Per the TCG PC Client Platform TPM Pro
 
 **P5. Crypto policy.** Keep the SHA-1 downgrade, document it as a hard failure for regulated deployments, and add a flag that refuses SHA-1 outright.
 
-## 6. Open questions for Intel
+## 6. Open ecosystem questions
 
-1. **EK certificate roots.** Supported path for programmatically obtaining and pinning Intel PTT EK CA roots for offline verification. Blocking dependency for P1.
-2. **Intel Trust Authority.** Can ITA verify TPM quotes as well as TDX, giving relying parties one verification interface across tiers? If yes, it changes the verifier design.
-3. **DRTM.** Is a dynamic root of trust realistic on AI PC, or is SRTM plus an NV extend index the practical ceiling?
+1. **EK certificate roots.** A supported path for programmatically obtaining and pinning TPM vendor EK CA roots for offline verification, covering discrete TPMs and firmware TPMs. This is the blocking dependency for P1 and it has no good answer today.
+2. **Hosted verification services.** Can a hosted attestation verifier cover TPM quotes as well as confidential-compute reports, giving relying parties one verification interface across tiers? If so, it changes the verifier design.
+3. **DRTM.** Is a dynamic root of trust realistic on commodity client hardware, or is SRTM plus an NV extend index the practical ceiling?
 4. **Windows and Linux parity.** Recommended interface for AK provisioning and event log access on Windows, where Measured Boot already owns part of this.
-5. **Claim vocabulary.** Is there an Intel-endorsed way to express TPM-tier versus confidential-compute-tier evidence, so cMCP does not invent tiering language that later conflicts with the ecosystem?
+5. **Claim vocabulary.** Is there an established way to express TPM-tier versus confidential-compute-tier evidence, so cMCP does not invent tiering language that later conflicts with the ecosystem?
 
 ## 7. Positioning
 
@@ -103,8 +105,8 @@ cMCP should describe three tiers rather than one attestation story.
 | TPM, target model in section 5 | AK-signed quote chained to a vendor CA, gateway measured into a non-resettable index, signing key sealed to that policy | Local code execution below the gateway measurement |
 | TPM, as implemented today | Unsigned self-reported PCR digest | Remote and passive adversaries, accidental drift |
 
-The gap between rows two and three is the work in section 5. Naming it plainly is more useful to an evaluating partner than any claim we could round up to.
+The gap between rows two and three is the work in section 5. Naming it plainly is more useful to anyone evaluating the project than any claim we could round up to.
 
 ## 8. Decision requested
 
-Approve the target model in section 5 and its ordering, and the three-tier vocabulary in section 7, so that public materials and partner conversations describe the TPM tier consistently. Approvals needed from @podcastinator and @AaronRoeF.
+Approve the target model in section 5 and its ordering, and the three-tier vocabulary in section 7, so that documentation and public materials describe the TPM tier consistently. Approvals needed from @podcastinator, @AaronRoeF, and @katy-gordon.
