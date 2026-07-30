@@ -2,9 +2,10 @@
 * @agentrust-io/maintainers
 
 # Security-sensitive paths require security-reviewers sign-off
-src/cmcp_gateway/audit/ @agentrust-io/security-reviewers @agentrust-io/maintainers
-src/cmcp_gateway/tee/ @agentrust-io/security-reviewers @agentrust-io/maintainers
-src/cmcp_gateway/policy/ @agentrust-io/security-reviewers @agentrust-io/maintainers
+src/cmcp_runtime/audit/ @agentrust-io/security-reviewers @agentrust-io/maintainers
+src/cmcp_runtime/tee/ @agentrust-io/security-reviewers @agentrust-io/maintainers
+src/cmcp_runtime/policy/ @agentrust-io/security-reviewers @agentrust-io/maintainers
+src/cmcp_verify/ @agentrust-io/security-reviewers @agentrust-io/maintainers
 
 # CI/CD workflow changes
 .github/workflows/ @agentrust-io/maintainers
