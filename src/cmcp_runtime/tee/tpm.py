@@ -110,7 +110,12 @@ class TPMProvider(TEEProvider):
                     pcrselect=pcr_sel_quote,
                 )
                 raw_evidence = bytes(quoted.attestationData)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "TPM quote unavailable (%s); the report will carry an unsigned "
+                    "PCR read as its only evidence.",
+                    exc,
+                )
                 raw_evidence = None
 
         effective_provider = (
@@ -194,15 +199,24 @@ def _parse_tpm2_pcrread_output(output: str) -> list[bytes]:
     Expected format (per PCR):
       sha256:
         0 : 0xABCD...
+
+    ``lstrip("0x")`` cannot be used to drop the prefix: it strips a character set,
+    so a value whose digits begin with 0 loses those digits as well.
     """
     pcr_values: list[bytes] = []
     for line in output.splitlines():
         line = line.strip()
         if ":" in line and line.split(":")[0].strip().isdigit():
             _, _, hex_val = line.partition(":")
-            hex_val = hex_val.strip().lstrip("0x").lstrip("0X")
+            hex_val = hex_val.strip()
+            if hex_val[:2].lower() == "0x":
+                hex_val = hex_val[2:]
+            if not hex_val:
+                raise RuntimeError(f"TPM PCR read returned an empty value: {line!r}")
             try:
-                pcr_values.append(bytes.fromhex(hex_val or "00"))
-            except ValueError:
-                continue
+                pcr_values.append(bytes.fromhex(hex_val))
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"TPM PCR read returned an unparseable value: {line!r}"
+                ) from exc
     return pcr_values
