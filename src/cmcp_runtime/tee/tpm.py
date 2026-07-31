@@ -300,6 +300,13 @@ class TPMProvider(TEEProvider):
             return []
 
         chain = load_any(leaf_der)
+        if not chain:
+            logger.warning(
+                "The attestation key certificate could not be parsed as X.509 or PKCS#7; "
+                "no chain will be shipped."
+            )
+            return b""
+
         while len(chain) < _AIA_MAX_DEPTH:
             current = chain[-1]
             if current.subject == current.issuer:
