@@ -1,0 +1,265 @@
+"""Chained TPM quote verification against a real Azure vTPM capture.
+
+The chain and quote below came from a Standard_D2s_v5 Azure VM with Trusted Launch,
+vTPM and secure boot, eastus, 2026-07-31. The attestation key certificate was read
+from vTPM NV index 0x01C101D0 and the quote taken with the platform key at
+persistent handle 0x81000003. The intermediates were fetched over the certificate
+AIA extension.
+
+All of this is public certificate data plus a public key from a VM that no longer
+exists, so it is committed rather than env-gated: the chained path then runs on
+every PR.
+"""
+
+from __future__ import annotations
+
+import base64
+
+from cmcp_verify.tpm import verify_tpm_quote_chained
+from cmcp_verify.tpm_roots import trusted_roots_for
+
+AK_CHAIN_PEM = b"""-----BEGIN CERTIFICATE-----
+MIIGODCCBCCgAwIBAgIRAL1brvxxHHH2uWx5vIlxlK8wDQYJKoZIhvcNAQENBQAw
+KjEoMCYGA1UEAxMfQXp1cmUgQ2xvdWQgVmlydHVhbCBUUE0gQ0EgLSAxMTAeFw0y
+NjA3MzEwMDAwMDBaFw0yNzA3MzAwMDAwMDBaMDMxMTAvBgNVBAMTKDM3ODk2NGY4
+NTU1Zi5UcnVzdGVkVk0uQXp1cmUud2luZG93cy5uZXQwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQDSzxV+AADdON1w6I97AhPCJLwH+Oe2/AvBTLHxSTX3
+QrLEloEOvrD7aOJ7c1nKDFU/BOPNyCONX6KdQarE+IgbPF23dWrWvYECmN120bXe
+zJXZx0kSs6td7qXQJlbwSqawjP/XbiqcHBPBlINPLi9YbRKmtgqE1wRYyTXTWzHF
+82YttHJYowHgDuDOf/OGF7KtQ8hess7CMfHqsx3yKH1L282L02TCKLOOZv9IRViO
+uKvOoZRk+sd/GeSLUg1VXjBmFkZiXKqbcN8pw8rHAO/wCGqzNYGlUcVjz2Sw6pF1
+U+WXT/mxT4qKn74tfg3JA+DN1ounyatAXebaTX1/x6tjAgMBAAGjggJOMIICSjAV
+BgNVHSAEDjAMMAoGCCsGAQQBgjdsMAwGA1UdEwEB/wQCMAAwHAYDVR0lBBUwEwYK
+KwYBBAGCNwoDDAYFZ4EFCAMwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQB0TZ4
+XTVKHyju9cP8iVtytyGGeDAfBgNVHSMEGDAWgBRm1U4hlEAV02bz5gvHbbQ2L3QC
+iTCCAbMGCCsGAQUFBwEBBIIBpTCCAaEwawYIKwYBBQUHMAKGX2h0dHA6Ly9wcmlt
+YXJ5LWNkbi5wa2kuY29yZS53aW5kb3dzLm5ldC9lYXN0dXMvY2FjZXJ0cy9henVy
+ZXZ0cG1pY2Fwa2kvYXp1cmV2dHBtaWNhdXNlL2NlcnQuY2VyMG0GCCsGAQUFBzAC
+hmFodHRwOi8vc2Vjb25kYXJ5LWNkbi5wa2kuY29yZS53aW5kb3dzLm5ldC9lYXN0
+dXMvY2FjZXJ0cy9henVyZXZ0cG1pY2Fwa2kvYXp1cmV2dHBtaWNhdXNlL2NlcnQu
+Y2VyMFwGCCsGAQUFBzAChlBodHRwOi8vY3JsLm1pY3Jvc29mdC5jb20vZWFzdHVz
+L2NhY2VydHMvYXp1cmV2dHBtaWNhcGtpL2F6dXJldnRwbWljYXVzZS9jZXJ0LmNl
+cjBlBggrBgEFBQcwAoZZaHR0cDovL2F6dXJldnRwbWljYXBraS5lYXN0dXMucGtp
+LmNvcmUud2luZG93cy5uZXQvY2VydGlmaWNhdGVBdXRob3JpdGllcy9henVyZXZ0
+cG1pY2F1c2UwDQYJKoZIhvcNAQENBQADggIBAGrVqAZADlhekfiVEimcakxqOR+q
+QL3zOC8dD6jvEBWq+BTe0btU9jh6NHudQnE629WyqjLguXmmhYiRGV1Rt9YwYxVH
+yn6waLwM96ifqBWR/3Rz4lQ9uug5wfhtZ0H2dyYv2bqfxe7omsyt6ZWRCYMgKSOf
+atocMQP3lR+j76eoYRjCIcZRYtvNbv3B2G2UGhRSAuieKhEf2pVmSOE5/UYRuDnb
+mm8tr4zg6/X6D9qD4ax649d63IZ+TgV87DbWCLyv14hLAft3VFJFl4aTHFsUZ0UN
+4CZdKB5QqxPXJm1gD5UHfBqozB+63aGy9UZ/jyKzH9ca38ODyqPZjkJDEV55PIVI
+JLKUyCbrn2WmKDu9oBuJh3DHJQj62QN2YpbAZKPsUgnVANbN0teKPB5d+Fmi7DIE
+wcRXo3SfRlQebcdETGB4+cmasJgaf45R327nvMUReJS5ueRRIq0etY6YnKoI8fr+
+RdraNRz3/ZmDhpMTv74ptvt5UcAA/uH12jbP2oPjI0L06fwbpc6bOkk0V7rm1Zw5
+xdINFj4iiuRXwXiKVYkqW7QzSfgs4h3kNKg0Edikya79Bzx+Fvd8jmlmjYssQ9PA
+Kqnark0rzRuYi/BERyGcRez5v9pfXi3WQ52zmA26hq2h/rAG9XwxRCG6ks72IGPc
+qDPssvaxuSevA56u
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIII6jCCBtKgAwIBAgIQK8uZoE6BL36UTx25KTymujANBgkqhkiG9w0BAQ0FADAq
+MSgwJgYDVQQDEx9BenVyZSBDbG91ZCBWaXJ0dWFsIFRQTSBDQSAyMDI1MB4XDTI1
+MTAwMjAwMDAwMFoXDTI4MTAwMTAwMDAwMFowKjEoMCYGA1UEAxMfQXp1cmUgQ2xv
+dWQgVmlydHVhbCBUUE0gQ0EgLSAxMTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCC
+AgoCggIBAKJsmb6uMLIUg2hJgucE1S5NVeaU0e8zxlTfHPjLYCZcb8DzMMg9r77C
+T1qGubhiBLVwJ0av4MH6BVCFcHYUOMwp1YkCgTqe1aD6ntko0s2VYgrfVbGFTfK7
+wlGrQd4/4N14NwUDJ0AiAxXLNjFK9ZWDMiQi2Gn5W7wYZ48UP8wYf+IKfKVgLyr3
+C0VSeWK65NkGZkRaeexr3OGxuF88aEXLledC0xpqu5N7kqGzZq1Bs33sW66kmPsW
+m5erUGIm8xNb66mClYGbn8eEnNM9gJnyukSNCfHcincugj347wHwQDXvz4PykBUO
+N5sFcDB+BuIdB3n1kLxBN9WhCAB/eBnnRTW+W6xbnVo2ckmv8XPGqgf6Wid1owGT
+qKCsiAS9I6leJ0XVGsV10q/Gf/h2okHKJR3SaMmNNcwcKG577XzcStGDA7vrWJL0
+foFiWyNmQdeoRhn9Mtm3KL/+VQEMhpVHAEozx7UBY3lHUmOPHtSwuNp1bIeWlxK/
+XhAk/sLx8LjFO+MYNn76hAlae0h49x8jpy4ajEYA0kouwOjpHYN4hwZYcOorvfmQ
+yg189aM/Jx505xruO0DBS0C7aLIVu7Tf+brmR8H90I9jCTRG/YgapzR4950dECeV
+8w9quSyqsNtaOO9Olms/dqmDtFWQjP45cMqNnRVGoin5em5fmsp9AgMBAAGjggQK
+MIIEBjASBgNVHRMBAf8ECDAGAQH/AgEAMCMGA1UdJQQcMBoGCisGAQQBgjcKAwwG
+BWeBBQgBBgVngQUIAzAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0OBBYEFGbVTiGUQBXT
+ZvPmC8dttDYvdAKJMB8GA1UdIwQYMBaAFBxqlvcz0egLZjNmB55lFH2P/rA8MIIB
+sgYDVR0fBIIBqTCCAaUwaaBnoGWGY2h0dHA6Ly9wcmltYXJ5LWNkbi5wa2kuY29y
+ZS53aW5kb3dzLm5ldC9lYXN0dXMyL2NybHMvYXp1cmV2dHBtcGtpL2F6dXJldnRw
+bXBvbGljeWNhZXVzMi9jdXJyZW50LmNybDBroGmgZ4ZlaHR0cDovL3NlY29uZGFy
+eS1jZG4ucGtpLmNvcmUud2luZG93cy5uZXQvZWFzdHVzMi9jcmxzL2F6dXJldnRw
+bXBraS9henVyZXZ0cG1wb2xpY3ljYWV1czIvY3VycmVudC5jcmwwWqBYoFaGVGh0
+dHA6Ly9jcmwubWljcm9zb2Z0LmNvbS9lYXN0dXMyL2NybHMvYXp1cmV2dHBtcGtp
+L2F6dXJldnRwbXBvbGljeWNhZXVzMi9jdXJyZW50LmNybDBvoG2ga4ZpaHR0cDov
+L2F6dXJldnRwbXBraS5lYXN0dXMyLnBraS5jb3JlLndpbmRvd3MubmV0L2NlcnRp
+ZmljYXRlQXV0aG9yaXRpZXMvYXp1cmV2dHBtcG9saWN5Y2FldXMyL2N1cnJlbnQu
+Y3JsMIIBwwYIKwYBBQUHAQEEggG1MIIBsTBvBggrBgEFBQcwAoZjaHR0cDovL3By
+aW1hcnktY2RuLnBraS5jb3JlLndpbmRvd3MubmV0L2Vhc3R1czIvY2FjZXJ0cy9h
+enVyZXZ0cG1wa2kvYXp1cmV2dHBtcG9saWN5Y2FldXMyL2NlcnQuY2VyMHEGCCsG
+AQUFBzAChmVodHRwOi8vc2Vjb25kYXJ5LWNkbi5wa2kuY29yZS53aW5kb3dzLm5l
+dC9lYXN0dXMyL2NhY2VydHMvYXp1cmV2dHBtcGtpL2F6dXJldnRwbXBvbGljeWNh
+ZXVzMi9jZXJ0LmNlcjBgBggrBgEFBQcwAoZUaHR0cDovL2NybC5taWNyb3NvZnQu
+Y29tL2Vhc3R1czIvY2FjZXJ0cy9henVyZXZ0cG1wa2kvYXp1cmV2dHBtcG9saWN5
+Y2FldXMyL2NlcnQuY2VyMGkGCCsGAQUFBzAChl1odHRwOi8vYXp1cmV2dHBtcGtp
+LmVhc3R1czIucGtpLmNvcmUud2luZG93cy5uZXQvY2VydGlmaWNhdGVBdXRob3Jp
+dGllcy9henVyZXZ0cG1wb2xpY3ljYWV1czIwDQYJKoZIhvcNAQENBQADggIBAAiK
+WixDsu5UTYC12CzOGAitv+Cls1CA7OeB6OZld/Yc4xJ8SFVHuoZnZb0PWIchskPu
+yZqOvunC6/seV64zjuwqYh1xgyBt1Rqn7vRzX37O1ETbg2yAJjuhWYc7QNB7uuyW
+bPrgGuVkrYebeHeV3fgyXZe8WZcDHGulzyHALi0l8WKClmwY7DNh986iGHfQK4Eg
+8y81B7vwWqk8U4XibiJFeulu/zZdzUIPphUSdTqS9z1nT7GHbmv787hJBH6jYL/O
+wV4D87O1dW7xVSh+XFa30+cDtziQO5rNOVcQzJ92ona5n/IF9VQ4IfNlwPSJzOrH
+sKCmQ5Mv1ThqZi8EeHo539ZqKUiky+FwJyOvYWQLmptYa6z5GjQxXJiQqE81XSY7
+0FcGIurxOnf9HORGDXp/pgTn4RIX6RnuBZLT2f5xpowjQFSIuRvLwmNaM+R2AHiE
+urwAWy2JYkjkX4c6AVDZb8LDC8GzeZQTPpCYSdS7GgFnfKaQmoAQoPX+aElZ0rz3
+bzRhXpcTHZCXacasdSzzD7Q6fituRyY/c8O9LQVraJwjB8II0McwHyV6EHttLBXR
+N0NoEPPBgdwuqLEI3HAUemha1cyAuSSW4IBiZNknt0VF3RRbtdNHCd0/HohO/XjV
+glY9cDk4ApeiQxBDUguEO0TDtwa7RxGzhYRDVlZG
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIGqjCCBJKgAwIBAgITMwAAAA3hTgyMJlm7XAAAAAAADTANBgkqhkiG9w0BAQwF
+ADBpMQswCQYDVQQGEwJVUzEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9u
+MTowOAYDVQQDEzFBenVyZSBWaXJ0dWFsIFRQTSBSb290IENlcnRpZmljYXRlIEF1
+dGhvcml0eSAyMDIzMB4XDTI1MDgwNjIxMDIwMloXDTMxMDgwNTIxMDIwMlowKjEo
+MCYGA1UEAxMfQXp1cmUgQ2xvdWQgVmlydHVhbCBUUE0gQ0EgMjAyNTCCAiIwDQYJ
+KoZIhvcNAQEBBQADggIPADCCAgoCggIBAIa4QCuPJi5ehBDiXG6HYkmy17bgAtrQ
+mK/+Ik9MHnmZoRw+Th08dgXZRNZf5A73WCC78r9O1hLqdiOIGf19Ejf8UxU6cRXj
+UPpkn1Gfru8G/Rn488R2sJ/OJIncTKbJFVUNEt6HhABXRz/I6xlYLpXoU0HcgfB4
+Cw+8h/jQsXqnVXWrMmjQJ6+DgJR2Yk32zi75NY5Z6j3L0he+nO9P/uZ6ZSLOn/Lj
+ftoPVs26Ay6Q/h7bJ7wtcC06k8qHxplimiWrEtNU7A74PaUGWZfgFXeOrUZXSURb
+YxqbCTW6isbvS2D7IkNq/OasRVEUY3gNXFu3g8d08JCmvSY6P1peJQN0yvbFx43L
+/nfY7CXRhF/sEViTcjkV1/Asa+PUT7yjzE6hf512yfUJtlBU7HXfK1n7sK2BT1xG
+ds9N+jpBSXXq7dqWr2OsfmNMDF3wttnjD31OOjxmyq1yR4BuPxhJYH/AHnQQIA+/
+tIcdLgtEKISXzSwcMvKt0X5olzTKFREeEWH/x+i1zPuu4bxUY7Fd0z0PvealExtv
+mT8MJ3iFhHRReJolnG8a00DUfyj++dEaSQtgf4liGQZLgBK7g4AesL3vKPgRVNP9
+ex4WEuLULIW78QiG0bOwoswc2pMePWlNVDEVju56VwB2+Y+qNQIO29ySuTf7W9NB
+adXUAmuJEykrAgMBAAGjggGIMIIBhDALBgNVHQ8EBAMCAYYwIwYDVR0lBBwwGgYK
+KwYBBAGCNwoDDAYFZ4EFCAEGBWeBBQgDMBIGA1UdEwEB/wQIMAYBAf8CAQEwHQYD
+VR0OBBYEFBxqlvcz0egLZjNmB55lFH2P/rA8MB8GA1UdIwQYMBaAFEv+JlqUwfYz
+w4NIJt3z5bBksqqVMHYGA1UdHwRvMG0wa6BpoGeGZWh0dHA6Ly93d3cubWljcm9z
+b2Z0LmNvbS9wa2lvcHMvY3JsL0F6dXJlJTIwVmlydHVhbCUyMFRQTSUyMFJvb3Ql
+MjBDZXJ0aWZpY2F0ZSUyMEF1dGhvcml0eSUyMDIwMjMuY3JsMIGDBggrBgEFBQcB
+AQR3MHUwcwYIKwYBBQUHMAKGZ2h0dHA6Ly93d3cubWljcm9zb2Z0LmNvbS9wa2lv
+cHMvY2VydHMvQXp1cmUlMjBWaXJ0dWFsJTIwVFBNJTIwUm9vdCUyMENlcnRpZmlj
+YXRlJTIwQXV0aG9yaXR5JTIwMjAyMy5jcnQwDQYJKoZIhvcNAQEMBQADggIBADv8
+FY5P/MusECLp6meis4Ujpce/2mq9bEBnSTV/qjTv1i59StJbqCD1uUXTPddeOnFl
+jkFai5y09zMka+aJnhhS8PIHhbgFSI4SKCjdC1CVZOQoPTTM/q3/SfJoZ2Zn/PGH
+2z+CxFsj7p2CNs843+swiUc+klA+X2hVy4HKEplh5HQmGPK6I3PBT/4P0PqBpqeB
+2ylTEMvuhSYtDnTYTGOUCUpnEYeY/THBMLsHVL0+I/Ti5irNaRwurpP3bIPzZd3G
+SO+EjQfOq/lGj3f7ipbLdwovIMVtbYuThlRK9AjsiS/mwGIZeuIiRy8T2KUqxkq/
+4Kt6i8gcIAKBgAx0/5BMbLf24KJHjtv7NN/0RissF6qOPa1ivk/rQwfr/FCilND5
+qvnHAgnHPSBKeo6cNQ1YjGl5KAQZuXxl2HWR/Pnv5ukUiBzdkozB+npXaTVQHmTx
+NUIRTErbYuCYW+HASCxnhZMYcLha7lM/X6Q5NMEOgz3dPA8mkxGCInZfjYZ2JlDb
+Rx9ks9aRqFpoxHuyBxas3Fycuyz77YFE6rr+p7uAQ3o+dZqbO0RatvsNUpO6aTH6
+lUl8xyTwGMw2WV3ATxAaUCtVOAA8xVpJo9Z19PSfepho+g6VKku7eXHPqGR/p9++
+MIy/GuVREnFXQXQt5Ut3pYlREPiZ/k+57avJoQhv
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIFsDCCA5igAwIBAgIQUfQx2iySCIpOKeDZKd5KpzANBgkqhkiG9w0BAQwFADBp
+MQswCQYDVQQGEwJVUzEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMTow
+OAYDVQQDEzFBenVyZSBWaXJ0dWFsIFRQTSBSb290IENlcnRpZmljYXRlIEF1dGhv
+cml0eSAyMDIzMB4XDTIzMDYwMTE4MDg1M1oXDTQ4MDYwMTE4MTU0MVowaTELMAkG
+A1UEBhMCVVMxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjE6MDgGA1UE
+AxMxQXp1cmUgVmlydHVhbCBUUE0gUm9vdCBDZXJ0aWZpY2F0ZSBBdXRob3JpdHkg
+MjAyMzCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBALoMMwvdRJ7+bW00
+adKE1VemNqJS+268Ure8QcfZXVOsVO22+PL9WRoPnWo0r5dVoomYGbobh4HC72s9
+sGY6BGRe+Ui2LMwuWnirBtOjaJ34r1ZieNMcVNJT/dXW5HN/HLlm/gSKlWzqCEx6
+gFFAQTvyYl/5jYI4Oe05zJ7ojgjK/6ZHXpFysXnyUITJ9qgjn546IJh/G5OMC3mD
+fFU7A/GAi+LYaOHSzXj69Lk1vCftNq9DcQHtB7otO0VxFkRLaULcfu/AYHM7FC/S
+q6cJb9Au8K/IUhw/5lJSXZawLJwHpcEYzETm2blad0VHsACaLNucZL5wBi8GEusQ
+9Wo8W1p1rUCMp89pufxa3Ar9sYZvWeJlvKggWcQVUlhvvIZEnT+fteEvwTdoajl5
+qSvZbDPGCPjb91rSznoiLq8XqgQBBFjnEiTL+ViaZmyZPYUsBvBY3lKXB1l2hgga
+hfBIag4j0wcgqlL82SL7pAdGjq0Fou6SKgHnkkrV5CNxUBBVMNCwUoj5mvEjd5mF
+7XPgfM98qNABb2Aqtfl+VuCkU/G1XvFoTqS9AkwbLTGFMS9+jCEU2rw6wnKuGv1T
+x9iuSdNvsXt8stx4fkVeJvnFpJeAIwBZVgKRSTa3w3099k0mW8qGiMnwCI5SfdZ2
+SJyD4uEmszsnieE6wAWd1tLLg1jvAgMBAAGjVDBSMA4GA1UdDwEB/wQEAwIBhjAP
+BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRL/iZalMH2M8ODSCbd8+WwZLKqlTAQ
+BgkrBgEEAYI3FQEEAwIBADANBgkqhkiG9w0BAQwFAAOCAgEALgNAyg8I0ANNO/8I
+2BhpTOsbywN2YSmShAmig5h4sCtaJSM1dRXwA+keY6PCXQEt/PRAQAiHNcOF5zbu
+OU1Bw/Z5Z7k9okt04eu8CsS2Bpc+POg9js6lBtmigM5LWJCH1goMD0kJYpzkaCzx
+1TdD3yjo0xSxgGhabk5Iu1soD3OxhUyIFcxaluhwkiVINt3Jhy7G7VJTlEwkk21A
+oOrQxUsJH0f2GXjYShS1r9qLPzLf7ykcOm62jHGmLZVZujBzLIdNk1bljP9VuGW+
+cISBwzkNeEMMFufcL2xh6s/oiUnXicFWvG7E6ioPnayYXrHy3Rh68XLnhfpzeCzv
+bz/I4yMV38qGo/cAY2OJpXUuuD/ZbI5rT+lRBEkDW1kxHP8cpwkRwGopV8+gX2KS
+UucIIN4l8/rrNDEX8T0b5U+BUqiO7Z5YnxCya/H0ZIwmQnTlLRTU2fW+OGG+xyIr
+jMi/0l6/yWPUkIAkNtvS/yO7USRVLPbtGVk3Qre6HcqacCXzEjINcJhGEVg83Y8n
+M+Y+a9J0lUnHytMSFZE85h88OseRS2QwqjozUo2j1DowmhSSUv9Na5Ae22ycciBk
+EZSq8a4rSlwqthaELNpeoTLUk6iVoUkK/iLvaMvrkdj9yJY1O/gvlfN2aiNTST/2
+bd+PA4RBToG9rXn6vNkUWdbLibU=
+-----END CERTIFICATE-----
+"""
+
+QUOTE_ATTEST = base64.b64decode(
+    "/1RDR4AYACIACwE/qubatjcS/WS72HXlKy/CS6bPcf0/lzlZL2DcLqLqACCI5I4bWvXV3t3XSeLW+Qx+"
+    "m82jzGG2J9rF7wDmLUkljgAAAAAAAuV0AAAAAwAAAAABICADEgASAAQAAAABAAsD/wAAACBvncdDSOT3"
+    "axcLXewofFl///qlaPbfeS/c161KXlxtjA=="
+)
+
+QUOTE_SIGNATURE = base64.b64decode(
+    "ABQACwEAZIZoywuUMOo6iK9hR2ZS2YbPdmkjD6Skzov3mPn+WFFYWbsXQOCgGCphU9ep9QI4j2TrMaro"
+    "tKK9pSgxYHGQ+eA9LGXdz+kEIYY5av+Gt96HDpYo4T7JzPtjRYX+icXW+56KXS7pSFFqS7lg0EwFtPIu"
+    "BEcEYIwM/v+MRe+c8bc3woOehpwX71wS5gW7Ug+wp1Ux/BnRcA83SAfLUOz4Sq4SIYtHN49CiQENOAq3"
+    "tSHsDGBXpnO6pfn183JG3fDl29RXRdB2hXqnmBWz+X1IvCiaOdcV5fse7/W0x3g0TaLSM32mQmC6MMAQ"
+    "RD0fUBytDRvGKRIuZw7ywt/K/aA5Cw=="
+)
+
+NONCE = bytes.fromhex("88e48e1b5af5d5deddd749e2d6f90c7e9bcda3cc61b627dac5ef00e62d49258e")
+
+AZURE_ROOTS = trusted_roots_for("azure-vtpm")
+
+
+def test_real_quote_verifies_against_the_pinned_azure_root() -> None:
+    verified, details = verify_tpm_quote_chained(
+        QUOTE_ATTEST, QUOTE_SIGNATURE, AK_CHAIN_PEM,
+        trusted_roots_pem=AZURE_ROOTS, expected_qualifying_data=NONCE,
+    )
+
+    assert verified is True
+    assert details["chain"] == "verified to a pinned root"
+    assert details["signature_algorithm"] == "rsassa"
+
+
+def test_a_wrong_nonce_fails_the_binding() -> None:
+    verified, _ = verify_tpm_quote_chained(
+        QUOTE_ATTEST, QUOTE_SIGNATURE, AK_CHAIN_PEM,
+        trusted_roots_pem=AZURE_ROOTS, expected_qualifying_data=bytes(32),
+    )
+
+    assert verified is False
+
+
+def test_a_tampered_attest_fails() -> None:
+    tampered = bytearray(QUOTE_ATTEST)
+    tampered[-1] ^= 0x01
+
+    verified, _ = verify_tpm_quote_chained(
+        bytes(tampered), QUOTE_SIGNATURE, AK_CHAIN_PEM, trusted_roots_pem=AZURE_ROOTS
+    )
+
+    assert verified is False
+
+
+def test_a_chain_whose_root_is_not_pinned_is_rejected_distinctly() -> None:
+    """A chain failure must be distinguishable from a signature failure, so an
+    operator cannot mistake an untrusted platform for a forged quote."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+
+    intermediate_only = x509.load_pem_x509_certificates(AK_CHAIN_PEM)[1].public_bytes(
+        serialization.Encoding.PEM
+    )
+
+    verified, details = verify_tpm_quote_chained(
+        QUOTE_ATTEST, QUOTE_SIGNATURE, AK_CHAIN_PEM, trusted_roots_pem=intermediate_only
+    )
+
+    assert verified is False
+    assert "chain_error" in details
+    assert "not among the supplied trusted" in details["chain_error"]
+
+
+def test_a_malformed_signature_blob_is_reported_as_such() -> None:
+    verified, details = verify_tpm_quote_chained(
+        QUOTE_ATTEST, QUOTE_SIGNATURE[:4], AK_CHAIN_PEM, trusted_roots_pem=AZURE_ROOTS
+    )
+
+    assert verified is False
+    assert "signature_error" in details
+
+
+def test_an_empty_trust_bundle_cannot_pass() -> None:
+    """Verifying against no anchor would accept any self-consistent chain."""
+    verified, details = verify_tpm_quote_chained(
+        QUOTE_ATTEST, QUOTE_SIGNATURE, AK_CHAIN_PEM, trusted_roots_pem=b""
+    )
+
+    assert verified is False
+    assert "chain_error" in details

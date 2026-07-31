@@ -290,7 +290,14 @@ def verify_quote_signature(
     attest: bytes, signature_blob: bytes, ak_public_pem: bytes
 ) -> tuple[bool, dict[str, str]]:
     """
-    Verify a TPMT_SIGNATURE over a TPMS_ATTEST blob using the attestation key.
+    Verify a TPMT_SIGNATURE over a TPMS_ATTEST blob using a bare attestation key.
+
+    This is the **unchained** path and it establishes no key provenance: it proves
+    the blob was signed by the key supplied, not that the key lives in a TPM.
+    Prefer :func:`verify_tpm_quote_chained`, which verifies the certificate chain
+    to a pinned root. This function remains for platforms that expose no
+    attestation key certificate, where a signature is still better than nothing but
+    must not be reported as hardware-rooted.
 
     ``attest`` must be the exact bytes the TPM signed, which is the bare TPMS_ATTEST
     written by ``tpm2_quote -m``. Returns (verified, details); never raises.
@@ -346,4 +353,66 @@ def verify_quote_signature(
     return True, {
         "signature_algorithm": _SIG_ALG_NAMES.get(parsed.sig_alg, f"0x{parsed.sig_alg:04x}"),
         "signature_digest": f"0x{parsed.hash_alg:04x}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Chained verification (issues #431, #447)
+#
+# The signature, chain, and root pinning all live in agent-manifest, which cMCP
+# already depends on and which is hardware-validated. cMCP keeps only the piece
+# agent-manifest does not model: the TPMT_SIGNATURE wire format written by
+# tpm2_quote and by tpm2-pytss `signature.marshal()`.
+# ---------------------------------------------------------------------------
+
+
+def verify_tpm_quote_chained(
+    attest: bytes,
+    signature_blob: bytes,
+    ak_chain_pem: bytes,
+    *,
+    trusted_roots_pem: bytes,
+    expected_qualifying_data: bytes | None = None,
+    expected_pcr_digest: bytes | None = None,
+) -> tuple[bool, dict[str, str]]:
+    """
+    Fully verify a TPM quote: signature, certificate chain, and pinned root.
+
+    Delegates the cryptography to ``agent_manifest.verify_tpm_quote`` rather than
+    reimplementing it. ``signature_blob`` is a marshalled TPMT_SIGNATURE; the raw
+    signature is extracted here because agent-manifest takes the bare signature.
+
+    Returns (verified, details) and never raises. A malformed quote, a broken
+    chain, or a root outside ``trusted_roots_pem`` all report verified=False with a
+    reason, so callers cannot mistake a chain failure for a signature failure.
+    """
+    try:
+        parsed = parse_tpmt_signature(signature_blob)
+    except ValueError as exc:
+        return False, {"signature_error": str(exc)}
+
+    try:
+        from agent_manifest import verify_tpm_quote
+    except ImportError as exc:  # pragma: no cover
+        return False, {"error": f"agent-manifest is required for chained verification: {exc}"}
+
+    try:
+        ok = verify_tpm_quote(
+            attest,
+            parsed.signature,
+            ak_chain_pem,
+            trusted_roots_pem=trusted_roots_pem,
+            expected_qualifying_data=expected_qualifying_data,
+            expected_pcr_digest=expected_pcr_digest,
+        )
+    except Exception as exc:  # noqa: BLE001 - agent-manifest raises on chain/structure faults
+        return False, {"chain_error": f"{type(exc).__name__}: {exc}"}
+
+    if not ok:
+        return False, {"verification": "signature or binding mismatch"}
+
+    return True, {
+        "signature_algorithm": _SIG_ALG_NAMES.get(parsed.sig_alg, f"0x{parsed.sig_alg:04x}"),
+        "signature_digest": f"0x{parsed.hash_alg:04x}",
+        "chain": "verified to a pinned root",
     }
