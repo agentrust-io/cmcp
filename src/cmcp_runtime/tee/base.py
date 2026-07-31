@@ -36,6 +36,10 @@ class AttestationReport:
     # signature envelope (SEV-SNP, TDX).
     quote_signature: bytes | None = None  # marshalled TPMT_SIGNATURE
     attestation_key_pem: bytes | None = None  # AK public key, PEM
+    # Leaf-first PEM chain for the attestation key, when the platform provisions a
+    # certificate for it. Without this a verified signature says nothing about where
+    # the key lives, so this is what separates the hardware tier from a bare key.
+    attestation_key_chain_pem: bytes | None = None
 
     def __post_init__(self) -> None:
         if self.provider not in _ALLOWED_PROVIDERS:

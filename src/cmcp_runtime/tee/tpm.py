@@ -29,6 +29,22 @@ _TPM_DEVICES = [Path("/dev/tpm0"), Path("/dev/tpmrm0")]
 # PCR selection quoted alongside the measurement.
 _QUOTE_PCR_SELECTION = "sha256:0,1,2,3,4,5,6,7"
 
+# Platforms that provision an attestation key expose it at a persistent handle with a
+# certificate in NV. Azure Trusted Launch uses these two; both are TCG-conventional
+# ranges rather than Azure inventions, so the probe is harmless elsewhere.
+_PLATFORM_AK_HANDLE = 0x81000003
+_PLATFORM_AK_CERT_NV_INDEX = 0x01C101D0
+
+# Walking the certificate AIA extension is what lets a relying party verify offline
+# later: the chain travels with the evidence instead of being fetched at audit time.
+_AIA_FETCH_TIMEOUT_SECONDS = 5
+_AIA_MAX_DEPTH = 4
+
+# TPM2_NV_Read is bounded by TPM2_PT_NV_BUFFER_MAX; query it and cap by this.
+_NV_READ_CHUNK_BYTES = 512
+_TPM2_CAP_TPM_PROPERTIES = 0x00000006
+_TPM2_PT_NV_BUFFER_MAX = 0x0000012B
+
 
 class TPMProvider(TEEProvider):
     """TPM 2.0 attestation provider using tpm2-pytss or subprocess fallback."""
@@ -104,9 +120,12 @@ class TPMProvider(TEEProvider):
             raw_evidence: bytes | None = None
             quote_signature: bytes | None = None
             attestation_key_pem: bytes | None = None
+            attestation_key_chain_pem: bytes | None = None
             ak_handle = None
+            self._last_key_was_transient = False
+            transient_ak = False
             try:
-                ak_handle, ak_public = self._create_attestation_key(ectx)
+                ak_handle, ak_public, attestation_key_chain_pem = self._attestation_key(ectx)
                 quoted, signature = ectx.quote(
                     ak_handle,
                     _QUOTE_PCR_SELECTION,
@@ -115,6 +134,7 @@ class TPMProvider(TEEProvider):
                 raw_evidence = bytes(quoted.attestationData)
                 quote_signature = signature.marshal()
                 attestation_key_pem = ak_public.to_pem()
+                transient_ak = self._last_key_was_transient
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "TPM quote unavailable (%s); the report will carry an unsigned "
@@ -124,8 +144,9 @@ class TPMProvider(TEEProvider):
                 raw_evidence = None
                 quote_signature = None
                 attestation_key_pem = None
+                attestation_key_chain_pem = None
             finally:
-                if ak_handle is not None:
+                if ak_handle is not None and transient_ak:
                     try:
                         ectx.flush_context(ak_handle)
                     except Exception as exc:  # noqa: BLE001
@@ -145,7 +166,176 @@ class TPMProvider(TEEProvider):
             measurement_note=measurement_note,
             quote_signature=quote_signature,
             attestation_key_pem=attestation_key_pem,
+            attestation_key_chain_pem=attestation_key_chain_pem,
         )
+
+    def _attestation_key(self, ectx: Any) -> tuple[Any, Any, bytes | None]:
+        """
+        Return (handle, public, chain_pem) for the key that will sign the quote.
+
+        Prefers the platform attestation key: a key the platform provisioned and
+        certified, at a persistent handle with its certificate in NV. That key is the
+        only one whose signature says anything about where it lives, because the
+        certificate chains to a vendor root.
+
+        Falls back to a transient restricted signing key when the platform provides
+        none. That path still produces a verifiable signature but no provenance, and
+        the caller reports it without a chain so it cannot be mistaken for the
+        stronger tier.
+        """
+        cert_der = self._read_nv(ectx, _PLATFORM_AK_CERT_NV_INDEX)
+        if cert_der is not None:
+            try:
+                handle = ectx.tr_from_tpmpublic(_PLATFORM_AK_HANDLE)
+                public, _, _ = ectx.read_public(handle)
+                chain = self._chain_from_leaf(cert_der)
+                if self._certifies(chain, public):
+                    logger.info(
+                        "Using the platform attestation key at 0x%X with its "
+                        "certificate from NV 0x%X.",
+                        _PLATFORM_AK_HANDLE,
+                        _PLATFORM_AK_CERT_NV_INDEX,
+                    )
+                    return handle, public, chain
+                logger.warning(
+                    "The certificate at NV 0x%X does not certify the key at 0x%X; "
+                    "falling back to a transient attestation key.",
+                    _PLATFORM_AK_CERT_NV_INDEX,
+                    _PLATFORM_AK_HANDLE,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Platform attestation key unusable (%s); falling back to a "
+                    "transient key.",
+                    exc,
+                )
+
+        handle, public = self._create_attestation_key(ectx)
+        self._last_key_was_transient = True
+        return handle, public, None
+
+    @staticmethod
+    def _read_nv(ectx: Any, index: int) -> bytes | None:
+        """
+        Read an NV index in full, returning None when it is not defined or readable.
+
+        TPM2_NV_Read is bounded by TPM2_PT_NV_BUFFER_MAX, so an index larger than that
+        must be read in chunks. Requesting the whole thing at once fails with
+        TPM_RC_VALUE on the size parameter, which is why a certificate of 1596 bytes
+        cannot be fetched in a single call even though the index is plainly readable.
+        """
+        try:
+            handle = ectx.tr_from_tpmpublic(index)
+            public, _ = ectx.nv_read_public(handle)
+            total = int(public.nvPublic.dataSize)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("NV index 0x%X not defined: %s", index, exc)
+            return None
+
+        chunk = _NV_READ_CHUNK_BYTES
+        try:
+            caps = ectx.get_capability(_TPM2_CAP_TPM_PROPERTIES, _TPM2_PT_NV_BUFFER_MAX, 1)
+            for prop in caps[1].data.tpmProperties:
+                if int(prop.property) == _TPM2_PT_NV_BUFFER_MAX:
+                    chunk = min(chunk, int(prop.value))
+                    break
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("NV buffer max unavailable, using %d: %s", chunk, exc)
+
+        out = bytearray()
+        try:
+            while len(out) < total:
+                want = min(chunk, total - len(out))
+                out += bytes(ectx.nv_read(handle, want, len(out)))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("NV index 0x%X read failed at offset %d: %s", index, len(out), exc)
+            return None
+        return bytes(out)
+
+    @staticmethod
+    def _certifies(chain_pem: bytes, tpm_public: Any) -> bool:
+        """True when the chain's leaf certificate carries the TPM key's public key."""
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+
+        leaf = x509.load_pem_x509_certificates(chain_pem)[0]
+        return leaf.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ) == tpm_public.to_pem()
+
+    @staticmethod
+    def _chain_from_leaf(leaf_der: bytes) -> bytes:
+        """
+        Build a leaf-first PEM chain by following each certificate's AIA extension.
+
+        The chain is assembled at collection time on purpose: shipping it with the
+        evidence is what keeps verification offline later. A self-signed certificate
+        or a missing AIA ends the walk, and whatever was gathered is returned so a
+        partial chain still travels rather than being discarded.
+        """
+        import urllib.request
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives.serialization import pkcs7
+
+        def load_any(data: bytes) -> list[x509.Certificate]:
+            for loader in (x509.load_der_x509_certificate, x509.load_pem_x509_certificate):
+                try:
+                    return [loader(data)]
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("not an X.509 certificate via %s: %s", loader.__name__, exc)
+            for bundle_loader in (
+                pkcs7.load_der_pkcs7_certificates,
+                pkcs7.load_pem_pkcs7_certificates,
+            ):
+                found: list[x509.Certificate] = []
+                try:
+                    found = list(bundle_loader(data))
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "not a PKCS#7 bundle via %s: %s", bundle_loader.__name__, exc
+                    )
+                if found:
+                    return found
+            return []
+
+        chain = load_any(leaf_der)
+        while len(chain) < _AIA_MAX_DEPTH:
+            current = chain[-1]
+            if current.subject == current.issuer:
+                break
+            try:
+                aia = current.extensions.get_extension_for_class(
+                    x509.AuthorityInformationAccess
+                ).value
+            except x509.ExtensionNotFound:
+                break
+            urls = [
+                d.access_location.value
+                for d in aia
+                if d.access_method.dotted_string == "1.3.6.1.5.5.7.48.2"
+            ]
+            issuer = None
+            for url in urls:
+                if not url.startswith(("http://", "https://")):
+                    continue
+                try:
+                    with urllib.request.urlopen(  # noqa: S310  # nosec B310 - http(s) only, checked above
+                        url, timeout=_AIA_FETCH_TIMEOUT_SECONDS
+                    ) as response:
+                        found = load_any(response.read())
+                    if found:
+                        issuer = found[0]
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("AIA fetch failed for %s: %s", url, exc)
+            if issuer is None:
+                break
+            chain.append(issuer)
+
+        from cryptography.hazmat.primitives.serialization import Encoding
+
+        return b"".join(c.public_bytes(Encoding.PEM) for c in chain)
 
     @staticmethod
     def _create_attestation_key(ectx: Any) -> tuple[Any, Any]:
