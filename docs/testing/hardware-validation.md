@@ -144,11 +144,18 @@ the outer `TPM2B_ATTEST` two-byte size prefix, but `tpm2_quote -m` writes a bare
 the magic constant.
 
 The AK signature is now verified (see the 2026-07-31 run below). The EK/AK
-certificate chain remains in `unverified_fields`. Note also that
-Azure's pre-provisioned AK certificate (vTPM NV index `0x01C101D0`, issuer
-`CN=Global Virtual TPM CA - 03`) certifies a different key than an in-guest
-`tpm2_createak` AK, and carries no AIA extension, so its issuing intermediate is
-not fetchable from it.
+certificate chain remains in `unverified_fields`. **Corrected 2026-07-31.** An earlier run recorded that Azure's pre-provisioned AK
+certificate carries no AIA extension and that its issuing intermediate is
+therefore not fetchable. That is no longer true: Azure has changed its vTPM PKI.
+On a VM provisioned 2026-07-31 in eastus, the certificate at vTPM NV index
+`0x01C101D0` is issued by `CN=Azure Cloud Virtual TPM CA - 11`, not
+`CN=Global Virtual TPM CA - 03`, and it does carry an AIA extension with four CA
+Issuers URIs. The intermediate was fetched from the public CDN and verified to
+have signed the AK certificate. See the certificate-chain section below.
+
+It remains true that this certificate certifies a different key than an in-guest
+`tpm2_createak` AK. The resolution is not to certify our own AK: it is to use the
+key Azure already certified, which is live at persistent handle `0x81000003`.
 
 ## TPM 2.0 quote signature, Azure Trusted Launch vTPM, 2026-07-31
 
@@ -186,6 +193,47 @@ not present at NV index `0x01C00002` on this VM, and as recorded above Azure's
 pre-provisioned AK certificate certifies a different key and carries no AIA
 extension. Binding an in-guest AK to the platform EK needs
 `TPM2_ActivateCredential`, which is the next step for #431.
+
+## TPM 2.0 attestation key certificate chain, Azure Trusted Launch, 2026-07-31
+
+This run establishes that a chain to a public CA is reachable on Azure, which the
+earlier note had concluded was not possible.
+
+Findings on a `Standard_D2s_v5` Ubuntu 24.04 Trusted Launch VM in eastus:
+
+- The only NV index defined is `0x01C101D0` (1596 bytes). There is **no EK
+  certificate**, at `0x01C00002` or anywhere else. `tpm2_createek` succeeds but
+  produces an uncertified key, so credential activation against a platform EK
+  certificate is not available on this platform.
+- Two persistent handles exist, `0x81000003` and `0x81010001`. The public key at
+  **`0x81000003` is exactly the key certified by the certificate at
+  `0x01C101D0`**, and that handle can produce a quote directly.
+- The certificate carries Extended Key Usage `2.23.133.8.3`, the TCG
+  Attestation Identity Key certificate OID, alongside `1.3.6.1.4.1.311.10.3.12`.
+- Chain, verified end to end:
+  `CN=<vm-id>.TrustedVM.Azure.windows.net`
+  signed by `CN=Azure Cloud Virtual TPM CA - 11` (fetched over AIA from
+  `primary-cdn.pki.core.windows.net`), itself issued by
+  `CN=Azure Cloud Virtual TPM CA 2025`.
+
+So the route for #431 on Azure is not `TPM2_ActivateCredential`. It is to quote
+with the platform attestation key at `0x81000003` and present the certificate
+from `0x01C101D0`, letting the relying party build the chain over AIA and pin the
+Azure vTPM root. Credential activation remains the route on hardware that ships
+an EK certificate, which is the client fTPM case.
+
+Not yet implemented: the runtime does not read the NV certificate or use the
+persistent handle, and `cmcp_verify` does not build or pin the chain. `#431`
+tracks that work.
+
+## TCG event log availability, Azure Trusted Launch, 2026-07-31
+
+`/sys/kernel/security/tpm0/binary_bios_measurements` exists on this platform but
+is **zero bytes**. The Azure Gen2 UEFI does not hand a TCG log to the guest, so
+event-log replay cannot be exercised on an Azure vTPM at all. The replay code in
+`cmcp_verify.tcg_event_log` is covered by synthetic logs, and validating it
+against a real log needs a platform that publishes one, which in practice means
+physical client hardware. `#433` tracks that.
 
 ## Not yet validated
 
