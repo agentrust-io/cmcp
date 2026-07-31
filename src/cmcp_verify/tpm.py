@@ -211,3 +211,139 @@ def _parse_tpm2b_attest(
         return False, {"error": f"struct parse error: {exc}"}
     except Exception as exc:  # noqa: BLE001
         return False, {"error": f"unexpected parse error: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Quote signature verification (issue #429)
+#
+# Parsing an attest blob and comparing its qualifying data proves nothing on its
+# own: both are attacker-controllable. The signature is what binds the blob to a
+# key held in a TPM. Validated against a real Azure Trusted Launch vTPM quote,
+# see docs/testing/hardware-validation.md.
+# ---------------------------------------------------------------------------
+
+# TPM2_ALG_ID values for the signing schemes a quote can use.
+_ALG_RSASSA = 0x0014
+_ALG_RSAPSS = 0x0016
+_ALG_ECDSA = 0x0018
+
+_ALG_SHA1 = 0x0004
+_ALG_SHA256 = 0x000B
+_ALG_SHA384 = 0x000C
+_ALG_SHA512 = 0x000D
+
+_SIG_ALG_NAMES = {
+    _ALG_RSASSA: "rsassa",
+    _ALG_RSAPSS: "rsapss",
+    _ALG_ECDSA: "ecdsa",
+}
+
+
+@dataclass
+class ParsedSignature:
+    """A parsed TPMT_SIGNATURE."""
+
+    sig_alg: int
+    hash_alg: int
+    signature: bytes
+
+
+def parse_tpmt_signature(blob: bytes) -> ParsedSignature:
+    """
+    Parse a TPMT_SIGNATURE as written by ``tpm2_quote -s``.
+
+    Layout: sigAlg (2), hashAlg (2), then the algorithm-specific signature. For RSA
+    that is a TPM2B_PUBLIC_KEY_RSA (size-prefixed). For ECDSA it is two size-prefixed
+    integers, R then S.
+    """
+    if len(blob) < 6:
+        raise ValueError("TPMT_SIGNATURE too short")
+    sig_alg, hash_alg = struct.unpack_from(">HH", blob, 0)
+    offset = 4
+
+    if sig_alg in (_ALG_RSASSA, _ALG_RSAPSS):
+        (size,) = struct.unpack_from(">H", blob, offset)
+        offset += 2
+        if len(blob) < offset + size:
+            raise ValueError("TPMT_SIGNATURE truncated inside the RSA signature")
+        return ParsedSignature(sig_alg, hash_alg, blob[offset : offset + size])
+
+    if sig_alg == _ALG_ECDSA:
+        parts = []
+        for _ in range(2):
+            (size,) = struct.unpack_from(">H", blob, offset)
+            offset += 2
+            if len(blob) < offset + size:
+                raise ValueError("TPMT_SIGNATURE truncated inside the ECDSA signature")
+            parts.append(blob[offset : offset + size])
+            offset += size
+        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+        r = int.from_bytes(parts[0], "big")
+        s = int.from_bytes(parts[1], "big")
+        return ParsedSignature(sig_alg, hash_alg, encode_dss_signature(r, s))
+
+    raise ValueError(f"unsupported signature algorithm 0x{sig_alg:04x}")
+
+
+def verify_quote_signature(
+    attest: bytes, signature_blob: bytes, ak_public_pem: bytes
+) -> tuple[bool, dict[str, str]]:
+    """
+    Verify a TPMT_SIGNATURE over a TPMS_ATTEST blob using the attestation key.
+
+    ``attest`` must be the exact bytes the TPM signed, which is the bare TPMS_ATTEST
+    written by ``tpm2_quote -m``. Returns (verified, details); never raises.
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+
+    hashes_by_alg = {
+        _ALG_SHA1: hashes.SHA1,
+        _ALG_SHA256: hashes.SHA256,
+        _ALG_SHA384: hashes.SHA384,
+        _ALG_SHA512: hashes.SHA512,
+    }
+
+    try:
+        parsed = parse_tpmt_signature(signature_blob)
+    except ValueError as exc:
+        return False, {"signature_error": str(exc)}
+
+    hash_cls = hashes_by_alg.get(parsed.hash_alg)
+    if hash_cls is None:
+        return False, {"signature_error": f"unsupported digest 0x{parsed.hash_alg:04x}"}
+
+    try:
+        key = serialization.load_pem_public_key(ak_public_pem)
+    except Exception as exc:  # noqa: BLE001
+        return False, {"signature_error": f"attestation key not loadable: {exc}"}
+
+    try:
+        if parsed.sig_alg == _ALG_RSASSA:
+            if not isinstance(key, rsa.RSAPublicKey):
+                return False, {"signature_error": "RSASSA signature with a non-RSA key"}
+            key.verify(parsed.signature, attest, padding.PKCS1v15(), hash_cls())
+        elif parsed.sig_alg == _ALG_RSAPSS:
+            if not isinstance(key, rsa.RSAPublicKey):
+                return False, {"signature_error": "RSAPSS signature with a non-RSA key"}
+            key.verify(
+                parsed.signature,
+                attest,
+                padding.PSS(mgf=padding.MGF1(hash_cls()), salt_length=hash_cls.digest_size),
+                hash_cls(),
+            )
+        else:
+            if not isinstance(key, ec.EllipticCurvePublicKey):
+                return False, {"signature_error": "ECDSA signature with a non-EC key"}
+            key.verify(parsed.signature, attest, ec.ECDSA(hash_cls()))
+    except InvalidSignature:
+        return False, {"signature_error": "signature does not verify against the attestation key"}
+    except Exception as exc:  # noqa: BLE001
+        return False, {"signature_error": f"verification error: {exc}"}
+
+    return True, {
+        "signature_algorithm": _SIG_ALG_NAMES.get(parsed.sig_alg, f"0x{parsed.sig_alg:04x}"),
+        "signature_digest": f"0x{parsed.hash_alg:04x}",
+    }

@@ -14,7 +14,7 @@ been verified end to end by `cmcp_verify`, and the run is recorded below.
 |---|---|---|---|---|
 | AMD SEV-SNP (Azure CVM, vTPM-rooted) | Yes | Yes, to the real AMD ARK-Milan root | Yes | **Yes**, 2026-07-27, both from a stored capture and **live inside a running CVM** |
 | Intel TDX (GCP C3, non-paravisor) | Yes | Yes, to the pinned Intel SGX Root CA | Yes | **Yes**, 2026-07-27, capture of 2026-07-21 |
-| TPM 2.0 (Azure vTPM, Trusted Launch) | Yes | Not in Phase 1 (`ek_cert_chain` stays unverified) | Not in Phase 1 | **Partly**, 2026-07-27. Parse and freshness binding yes; signature and chain are out of Phase 1 scope |
+| TPM 2.0 (Azure vTPM, Trusted Launch) | Yes | Not yet (`ek_cert_chain` stays unverified, see #431) | Yes | **Yes**, 2026-07-31. AK-signed quote verified end to end, tampered copies rejected; certificate chain still open |
 | NVIDIA GPU CC (H100/H200) | Not implemented | | | No |
 
 "Verified against real hardware evidence" means the committed verifier accepted a
@@ -143,12 +143,49 @@ the outer `TPM2B_ATTEST` two-byte size prefix, but `tpm2_quote -m` writes a bare
 `TPM2B_ATTEST size field invalid`. Both framings are now accepted, told apart by
 the magic constant.
 
-Still out of scope for Phase 1 and unchanged by this run: the AK signature and
-the EK/AK certificate chain, which stay in `unverified_fields`. Note also that
+The AK signature is now verified (see the 2026-07-31 run below). The EK/AK
+certificate chain remains in `unverified_fields`. Note also that
 Azure's pre-provisioned AK certificate (vTPM NV index `0x01C101D0`, issuer
 `CN=Global Virtual TPM CA - 03`) certifies a different key than an in-guest
 `tpm2_createak` AK, and carries no AIA extension, so its issuing intermediate is
 not fetchable from it.
+
+## TPM 2.0 quote signature, Azure Trusted Launch vTPM, 2026-07-31
+
+Evidence: an AK-signed quote from a `Standard_D2s_v5` Ubuntu 24.04 VM with Trusted
+Launch, vTPM and secure boot enabled, eastus. The guest reports TPM 2.0 with
+`TPM2_PT_MANUFACTURER` = `MSFT`. The attestation key was created with
+`tpm2_createek` followed by `tpm2_createak` (RSA, RSASSA, SHA-256), and the quote
+taken over PCRs 0-7 in the SHA-256 bank under a fresh 32-byte nonce:
+
+```
+tpm2_createek -c ek.ctx -G rsa -u ek.pub
+tpm2_createak -C ek.ctx -c ak.ctx -G rsa -g sha256 -s rsassa -u ak.pub -n ak.name
+tpm2_readpublic -c ak.ctx -f pem -o ak.pem
+tpm2_quote -c ak.ctx -l sha256:0,1,2,3,4,5,6,7 -q $NONCE -m quote.msg -s quote.sig -g sha256
+```
+
+What the run checks: the `TPMS_ATTEST` magic constant, `extraData` equalling the
+nonce, and the RSASSA-SHA256 signature over the attest blob verifying under the AK
+public key. It also confirms rejection of a one-bit tampered attest blob, a
+tampered signature, and a correct signature checked against a different key.
+
+Unlike the SEV-SNP captures, this vector **is committed**, in
+`tests/unit/test_tpm_quote_signature.py`. It carries no per-CPU hardware
+identifier: the AK public key belongs to a virtual TPM in a VM that no longer
+exists, and the PCR values describe a stock Ubuntu image. Committing it means the
+signature path is exercised on every PR rather than only when a fixture directory
+is set.
+
+```
+pytest tests/unit/test_tpm_quote_signature.py
+```
+
+Not closed by this run: the EK certificate chain (#431). The EK certificate was
+not present at NV index `0x01C00002` on this VM, and as recorded above Azure's
+pre-provisioned AK certificate certifies a different key and carries no AIA
+extension. Binding an in-guest AK to the platform EK needs
+`TPM2_ActivateCredential`, which is the next step for #431.
 
 ## Not yet validated
 
