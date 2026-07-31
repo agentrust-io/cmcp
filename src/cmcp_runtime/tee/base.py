@@ -30,6 +30,12 @@ class AttestationReport:
     attestation_generated_at: datetime
     attestation_validity_seconds: int
     measurement_note: str | None = None  # e.g. "sha1-bank-fallback"
+    # Set by providers whose evidence is a signed quote. raw_evidence alone is not
+    # verifiable: it is the signature, checked against the key below, that binds the
+    # evidence to hardware. Left None by providers whose report carries its own
+    # signature envelope (SEV-SNP, TDX).
+    quote_signature: bytes | None = None  # marshalled TPMT_SIGNATURE
+    attestation_key_pem: bytes | None = None  # AK public key, PEM
 
     def __post_init__(self) -> None:
         if self.provider not in _ALLOWED_PROVIDERS:

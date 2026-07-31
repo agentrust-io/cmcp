@@ -8,7 +8,7 @@ import subprocess  # nosec B404
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 
@@ -26,6 +26,8 @@ except ImportError:
     _TSS2_AVAILABLE = False
 
 _TPM_DEVICES = [Path("/dev/tpm0"), Path("/dev/tpmrm0")]
+# PCR selection quoted alongside the measurement.
+_QUOTE_PCR_SELECTION = "sha256:0,1,2,3,4,5,6,7"
 
 
 class TPMProvider(TEEProvider):
@@ -58,7 +60,6 @@ class TPMProvider(TEEProvider):
     def _report_via_tss2(self, nonce: bytes) -> AttestationReport:
         from tpm2_pytss.ESAPI import ESAPI
         from tpm2_pytss.types import (
-            TPM2_ALG,
             TPM2B_DATA,
             TPML_PCR_SELECTION,
         )
@@ -71,11 +72,11 @@ class TPMProvider(TEEProvider):
             try:
                 pcr_sel = TPML_PCR_SELECTION.parse("sha256:0,1,2,3,4,5,6,7")
                 _, _, digests = ectx.pcr_read(pcr_sel)
-                for bank in digests.digests:
-                    for digest in bank.digests:
-                        raw_pcrs.append(bytes(digest.buffer))
-            except Exception:  # noqa: BLE001
+                for digest in digests.digests:
+                    raw_pcrs.append(bytes(digest))
+            except Exception as exc:  # noqa: BLE001
                 # Fall back to SHA-1
+                logger.warning("SHA-256 PCR read failed (%s)", exc)
                 measurement_note = "sha1-bank-fallback"
                 logger.warning(
                     "TPM SHA-1 fallback: SHA-256 PCR bank unavailable. "
@@ -85,9 +86,8 @@ class TPMProvider(TEEProvider):
                 pcr_sel = TPML_PCR_SELECTION.parse("sha1:0,1,2,3,4,5,6,7")
                 _, _, digests = ectx.pcr_read(pcr_sel)
                 raw_pcrs = []
-                for bank in digests.digests:
-                    for digest in bank.digests:
-                        raw_pcrs.append(bytes(digest.buffer))
+                for digest in digests.digests:
+                    raw_pcrs.append(bytes(digest))
 
             # Ensure we got 8 PCRs
             if len(raw_pcrs) < 8:
@@ -98,18 +98,23 @@ class TPMProvider(TEEProvider):
             concatenated = b"".join(raw_pcrs[:8])
             measurement = "sha256:" + hashlib.sha256(concatenated).hexdigest()
 
-            # Attempt TPM2_Quote for raw_evidence
+            # TPM2_Quote over the same PCR selection, signed by a restricted
+            # signing key. Without the signature the attest blob proves nothing:
+            # every field in it is attacker-controllable.
             raw_evidence: bytes | None = None
+            quote_signature: bytes | None = None
+            attestation_key_pem: bytes | None = None
+            ak_handle = None
             try:
-                qualifying_data = TPM2B_DATA(nonce[:32])
-                pcr_sel_quote = TPML_PCR_SELECTION.parse("sha256:0,1,2,3,4,5,6,7")
-                quoted, _signature = ectx.quote(
-                    object_handle=ectx.get_capability(TPM2_ALG.NULL),
-                    qualifying_data=qualifying_data,
-                    in_scheme=TPM2_ALG.NULL,
-                    pcrselect=pcr_sel_quote,
+                ak_handle, ak_public = self._create_attestation_key(ectx)
+                quoted, signature = ectx.quote(
+                    ak_handle,
+                    _QUOTE_PCR_SELECTION,
+                    TPM2B_DATA(nonce[:32]),
                 )
                 raw_evidence = bytes(quoted.attestationData)
+                quote_signature = signature.marshal()
+                attestation_key_pem = ak_public.to_pem()
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "TPM quote unavailable (%s); the report will carry an unsigned "
@@ -117,6 +122,14 @@ class TPMProvider(TEEProvider):
                     exc,
                 )
                 raw_evidence = None
+                quote_signature = None
+                attestation_key_pem = None
+            finally:
+                if ak_handle is not None:
+                    try:
+                        ectx.flush_context(ak_handle)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("flushing the attestation key failed: %s", exc)
 
         measurement_note = self._downgrade_note(measurement_note, raw_evidence)
         effective_provider = (
@@ -130,7 +143,35 @@ class TPMProvider(TEEProvider):
             attestation_generated_at=datetime.now(tz=UTC),
             attestation_validity_seconds=3600,
             measurement_note=measurement_note,
+            quote_signature=quote_signature,
+            attestation_key_pem=attestation_key_pem,
         )
+
+    @staticmethod
+    def _create_attestation_key(ectx: Any) -> tuple[Any, Any]:
+        """
+        Create a restricted signing key under the owner hierarchy and return
+        (handle, public).
+
+        Restricted signing is what makes the key usable for TPM2_Quote: the TPM will
+        only sign TPM-generated structures with it, so a quote cannot be forged by
+        asking the key to sign arbitrary bytes. The key is transient and flushed
+        after use. Binding it to the platform EK is separate work (issue #431).
+        """
+        from tpm2_pytss.constants import ESYS_TR
+        from tpm2_pytss.types import TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE
+
+        template = TPM2B_PUBLIC.parse(
+            "rsa2048:rsassa:null",
+            objectAttributes=(
+                "restricted|sign|fixedtpm|fixedparent|"
+                "sensitivedataorigin|userwithauth|noda"
+            ),
+        )
+        handle, public, _, _, _ = ectx.create_primary(
+            TPM2B_SENSITIVE_CREATE(), template, ESYS_TR.OWNER
+        )
+        return handle, public
 
     @staticmethod
     def _downgrade_note(measurement_note: str | None, raw_evidence: bytes | None) -> str | None:
