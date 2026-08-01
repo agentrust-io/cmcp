@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The gateway is now measured into a TPM NV extend index at startup (#432).** PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and the bootloader, and there was no `PCR_Extend` anywhere in the codebase, so replacing the policy bundle or the gateway itself produced an identical measurement and the TPM enforced nothing about the thing the TPM path exists to protect. `cmcp_runtime.tee.measurement` digests the installed distributions' recorded per-file hashes (pip's `RECORD`), the policy bundle bytes, and the resolved configuration with secrets excluded, then extends that digest into NV `0x01500432` before the gateway serves traffic. `RuntimeContext` carries the result.
+
+  An NV index with `TPM_NT_EXTEND` rather than an application PCR, per the decision on #432: PCR 23 and PCR 16 are both resettable from locality 0, so an adversary with local code execution could reset and re-extend a chosen value, which is exactly the adversary this tier addresses. Extend writes are one-way (`new = H(old || data)`), so forgery needs a preimage, which is what carries the security argument rather than the write policy the original proposal called for.
+
+  Scope is deliberately honest about two things. Measuring dependencies means an editable install, which has no `RECORD`, cannot be measured: that is fatal in production and a warning under `CMCP_DEV_MODE`, rather than a confident digest over an unknown subset of code. And because extends accumulate across reboots, the index is a hash chain over every start rather than a predictable absolute value, so the collector reports the value both before and after the extend and continuity is what a relying party checks.
+
+### Changed
+
+- **RFC section 5 P2 (`docs/spec/tpm-security-model.md`) rewritten** to record the NV-extend decision instead of leading with the application PCR it rejected, along with the residual-risk analysis: `TPM2_NV_UndefineSpace` with owner auth can erase the measurement, which guest root holds on Azure, so the property is tamper-evident rather than tamper-proof. Section 4.3 now separates what landed from what has not: the index value travels as an ordinary NV read, which the quote signature does not cover, so it is a local integrity control and not yet remote-verifiable evidence. `TPM2_NV_Certify` is the primitive that closes it; committing an NV read into the quote's qualifying data is not sound, because the collector would be asserting the value it read.
+
 ### Changed
 
 - **BREAKING: TRACE Claims now carry the v0.2 profile** `tag:agentrust-io.com,2026:trace-v0.2`, and `agentrust-trace` is pinned to `>=0.5`. The v0.1 URI named `agentrust.io`, a domain this project never controlled, which RFC 4151 does not permit for a tag URI (agentrust-io/trace-spec#107). A verifier on the v0.2 suite rejects a v0.1 claim, so producers and verifiers move together. Nothing else about the claim format changed.

@@ -32,6 +32,13 @@ from cmcp_runtime.errors import (
 from cmcp_runtime.policy.bundle import PolicyStore, load_policy_bundle
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 from cmcp_runtime.tee.detect import detect_provider
+from cmcp_runtime.tee.measurement import (
+    ExtendResult,
+    GatewayMeasurement,
+    MeasurementUnavailable,
+    extend_gateway_measurement,
+    gateway_measurement,
+)
 from cmcp_runtime.tee.nras import AppraisalResult, try_appraise
 from cmcp_runtime.tee.spiffe import SpiffeClientResult, fetch_svid
 
@@ -63,6 +70,11 @@ class RuntimeContext:
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
     agent_manifest: AgentManifestBinding | None = None
+    # #432: the gateway's own measurement, and the NV extend index state around it.
+    # Both None when the platform has no TPM, or in dev mode where an editable
+    # install makes the code digest uncomputable.
+    gateway_measurement: GatewayMeasurement | None = None
+    measurement_extend: ExtendResult | None = None
 
 
 def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
@@ -84,6 +96,83 @@ def _fatal(code: str, message: str, **fields: Any) -> None:
         **fields,
     }
     logger.critical("%s", entry)
+
+
+def _measure_gateway(
+    config: Config, tee_provider: TEEProvider
+) -> tuple[GatewayMeasurement | None, ExtendResult | None]:
+    """Measure the gateway and extend it into the TPM NV index (#432).
+
+    Returns ``(None, None)`` when the platform has no TPM to extend into, which is
+    not a failure: the SEV-SNP and TDX providers commit their own binding through
+    the report's own fields.
+
+    A TPM platform that cannot be measured is fatal in production and a warning in
+    dev mode, matching how ``CMCP_POLICY_HASH`` is handled. The dev-mode escape
+    matters in practice because an editable install has no ``RECORD`` metadata, so
+    the code digest is genuinely uncomputable there rather than merely inconvenient.
+    """
+    if tee_provider.provider_name() != "tpm":
+        logger.debug(
+            "Gateway measurement skipped: provider %s does not use an NV extend index",
+            tee_provider.provider_name(),
+        )
+        return None, None
+
+    def _degrade(exc: MeasurementUnavailable) -> tuple[None, None]:
+        if config.dev_mode:
+            logger.warning(
+                "Gateway measurement unavailable (%s): %s. Continuing because "
+                "CMCP_DEV_MODE is set; the TPM will not attest what code is running.",
+                exc,
+                exc.detail or "",
+            )
+            return None, None
+        _fatal(
+            "MEASUREMENT_UNAVAILABLE",
+            f"the gateway could not be measured into the TPM: {exc}",
+            detail=exc.detail or "",
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
+    try:
+        measurement = gateway_measurement(config)
+    except MeasurementUnavailable as exc:
+        return _degrade(exc)
+
+    try:
+        from tpm2_pytss.ESAPI import ESAPI
+    except ImportError as exc:
+        return _degrade(
+            MeasurementUnavailable(
+                "tpm2-pytss is required to extend the measurement NV index",
+                detail=str(exc),
+            )
+        )
+
+    try:
+        with ESAPI() as ectx:
+            extend_result = extend_gateway_measurement(ectx, measurement)
+    except MeasurementUnavailable as exc:
+        return _degrade(exc)
+    except Exception as exc:  # noqa: BLE001 - any TPM fault means unmeasured
+        return _degrade(
+            MeasurementUnavailable(
+                "the TPM could not be opened to extend the measurement",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        )
+
+    logger.info(
+        "Gateway measured: %s (code=%s policy=%s config=%s) into NV %#x",
+        measurement.digest_hex,
+        measurement.components["code"][:12],
+        measurement.components["policy"][:12],
+        measurement.components["config"][:12],
+        extend_result.index,
+    )
+    return measurement, extend_result
 
 
 def run_startup(config_path: str) -> RuntimeContext:
@@ -117,6 +206,13 @@ def run_startup(config_path: str) -> RuntimeContext:
             action="startup_aborted",
         )
         sys.exit(1)
+
+    # Step 2b (#432): measure the gateway into the NV extend index BEFORE the
+    # attestation report is produced, so the evidence reflects the code, policy, and
+    # config that are actually about to serve traffic. PCRs 0-7 cover firmware and
+    # the bootloader only, so without this the TPM enforced nothing about the
+    # gateway itself and a swapped policy bundle measured identically.
+    measurement, extend_result = _measure_gateway(config, tee_provider)
 
     # Step 3: signing key
     signing_key = SigningKey()
@@ -334,4 +430,6 @@ def run_startup(config_path: str) -> RuntimeContext:
         spiffe=spiffe_result,
         nras_appraisal=nras_appraisal,
         agent_manifest=agent_manifest,
+        gateway_measurement=measurement,
+        measurement_extend=extend_result,
     )

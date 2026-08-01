@@ -43,9 +43,11 @@ Consequence: any code executing in the gateway process can synthesise attestatio
 
 No AK is provisioned. `ek_cert_chain` is unconditionally listed as unverified with the note `requires_ca_lookup`. Even with a verified signature, nothing distinguishes a discrete TPM from a software emulator or an attacker-generated key.
 
-### 4.3 The gateway is not measured (#432)
+### 4.3 The gateway is not measured (#432, measurement landed, binding open)
 
-PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and bootloader. There is no `PCR_Extend` anywhere in the codebase. Replacing the policy bundle or the gateway binary produces an identical measurement, so the stated purpose of the TPM path, protecting policy from tampering, is not enforced by the TPM.
+PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and bootloader. Replacing the policy bundle or the gateway binary produced an identical measurement, so the stated purpose of the TPM path, protecting policy from tampering, was not enforced by the TPM.
+
+The gateway is now measured into an NV extend index at startup, before it serves traffic, per P2 below. What is still missing is the signed binding: the index value travels as an ordinary NV read, which the quote signature does not cover, so a verifier cannot yet distinguish a genuine value from one a compromised gateway reported. `TPM2_NV_Certify` closes that, and until it does the measurement is a local integrity control rather than remote-verifiable evidence.
 
 ### 4.4 PCR digests are uninterpretable (#433)
 
@@ -73,13 +75,19 @@ Ordered by trust gained per unit of effort.
 
 **P1. Provision an AK and validate its chain (#431).** Restricted signing AK certified against the EK, EK certificate shipped with the evidence, chain verified to a TPM vendor root. Open dependency: vendor CA root distribution.
 
-**P2. Measure the gateway (#432).** Extend an application PCR at startup with a digest over binary, policy bundle, and effective configuration, and include it in the quote selection.
+**P2. Measure the gateway (#432).** Extend an **NV index defined with `TPM_NT_EXTEND`** at startup with a digest over installed code, the policy bundle, and the effective configuration, before the gateway serves traffic.
 
-Important caveat that changes the design. Per the TCG PC Client Platform TPM Profile, PCR 23 is Application Support and PCR 16 is Debug, and **both are resettable from locality 0**. An adversary with local code execution can reset PCR 23 and re-extend a value of their choosing, so an application PCR alone is advisory, not tamper-resistant, against precisely the adversary this tier is meant to address. Options:
+**Decided: NV extend index, not an application PCR.** Per the TCG PC Client Platform TPM Profile, PCR 23 is Application Support and PCR 16 is Debug, and **both are resettable from locality 0**. An adversary with local code execution can reset PCR 23 and re-extend a value of their choosing, so an application PCR is advisory, not tamper-resistant, against precisely the adversary this tier exists to address. An NV extend index is not resettable from locality 0. The alternatives considered and not chosen were sealing the signing key to a policy spanning the application PCR and non-resettable SRTM PCRs (kept as P4, which is enforcement rather than measurement) and DRTM (unavailable on the platforms in scope).
 
-- An NV extend index (`TPM_NT_EXTEND`) with a write policy, which is not resettable from locality 0. Preferred.
-- Sealing the signing key to a policy spanning the application PCR and non-resettable SRTM PCRs, so a reset breaks unseal.
-- DRTM where the platform supports it.
+What the extend semantics buy, and what they do not:
+
+- **Forgery is infeasible without a write policy.** `TPM_NT_EXTEND` writes are one-way, `new = H(old || data)`, so an adversary who can call `TPM2_NV_Extend` can append but cannot set the index to a chosen value without a preimage. The write policy the original proposal called for is therefore not what carries the security argument.
+- **Destruction is possible, but not silent.** `TPM2_NV_UndefineSpace` then a fresh define resets the index, and owner authorization permits it. Guest root holds owner auth on an Azure VM. A redefined index reads back with `TPMA_NV_WRITTEN` clear until written again, so the erasure is visible. The property claimed is therefore **tamper-evident, not tamper-proof**. Tamper-proof needs the platform hierarchy, which a guest VM cannot reach; that is the same client-firmware dependency in section 6.
+- **The value is not predictable.** Extends accumulate and NV is persistent, so after N gateway starts the index is a hash chain over all N digests rather than `H(0 || digest)`. A verifier cannot recompute it from the current gateway digest. The collector therefore reports the index value both before and after the extend, so continuity (`after == H(before || digest)`) is checkable, which is the hash-chain idiom the audit log already uses.
+
+What is measured is the installed distributions' recorded per-file hashes (pip's `RECORD` metadata), plus the policy bundle bytes and the resolved configuration with secrets excluded. RECORD covers dependencies, so a swapped transitive package is caught; measuring only cMCP's own source would report an identical digest for it. An editable install has no RECORD, so the measurement is refused rather than computed over an unknown subset: fatal in production, a warning under `CMCP_DEV_MODE`.
+
+**Remaining for P2:** an NV read is not covered by the quote signature, so the value needs its own signed freshness argument. `TPM2_NV_Certify` is the primitive: the TPM signs a `TPM_ST_ATTEST_NV` structure over the index contents with the AK, under caller-supplied qualifying data. Reading the index and committing the result into the quote's qualifying data is **not** sound, because the collector would be asserting the value it read and a compromised gateway is the adversary. That half also needs a `TPM_ST_ATTEST_NV` parser, which agent-manifest does not currently model.
 
 **P3. Ship the TCG event log (#433).** Collect and replay it so evidence is interpretable and policy can name specific components.
 
