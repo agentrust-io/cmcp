@@ -50,7 +50,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from cmcp_verify.tpm import parse_tpmt_signature
+from agent_manifest import parse_tpmt_signature
 
 # TPMS_ATTEST header constants.
 _TPM_GENERATED_VALUE = 0xFF544347

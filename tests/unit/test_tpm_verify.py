@@ -36,15 +36,29 @@ def _make_tpm2b_attest(
     magic: int = 0xFF544347,
     qualified_signer: bytes = b"",
 ) -> bytes:
-    """Build a minimal TPM2B_ATTEST with the given qualifying_data."""
+    """Build a minimal but structurally complete TPM2B_ATTEST.
+
+    The tail must be a real TPMS_ATTEST tail. An earlier version of this helper
+    wrote 16 zero bytes for clockInfo + firmwareVersion and no PCR selection at
+    all, which parsed only because cMCP's own parser stopped reading after
+    extraData. agent-manifest's shared parser reads the whole structure and
+    rejects that, correctly: TPMS_CLOCK_INFO is 17 bytes (clock 8, resetCount 4,
+    restartCount 4, safe 1), firmwareVersion is 8, and TPMS_QUOTE_INFO is a
+    TPML_PCR_SELECTION followed by a TPM2B_DIGEST.
+    """
     # TPMS_ATTEST body
     magic_bytes = struct.pack(">I", magic)
     type_bytes = struct.pack(">H", 0x8018)  # TPM_ST_ATTEST_QUOTE
     qs = struct.pack(">H", len(qualified_signer)) + qualified_signer
     ed = struct.pack(">H", len(qualifying_data)) + qualifying_data
-    # clockInfo (8 bytes) + firmwareVersion (8 bytes) + minimal attested
-    tail = b"\x00" * 16 + struct.pack(">H", 0) + b"\x00" * 4  # minimal pcrSelect
-    attest_body = magic_bytes + type_bytes + qs + ed + tail
+    clock_info = b"\x00" * 17
+    firmware_version = b"\x00" * 8
+    pcr_selection = struct.pack(">I", 0)  # TPML_PCR_SELECTION with no entries
+    pcr_digest = struct.pack(">H", 32) + b"\x02" * 32  # TPM2B_DIGEST
+    attest_body = (
+        magic_bytes + type_bytes + qs + ed
+        + clock_info + firmware_version + pcr_selection + pcr_digest
+    )
 
     # Outer TPM2B size
     return struct.pack(">H", len(attest_body)) + attest_body

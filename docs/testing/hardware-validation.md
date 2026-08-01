@@ -203,16 +203,27 @@ nonce, and the RSASSA-SHA256 signature over the attest blob verifying under the 
 public key. It also confirms rejection of a one-bit tampered attest blob, a
 tampered signature, and a correct signature checked against a different key.
 
-Unlike the SEV-SNP captures, this vector **is committed**, in
-`tests/unit/test_tpm_quote_signature.py`. It carries no per-CPU hardware
-identifier: the AK public key belongs to a virtual TPM in a VM that no longer
-exists, and the PCR values describe a stock Ubuntu image. Committing it means the
-signature path is exercised on every PR rather than only when a fixture directory
-is set.
+Unlike the SEV-SNP captures, this vector **is committed**. It carries no per-CPU
+hardware identifier: the AK public key belongs to a virtual TPM in a VM that no
+longer exists, and the PCR values describe a stock Ubuntu image. Committing it
+means the signature path is exercised on every PR rather than only when a fixture
+directory is set.
+
+**The vector now lives in agent-manifest**, alongside the code it validates: the
+`TPMT_SIGNATURE` parse and both `TPMS_ATTEST` framings consolidated there in
+agent-manifest 0.8.0, and cMCP imports them rather than carrying its own copies.
+Keeping the evidence with the implementation is the point: a capture that
+validates code in another repository drifts away from it. It runs on every
+agent-manifest PR.
 
 ```
-pytest tests/unit/test_tpm_quote_signature.py
+# in agent-manifest
+pytest python/tests/test_tpm_hardware_vector.py
 ```
+
+The provenance above is the record of how the capture was taken and stays here;
+`tests/unit/test_tpm_quote_signature.py` still covers cMCP's own layer, which is
+result shaping and fail-closed handling of blobs agent-manifest rejects.
 
 Not closed by this run: the EK certificate chain (#431). The EK certificate was
 not present at NV index `0x01C00002` on this VM, and as recorded above Azure's
