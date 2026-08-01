@@ -36,6 +36,7 @@ from cmcp_runtime.tee.measurement import (
     ExtendResult,
     GatewayMeasurement,
     MeasurementUnavailable,
+    certify_and_extend_gateway_measurement,
     extend_gateway_measurement,
     gateway_measurement,
 )
@@ -75,6 +76,9 @@ class RuntimeContext:
     # install makes the code digest uncomputable.
     gateway_measurement: GatewayMeasurement | None = None
     measurement_extend: ExtendResult | None = None
+    # The signed TPM2_NV_Certify pair proving the measurement. None when the platform
+    # provisions no certified attestation key to sign with; see cmcp_verify.nv_certify.
+    measurement_evidence: bytes | None = None
 
 
 def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
@@ -99,13 +103,16 @@ def _fatal(code: str, message: str, **fields: Any) -> None:
 
 
 def _measure_gateway(
-    config: Config, tee_provider: TEEProvider
-) -> tuple[GatewayMeasurement | None, ExtendResult | None]:
-    """Measure the gateway and extend it into the TPM NV index (#432).
+    config: Config, tee_provider: TEEProvider, nonce: bytes
+) -> tuple[GatewayMeasurement | None, ExtendResult | None, bytes | None]:
+    """Measure the gateway into the TPM NV index and have the TPM certify it (#432).
 
-    Returns ``(None, None)`` when the platform has no TPM to extend into, which is
-    not a failure: the SEV-SNP and TDX providers commit their own binding through
-    the report's own fields.
+    Returns ``(measurement, extend, evidence)``. ``evidence`` is the signed
+    ``TPM2_NV_Certify`` pair, or None when the platform provisions no certified
+    attestation key to sign with: the extend still happens and is still a local
+    integrity control, but it is not remote-verifiable, so it is not presented as
+    evidence. All three are None when the platform has no TPM at all, which is not a
+    failure: SEV-SNP and TDX commit their own binding through the report's fields.
 
     A TPM platform that cannot be measured is fatal in production and a warning in
     dev mode, matching how ``CMCP_POLICY_HASH`` is handled. The dev-mode escape
@@ -117,9 +124,9 @@ def _measure_gateway(
             "Gateway measurement skipped: provider %s does not use an NV extend index",
             tee_provider.provider_name(),
         )
-        return None, None
+        return None, None, None
 
-    def _degrade(exc: MeasurementUnavailable) -> tuple[None, None]:
+    def _degrade(exc: MeasurementUnavailable) -> tuple[None, None, None]:
         if config.dev_mode:
             logger.warning(
                 "Gateway measurement unavailable (%s): %s. Continuing because "
@@ -127,7 +134,7 @@ def _measure_gateway(
                 exc,
                 exc.detail or "",
             )
-            return None, None
+            return None, None, None
         _fatal(
             "MEASUREMENT_UNAVAILABLE",
             f"the gateway could not be measured into the TPM: {exc}",
@@ -151,9 +158,10 @@ def _measure_gateway(
             )
         )
 
+    evidence: bytes | None = None
     try:
         with ESAPI() as ectx:
-            extend_result = extend_gateway_measurement(ectx, measurement)
+            extend_result, evidence = _extend_and_certify(ectx, measurement, nonce)
     except MeasurementUnavailable as exc:
         return _degrade(exc)
     except Exception as exc:  # noqa: BLE001 - any TPM fault means unmeasured
@@ -165,14 +173,59 @@ def _measure_gateway(
         )
 
     logger.info(
-        "Gateway measured: %s (code=%s policy=%s config=%s) into NV %#x",
+        "Gateway measured: %s (code=%s policy=%s config=%s) into NV %#x, certified=%s",
         measurement.digest_hex,
         measurement.components["code"][:12],
         measurement.components["policy"][:12],
         measurement.components["config"][:12],
         extend_result.index,
+        evidence is not None,
     )
-    return measurement, extend_result
+    return measurement, extend_result, evidence
+
+
+def _extend_and_certify(
+    ectx: Any, measurement: GatewayMeasurement, nonce: bytes
+) -> tuple[ExtendResult, bytes | None]:
+    """Extend the measurement, certifying it with the platform AK when there is one.
+
+    The certify pair must be signed by a key whose certificate chains to a vendor
+    root, otherwise the signature proves nothing about where the key lives. Only the
+    platform attestation key qualifies; a transient key would produce a verifiable
+    signature with no provenance, which is worse than an honest absence because it
+    looks like evidence. So when no platform key is available this falls back to the
+    unsigned extend and returns no evidence.
+    """
+    from cmcp_runtime.tee.tpm import TPMProvider
+    from cmcp_verify.nv_certify import build_envelope
+
+    platform_key = None
+    try:
+        platform_key = TPMProvider().platform_attestation_key(ectx)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No attestation key available to certify the measurement: %s", exc)
+
+    if platform_key is None:
+        logger.warning(
+            "The measurement will not be certified: this platform provisions no "
+            "certified attestation key. The extend still happened and remains a local "
+            "integrity control, but it is not remote-verifiable evidence."
+        )
+        return extend_gateway_measurement(ectx, measurement), None
+
+    sign_handle, _chain_pem = platform_key
+    certified = certify_and_extend_gateway_measurement(
+        ectx, measurement, sign_handle=sign_handle, nonce=nonce
+    )
+    envelope = build_envelope(
+        pre_attest=certified.pre_attest,
+        pre_signature=certified.pre_signature,
+        post_attest=certified.post_attest,
+        post_signature=certified.post_signature,
+        gateway_digest=measurement.digest,
+        components=measurement.components,
+    )
+    return certified.extend, envelope
 
 
 def run_startup(config_path: str) -> RuntimeContext:
@@ -182,8 +235,10 @@ def run_startup(config_path: str) -> RuntimeContext:
 
     Startup order per docs/spec/failure-modes.md:
     1. Load and validate config
-    2. Detect TEE provider and attest
-    3. Generate ephemeral signing keypair
+    2. Detect TEE provider
+    3. Generate ephemeral signing keypair and derive the attestation nonce
+    3b. Measure the gateway into the TPM NV index and certify it (#432)
+    3c. Produce the attestation report
     4. Load and verify policy bundle hash
     5. Load and verify catalog hash
     (Step 6: bind network port - done by the caller after this returns)
@@ -207,14 +262,10 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
 
-    # Step 2b (#432): measure the gateway into the NV extend index BEFORE the
-    # attestation report is produced, so the evidence reflects the code, policy, and
-    # config that are actually about to serve traffic. PCRs 0-7 cover firmware and
-    # the bootloader only, so without this the TPM enforced nothing about the
-    # gateway itself and a swapped policy bundle measured identically.
-    measurement, extend_result = _measure_gateway(config, tee_provider)
-
-    # Step 3: signing key
+    # Step 3: signing key. Generated before the measurement (#432) because the
+    # measurement's TPM2_NV_Certify calls commit the attestation nonce, which is
+    # derived from this key. The key has no dependencies of its own, so producing it
+    # earlier is ordering only, not a behaviour change.
     signing_key = SigningKey()
     logger.info("Signing key generated: %s...", signing_key.public_key_hex[:16])
 
@@ -228,6 +279,17 @@ def run_startup(config_path: str) -> RuntimeContext:
     key_fingerprint = _jwk_thumbprint_sha256(_x_b64)
     random_salt = secrets.token_bytes(32)
     nonce = key_fingerprint + random_salt
+
+    # Step 3b (#432): measure the gateway into the NV extend index BEFORE it serves
+    # traffic, and have the TPM certify the value either side of the extend so the
+    # measurement is signed evidence rather than a self-reported number. PCRs 0-7
+    # cover firmware and the bootloader only, so without this the TPM enforced
+    # nothing about the gateway itself and a swapped policy bundle measured
+    # identically.
+    measurement, extend_result, measurement_evidence = _measure_gateway(
+        config, tee_provider, nonce
+    )
+
     try:
         attestation_report = tee_provider.get_attestation_report(nonce)
     except Exception as exc:
@@ -432,4 +494,5 @@ def run_startup(config_path: str) -> RuntimeContext:
         agent_manifest=agent_manifest,
         gateway_measurement=measurement,
         measurement_extend=extend_result,
+        measurement_evidence=measurement_evidence,
     )

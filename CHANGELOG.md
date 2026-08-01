@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The gateway measurement is now signed evidence (#432, second half).** The NV index value previously travelled as an ordinary NV read that no signature covers, so it was a local integrity control: a compromised gateway could report any value. `certify_and_extend_gateway_measurement` now certifies the index, extends it, and certifies again, giving two TPM-signed values. `cmcp_verify.nv_certify.verify_gateway_measurement` appraises the pair, checking `post == H(pre || expected_gateway_digest)` with nothing collector-asserted and no verifier-side state.
+
+  Two certifies rather than one because `TPM2_NV_Certify` signs only the index's *current* value and cannot attest to a previous one, while extends accumulate across reboots so there is no absolute value a verifier could expect. The two calls commit different qualifying data (`pre` / `post`) so each blob's role is signed rather than inferred from position. The shortcut that looks equivalent and is not: reading the index and committing the result into a quote's qualifying data means the collector asserts the value it read, and a compromised gateway is the adversary.
+
+  Only the platform attestation key certifies. A transient key would produce a verifiable signature with no provenance, which is worse than an honest absence because it looks like evidence, so a platform without a certified key falls back to the unsigned extend and ships no evidence at all. `TPMProvider.platform_attestation_key` exposes that distinction explicitly instead of leaving callers to read a transient-key side channel.
+
+  `agent_manifest.verify_tpm_quote` cannot appraise an NV certify: it rejects any attest type that is not `TPM_ST_ATTEST_QUOTE`, and its parser assumes a `TPML_PCR_SELECTION` union. The certificate chain is still delegated to `agent_manifest.verify_cert_chain`; only the `TPM_ST_ATTEST_NV` and `TPMT_SIGNATURE` wire formats are local, tracked upstream as agentrust-io/agent-manifest#255.
+
+### Changed
+
+- **Startup generates the signing key before measuring the gateway.** The measurement's certify calls commit the attestation nonce, which is derived from that key, so the key now comes first. It has no dependencies of its own, so this is ordering only and not a behaviour change. The documented sequence in `run_startup` is updated: detect provider, signing key and nonce, measure and certify, produce the report.
+- `mypy src` is clean for the first time. The five pre-existing errors in `cmcp_verify/tpm.py` were a `type[HashAlgorithm]` inference that made `hash_cls()` read as instantiating the abstract base; typing the lookup as a factory fixes it, and `padding.PSS.DIGEST_LENGTH` replaces `hash_cls.digest_size` for the same salt length with a correct type.
+
 ### Fixed
 
 - **The Azure vTPM certificate hierarchy is fleet variance, not a migration (hardware, 2026-08-01).** `docs/testing/hardware-validation.md` recorded on 2026-07-31 that "Azure has changed its vTPM PKI", after finding the AK certificate at NV `0x01C101D0` issued by `Azure Cloud Virtual TPM CA - 11` with a walkable AIA chain, superseding an earlier no-AIA observation. A VM provisioned 2026-08-01 (`Standard_D2s_v7`, eastus2) presented the older form again: 994 bytes, issued by `Global Virtual TPM CA - 03`, **no AIA extension at all**, and `tpm2_getcap handles-nv-index` confirmed no intermediates stored in NV as a fallback. Both hierarchies are live concurrently, so the planning assumption must be that a host may present either and **AIA cannot be relied on**. The practical consequence, now stated in the doc and in `cmcp_verify/tpm_roots.py`: pinning the 2023 root does not make Azure verify everywhere, and chained verification is impossible on a host presenting the no-AIA hierarchy. This is worth re-reading against #431, which was closed on the basis that chains ship with the evidence.

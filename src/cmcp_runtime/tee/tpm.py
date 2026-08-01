@@ -169,6 +169,29 @@ class TPMProvider(TEEProvider):
             attestation_key_chain_pem=attestation_key_chain_pem,
         )
 
+    def platform_attestation_key(self, ectx: Any) -> tuple[Any, bytes] | None:
+        """
+        Return (handle, chain_pem) for the certified platform AK, or None if absent.
+
+        Only the platform key is offered here, never the transient fallback. Callers
+        that need provenance (the gateway-measurement certify pair, #432) must not be
+        handed a transient key: it would produce a verifiable signature with no
+        provenance, which is worse than an honest absence because it looks like
+        evidence. Returning None lets the caller degrade explicitly instead.
+        """
+        cert_der = self._read_nv(ectx, _PLATFORM_AK_CERT_NV_INDEX)
+        if cert_der is None:
+            return None
+        try:
+            handle = ectx.tr_from_tpmpublic(_PLATFORM_AK_HANDLE)
+            public, _, _ = ectx.read_public(handle)
+            chain = self._chain_from_leaf(cert_der)
+            if chain and self._certifies(chain, public):
+                return handle, chain
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("platform attestation key unusable: %s", exc)
+        return None
+
     def _attestation_key(self, ectx: Any) -> tuple[Any, Any, bytes | None]:
         """
         Return (handle, public, chain_pem) for the key that will sign the quote.

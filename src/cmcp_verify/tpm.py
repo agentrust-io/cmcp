@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -306,7 +307,9 @@ def verify_quote_signature(
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
-    hashes_by_alg = {
+    # Typed as a factory rather than type[HashAlgorithm]: the latter makes mypy read
+    # hash_cls() below as instantiating the abstract base class.
+    hashes_by_alg: dict[int, Callable[[], hashes.HashAlgorithm]] = {
         _ALG_SHA1: hashes.SHA1,
         _ALG_SHA256: hashes.SHA256,
         _ALG_SHA384: hashes.SHA384,
@@ -338,7 +341,9 @@ def verify_quote_signature(
             key.verify(
                 parsed.signature,
                 attest,
-                padding.PSS(mgf=padding.MGF1(hash_cls()), salt_length=hash_cls.digest_size),
+                # DIGEST_LENGTH is the salt length this previously computed as
+                # hash_cls.digest_size; same value, and it types correctly.
+                padding.PSS(mgf=padding.MGF1(hash_cls()), salt_length=padding.PSS.DIGEST_LENGTH),
                 hash_cls(),
             )
         else:

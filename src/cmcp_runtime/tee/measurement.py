@@ -47,12 +47,27 @@ docs/testing/hardware-validation.md.
 Because extends accumulate and NV is persistent across reboots, the index value
 after N gateway starts is a hash chain over all N digests, not ``H(0 ||
 gateway_digest)``. A verifier therefore cannot recompute the expected value from
-the current gateway digest alone. :func:`extend_gateway_measurement` returns the
-value both before and after the extend so a relying party can check continuity
-(``after == H(before || digest)``), which is the same hash-chain idiom cMCP already
-uses for the audit log. Turning that into signed evidence is the second half of
-#432: an NV read is not covered by the quote signature, so it needs
-``TPM2_NV_Certify`` to be signed and fresh.
+the current gateway digest alone. Continuity (``after == H(before || digest)``) is
+what is checkable instead, which is the same hash-chain idiom cMCP already uses for
+the audit log.
+
+## Signed evidence
+
+An NV read is not covered by any signature, so on its own the index value is a
+local integrity control: a compromised gateway could report anything.
+:func:`certify_and_extend_gateway_measurement` closes that with two
+``TPM2_NV_Certify`` calls bracketing the extend. ``TPM2_NV_Certify`` signs only the
+*current* value and cannot attest to a previous one, so one certify would be
+uncheckable for the reason above; two give TPM-signed values whose relation a
+verifier can appraise with no state and nothing collector-asserted. Appraisal is in
+:mod:`cmcp_verify.nv_certify`.
+
+Reading the index and committing the result into a quote's qualifying data would
+*not* work: the collector would be asserting the value it read, and a compromised
+gateway is the adversary.
+
+:func:`extend_gateway_measurement` remains for the unsigned path, used where no
+attestation key is available to certify with.
 """
 
 from __future__ import annotations
@@ -307,7 +322,6 @@ def extend_gateway_measurement(
     the index cannot be defined, extended, or read back, so a gateway never
     proceeds believing it was measured when it was not.
     """
-    from tpm2_pytss.constants import ESYS_TR
 
     provisioned = False
     handle = _nv_handle(ectx, index)
@@ -322,14 +336,7 @@ def extend_gateway_measurement(
             )
 
     before = _read_extend_index(ectx, handle)
-    try:
-        ectx.nv_extend(handle, measurement.digest, auth_handle=ESYS_TR.OWNER)
-    except Exception as exc:  # noqa: BLE001
-        raise MeasurementUnavailable(
-            "TPM2_NV_Extend failed, so the gateway is not measured",
-            detail=f"index={index:#x}: {type(exc).__name__}: {exc}",
-        ) from exc
-
+    _extend(ectx, handle, measurement.digest, index)
     after = _read_extend_index(ectx, handle)
     result = ExtendResult(index=index, before=before, after=after, provisioned=provisioned)
 
@@ -350,6 +357,130 @@ def extend_gateway_measurement(
         after.hex()[:16],
     )
     return result
+
+
+@dataclass(frozen=True)
+class CertifiedExtend:
+    """A TPM-signed proof that the gateway measurement was extended.
+
+    Both certify blobs are signed by the TPM, so a relying party can check
+    ``post_contents == H(pre_contents || digest)`` without trusting anything the
+    collector says. See :mod:`cmcp_verify.nv_certify` for the appraisal.
+    """
+
+    extend: ExtendResult
+    pre_attest: bytes
+    pre_signature: bytes
+    post_attest: bytes
+    post_signature: bytes
+
+
+def certify_and_extend_gateway_measurement(
+    ectx: Any,
+    measurement: GatewayMeasurement,
+    *,
+    sign_handle: Any,
+    nonce: bytes,
+    index: int = DEFAULT_MEASUREMENT_NV_INDEX,
+) -> CertifiedExtend:
+    """Certify the index, extend it, and certify again.
+
+    ``TPM2_NV_Certify`` signs only the index's *current* value and cannot attest to
+    a previous one. Since extends accumulate and NV is persistent, a single certify
+    is uncheckable: there is no absolute value a verifier could expect. Two
+    certifies bracketing the extend give two TPM-signed values whose relation is
+    verifiable, with nothing collector-asserted and no verifier-side state.
+
+    The two calls commit different qualifying data (``pre`` and ``post``), so each
+    blob's role is signed rather than inferred from its position in the envelope.
+
+    ``sign_handle`` must be the platform attestation key, so the signature chains to
+    a vendor root. Raises :class:`MeasurementUnavailable` on any TPM fault, because
+    a gateway must not proceed believing its measurement is attested when it is not.
+    """
+    from cmcp_verify.nv_certify import PHASE_POST, PHASE_PRE, certify_qualifying_data
+
+    handle = _nv_handle(ectx, index)
+    provisioned = False
+    if handle is None:
+        _define_extend_index(ectx, index)
+        provisioned = True
+        handle = _nv_handle(ectx, index)
+        if handle is None:
+            raise MeasurementUnavailable(
+                "the measurement NV index could not be read back after defining it",
+                detail=f"index={index:#x}",
+            )
+
+    pre_attest, pre_sig = _certify_nv(
+        ectx, handle, sign_handle, certify_qualifying_data(nonce, PHASE_PRE), phase="pre"
+    )
+    before = _read_extend_index(ectx, handle)
+    _extend(ectx, handle, measurement.digest, index)
+    after = _read_extend_index(ectx, handle)
+    post_attest, post_sig = _certify_nv(
+        ectx, handle, sign_handle, certify_qualifying_data(nonce, PHASE_POST), phase="post"
+    )
+
+    result = ExtendResult(index=index, before=before, after=after, provisioned=provisioned)
+    if not result.chains_from(measurement.digest):
+        raise MeasurementUnavailable(
+            "the NV index value does not chain from its previous value, so the "
+            "measurement that was written is not the one computed",
+            detail=(
+                f"index={index:#x} before={before.hex()} after={after.hex()} "
+                f"digest={measurement.digest.hex()}"
+            ),
+        )
+    logger.info(
+        "Gateway measurement certified into NV %#x (%s): %s -> %s",
+        index,
+        "provisioned" if provisioned else "existing index",
+        before.hex()[:16],
+        after.hex()[:16],
+    )
+    return CertifiedExtend(
+        extend=result,
+        pre_attest=pre_attest,
+        pre_signature=pre_sig,
+        post_attest=post_attest,
+        post_signature=post_sig,
+    )
+
+
+def _certify_nv(
+    ectx: Any, nv_handle: Any, sign_handle: Any, qualifying_data: bytes, *, phase: str
+) -> tuple[bytes, bytes]:
+    """Run TPM2_NV_Certify and return the marshalled (attest, signature)."""
+    from tpm2_pytss.constants import ESYS_TR
+    from tpm2_pytss.types import TPM2B_DATA
+
+    try:
+        attest, signature = ectx.nv_certify(
+            sign_handle,
+            nv_handle,
+            TPM2B_DATA(qualifying_data),
+            auth_handle=ESYS_TR.OWNER,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise MeasurementUnavailable(
+            f"TPM2_NV_Certify ({phase}) failed, so the measurement is not attested",
+            detail=f"{type(exc).__name__}: {exc}",
+        ) from exc
+    return bytes(attest.attestationData), bytes(signature.marshal())
+
+
+def _extend(ectx: Any, handle: Any, digest: bytes, index: int) -> None:
+    """Extend the measurement digest into the index."""
+    from tpm2_pytss.constants import ESYS_TR
+
+    try:
+        ectx.nv_extend(handle, digest, auth_handle=ESYS_TR.OWNER)
+    except Exception as exc:  # noqa: BLE001
+        raise MeasurementUnavailable(
+            "TPM2_NV_Extend failed, so the gateway is not measured",
+            detail=f"index={index:#x}: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 def _nv_handle(ectx: Any, index: int) -> Any | None:
