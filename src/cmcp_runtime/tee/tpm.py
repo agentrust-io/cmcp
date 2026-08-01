@@ -302,13 +302,18 @@ class TPMProvider(TEEProvider):
 
         The chain is assembled at collection time on purpose: shipping it with the
         evidence is what keeps verification offline later. A self-signed certificate
-        or a missing AIA ends the walk, and whatever was gathered is returned so a
-        partial chain still travels rather than being discarded.
+        ends the walk. Where AIA is absent or yields nothing -- as on the Azure
+        Trusted Launch hosts whose AK certificate carries no AIA at all -- the
+        issuer is resolved from :mod:`cmcp_runtime.tee.vtpm_ca_bundle` instead.
+        If neither produces an issuer the walk stops, and whatever was gathered is
+        returned so a partial chain still travels rather than being discarded.
         """
         import urllib.request
 
         from cryptography import x509
         from cryptography.hazmat.primitives.serialization import pkcs7
+
+        from cmcp_runtime.tee.vtpm_ca_bundle import vendored_issuer_for
 
         def load_any(data: bytes) -> list[x509.Certificate]:
             for loader in (x509.load_der_x509_certificate, x509.load_pem_x509_certificate):
@@ -348,12 +353,16 @@ class TPMProvider(TEEProvider):
                     x509.AuthorityInformationAccess
                 ).value
             except x509.ExtensionNotFound:
-                break
-            urls = [
-                d.access_location.value
-                for d in aia
-                if d.access_method.dotted_string == "1.3.6.1.5.5.7.48.2"
-            ]
+                aia = None
+            urls = (
+                [
+                    d.access_location.value
+                    for d in aia
+                    if d.access_method.dotted_string == "1.3.6.1.5.5.7.48.2"
+                ]
+                if aia is not None
+                else []
+            )
             issuer = None
             for url in urls:
                 if not url.startswith(("http://", "https://")):
@@ -369,6 +378,19 @@ class TPMProvider(TEEProvider):
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("AIA fetch failed for %s: %s", url, exc)
             if issuer is None:
+                # Some Azure Trusted Launch hosts present an AK certificate with
+                # no AIA extension, so there is nothing to walk and the chain
+                # would stop at the leaf and never reach a pinned root. The
+                # issuer is resolved from a vendored bundle instead, and only
+                # when it verifiably signed this certificate.
+                issuer = vendored_issuer_for(current)
+            if issuer is None:
+                logger.debug(
+                    "no issuer for %s: AIA gave nothing and no vendored certificate "
+                    "signed it; shipping a %d-certificate chain",
+                    current.subject.rfc4514_string(),
+                    len(chain),
+                )
                 break
             chain.append(issuer)
 
