@@ -289,6 +289,47 @@ Not covered by this run: the index value still travels as an ordinary NV read,
 which no signature covers, so it is a local integrity control and not yet
 remote-verifiable evidence. `TPM2_NV_Certify` is the remaining half of #432.
 
+## TPM2_NV_Certify for the gateway measurement, Azure Trusted Launch vTPM, 2026-08-01
+
+`Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by
+#461). This run **found two defects in code that had already merged**, which is the
+argument for running it.
+
+**Defect 1: the call was wrong and could never have worked.** `ESAPI.nv_certify`
+takes `in_scheme` (a `TPMT_SIG_SCHEME`) and `size` as *required positional*
+arguments. The shipped call omitted both, so it raised `TypeError` before reaching
+the TPM. The unit tests passed because the fake accepted any signature.
+
+**Defect 2: a freshly provisioned index cannot be certified at all.** A newly
+defined `TPM_NT_EXTEND` index is uninitialised, and `TPM2_NV_Certify` on it fails
+with `TPM_RC_NV_UNINITIALIZED`. So on a first gateway start there was no pre-value
+to certify. Fixed by seeding the index once at provision time, which keeps the
+verifier's `post == H(pre || digest)` check free of a first-boot special case.
+
+With both fixed, the following hold on hardware:
+
+- `nv_certify(sign_handle, nv_index, qualifying_data, TPMT_SIG_SCHEME(NULL), 32, 0,
+  auth_handle=ESYS_TR.OWNER)` returns a 173-byte attest and a 262-byte
+  `TPMT_SIGNATURE`. A NULL scheme resolves to the key's own, RSASSA/SHA-256 here.
+- **The platform AK at `0x81000003` can sign an NV certify.** This was an open
+  question, since it is a restricted signing key; the answer is yes.
+- **`parse_nv_certify`'s field offsets are correct against a real blob.** This was
+  the highest-risk item, as the offsets came from the TCG structures spec and had
+  never met real bytes. `indexName`, `offset` and `nvContents` all parse, and
+  `nvContents` equals the value returned by `TPM2_NV_Read`.
+- The extend relation holds on hardware across two consecutive starts: run 1
+  provisioned the index and run 2 reused it, with run 2's `pre` equal to run 1's
+  `post`, which is the accumulation the two-certify design exists to handle.
+- `verify_gateway_measurement` passes all seven appraisal steps, and rejects both a
+  wrong expected digest (`gateway_digest_mismatch`) and a replayed nonce
+  (`pre_binding_mismatch`) on genuine evidence.
+
+One limit on this run: the VM drew the `Global Virtual TPM CA - 03` hierarchy, whose
+AK certificate has no AIA, so the chain is the leaf alone. The verification above
+was therefore anchored on the leaf itself, which exercises the verifier's plumbing
+but proves **no key provenance**. Chained verification against a vendor root still
+needs a host of the other hierarchy, or the root from #453.
+
 ## Not yet validated
 
 - **TPM certificate chain on every Azure host**: the AK signature is verified, and
@@ -297,8 +338,9 @@ remote-verifiable evidence. `TPM2_NV_Certify` is the remaining half of #432.
   see the fleet-variance correction above, where a host presenting the
   `Global Virtual TPM CA - 03` hierarchy with no AIA extension cannot produce a
   chain at all.
-- **`TPM2_NV_Certify` for the gateway measurement**: the remaining half of #432,
-  without which the NV index value is not signed evidence.
+- **The NV certify pair against a real vendor-rooted chain**: the 2026-08-01 run
+  anchored on the leaf because that host presented the no-AIA hierarchy, so key
+  provenance for the certifying key is still unproven on Azure (#453).
 - **NVIDIA GPU CC**: not implemented, planned for v0.2 via NRAS.
 - **cMCP serving traffic from inside the TEE**: attestation collection and
   verification now run in situ on a CVM (above). A production gateway serving

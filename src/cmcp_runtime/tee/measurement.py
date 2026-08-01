@@ -39,8 +39,13 @@ Exercised on a real Azure Trusted Launch vTPM (``Standard_D2s_v7``, eastus2,
 ``TPM_NT = 4`` back out of the public area), extends accumulated as
 ``H(old || data)`` across successive calls, an existing index was reused rather
 than redefined, and **a plain ``TPM2_NV_Write`` to it was refused by the TPM**,
-which is the check the tamper-evidence argument actually rests on. See
-docs/testing/hardware-validation.md.
+which is the check the tamper-evidence argument actually rests on.
+
+The certify path was validated in the same session, after that run found two
+defects in it: the ``nv_certify`` call omitted the required ``in_scheme`` and
+``size`` arguments, and a freshly provisioned index cannot be certified at all. Both
+are fixed; the platform AK does sign an NV certify, and the parser's field offsets
+are correct against a real blob. See docs/testing/hardware-validation.md.
 
 ## Predictability is deliberately left to the verifier
 
@@ -87,6 +92,15 @@ logger = logging.getLogger(__name__)
 
 # An extend index holds exactly one digest of its nameAlg, which is SHA-256 here.
 _EXTEND_INDEX_SIZE = 32
+
+# A freshly defined extend index is *uninitialised*, and TPM2_NV_Certify on an
+# uninitialised index fails with TPM_RC_NV_UNINITIALIZED. So on the very first start
+# there would be no pre-value to certify at all. Seeding the index once at provision
+# time makes the pre-certify always possible, which keeps the verifier's
+# post == H(pre || digest) check free of a first-boot special case. The seed value is
+# irrelevant to security: the pre-certify signs whatever the index holds, and the
+# verifier only checks the relation between the two certified values.
+_INDEX_SEED = hashlib.sha256(b"cmcp-nv-index-initialised-v1").digest()
 
 # Owner-defined NV index holding the gateway measurement. Outside the TCG-reserved
 # 0x01C00000-0x01C3FFFF range so it cannot collide with platform certificates.
@@ -412,6 +426,10 @@ def certify_and_extend_gateway_measurement(
                 detail=f"index={index:#x}",
             )
 
+    if provisioned:
+        # See _INDEX_SEED: an uninitialised index cannot be certified.
+        _extend(ectx, handle, _INDEX_SEED, index)
+
     pre_attest, pre_sig = _certify_nv(
         ectx, handle, sign_handle, certify_qualifying_data(nonce, PHASE_PRE), phase="pre"
     )
@@ -451,15 +469,24 @@ def certify_and_extend_gateway_measurement(
 def _certify_nv(
     ectx: Any, nv_handle: Any, sign_handle: Any, qualifying_data: bytes, *, phase: str
 ) -> tuple[bytes, bytes]:
-    """Run TPM2_NV_Certify and return the marshalled (attest, signature)."""
-    from tpm2_pytss.constants import ESYS_TR
-    from tpm2_pytss.types import TPM2B_DATA
+    """Run TPM2_NV_Certify and return the marshalled (attest, signature).
+
+    ``in_scheme`` and ``size`` are required positional arguments, not optional:
+    omitting them raises a ``TypeError`` before the TPM is ever reached, which is how
+    the first hardware run failed. A NULL scheme means "use the signing key's own
+    scheme", which for the Azure platform AK is RSASSA/SHA-256.
+    """
+    from tpm2_pytss.constants import ESYS_TR, TPM2_ALG
+    from tpm2_pytss.types import TPM2B_DATA, TPMT_SIG_SCHEME
 
     try:
         attest, signature = ectx.nv_certify(
             sign_handle,
             nv_handle,
             TPM2B_DATA(qualifying_data),
+            TPMT_SIG_SCHEME(scheme=TPM2_ALG.NULL),
+            _EXTEND_INDEX_SIZE,
+            0,
             auth_handle=ESYS_TR.OWNER,
         )
     except Exception as exc:  # noqa: BLE001

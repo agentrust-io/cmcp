@@ -300,12 +300,14 @@ def _pytss(monkeypatch: pytest.MonkeyPatch) -> None:
     pkg = types.ModuleType("tpm2_pytss")
     constants = types.ModuleType("tpm2_pytss.constants")
     constants.ESYS_TR = SimpleNamespace(OWNER="owner")
-    constants.TPM2_ALG = SimpleNamespace(SHA256=0x000B)
+    constants.TPM2_ALG = SimpleNamespace(SHA256=0x000B, NULL=0x0010)
     constants.TPM2_NT = SimpleNamespace(EXTEND=0x4)
     constants.TPMA_NV = SimpleNamespace(parse=lambda _spec: 0x2000000)
     types_mod = types.ModuleType("tpm2_pytss.types")
     types_mod.TPMS_NV_PUBLIC = lambda **kw: SimpleNamespace(**kw)
     types_mod.TPM2B_NV_PUBLIC = lambda **kw: SimpleNamespace(**kw)
+    types_mod.TPM2B_DATA = lambda data=b"": data
+    types_mod.TPMT_SIG_SCHEME = lambda **kw: SimpleNamespace(**kw)
 
     monkeypatch.setitem(sys.modules, "tpm2_pytss", pkg)
     monkeypatch.setitem(sys.modules, "tpm2_pytss.constants", constants)
@@ -401,3 +403,97 @@ def test_chains_from_rejects_a_foreign_digest() -> None:
     )
     assert result.chains_from(b"\x01" * 32)
     assert not result.chains_from(b"\x02" * 32)
+
+
+# ── regressions from the 2026-08-01 hardware run (#460) ───────────────────────
+
+
+class _CertifyingTpm(_FakeNvTpm):
+    """Fake TPM that enforces the two constraints real hardware enforced.
+
+    Both were missed by the original fake, which is why #459 shipped broken:
+    nv_certify's in_scheme and size are required positional arguments, and an
+    uninitialised NV index cannot be certified at all.
+    """
+
+    def __init__(self, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.written = False
+        self.certifies: list[bytes] = []
+
+    def nv_extend(self, handle: str, data: bytes, **kw: Any) -> None:
+        super().nv_extend(handle, data, **kw)
+        self.written = True
+
+    def nv_certify(
+        self,
+        sign_handle: Any,
+        nv_index: Any,
+        qualifying_data: Any,
+        in_scheme: Any = None,
+        size: Any = None,
+        offset: int = 0,
+        **kw: Any,
+    ) -> tuple[Any, Any]:
+        if in_scheme is None or size is None:
+            raise TypeError("nv_certify requires in_scheme and size")
+        if not self.written:
+            raise RuntimeError("TPM_RC_NV_UNINITIALIZED")
+        from types import SimpleNamespace
+
+        blob = b"attest:" + bytes(self.value or b"")
+        self.certifies.append(blob)
+        return (
+            SimpleNamespace(attestationData=blob),
+            SimpleNamespace(marshal=lambda: b"sig:" + blob),
+        )
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_certify_passes_in_scheme_and_size() -> None:
+    """Regression: omitting them raises TypeError before the TPM is reached.
+
+    That is how the first hardware run failed, and the original fake accepted the
+    call, so the unit tests passed while the shipped code could not work.
+    """
+    from cmcp_runtime.tee.measurement import certify_and_extend_gateway_measurement
+
+    tpm = _CertifyingTpm(defined=True)
+    tpm.nv_extend("h", b"\x00" * 32)  # initialise so certify is permitted
+    result = certify_and_extend_gateway_measurement(
+        tpm, _measurement(), sign_handle="ak", nonce=b"\xa5" * 32
+    )
+    assert len(tpm.certifies) == 2
+    assert result.pre_attest and result.post_attest
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_a_freshly_provisioned_index_is_seeded_before_certifying() -> None:
+    """Regression: TPM2_NV_Certify on an uninitialised index fails on hardware.
+
+    On a first start the index is defined and has never been written, so without a
+    seeding extend the pre-certify is impossible.
+    """
+    from cmcp_runtime.tee.measurement import certify_and_extend_gateway_measurement
+
+    tpm = _CertifyingTpm(defined=False)
+    result = certify_and_extend_gateway_measurement(
+        tpm, _measurement(), sign_handle="ak", nonce=b"\xa5" * 32
+    )
+    assert result.extend.provisioned is True
+    # The seed plus the measurement: two extends, and both certifies succeeded.
+    assert len(tpm.extends) == 2
+    assert len(tpm.certifies) == 2
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_certified_extend_still_chains_after_seeding() -> None:
+    """The relation the verifier checks must hold on a first start too."""
+    from cmcp_runtime.tee.measurement import certify_and_extend_gateway_measurement
+
+    tpm = _CertifyingTpm(defined=False)
+    m = _measurement()
+    result = certify_and_extend_gateway_measurement(
+        tpm, m, sign_handle="ak", nonce=b"\xa5" * 32
+    )
+    assert result.extend.chains_from(m.digest)

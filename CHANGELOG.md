@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`TPM2_NV_Certify` could never have worked as shipped in #459 (hardware, 2026-08-01).** Two defects, both found by running it against a real Azure Trusted Launch vTPM and neither catchable by the unit tests as written:
+
+  1. `ESAPI.nv_certify` takes `in_scheme` (a `TPMT_SIG_SCHEME`) and `size` as **required positional** arguments. The shipped call omitted both, so it raised `TypeError` before the TPM was ever reached. The fake in the unit tests accepted any signature, so the tests passed against code that could not run.
+  2. A freshly defined `TPM_NT_EXTEND` index is **uninitialised**, and `TPM2_NV_Certify` on it fails with `TPM_RC_NV_UNINITIALIZED`. On a first gateway start there was therefore no pre-value to certify. Fixed by seeding the index once at provision time, which keeps the verifier's `post == H(pre || digest)` check free of a first-boot special case.
+
+  The fake now enforces both constraints, so each defect has a regression test that fails without its fix (verified by mutation).
+
+  What the run then established: the platform AK at `0x81000003` **can** sign an NV certify, which was an open question for a restricted signing key; `parse_nv_certify`'s field offsets are correct against a real blob, which was the highest-risk item since they came from the TCG spec and had never met real bytes; the extend relation holds across two consecutive starts with run 2's `pre` equal to run 1's `post`; and `verify_gateway_measurement` passes all seven steps while rejecting a wrong digest and a replayed nonce on genuine evidence. The chain was anchored on the leaf because that host presented the no-AIA hierarchy, so key provenance remains unproven on Azure (#453).
+
 ### Added
 
 - **The gateway measurement is now signed evidence (#432, second half).** The NV index value previously travelled as an ordinary NV read that no signature covers, so it was a local integrity control: a compromised gateway could report any value. `certify_and_extend_gateway_measurement` now certifies the index, extends it, and certifies again, giving two TPM-signed values. `cmcp_verify.nv_certify.verify_gateway_measurement` appraises the pair, checking `post == H(pre || expected_gateway_digest)` with nothing collector-asserted and no verifier-side state.
