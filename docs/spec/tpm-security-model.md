@@ -89,9 +89,13 @@ What is measured is the installed distributions' recorded per-file hashes (pip's
 
 **Remaining for P2:** an NV read is not covered by the quote signature, so the value needs its own signed freshness argument. `TPM2_NV_Certify` is the primitive: the TPM signs a `TPM_ST_ATTEST_NV` structure over the index contents with the AK, under caller-supplied qualifying data. Reading the index and committing the result into the quote's qualifying data is **not** sound, because the collector would be asserting the value it read and a compromised gateway is the adversary. That half also needs a `TPM_ST_ATTEST_NV` parser, which agent-manifest does not currently model.
 
-**P3. Ship the TCG event log (#433).** Collect and replay it so evidence is interpretable and policy can name specific components.
+Because extends accumulate, one certified value cannot be checked against anything: there is no absolute value to expect. **Decided: certify twice, bracketing the extend.** The collector certifies the index, extends it, and certifies again, so both values are TPM-signed and a verifier checks `after == H(before || expected_gateway_digest)` with nothing collector-asserted and no verifier-side state. This proves that this gateway extended exactly this digest; it deliberately does not attempt to prove the history behind the first value, which would require the verifier to remember prior attestations.
 
-**P4. Seal the TRACE signing key (attestation.md 4.2).** Implement the documented Phase 2 design over the P2 policy, so a modified gateway cannot unseal the key that signs claims. This is what converts measurement into enforcement.
+**P3. Seal the TRACE signing key (attestation.md 4.2).** Implement the documented Phase 2 design over the P2 policy, so a modified gateway cannot unseal the key that signs claims. This is what converts measurement into enforcement.
+
+**P4. Ship the TCG event log (#433).** Collect and replay it so evidence is interpretable and policy can name specific components.
+
+**Reordered 2026-08-01: sealing moved ahead of the event log.** The event log is 0 bytes on both Azure and GCP, so replay cannot be validated on any cloud vTPM we can provision and P4 is gated on physical client hardware. Sealing is reachable today and it is the step that converts measurement into enforcement, so it earns more trust per unit of effort. P3 does still depend on P2 finishing, since the policy it seals against is the NV index.
 
 **P5. Crypto policy.** Keep the SHA-1 downgrade, document it as a hard failure for regulated deployments, and add a flag that refuses SHA-1 outright.
 
@@ -111,10 +115,43 @@ cMCP should describe three tiers rather than one attestation story.
 |---|---|---|
 | Confidential compute (TDX, SEV-SNP) | Vendor-signed report, memory encrypted | Host operator and local code execution |
 | TPM, target model in section 5 | AK-signed quote chained to a vendor CA, gateway measured into a non-resettable index, signing key sealed to that policy | Local code execution below the gateway measurement |
-| TPM, as implemented today | Unsigned self-reported PCR digest | Remote and passive adversaries, accidental drift |
+| TPM, as implemented today | AK-signed quote over PCRs 0-7, gateway measured into a `TPM_NT_EXTEND` NV index, AK chain verified to a pinned root **where the host's AK certificate permits it** | Remote and passive adversaries, accidental drift, and forgery of the gateway measurement |
 
-The gap between rows two and three is the work in section 5. Naming it plainly is more useful to anyone evaluating the project than any claim we could round up to.
+Two things about row three, both load-bearing and neither visible in a one-line
+summary.
 
-## 8. Decision requested
+**Chain verification is host-dependent, not a given.** Azure Trusted Launch runs two
+vTPM CA hierarchies concurrently: one chains to the root pinned in
+`cmcp_verify/tpm_roots.py` over AIA, the other carries no AIA extension at all and
+therefore cannot produce a chain. On the latter, evidence is signed and fresh but
+proves nothing about *where* the key lives, so key provenance is unavailable. See
+docs/testing/hardware-validation.md and #453.
 
-Approve the target model in section 5 and its ordering, and the three-tier vocabulary in section 7, so that documentation and public materials describe the TPM tier consistently. Approvals needed from @podcastinator, @AaronRoeF, and @katy-gordon.
+**The gateway measurement is not yet signed evidence.** The NV index value travels
+as an ordinary read that no signature covers, so it is a local integrity control
+rather than something a relying party can appraise. `TPM2_NV_Certify` closes that
+and is the open half of #432.
+
+The gap between rows two and three is the remaining work in section 5. Naming it
+plainly is more useful to anyone evaluating the project than any claim we could
+round up to.
+
+## 8. Decisions taken
+
+The target model in section 5, its ordering, and the three-tier vocabulary in
+section 7 are approved, so documentation and public materials should describe the
+TPM tier consistently with them. Recorded here rather than left open, since an RFC
+that stays "pending approval" while the code moves underneath it stops being a
+reference.
+
+| Decision | Where it lives |
+|---|---|
+| Measure the gateway into a `TPM_NT_EXTEND` NV index, not an application PCR | section 5 P2, #432 |
+| Bind the measurement with two `TPM2_NV_Certify` calls bracketing the extend, so both values are TPM-signed and the verifier stays stateless | section 5 P2, #432 |
+| Sealing (P3) precedes the event log (P4), because the log is 0 bytes on every cloud vTPM and sealing is what converts measurement into enforcement | section 5 |
+| The three-tier vocabulary stands, with row three carrying the host-dependency and unsigned-measurement caveats explicitly | section 7 |
+| Azure TPM key provenance is hierarchy-dependent until the second CA root is sourced | section 7, #453 |
+
+What remains genuinely open is in section 6, and it is not ours to decide: vendor
+root distribution for client firmware TPMs, and whether Microsoft publishes the
+`Global Virtual TPM CA - 03` chain in a citable location (#453).
