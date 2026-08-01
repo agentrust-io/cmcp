@@ -18,11 +18,10 @@ from __future__ import annotations
 import struct
 
 import pytest
-
-from cmcp_verify.tpm import parse_tpmt_signature, verify_quote_signature
-
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+from cmcp_verify.tpm import parse_tpmt_signature, verify_quote_signature
 
 _ALG_RSASSA = 0x0014
 _ALG_SHA256 = 0x000B
