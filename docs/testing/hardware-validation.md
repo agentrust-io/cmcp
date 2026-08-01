@@ -146,12 +146,38 @@ the magic constant.
 The AK signature is now verified (see the 2026-07-31 run below). The EK/AK
 certificate chain remains in `unverified_fields`. **Corrected 2026-07-31.** An earlier run recorded that Azure's pre-provisioned AK
 certificate carries no AIA extension and that its issuing intermediate is
-therefore not fetchable. That is no longer true: Azure has changed its vTPM PKI.
-On a VM provisioned 2026-07-31 in eastus, the certificate at vTPM NV index
-`0x01C101D0` is issued by `CN=Azure Cloud Virtual TPM CA - 11`, not
-`CN=Global Virtual TPM CA - 03`, and it does carry an AIA extension with four CA
-Issuers URIs. The intermediate was fetched from the public CDN and verified to
-have signed the AK certificate. See the certificate-chain section below.
+therefore not fetchable. On a VM provisioned 2026-07-31 in eastus, the
+certificate at vTPM NV index `0x01C101D0` is issued by
+`CN=Azure Cloud Virtual TPM CA - 11`, not `CN=Global Virtual TPM CA - 03`, and it
+does carry an AIA extension with four CA Issuers URIs. The intermediate was
+fetched from the public CDN and verified to have signed the AK certificate. See
+the certificate-chain section below.
+
+**Corrected again 2026-08-01: this is fleet variance, not a migration.** The
+2026-07-31 note above concluded that "Azure has changed its vTPM PKI", which
+implies the old presentation is gone and AIA can be relied on going forward. That
+is wrong. A VM provisioned 2026-08-01 (`Standard_D2s_v7`, eastus2) presented the
+*old* form again:
+
+| | 2026-07-31, `D2s_v5` eastus | 2026-08-01, `D2s_v7` eastus2 |
+|---|---|---|
+| Certificate size | 1596 bytes | **994 bytes** |
+| Issuer | `Azure Cloud Virtual TPM CA - 11` | **`Global Virtual TPM CA - 03`** |
+| AIA extension | present, 4 CA Issuers URIs | **absent entirely** |
+| Chain to a pinnable root | yes | **no** |
+
+Both hierarchies are live concurrently, so the correct planning assumption is that
+**an Azure Trusted Launch host may present either, and AIA cannot be relied on.**
+On the 2026-08-01 host `tpm2_getcap handles-nv-index` returned only `0x01C101D0`
+(plus a test index), confirming the intermediates are not stored in NV as a
+fallback. Chained verification against the root pinned in
+`cmcp_verify/tpm_roots.py` is therefore impossible on such a host, and it fails
+closed with "AK chain root is not among the supplied trusted TPM roots", which is
+correct: key provenance genuinely cannot be established there.
+
+Consequence for #431 and for any deployment: pinning the 2023 root does not make
+Azure verify everywhere. A deployment must obtain and pin the root for the
+hierarchy its own hosts present, and a fleet spanning both needs both.
 
 It remains true that this certificate certifies a different key than an in-guest
 `tpm2_createak` AK. The resolution is not to certify our own AK: it is to use the
@@ -235,11 +261,44 @@ event-log replay cannot be exercised on an Azure vTPM at all. The replay code in
 against a real log needs a platform that publishes one, which in practice means
 physical client hardware. `#433` tracks that.
 
+## Gateway measurement NV extend index, Azure Trusted Launch vTPM, 2026-08-01
+
+`Standard_D2s_v7`, Ubuntu 24.04, Trusted Launch with vTPM and secure boot, eastus2.
+This validates `cmcp_runtime.tee.measurement` (#432, #451), whose TPM calls had
+been written against the documented tpm2-pytss API without ever executing against
+a TPM. All of them work:
+
+- `nv_define_space(None, nv_public, auth_handle=ESYS_TR.OWNER)` created the index,
+  and `TPMA_NV.parse("ownerwrite|ownerread|authread|no_da") | (TPM2_NT.EXTEND << 4)`
+  produced the intended attributes. Reading the public area back gave
+  `TPM_NT = 4`, confirming a genuine `TPM_NT_EXTEND` index rather than an
+  ordinary one. `tpm2_getcap handles-nv-index` listed `0x01500432` at size 32.
+- `nv_extend(handle, digest, auth_handle=ESYS_TR.OWNER)` extended it. First call
+  reported `provisioned=True`, second `provisioned=False`, so an existing index is
+  reused rather than redefined, which matters because redefining each boot would
+  hand an adversary the reset the design exists to prevent.
+- The extend semantics the security argument rests on hold on hardware: after the
+  second extend, `before` equalled the first `after`, the value moved, and both
+  extends satisfied `after == H(before || digest)`.
+- **A plain `nv_write` to the index was refused by the TPM.** This is the
+  load-bearing check: it is what makes an adversary unable to write a chosen clean
+  value, and it is confirmed independently by the `TPM_NT` field above rather than
+  only by an exception.
+
+Not covered by this run: the index value still travels as an ordinary NV read,
+which no signature covers, so it is a local integrity control and not yet
+remote-verifiable evidence. `TPM2_NV_Certify` is the remaining half of #432.
+
 ## Not yet validated
 
-- **TPM signature and certificate chain**: out of Phase 1 scope here. The
-  sibling [ca2a](https://github.com/agentrust-io/ca2a) verifier does check the AK
-  signature and has now done so against this same real quote.
+- **TPM certificate chain on every Azure host**: the AK signature is verified, and
+  the sibling [ca2a](https://github.com/agentrust-io/ca2a) verifier has done so
+  against real quotes. Chaining that key to a pinned root is **host-dependent**:
+  see the fleet-variance correction above, where a host presenting the
+  `Global Virtual TPM CA - 03` hierarchy with no AIA extension cannot produce a
+  chain at all.
+- **`TPM2_NV_Certify` for the gateway measurement**: the remaining half of #432,
+  without which the NV index value is not signed evidence.
 - **NVIDIA GPU CC**: not implemented, planned for v0.2 via NRAS.
 - **cMCP serving traffic from inside the TEE**: attestation collection and
   verification now run in situ on a CVM (above). A production gateway serving

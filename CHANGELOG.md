@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Azure vTPM certificate hierarchy is fleet variance, not a migration (hardware, 2026-08-01).** `docs/testing/hardware-validation.md` recorded on 2026-07-31 that "Azure has changed its vTPM PKI", after finding the AK certificate at NV `0x01C101D0` issued by `Azure Cloud Virtual TPM CA - 11` with a walkable AIA chain, superseding an earlier no-AIA observation. A VM provisioned 2026-08-01 (`Standard_D2s_v7`, eastus2) presented the older form again: 994 bytes, issued by `Global Virtual TPM CA - 03`, **no AIA extension at all**, and `tpm2_getcap handles-nv-index` confirmed no intermediates stored in NV as a fallback. Both hierarchies are live concurrently, so the planning assumption must be that a host may present either and **AIA cannot be relied on**. The practical consequence, now stated in the doc and in `cmcp_verify/tpm_roots.py`: pinning the 2023 root does not make Azure verify everywhere, and chained verification is impossible on a host presenting the no-AIA hierarchy. This is worth re-reading against #431, which was closed on the basis that chains ship with the evidence.
+
 ### Added
+
+- **Hardware validation for the gateway measurement NV extend index (#432, #451).** The TPM calls in `cmcp_runtime.tee.measurement` were written against the documented tpm2-pytss API without ever executing against a TPM. All of them work on a real Azure Trusted Launch vTPM: `nv_define_space` with `TPMA_NV.parse(...) | (TPM2_NT.EXTEND << 4)` created a genuine extend index (`TPM_NT = 4` read back from the public area), `nv_extend` accumulated as `H(old || data)` across calls, an existing index was reused rather than redefined, and **a plain `nv_write` to the index was refused by the TPM**, which is the check the tamper-evidence argument actually rests on. Recorded in `docs/testing/hardware-validation.md`.
 
 - **The gateway is now measured into a TPM NV extend index at startup (#432).** PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and the bootloader, and there was no `PCR_Extend` anywhere in the codebase, so replacing the policy bundle or the gateway itself produced an identical measurement and the TPM enforced nothing about the thing the TPM path exists to protect. `cmcp_runtime.tee.measurement` digests the installed distributions' recorded per-file hashes (pip's `RECORD`), the policy bundle bytes, and the resolved configuration with secrets excluded, then extends that digest into NV `0x01500432` before the gateway serves traffic. `RuntimeContext` carries the result.
 

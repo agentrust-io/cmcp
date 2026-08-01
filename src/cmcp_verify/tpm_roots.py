@@ -21,8 +21,16 @@ from __future__ import annotations
 #       CN=Azure Cloud Virtual TPM CA 2025
 #         CN=Azure Virtual TPM Root Certificate Authority 2023   <- this cert
 #
-# The intermediates are fetchable over the certificate AIA extension; only the
-# self-signed root is pinned here.
+# On that host the intermediates are fetchable over the certificate AIA extension,
+# so only the self-signed root is pinned here.
+#
+# NOT SUFFICIENT FLEET-WIDE, measured 2026-08-01 on a Standard_D2s_v7 in eastus2.
+# The same NV index there held a 994-byte certificate issued by
+# CN=Global Virtual TPM CA - 03 with NO AIA extension, so no intermediates can be
+# fetched, none are stored elsewhere in NV, and no chain reaches this root.
+# Verification correctly fails closed on such a host. Azure runs both hierarchies
+# concurrently, so a deployment must pin the root its own hosts actually present;
+# see docs/testing/hardware-validation.md.
 AZURE_VTPM_ROOT_2023_PEM = b"""\
 -----BEGIN CERTIFICATE-----
 MIIFsDCCA5igAwIBAgIQUfQx2iySCIpOKeDZKd5KpzANBgkqhkiG9w0BAQwFADBp

@@ -32,6 +32,16 @@ not tamper-proof**. Making it tamper-proof needs the platform hierarchy, which a
 guest VM cannot reach, and that is the same client-firmware dependency that gates
 the AI PC tier.
 
+## Validated on hardware
+
+Exercised on a real Azure Trusted Launch vTPM (``Standard_D2s_v7``, eastus2,
+2026-08-01): the index was defined with ``TPM_NT_EXTEND`` (confirmed by reading
+``TPM_NT = 4`` back out of the public area), extends accumulated as
+``H(old || data)`` across successive calls, an existing index was reused rather
+than redefined, and **a plain ``TPM2_NV_Write`` to it was refused by the TPM**,
+which is the check the tamper-evidence argument actually rests on. See
+docs/testing/hardware-validation.md.
+
 ## Predictability is deliberately left to the verifier
 
 Because extends accumulate and NV is persistent across reboots, the index value
