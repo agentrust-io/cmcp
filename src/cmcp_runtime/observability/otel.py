@@ -48,6 +48,7 @@ _otel_trace: Any = None
 _SpanKind: Any = None
 _Status: Any = None
 _StatusCode: Any = None
+_PLACEHOLDER_PROVIDERS: tuple[type, ...] = ()
 
 try:  # pragma: no cover - import-time branch depends on the environment
     from opentelemetry import trace as _imported_trace
@@ -56,10 +57,36 @@ try:  # pragma: no cover - import-time branch depends on the environment
     _otel_trace = _imported_trace
     _SpanKind, _Status, _StatusCode = SpanKind, Status, StatusCode
     OTEL_AVAILABLE = True
+
+    # get_tracer_provider() returns one of these until something installs a real
+    # SDK provider; spans from them are NonRecordingSpans that go nowhere. They
+    # are how `enabled` tells "OTel is importable" from "spans are exported".
+    #
+    # Resolved by getattr rather than a top-level import on purpose. These two
+    # names are a convenience, not a requirement, and folding them into the
+    # import above would mean a release that renames either one turns export off
+    # entirely -- reintroducing the silent no-op this module exists to avoid. An
+    # empty tuple degrades `enabled` to optimistic, which is the milder failure.
+    _PLACEHOLDER_PROVIDERS = tuple(
+        candidate
+        for candidate in (
+            getattr(_imported_trace, "NoOpTracerProvider", None),
+            getattr(_imported_trace, "ProxyTracerProvider", None),
+        )
+        if isinstance(candidate, type)
+    )
 except ImportError:  # pragma: no cover
     OTEL_AVAILABLE = False
 
-__all__ = ["OTEL_AVAILABLE", "OtelAuditExporter", "otel_sink_from_env"]
+__all__ = [
+    "OTEL_AVAILABLE",
+    "OtelAuditExporter",
+    "configure_tracer_provider",
+    "otel_sink_from_env",
+]
+
+#: Values of CMCP_OTEL_ENABLED that turn export on, case-insensitively.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 #: Audit entry fields that are safe to export. Everything omitted is either a
 #: payload-adjacent value or internal chain bookkeeping that a telemetry
@@ -107,7 +134,17 @@ class OtelAuditExporter:
 
     @property
     def enabled(self) -> bool:
-        return self._tracer is not None
+        """
+        True when a span emitted now would actually be recorded and exported.
+
+        Deliberately stricter than "opentelemetry imported". Without an SDK
+        provider installed the tracer is a proxy that yields NonRecordingSpans,
+        so export is silently a no-op; reporting True there told an operator
+        telemetry was working when nothing was leaving the process (#456).
+        """
+        if self._tracer is None:
+            return False
+        return not isinstance(_otel_trace.get_tracer_provider(), _PLACEHOLDER_PROVIDERS)
 
     def __call__(self, entry: AuditEntry) -> None:
         self.export(entry)
@@ -127,6 +164,12 @@ class OtelAuditExporter:
     def _export(self, tracer: Any, entry: AuditEntry) -> None:
         name = f"cmcp.{entry.entry_type}"
         with tracer.start_as_current_span(name, kind=_SpanKind.INTERNAL) as span:
+            # Skip the attribute work when the span is a NonRecordingSpan (no
+            # provider installed) or the sampler dropped it. This runs once per
+            # audit entry on the call path, so the ~19 discarded set_attribute
+            # calls are worth avoiding.
+            if not span.is_recording():
+                return
             for field_name in _EXPORTED_FIELDS:
                 value = getattr(entry, field_name, None)
                 if value is not None:
@@ -134,6 +177,90 @@ class OtelAuditExporter:
             decision = entry.policy_decision
             if decision in _ERROR_DECISIONS:
                 span.set_status(_Status(_StatusCode.ERROR, f"policy_decision={decision}"))
+
+
+def _export_requested() -> bool:
+    """True when ``CMCP_OTEL_ENABLED`` asks for export."""
+    return os.environ.get("CMCP_OTEL_ENABLED", "").strip().lower() in _TRUTHY
+
+
+def configure_tracer_provider() -> bool:
+    """
+    Install an SDK tracer provider so exported spans have somewhere to go.
+
+    Call once during process startup, before any session is created. Attaching
+    the sink is not sufficient on its own: ``trace.get_tracer()`` returns a
+    proxy that drops every span until a real provider is installed, which is
+    why ``CMCP_OTEL_ENABLED=1`` alone produced no telemetry at all (#456).
+
+    Returns True when spans will be exported after this call. No-ops when
+    export was not requested, when the optional dependency is missing, or when
+    something else already installed a provider - an embedder that configures
+    its own pipeline keeps it, and this function never replaces it.
+
+    The endpoint and the rest of the pipeline come from the standard
+    ``OTEL_EXPORTER_OTLP_*`` environment variables, so cMCP introduces no
+    second way to point telemetry at a collector.
+
+    Shutdown behaviour, measured against a live collector and a dead one: the
+    SDK flushes the batch queue at exit, so spans still buffered when the
+    gateway is signalled do arrive rather than being dropped. When the collector
+    is unreachable that flush retries with backoff before giving up, which added
+    roughly 6s to gateway shutdown in testing (~8.8s against a dead collector
+    versus ~2.2s against a healthy one). It terminates on its own and is well
+    inside a default Kubernetes grace period; operators who need it tighter can
+    set ``OTEL_BSP_EXPORT_TIMEOUT``.
+    """
+    if not _export_requested():
+        return False
+    if not OTEL_AVAILABLE:
+        logger.warning(
+            "CMCP_OTEL_ENABLED is set but opentelemetry is not installed; "
+            "telemetry export is disabled. Install with: pip install cmcp-runtime[otel]"
+        )
+        return False
+
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    except ImportError:  # pragma: no cover - depends on the environment
+        logger.warning(
+            "CMCP_OTEL_ENABLED is set but the OpenTelemetry SDK and OTLP exporter are "
+            "not installed; telemetry export is disabled. "
+            "Install with: pip install cmcp-runtime[otel]"
+        )
+        return False
+
+    if not isinstance(_otel_trace.get_tracer_provider(), _PLACEHOLDER_PROVIDERS):
+        logger.info("A tracer provider is already installed; leaving it in place")
+        return True
+
+    try:
+        resource = Resource.create(
+            {"service.name": os.environ.get("OTEL_SERVICE_NAME", "cmcp-gateway")}
+        )
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        _otel_trace.set_tracer_provider(provider)
+    except Exception:  # pragma: no cover - defensive
+        # The SDK validates OTEL_EXPORTER_OTLP_* at construction and raises on
+        # values it cannot parse: OTEL_EXPORTER_OTLP_TIMEOUT=abc and
+        # OTEL_EXPORTER_OTLP_COMPRESSION=bogus both raise ValueError. This runs
+        # from `cmcp start`, so letting that propagate would mean a typo in a
+        # telemetry variable takes the gateway down at boot. Telemetry is never
+        # allowed to do that; log it and run without export instead.
+        logger.warning(
+            "OTel tracer provider could not be configured; telemetry export is "
+            "disabled and the gateway will run without it. Check the "
+            "OTEL_EXPORTER_OTLP_* environment variables.",
+            exc_info=True,
+        )
+        return False
+
+    logger.info("OTel tracer provider installed; audit entries will be exported as spans")
+    return True
 
 
 def otel_sink_from_env() -> Callable[[Any], None] | None:
@@ -144,8 +271,11 @@ def otel_sink_from_env() -> Callable[[Any], None] | None:
     unset or falsey, so telemetry is opt-in rather than something a deployment
     discovers it is doing. Recognised truthy values are ``1``, ``true``,
     ``yes``, and ``on``, case-insensitively.
+
+    Attaching the returned sink exports nothing unless a tracer provider is
+    installed; see :func:`configure_tracer_provider`.
     """
-    if os.environ.get("CMCP_OTEL_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
+    if not _export_requested():
         return None
     if not OTEL_AVAILABLE:
         logger.warning(

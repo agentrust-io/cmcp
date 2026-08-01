@@ -16,6 +16,7 @@ import pytest
 
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.observability import otel as otel_module
 from cmcp_runtime.observability.otel import OtelAuditExporter, otel_sink_from_env
 from cmcp_runtime.policy.decisions import (
     AARM_DECISION_ANNOTATION,
@@ -207,3 +208,228 @@ class TestR8TelemetryExport:
             assert "payload" not in field_name or field_name.endswith("_hash")
         assert "detail" not in _EXPORTED_FIELDS
         assert "external_execution_evidence" not in _EXPORTED_FIELDS
+
+
+class TestOtelSpansActuallyExport:
+    """
+    #456: every test above passes against a feature that exports nothing.
+
+    They assert the sink plumbing and the inert path, which is exactly the state
+    the exporter was released in: no provider was ever installed and no sink was
+    ever attached to a production chain, so `CMCP_OTEL_ENABLED=1` produced no
+    telemetry. These tests exercise the recording path instead.
+
+    The global tracer provider is process-wide and refuses to be replaced, so
+    rather than calling set_tracer_provider these swap the module's handle on the
+    OTel API for one backed by an in-memory provider.
+    """
+
+    @pytest.fixture
+    def recorded(self, monkeypatch: pytest.MonkeyPatch):
+        """Yield a callable returning the spans exported so far."""
+        pytest.importorskip("opentelemetry.sdk")
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        from cmcp_runtime.observability import otel as otel_module
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+        class _Shim:
+            @staticmethod
+            def get_tracer(name: str):
+                return provider.get_tracer(name)
+
+            @staticmethod
+            def get_tracer_provider():
+                return provider
+
+        monkeypatch.setattr(otel_module, "_otel_trace", _Shim)
+        return exporter.get_finished_spans
+
+    def test_one_span_per_audit_entry_with_expected_attributes(self, recorded) -> None:
+        chain = AuditChain("otel-live-1", sinks=[OtelAuditExporter()])
+        chain.append(
+            "tool_call",
+            call_id="c-allow",
+            tool_name="echo",
+            policy_decision="allow",
+            latency_us=1234,
+            request_payload_hash="a" * 64,
+        )
+
+        spans = recorded()
+        assert [s.name for s in spans] == ["cmcp.session_start", "cmcp.tool_call"]
+
+        attrs = spans[1].attributes
+        assert attrs["cmcp.tool_name"] == "echo"
+        assert attrs["cmcp.policy_decision"] == "allow"
+        assert attrs["cmcp.call_id"] == "c-allow"
+        assert attrs["cmcp.latency_us"] == 1234
+        assert attrs["cmcp.request_payload_hash"] == "a" * 64
+        # The chain must be unaffected by having been mirrored.
+        assert chain.verify_chain()
+
+    def test_every_attribute_survives_the_otlp_type_constraint(self, recorded) -> None:
+        """set_attribute drops values it cannot represent; nothing may be dropped."""
+        from cmcp_runtime.observability.otel import _EXPORTED_FIELDS
+
+        chain = AuditChain("otel-live-2", sinks=[OtelAuditExporter()])
+        entry = chain.append(
+            "tool_call",
+            call_id="c1",
+            tool_name="echo",
+            server_identity="mock",
+            policy_decision="allow",
+            policy_rule_matched="allow-all",
+            latency_us=7,
+            request_payload_hash="a" * 64,
+            response_payload_hash="b" * 64,
+            response_inspection_result="pass",
+            workflow_id="w1",
+        )
+
+        attrs = recorded()[-1].attributes
+        for field_name in _EXPORTED_FIELDS:
+            if getattr(entry, field_name, None) is not None:
+                assert f"cmcp.{field_name}" in attrs, f"{field_name} was dropped by the SDK"
+                assert isinstance(attrs[f"cmcp.{field_name}"], (str, int, float, bool))
+
+    @pytest.mark.parametrize("decision", ["deny", "advisory_deny", "fault"])
+    def test_refused_calls_set_span_status_to_error(self, recorded, decision: str) -> None:
+        from opentelemetry.trace import StatusCode
+
+        chain = AuditChain("otel-live-3", sinks=[OtelAuditExporter()])
+        chain.append("tool_call", tool_name="blocked", policy_decision=decision)
+
+        span = recorded()[-1]
+        assert span.status.status_code is StatusCode.ERROR
+        assert span.status.description == f"policy_decision={decision}"
+
+    def test_allowed_calls_do_not_set_error_status(self, recorded) -> None:
+        from opentelemetry.trace import StatusCode
+
+        chain = AuditChain("otel-live-4", sinks=[OtelAuditExporter()])
+        chain.append("tool_call", tool_name="echo", policy_decision="allow")
+        assert recorded()[-1].status.status_code is not StatusCode.ERROR
+
+    def test_session_manager_attaches_the_sink(
+        self, recorded, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """
+        The gap in #456: the exporter worked, but nothing ever attached it to the
+        chain a running gateway uses, so a live collector received nothing.
+        """
+        from unittest.mock import MagicMock
+
+        from cmcp_runtime.session.manager import SessionManager
+
+        monkeypatch.setenv("CMCP_OTEL_ENABLED", "1")
+        ctx = MagicMock()
+        ctx.tee_provider.get_attestation_report.return_value = None
+
+        SessionManager(ctx).create_session()
+
+        assert "cmcp.session_start" in [s.name for s in recorded()]
+
+    def test_session_manager_attaches_nothing_when_export_is_off(
+        self, recorded, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from cmcp_runtime.session.manager import SessionManager
+
+        monkeypatch.delenv("CMCP_OTEL_ENABLED", raising=False)
+        ctx = MagicMock()
+        ctx.tee_provider.get_attestation_report.return_value = None
+
+        SessionManager(ctx).create_session()
+
+        assert recorded() == ()
+
+
+class TestExporterEnabledReportsRecording:
+    """`enabled` claimed True while spans were being discarded (#456)."""
+
+    def test_enabled_is_false_without_a_tracer_provider(self) -> None:
+        # Guarded on the module's own flag rather than importorskip: the
+        # opentelemetry namespace package can remain importable after the API
+        # is uninstalled, so importorskip does not mean the API is usable.
+        if not otel_module.OTEL_AVAILABLE:
+            pytest.skip("opentelemetry is not installed")
+        # No provider installed in the test process, so nothing is exported.
+        assert OtelAuditExporter().enabled is False
+
+    def test_configure_tracer_provider_is_a_noop_when_export_is_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from cmcp_runtime.observability.otel import configure_tracer_provider
+
+        monkeypatch.delenv("CMCP_OTEL_ENABLED", raising=False)
+        assert configure_tracer_provider() is False
+
+    def test_enabled_degrades_to_optimistic_if_placeholders_cannot_be_resolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """
+        The placeholder provider classes are resolved by getattr, so a release
+        that renames them costs this one signal rather than switching export off.
+        Deliberately the milder failure: `enabled` over-reports instead of the
+        module deciding OpenTelemetry is absent.
+        """
+        if not otel_module.OTEL_AVAILABLE:
+            pytest.skip("opentelemetry is not installed")
+
+        monkeypatch.setattr(otel_module, "_PLACEHOLDER_PROVIDERS", ())
+        assert otel_module.OtelAuditExporter().enabled is True
+
+    @pytest.mark.parametrize(
+        ("var", "value"),
+        [
+            ("OTEL_EXPORTER_OTLP_TIMEOUT", "abc"),
+            ("OTEL_EXPORTER_OTLP_COMPRESSION", "bogus"),
+            ("OTEL_EXPORTER_OTLP_HEADERS", "this is not valid"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "not-a-url::://x"),
+        ],
+    )
+    def test_a_malformed_otlp_variable_cannot_take_the_gateway_down(
+        self, monkeypatch: pytest.MonkeyPatch, var: str, value: str
+    ) -> None:
+        """
+        configure_tracer_provider() runs from `cmcp start`. The SDK validates
+        OTEL_EXPORTER_OTLP_* at construction and raises on values it cannot
+        parse, so an unguarded call would mean a typo in a telemetry variable
+        stops the gateway booting. Telemetry must never be able to do that.
+        """
+        if not otel_module.OTEL_AVAILABLE:
+            pytest.skip("opentelemetry is not installed")
+
+        monkeypatch.setenv("CMCP_OTEL_ENABLED", "1")
+        monkeypatch.setenv(var, value)
+        # Force the construction path rather than the already-installed early
+        # return, which would make this test vacuous.
+        monkeypatch.setattr(otel_module, "_PLACEHOLDER_PROVIDERS", (object,))
+        monkeypatch.setattr(
+            otel_module._otel_trace, "get_tracer_provider", lambda: object()
+        )
+        # Keep the process-global provider untouched: the values that parse
+        # cleanly would otherwise install one and leak into later tests.
+        monkeypatch.setattr(
+            otel_module._otel_trace, "set_tracer_provider", lambda provider: None
+        )
+
+        # Only some of these raise inside the SDK, and which ones is the SDK's
+        # business. The contract under test is that none of them propagate.
+        try:
+            result = otel_module.configure_tracer_provider()
+        except Exception as exc:  # pragma: no cover - the failure being guarded
+            pytest.fail(
+                f"{var}={value!r} propagated {exc!r}; a malformed telemetry "
+                "variable must not stop the gateway booting"
+            )
+        assert isinstance(result, bool)

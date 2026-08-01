@@ -84,7 +84,12 @@ def start(config: str, enforcement: str | None) -> None:
     import uvicorn
 
     from cmcp_runtime.config import parse_listen_addr
+    from cmcp_runtime.observability.otel import configure_tracer_provider
     from cmcp_runtime.startup import run_startup
+
+    # AARM R8: install the tracer provider before any session exists, so the
+    # first session's entries are exported too. No-op unless CMCP_OTEL_ENABLED.
+    configure_tracer_provider()
 
     ctx = run_startup(config)
 

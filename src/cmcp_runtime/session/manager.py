@@ -7,13 +7,14 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from cmcp_runtime.agent_manifest import AgentManifestBinding
-from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.chain import AuditChain, AuditEntry
 from cmcp_runtime.audit.trace_claim import (
     AgentIdentityInfo,
     AttestationReportInfo,
@@ -28,6 +29,7 @@ from cmcp_runtime.audit.trace_claim import (
 from cmcp_runtime.config import KillSwitchConfig
 from cmcp_runtime.errors import KillSwitchTripped
 from cmcp_runtime.kill_switch import KillSwitchEvaluator
+from cmcp_runtime.observability.otel import otel_sink_from_env
 from cmcp_runtime.policy.decisions import claim_value
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
 from cmcp_runtime.session.state import SessionState
@@ -58,6 +60,14 @@ class SessionManager:
         if not isinstance(ks_cfg, KillSwitchConfig):
             ks_cfg = KillSwitchConfig()  # disabled by default if not configured
         self._kill_switch = KillSwitchEvaluator(ks_cfg)
+        # AARM R8: telemetry export. Built once here rather than per session so
+        # every chain shares one exporter, and empty unless CMCP_OTEL_ENABLED
+        # asks for it. Sinks run after an entry is durable and cannot break the
+        # chain, so a collector outage stays a telemetry problem.
+        sink = otel_sink_from_env()
+        self._audit_sinks: list[Callable[[AuditEntry], None]] = (
+            [sink] if sink is not None else []
+        )
 
     def create_session(self) -> tuple[SessionState, AuditChain]:
         """
@@ -87,7 +97,11 @@ class SessionManager:
 
         session_id = str(uuid4())
         state = SessionState(session_id=session_id)
-        chain = AuditChain(session_id=session_id, store=self._ctx.audit_store)
+        chain = AuditChain(
+            session_id=session_id,
+            store=self._ctx.audit_store,
+            sinks=self._audit_sinks,
+        )
 
         # AUDIT-006: derive a per-session nonce that commits the chain root into
         # report_data, then KEEP the resulting report so close_session() builds the
