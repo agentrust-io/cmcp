@@ -85,7 +85,8 @@ def _tpmt_ecdsa(der: bytes) -> bytes:
     )
 
 
-def _cert(subject: str, issuer: str, subject_pub, issuer_key, issuer_hash=SHA384()):
+def _cert(subject: str, issuer: str, subject_pub, issuer_key, issuer_hash=None):
+    issuer_hash = issuer_hash or SHA384()
     now = datetime.now(UTC)
     return (
         x509.CertificateBuilder()
