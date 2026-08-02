@@ -14,12 +14,18 @@ pinned by the operator (AMD publishes it on the KDS).
 """
 from __future__ import annotations
 
-import ctypes
 import hashlib
 from dataclasses import dataclass, field
 
+from agent_manifest import (
+    SIG_ALGO_ECDSA_P384_SHA384,
+    SNP_REPORT_LEN,
+    load_snp_cert_chain,
+    parse_snp_report,
+    verify_snp_signature,
+)
 from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding
 
 # The SNP report is signed over its leading bytes; the 512-byte signature field
@@ -33,53 +39,6 @@ _SIG_ALGO_ECDSA_P384_SHA384 = 1
 # bytes (P-384 components are 48 bytes; the upper 24 are zero padding).
 _SNP_SIG_COMPONENT_LEN = 72
 _P384_COMPONENT_LEN = 48
-
-
-class _SnpAttestationReport(ctypes.LittleEndianStructure):
-    """Mirror of struct snp_attestation_report from the Linux kernel
-    (include/uapi/linux/sev-guest.h).  Matches the layout defined in
-    the gateway provider; kept in sync via the sizeof assertion below.
-
-    Total size: 0x4A0 (1184) bytes.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("version",             ctypes.c_uint32),
-        ("guest_svn",           ctypes.c_uint32),
-        ("policy",              ctypes.c_uint64),
-        ("family_id",           ctypes.c_uint8 * 16),
-        ("image_id",            ctypes.c_uint8 * 16),
-        ("vmpl",                ctypes.c_uint32),
-        ("sig_algo",            ctypes.c_uint32),
-        ("current_tcb",         ctypes.c_uint64),
-        ("plat_info",           ctypes.c_uint64),
-        ("author_key_en",       ctypes.c_uint32),
-        ("rsvd1",               ctypes.c_uint32),
-        ("report_data",         ctypes.c_uint8 * 64),
-        ("measurement",         ctypes.c_uint8 * 48),
-        ("host_data",           ctypes.c_uint8 * 32),
-        ("id_key_digest",       ctypes.c_uint8 * 48),
-        ("author_key_digest",   ctypes.c_uint8 * 48),
-        ("report_id",           ctypes.c_uint8 * 32),
-        ("report_id_ma",        ctypes.c_uint8 * 32),
-        ("reported_tcb",        ctypes.c_uint64),
-        ("rsvd2",               ctypes.c_uint8 * 24),
-        ("chip_id",             ctypes.c_uint8 * 64),
-        ("committed_svn",       ctypes.c_uint8 * 8),
-        ("committed_version",   ctypes.c_uint8 * 8),
-        ("launch_svn",          ctypes.c_uint8 * 8),
-        ("rsvd3",               ctypes.c_uint8 * 168),
-        ("signature",           ctypes.c_uint8 * 512),
-    ]
-
-
-assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0, (
-    f"_SnpAttestationReport size mismatch: "
-    f"got {ctypes.sizeof(_SnpAttestationReport):#x}, expected 0x4A0"
-)
-
-_SNP_REPORT_MIN_SIZE = ctypes.sizeof(_SnpAttestationReport)
 
 
 @dataclass
@@ -101,49 +60,28 @@ def verify_snp_report_signature(
     the format pre-checks below keep cmcp's specific failure reasons. Returns
     (True, None) on a valid signature, (False, reason) otherwise. Fails closed.
     """
-    from agent_manifest import parse_snp_report, verify_snp_signature
-
     if len(raw_report) < _SNP_SIG_OFFSET + 2 * _SNP_SIG_COMPONENT_LEN:
         return False, "report too short to contain a signature"
     try:
-        report = _SnpAttestationReport.from_buffer_copy(raw_report[:_SNP_REPORT_MIN_SIZE])
+        report = parse_snp_report(raw_report)
     except Exception:  # noqa: BLE001
         return False, "cannot parse SNP report"
-    if report.sig_algo != _SIG_ALGO_ECDSA_P384_SHA384:
-        return False, f"unsupported sig_algo {report.sig_algo} (expected ECDSA-P384/SHA-384)"
+    if report.signature_algo != SIG_ALGO_ECDSA_P384_SHA384:
+        return False, (
+            f"unsupported sig_algo {report.signature_algo} (expected ECDSA-P384/SHA-384)"
+        )
 
     pub = vcek_cert.public_key()
     if not isinstance(pub, ec.EllipticCurvePublicKey) or pub.curve.name != "secp384r1":
         return False, "VCEK public key is not EC P-384"
 
     try:
-        ok = verify_snp_signature(parse_snp_report(raw_report), vcek_cert.public_bytes(Encoding.DER))
+        ok = verify_snp_signature(report, vcek_cert.public_bytes(Encoding.DER))
     except Exception:  # noqa: BLE001  (fail closed on any parse/verify error)
         return False, "SNP report signature does not verify against the VCEK"
     if not ok:
         return False, "SNP report signature does not verify against the VCEK"
     return True, None
-
-
-def load_snp_cert_chain(
-    pem_bundle: bytes,
-) -> tuple[x509.Certificate, x509.Certificate, x509.Certificate]:
-    """Parse a PEM bundle into (vcek, ask, ark).
-
-    VCEK is the EC leaf; among the RSA certs, the self-signed one is the ARK and
-    the other is the ASK. Raises ValueError if the bundle is not a well-formed
-    SNP chain.
-    """
-    certs = x509.load_pem_x509_certificates(pem_bundle)
-    vcek = next(
-        (c for c in certs if isinstance(c.public_key(), ec.EllipticCurvePublicKey)), None
-    )
-    rsa_certs = [c for c in certs if isinstance(c.public_key(), rsa.RSAPublicKey)]
-    ark = next((c for c in rsa_certs if c.subject == c.issuer), None)
-    ask = next((c for c in rsa_certs if c is not ark), None)
-    if vcek is None or ask is None or ark is None:
-        raise ValueError("bundle must contain a VCEK (EC), an ASK and a self-signed ARK (RSA)")
-    return vcek, ask, ark
 
 
 def verify_vcek_chain(
@@ -218,10 +156,9 @@ def verify_sev_snp_measurement(
         result.details["raw_evidence"] = "not provided; SNP report cannot be checked"
         return result
 
-    if len(raw_evidence) >= _SNP_REPORT_MIN_SIZE:
+    if len(raw_evidence) >= SNP_REPORT_LEN:
         try:
-            # Parse via ctypes struct for named field access (HW-006)
-            report = _SnpAttestationReport.from_buffer_copy(raw_evidence[:_SNP_REPORT_MIN_SIZE])
+            report = parse_snp_report(raw_evidence)
 
             # Accept report version >= 2. The fields we read (report_data 0x50,
             # measurement 0x90, reported_tcb 0x180, chip_id 0x1a0, signature 0x2a0)
@@ -239,7 +176,7 @@ def verify_sev_snp_measurement(
             result.details["snp_report_version"] = str(report.version)
 
             # Verify measurement field using named struct access
-            m_bytes = bytes(report.measurement)
+            m_bytes = report.measurement
             computed = "sha384:" + hashlib.sha384(m_bytes).hexdigest()
             if computed == measurement:
                 result.verified_fields.append("measurement")
@@ -255,7 +192,7 @@ def verify_sev_snp_measurement(
             # silently ignoring a mismatch would accept an SNP report for a
             # different enclave whose measurement happens to match.
             if report_data_hex is not None:
-                extracted_rd = bytes(report.report_data)
+                extracted_rd = report.report_data
                 expected_rd = bytes.fromhex(report_data_hex[:128])
                 # Pad expected to 64 bytes if shorter
                 if len(expected_rd) < 64:

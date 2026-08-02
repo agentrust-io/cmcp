@@ -10,10 +10,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN, parse_snp_report
 
 from cmcp_runtime.errors import AttestationProviderNotImplemented
 from cmcp_runtime.tee.opaque import OpaqueProvider
-from cmcp_runtime.tee.sev_snp import SEVSNPProvider, _SnpAttestationReport
+from cmcp_runtime.tee.sev_snp import SEVSNPProvider
 from cmcp_runtime.tee.tdx import TDXProvider, _TdxReportReq
 from cmcp_runtime.tee.tpm import TPMProvider
 
@@ -33,33 +34,35 @@ def test_opaque_provider_name() -> None:
     assert OpaqueProvider().provider_name() == "opaque"
 
 
-# ── SEVSNPProvider struct layout (HW-006) ─────────────────────────────────────
+# ── SNP report layout (HW-006) ────────────────────────────────────────────────
+# The layout is agent-manifest's; these assert the resolved version still agrees
+# with what this provider assumes, which a floor pin does not otherwise guarantee.
 
 def test_snp_struct_size() -> None:
-    """_SnpAttestationReport must be exactly 0x4A0 bytes."""
-    assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0
+    """An SNP report must be exactly 0x4A0 bytes."""
+    assert SNP_REPORT_LEN == 0x4A0
 
 
 def test_snp_struct_measurement_field_round_trip() -> None:
     """Write a known pattern at the struct-derived measurement offset,
     parse with from_buffer_copy, assert the named field reads it back."""
-    buf = bytearray(ctypes.sizeof(_SnpAttestationReport))
+    buf = bytearray(SNP_REPORT_LEN)
     struct.pack_into("<I", buf, 0, 2)
     pattern = bytes(range(48))
-    offset = _SnpAttestationReport.measurement.offset
+    offset = SNP_OFFSETS["measurement"]
     buf[offset : offset + 48] = pattern
-    report = _SnpAttestationReport.from_buffer_copy(buf)
+    report = parse_snp_report(bytes(buf))
     assert bytes(report.measurement) == pattern
 
 
 def test_snp_struct_host_data_field_round_trip() -> None:
     """Write a known pattern at the host_data offset; read back via named field."""
-    buf = bytearray(ctypes.sizeof(_SnpAttestationReport))
+    buf = bytearray(SNP_REPORT_LEN)
     struct.pack_into("<I", buf, 0, 2)
     pattern = bytes(range(32))
-    offset = _SnpAttestationReport.host_data.offset
+    offset = SNP_OFFSETS["host_data"]
     buf[offset : offset + 32] = pattern
-    report = _SnpAttestationReport.from_buffer_copy(buf)
+    report = parse_snp_report(bytes(buf))
     assert bytes(report.host_data) == pattern
 
 
@@ -102,11 +105,11 @@ def test_sev_snp_get_report_raises_when_tsm_unavailable(monkeypatch: pytest.Monk
 def test_sev_snp_get_report_success_via_tsm(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_attestation_report parses the configfs-TSM outblob and binds the nonce."""
     from cmcp_runtime.tee import sev_snp as snp_mod
-    from cmcp_runtime.tee.sev_snp import _SNP_REPORT_SIZE, _SnpAttestationReport
+    from cmcp_runtime.tee.sev_snp import _SNP_REPORT_SIZE
 
     nonce = bytes(range(64))
     raw = bytearray(_SNP_REPORT_SIZE)
-    raw[_SnpAttestationReport.report_data.offset:_SnpAttestationReport.report_data.offset + 64] = nonce
+    raw[SNP_OFFSETS["report_data"]:SNP_OFFSETS["report_data"] + 64] = nonce
     monkeypatch.setattr(snp_mod, "_tsm_get_report", lambda report_data: bytes(raw))
 
     report = SEVSNPProvider().get_attestation_report(nonce)

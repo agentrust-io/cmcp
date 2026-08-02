@@ -13,12 +13,13 @@ in the report's REPORT_DATA field and the report verifies against the AMD VCEK.
 from __future__ import annotations
 
 import contextlib
-import ctypes
 import hashlib
 import hmac
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN, parse_snp_report
 
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 
@@ -31,52 +32,9 @@ _TSM_REPORT_DIR = Path("/sys/kernel/config/tsm/report")
 _TSM_ENTRY = "cmcp"
 
 
-class _SnpAttestationReport(ctypes.LittleEndianStructure):
-    """Mirror of struct snp_attestation_report from the Linux kernel
-    (include/uapi/linux/sev-guest.h).  Field offsets are computed by
-    ctypes so magic numeric offsets are never needed in application code.
-
-    Total size: 0x4A0 (1184) bytes.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("version",             ctypes.c_uint32),
-        ("guest_svn",           ctypes.c_uint32),
-        ("policy",              ctypes.c_uint64),
-        ("family_id",           ctypes.c_uint8 * 16),
-        ("image_id",            ctypes.c_uint8 * 16),
-        ("vmpl",                ctypes.c_uint32),
-        ("sig_algo",            ctypes.c_uint32),
-        ("current_tcb",         ctypes.c_uint64),
-        ("plat_info",           ctypes.c_uint64),
-        ("author_key_en",       ctypes.c_uint32),
-        ("rsvd1",               ctypes.c_uint32),
-        ("report_data",         ctypes.c_uint8 * 64),
-        ("measurement",         ctypes.c_uint8 * 48),
-        ("host_data",           ctypes.c_uint8 * 32),
-        ("id_key_digest",       ctypes.c_uint8 * 48),
-        ("author_key_digest",   ctypes.c_uint8 * 48),
-        ("report_id",           ctypes.c_uint8 * 32),
-        ("report_id_ma",        ctypes.c_uint8 * 32),
-        ("reported_tcb",        ctypes.c_uint64),
-        ("rsvd2",               ctypes.c_uint8 * 24),
-        ("chip_id",             ctypes.c_uint8 * 64),
-        ("committed_svn",       ctypes.c_uint8 * 8),
-        ("committed_version",   ctypes.c_uint8 * 8),
-        ("launch_svn",          ctypes.c_uint8 * 8),
-        ("rsvd3",               ctypes.c_uint8 * 168),
-        ("signature",           ctypes.c_uint8 * 512),
-    ]
-
-
-# Compile-time assertion: struct must be exactly 0x4A0 (1184) bytes.
-assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0, (
-    f"_SnpAttestationReport size mismatch: "
-    f"got {ctypes.sizeof(_SnpAttestationReport):#x}, expected 0x4A0"
-)
-
-_SNP_REPORT_SIZE = ctypes.sizeof(_SnpAttestationReport)
+# The report length comes from agent-manifest's shared ABI table, so the
+# collector cannot disagree with the verifier about how long a report is.
+_SNP_REPORT_SIZE = SNP_REPORT_LEN
 
 
 def _tsm_get_report(report_data: bytes) -> bytes:
@@ -153,11 +111,12 @@ class SEVSNPProvider(TEEProvider):
         report_data = (nonce[:64] + b"\x00" * 64)[:64]
         raw_evidence = _tsm_get_report(report_data)
 
-        # Parse report via ctypes struct for named field access (HW-006)
-        report = _SnpAttestationReport.from_buffer_copy(raw_evidence)
+        # Layout and parse are shared with the verifier via agent-manifest, so
+        # collector and appraiser cannot disagree about where a field sits.
+        report = parse_snp_report(raw_evidence)
 
         # Measurement = SHA-384 of the measurement field within the SNP report
-        measurement_bytes = bytes(report.measurement)
+        measurement_bytes = report.measurement
         measurement = "sha384:" + hashlib.sha384(measurement_bytes).hexdigest()
 
         # HW-002: reject reports whose measurement does not match the expected binary hash.
@@ -178,6 +137,7 @@ class SEVSNPProvider(TEEProvider):
         )
 
 
-# Retained for callers/tests that referenced the module-level constant.
-_SNP_MEASUREMENT_OFFSET: int = _SnpAttestationReport.measurement.offset
-_SNP_MEASUREMENT_END: int = _SNP_MEASUREMENT_OFFSET + _SnpAttestationReport.measurement.size
+# Retained for callers/tests that referenced the module-level constants; the
+# values come from agent-manifest's shared ABI table rather than a local mirror.
+_SNP_MEASUREMENT_OFFSET: int = SNP_OFFSETS["measurement"]
+_SNP_MEASUREMENT_END: int = _SNP_MEASUREMENT_OFFSET + 48

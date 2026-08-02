@@ -1,16 +1,17 @@
 """Unit tests for AMD SEV-SNP attestation verification (issue #67)."""
 from __future__ import annotations
 
-import ctypes
 import hashlib
 import struct
 
-from cmcp_verify.sev_snp import _SnpAttestationReport, verify_sev_snp_measurement
+from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN, parse_snp_report
 
-_REPORT_DATA_OFFSET = _SnpAttestationReport.report_data.offset
-_MEASUREMENT_OFFSET = _SnpAttestationReport.measurement.offset
-_HOST_DATA_OFFSET   = _SnpAttestationReport.host_data.offset
-_REPORT_SIZE        = ctypes.sizeof(_SnpAttestationReport)
+from cmcp_verify.sev_snp import verify_sev_snp_measurement
+
+_REPORT_DATA_OFFSET = SNP_OFFSETS["report_data"]
+_MEASUREMENT_OFFSET = SNP_OFFSETS["measurement"]
+_HOST_DATA_OFFSET   = SNP_OFFSETS["host_data"]
+_REPORT_SIZE        = SNP_REPORT_LEN
 
 
 def make_snp_report(
@@ -27,20 +28,26 @@ def make_snp_report(
     return bytes(buf)
 
 
+# These pin the ABI values cMCP builds and appraises reports against. The table
+# now comes from agent-manifest, and the dependency is a floor pin, so these are
+# the guard that an upstream release cannot move an offset out from under cMCP
+# without a red build here.
+
+
 def test_snp_struct_size() -> None:
-    assert ctypes.sizeof(_SnpAttestationReport) == 0x4A0
+    assert SNP_REPORT_LEN == 0x4A0
 
 
 def test_snp_struct_report_data_offset() -> None:
-    assert _SnpAttestationReport.report_data.offset == 0x050
+    assert SNP_OFFSETS["report_data"] == 0x050
 
 
 def test_snp_struct_measurement_offset() -> None:
-    assert _SnpAttestationReport.measurement.offset == 0x090
+    assert SNP_OFFSETS["measurement"] == 0x090
 
 
 def test_snp_struct_host_data_offset() -> None:
-    assert _SnpAttestationReport.host_data.offset == 0x0C0
+    assert SNP_OFFSETS["host_data"] == 0x0C0
 
 
 def test_snp_struct_round_trip() -> None:
@@ -50,7 +57,7 @@ def test_snp_struct_round_trip() -> None:
     buf[_MEASUREMENT_OFFSET : _MEASUREMENT_OFFSET + 48] = pattern
     host_pattern = bytes(range(32, 64))
     buf[_HOST_DATA_OFFSET : _HOST_DATA_OFFSET + 32] = host_pattern
-    report = _SnpAttestationReport.from_buffer_copy(buf)
+    report = parse_snp_report(bytes(buf))
     assert report.version == 2
     assert bytes(report.measurement) == pattern
     assert bytes(report.host_data) == host_pattern

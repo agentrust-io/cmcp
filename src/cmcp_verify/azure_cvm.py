@@ -19,26 +19,19 @@ Validated against evidence produced on live Azure SEV-SNP hardware.
 from __future__ import annotations
 
 import base64
-import ctypes
 import hashlib
 import hmac
 import json
 import struct
 from dataclasses import dataclass, field
 
+from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN, load_snp_cert_chain, parse_snp_report
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from cmcp_verify.sev_snp import (
-    _SnpAttestationReport,
-    load_snp_cert_chain,
-    verify_snp_report_signature,
-    verify_vcek_chain,
-)
+from cmcp_verify.sev_snp import verify_snp_report_signature, verify_vcek_chain
 
-# SNP REPORT_DATA offset (AMD ABI); _rd_offset() prefers the ctypes field offset.
-_RD_OFFSET = 0x50
-_SNP_REPORT_SIZE = ctypes.sizeof(_SnpAttestationReport)
+_SNP_REPORT_SIZE = SNP_REPORT_LEN
 
 _TPM_GENERATED_VALUE = 0xFF544347
 # TPMT_SIGNATURE sigAlg values.
@@ -59,11 +52,8 @@ class AzureCVMVerificationResult:
 
 
 def _rd_offset() -> int:
-    # Prefer the ctypes-computed offset; fall back to the ABI constant.
-    try:
-        return int(_SnpAttestationReport.report_data.offset)
-    except Exception:  # noqa: BLE001
-        return _RD_OFFSET
+    # The ABI table is shared, so there is no local mirror to fall back to.
+    return SNP_OFFSETS["report_data"]
 
 
 def _extract_extra_data(quote_msg: bytes) -> bytes:
@@ -160,8 +150,8 @@ def verify_azure_cvm_measurement(
 
     # Step c: measurement field matches the claim.
     try:
-        report = _SnpAttestationReport.from_buffer_copy(snp[:_SNP_REPORT_SIZE])
-        computed = "sha384:" + hashlib.sha384(bytes(report.measurement)).hexdigest()
+        report = parse_snp_report(snp)
+        computed = "sha384:" + hashlib.sha384(report.measurement).hexdigest()
     except Exception:  # noqa: BLE001
         result.verified = False
         result.failure_reason = "raw_evidence_parse_error"

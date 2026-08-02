@@ -31,7 +31,7 @@ dependencies = [
     # is called on a peer-supplied manifest below, and before 0.6.1 a manifest
     # declaring ML-DSA-65 or hybrid crashed the verifier with an uncaught
     # RuntimeError on any install without the optional [pq] extra.
-    "agent-manifest>=0.8",
+    "agent-manifest>=0.10",
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "httpx>=0.27",

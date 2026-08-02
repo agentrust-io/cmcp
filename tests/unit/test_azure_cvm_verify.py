@@ -9,7 +9,6 @@ closed on tampering. A real-hardware fixture test is env-gated at the bottom.
 from __future__ import annotations
 
 import base64
-import ctypes
 import hashlib
 import json
 import os
@@ -17,6 +16,7 @@ import struct
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
@@ -25,12 +25,12 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.x509.oid import NameOID
 
 from cmcp_verify.azure_cvm import verify_azure_cvm_measurement
-from cmcp_verify.sev_snp import _SNP_SIG_OFFSET, _SnpAttestationReport
+from cmcp_verify.sev_snp import _SNP_SIG_OFFSET
 
-_MEAS_OFFSET = _SnpAttestationReport.measurement.offset
-_RD_OFFSET = _SnpAttestationReport.report_data.offset
-_SIG_ALGO_OFFSET = _SnpAttestationReport.sig_algo.offset
-_REPORT_SIZE = ctypes.sizeof(_SnpAttestationReport)
+_MEAS_OFFSET = SNP_OFFSETS["measurement"]
+_RD_OFFSET = SNP_OFFSETS["report_data"]
+_SIG_ALGO_OFFSET = SNP_OFFSETS["sig_algo"]
+_REPORT_SIZE = SNP_REPORT_LEN
 
 
 def _name(cn: str) -> x509.Name:

@@ -10,11 +10,11 @@ marked skipped below and unblocks when that hardware fixture lands.
 """
 from __future__ import annotations
 
-import ctypes
 import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -24,15 +24,14 @@ from cryptography.x509.oid import NameOID
 
 from cmcp_verify.sev_snp import (
     _SNP_SIG_OFFSET,
-    _SnpAttestationReport,
     verify_sev_snp_measurement,
     verify_snp_report_signature,
 )
 
-_SIG_ALGO_OFFSET = _SnpAttestationReport.sig_algo.offset
-_MEAS_OFFSET = _SnpAttestationReport.measurement.offset
-_RD_OFFSET = _SnpAttestationReport.report_data.offset
-_REPORT_SIZE = ctypes.sizeof(_SnpAttestationReport)
+_SIG_ALGO_OFFSET = SNP_OFFSETS["sig_algo"]
+_MEAS_OFFSET = SNP_OFFSETS["measurement"]
+_RD_OFFSET = SNP_OFFSETS["report_data"]
+_REPORT_SIZE = SNP_REPORT_LEN
 
 
 def _name(cn: str) -> x509.Name:
