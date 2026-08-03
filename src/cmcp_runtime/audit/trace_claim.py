@@ -83,7 +83,11 @@ class AttestationReportInfo:
     attestation_generated_at: str
     attestation_validity_seconds: int
     measurement_note: str | None = None
+    # Base64 evidence, surfaced in the claim as gateway.attestation_evidence.
     raw_evidence: str | None = None
+    quote_signature: str | None = None
+    cert_chain: str | None = None
+    ek_cert_chain: str | None = None
 
 
 @dataclass
@@ -204,6 +208,29 @@ class CallLogSummary(BaseModel):
     suspicious_sequences_detected: int
 
 
+class AttestationEvidence(BaseModel):
+    """Signed platform evidence, base64, carried in the cmcp envelope.
+
+    This does not live under ``trace.runtime`` because ``RuntimeInfo`` belongs to
+    agentrust-trace and is ``extra="forbid"`` -- a claim carrying evidence there
+    is rejected as CLAIM_MALFORMED before platform verification runs, which is
+    what kept the chain verifiers unreachable (#370). ``GatewayAddenda`` is
+    cmcp's own model and is the documented home for fields outside the canonical
+    TRACE spec, so the evidence rides here instead.
+
+    Every field is optional: evidence predating these fields, and platforms whose
+    report carries its own signature envelope, degrade to ``unverified`` rather
+    than erroring.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    raw_evidence: str | None = None  # the exact bytes the platform signed
+    quote_signature: str | None = None  # marshalled TPMT_SIGNATURE (TPM)
+    cert_chain: str | None = None  # leaf-first PEM: AK/VCEK -> ... -> root
+    ek_cert_chain: str | None = None  # EK's own path to the manufacturer CA
+
+
 class GatewayAddenda(BaseModel):
     """cmcp-specific fields outside the canonical TRACE spec."""
 
@@ -223,6 +250,7 @@ class GatewayAddenda(BaseModel):
     call_log_summary: CallLogSummary | None = None
     agent_identity: AgentIdentityOut | None = None
     kill_switch_triggered: bool = False
+    attestation_evidence: AttestationEvidence | None = None
 
 
 class RuntimeClaim(BaseModel):
@@ -264,6 +292,25 @@ def sign_trace_claim(claim: RuntimeClaim, signing_key: Any) -> str:
 
 
 # ── Builder helpers ────────────────────────────────────────────────────────────
+
+
+def _build_evidence(report: AttestationReportInfo) -> AttestationEvidence | None:
+    """Collect the signed evidence, or None when the report carries none.
+
+    Returning None keeps it out of the serialized claim entirely (the claim is
+    dumped with ``exclude_none``), so software-only and evidence-less claims are
+    byte-identical to what they were before this field existed.
+    """
+    if not any(
+        (report.raw_evidence, report.quote_signature, report.cert_chain, report.ek_cert_chain)
+    ):
+        return None
+    return AttestationEvidence(
+        raw_evidence=report.raw_evidence,
+        quote_signature=report.quote_signature,
+        cert_chain=report.cert_chain,
+        ek_cert_chain=report.ek_cert_chain,
+    )
 
 
 def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
@@ -422,6 +469,7 @@ def generate_trace_claim(
         attestation_stale=attestation_stale,
         catalog_exceptions=catalog_exceptions or [],
         kill_switch_triggered=kill_switch_triggered,
+        attestation_evidence=_build_evidence(attestation_report),
         call_log_summary=call_log_summary,
         agent_identity=(
             AgentIdentityOut(

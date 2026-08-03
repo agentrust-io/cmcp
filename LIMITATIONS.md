@@ -54,6 +54,40 @@ The catalog binds each tool name to a specific upstream server identity, which p
 - **Threat classes T1 through T4 are not covered.** These are the rogue administrator, host OS compromise, post-incident audit log reconstruction, and policy substitution threats described in the [threat model](docs/spec/threat-model.md). All four require a hardware TEE to close. In software-only mode, all four remain open.
 - **TRACE Claims are partially verified only.** The `cmcp_verify` library returns `status: partially_verified` and reports `hardware_attestation: software-only mode -- not hardware-backed`. Claims produced in dev mode must not be presented as hardware-attested proof to auditors or regulators.
 
+## What attestation verification establishes, and what it does not
+
+`cmcp_verify` reports `status: verified` only when the platform evidence is
+cryptographically checked; a claim whose report signature or certificate chain
+is unverified stays `partially_verified` and is never presented as
+hardware-backed (issue #370). What that check covers differs by platform:
+
+- **AMD SEV-SNP** — report signature plus the VCEK → ASK → ARK chain, with the
+  ARK pinned by the operator.
+- **Intel TDX** — DCAP quote signature and the PCK chain to a pinned Intel SGX
+  Root CA.
+- **TPM 2.0** — the `TPMT_SIGNATURE` over the `TPMS_ATTEST`, verified with the
+  attestation key, plus the AK certificate chain to a manufacturer CA the
+  operator pins via `trusted_tpm_ca_pem`. Absent signature or chain material
+  degrades to `unverified`; supplied material that fails is fatal.
+
+Two gaps are worth stating plainly for the TPM path:
+
+- **The attestation key is not bound to a specific TPM.** A verified AK chain
+  proves the key was certified under a CA you pinned. It does not prove the key
+  lives in the endorsed TPM. That binding is TPM credential activation
+  (`TPM2_MakeCredential` / `TPM2_ActivateCredential`), a live challenge-response
+  an offline verifier cannot perform, and it is not implemented. A CA that
+  mis-issues, or a platform CA that certifies a software key, is not caught.
+- **Evidence rides in the cmcp envelope, not the TRACE runtime block.**
+  `RuntimeInfo` in `agentrust-trace` is `extra="forbid"`, so a claim carrying
+  `raw_evidence` / `quote_signature` / `cert_chain` under `trace.runtime` is
+  rejected as `CLAIM_MALFORMED` before platform verification runs. Signed
+  evidence therefore travels as `gateway.attestation_evidence`, a cmcp-owned
+  field. The verifier still reads `trace.runtime` as a fallback so older claims
+  keep working, but that path cannot pass schema validation. **The SEV-SNP
+  `cert_chain` path has not been migrated and remains subject to this**, so its
+  VCEK chain verification does not engage for a schema-valid claim.
+
 ## What cMCP does not do
 
 - **cMCP is not a WAF.** It does not inspect HTTP traffic for SQL injection, XSS, or other web application attack patterns. It operates at the MCP tool call layer, not the HTTP layer.

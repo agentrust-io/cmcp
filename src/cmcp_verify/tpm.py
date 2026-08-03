@@ -27,6 +27,7 @@ __all__ = [
     "ParsedSignature",
     "TPMVerificationResult",
     "parse_tpmt_signature",
+    "verify_ak_ek_chain",
     "verify_quote_signature",
     "verify_tpm_measurement",
     "verify_tpm_quote_chained",
@@ -61,8 +62,10 @@ def verify_tpm_measurement(
       it here, so a key substituted after attestation is detected.
     - PCR digest in quote matches measurement field
 
-    EK cert chain validation: always marked as unverified_fields (requires
-    manufacturer CA lookup - out of scope for Phase 1).
+    EK cert chain validation: always marked as unverified_fields here, because
+    this function sees no certificates. :func:`verify_ak_ek_chain` is what
+    establishes it, and ``verify_trace_claim`` clears this field's unverified
+    note when that succeeds.
     """
     verified_fields: list[str] = []
     unverified_fields: list[str] = []
@@ -293,6 +296,145 @@ def verify_quote_signature(
 # agent-manifest does not model: the TPMT_SIGNATURE wire format written by
 # tpm2_quote and by tpm2-pytss `signature.marshal()`.
 # ---------------------------------------------------------------------------
+
+
+# TCG OIDs that say what a certificate is for. An Endorsement Key certificate is
+# the manufacturer's statement that a specific key is resident in a specific TPM,
+# so it is the hop that turns "signed by a certified key" into "signed by a TPM".
+#
+# The EKU alone does NOT identify an EK. Azure's real vTPM chain carries
+# 2.23.133.8.1 on its *intermediate CAs* -- there it means "this CA may issue EK
+# certificates", not "this is an EK". Keying on the OID by itself reports
+# ek_cert_chain verified on a chain with no EK in it, which is a false claim of
+# hardware-backed verification. A genuine EK certificate is an end-entity
+# certificate, so ``ca=False`` in basicConstraints is required as well.
+_TCG_EK_CERTIFICATE = "2.23.133.8.1"
+_TCG_AIK_CERTIFICATE = "2.23.133.8.3"
+
+
+def verify_ak_ek_chain(
+    ak_chain_pem: bytes,
+    *,
+    trusted_ca_pem: bytes,
+    ek_chain_pem: bytes | None = None,
+) -> tuple[bool, list[str], str | None]:
+    """Verify AK -> EK -> manufacturer CA with the CA pinned by the caller.
+
+    Mirrors :func:`cmcp_verify.sev_snp.verify_vcek_chain`: a thin cMCP wrapper
+    that delegates the actual path building to agent-manifest's shared,
+    algorithm-agnostic ``verify_cert_chain`` and pins the root by fingerprint.
+    (Issue #370 named ``_cert_signed_by`` in ``sev_snp.py``; that helper was
+    replaced by the shared verifier in the agent-manifest 0.5 refactor, so this
+    reuses its successor rather than reviving a deleted private function.)
+
+    Issue #370 asks for "AK->EK and EK->manufacturer-CA". Only the second half
+    is a certificate path, and the split matters:
+
+    * ``ak_chain_pem`` -- AK -> ... -> pinned CA. Establishes
+      ``ak_cert_chain``: the attestation key is certified by a path the
+      operator's root anchors.
+    * ``ek_chain_pem`` -- the Endorsement Key certificate and its own path to
+      the pinned CA, supplied separately. Establishes ``ek_cert_chain``: this
+      EK is a genuine one the manufacturer vouched for.
+
+    **AK->EK is deliberately not attempted here, because it is not a
+    certificate link.** An EK is a restricted *decryption* key: it cannot sign,
+    so it cannot issue an AK certificate, and an end-entity EK can never appear
+    in the AK's issuance path. TPM 2.0 binds an AK to an EK by credential
+    activation (``TPM2_MakeCredential`` / ``TPM2_ActivateCredential``), a
+    challenge-response the verifier runs. That is blocker (3) on the issue and
+    remains an open design decision. Verifying both chains here proves each key
+    is individually certified; it does not prove they live in the same TPM.
+
+    A supplied EK chain must present a real end-entity EK certificate: the TCG
+    EK EKU **and** ``ca=False``. The EKU alone is not enough -- Azure's vTPM
+    intermediate CAs carry ``2.23.133.8.1`` to mean "may issue EK
+    certificates", and accepting that would report ``ek_cert_chain`` verified
+    for a chain holding no EK at all.
+
+    Returns ``(ok, established_links, reason)`` and never raises. A supplied
+    but invalid EK chain fails the whole call rather than downgrading, so bad
+    material is never silently ignored.
+    """
+    from agent_manifest import verify_cert_chain
+    from cryptography import x509
+
+    try:
+        chain = x509.load_pem_x509_certificates(ak_chain_pem)
+    except Exception as exc:  # noqa: BLE001
+        return False, [], f"AK cert chain is not parseable: {exc}"
+    if not chain:
+        return False, [], "AK cert chain contained no certificate"
+
+    try:
+        roots = x509.load_pem_x509_certificates(trusted_ca_pem)
+    except Exception as exc:  # noqa: BLE001
+        return False, [], f"trusted_tpm_ca_pem is not parseable: {exc}"
+    if not roots:
+        return False, [], "trusted_tpm_ca_pem contained no certificate"
+
+    try:
+        verify_cert_chain(chain, roots)
+    except Exception as exc:  # noqa: BLE001 - CertChainError or parse fault -> fail closed
+        return False, [], str(exc)
+
+    established = ["ak_cert_chain"]
+
+    if ek_chain_pem is not None:
+        try:
+            ek_chain = x509.load_pem_x509_certificates(ek_chain_pem)
+        except Exception as exc:  # noqa: BLE001
+            return False, [], f"EK cert chain is not parseable: {exc}"
+        if not ek_chain:
+            return False, [], "EK cert chain contained no certificate"
+        if not _is_endorsement_key_cert(ek_chain[0]):
+            return False, [], (
+                "EK chain leaf is not an end-entity Endorsement Key certificate "
+                "(needs TCG EK EKU 2.23.133.8.1 and ca=False)"
+            )
+        try:
+            verify_cert_chain(ek_chain, roots)
+        except Exception as exc:  # noqa: BLE001
+            return False, [], f"EK chain does not reach the pinned CA: {exc}"
+        established.append("ek_cert_chain")
+
+    return True, established, None
+
+
+def _is_endorsement_key_cert(cert: Any) -> bool:
+    """True only for an end-entity certificate bearing the TCG EK EKU.
+
+    Both conditions are load-bearing. The EKU alone matches Azure's issuing CAs,
+    which advertise it as a permission to issue EK certificates; requiring
+    ``ca=False`` keeps a CA from being counted as an endorsement of a TPM.
+    """
+    return _has_eku(cert, _TCG_EK_CERTIFICATE) and not _is_ca(cert)
+
+
+def _is_ca(cert: Any) -> bool:
+    """True when basicConstraints marks *cert* as a CA. Absent extension: not a CA."""
+    from cryptography import x509
+
+    try:
+        return bool(cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca)
+    except x509.ExtensionNotFound:
+        return False
+    except Exception:  # noqa: BLE001
+        # Unreadable constraints: treat as a CA so it cannot pass as an EK.
+        return True
+
+
+def _has_eku(cert: Any, oid_dotted: str) -> bool:
+    """True when *cert* carries *oid_dotted* in its extended key usage."""
+    from cryptography import x509
+
+    try:
+        eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    except x509.ExtensionNotFound:
+        return False
+    except Exception:  # noqa: BLE001 - a malformed extension is not an endorsement
+        return False
+    return any(usage.dotted_string == oid_dotted for usage in eku)
 
 
 def verify_tpm_quote_chained(

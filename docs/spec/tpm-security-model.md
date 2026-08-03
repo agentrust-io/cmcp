@@ -30,17 +30,21 @@ The gateway observed a platform boot state, expressed as a digest over PCRs 0 th
 
 ## 4. What is not claimable, and why
 
-### 4.1 The evidence is not cryptographically bound to the TPM (#429, #430)
+### 4.1 The evidence is not cryptographically bound to the TPM (#429, #430) — closed in the verifier
 
-`ESAPI.quote()` returns `Tuple[TPM2B_ATTEST, TPMT_SIGNATURE]`. The signature is discarded at the call site, and `verify_tpm_measurement` has no signature parameter. Verification is structural parsing plus a nonce comparison.
+Historically `ESAPI.quote()` returned `Tuple[TPM2B_ATTEST, TPMT_SIGNATURE]` and the signature was discarded at the call site, so verification was structural parsing plus a nonce comparison. Any code executing in the gateway process could synthesise attestation data with arbitrary PCR values and the expected nonce, and it verified.
 
-Compounding this, the quote is called with `object_handle=ectx.get_capability(TPM2_ALG.NULL)`, which is a capability query rather than a loaded key handle. The call raises, a bare `except` sets `raw_evidence = None`, and the provider degrades silently. The quote path is effectively dead code.
+That hole is closed. The producer now captures the marshalled `TPMT_SIGNATURE`, the AK public key, and the AK certificate chain onto `AttestationReport` (`quote_signature`, `attestation_key_pem`, `attestation_key_chain_pem`). `verify_trace_claim`'s `tpm2` branch verifies the signature over the `TPMS_ATTEST` and the AK chain against an operator-pinned root supplied as `trusted_tpm_ca_pem` (#370), and `hardware_attestation` is reported verified only when both check out — the same gating the SNP VCEK chain uses. Supplied-but-invalid chain material is fatal; absent chain material degrades to `unverified` for back-compatibility with evidence predating these fields.
 
-Consequence: any code executing in the gateway process can synthesise attestation data with arbitrary PCR values and the expected nonce, and it verifies. Local code execution is the primary adversary on a device without confidential compute, so this removes the security value of the TPM path.
+One transport gap remains. `RuntimeInfo` in `agentrust-trace` is `extra="forbid"` and carries no evidence fields, so a claim built through `_build_runtime()` cannot yet carry `raw_evidence`, `quote_signature`, or `cert_chain`. The verifier reads them from the raw claim dict, which means the chained path only engages for evidence supplied out of band. Closing this needs the `RuntimeInfo` schema change upstream and is the same constraint the SNP `cert_chain` field is under.
 
-### 4.2 There is no attestation key identity (#431)
+### 4.2 There is no attestation key identity (#431) — partially closed
 
-No AK is provisioned. `ek_cert_chain` is unconditionally listed as unverified with the note `requires_ca_lookup`. Even with a verified signature, nothing distinguishes a discrete TPM from a software emulator or an attacker-generated key.
+An AK certificate chain is now provisioned and verified to a pinned manufacturer root (`tpm_roots.py`), so a verified quote does distinguish a key certified by a known TPM vendor from an attacker-generated one. `verify_ak_ek_chain` will additionally verify an EK certificate's own path to the pinned CA when a producer bundles one, at which point `ek_cert_chain` is genuinely established rather than carrying the old `requires_ca_lookup` note.
+
+What is still open is the **binding** between the two, and it cannot be closed with certificates. An EK is a restricted decryption key: it cannot sign, so it cannot issue an AK certificate and cannot appear in the AK's issuance path. Issue #370's "verify AK->EK" is therefore only half realisable — `EK->manufacturer-CA` is a real path, `AK->EK` is not. TPM 2.0 binds them by credential activation (`TPM2_MakeCredential` / `TPM2_ActivateCredential`), a challenge-response the verifier runs, and that is not implemented. Verifying both chains proves each key is individually certified; it does not prove they live in the same TPM. A platform that certifies an AK without activation is trusted on the strength of its CA alone.
+
+One sharp edge worth recording, because it produced a false pass during implementation: the TCG EK EKU (`2.23.133.8.1`) does **not** identify an Endorsement Key. Azure's real vTPM chain carries it on the *issuing CAs* (`Azure Cloud Virtual TPM CA - 11` and `... CA 2025`), where it means "may issue EK certificates". Matching on the EKU alone reported `ek_cert_chain` verified for a chain containing no EK at all. Identification requires the EKU **and** `ca=False`.
 
 ### 4.3 The gateway is not measured (#432, measurement landed, binding open)
 

@@ -38,6 +38,19 @@ from cmcp_runtime.tee.base import AttestationReport, make_audit_bound_nonce
 
 logger = logging.getLogger(__name__)
 
+
+def _b64(data: object) -> str | None:
+    """base64url, unpadded, or None. Evidence fields are absent, not empty.
+
+    Anything that is not actual bytes is treated as absent. Providers are free to
+    leave these unset, and a report object that does not carry them at all (an
+    older provider, or a test double) must not break claim construction.
+    """
+    if not isinstance(data, (bytes, bytearray)):
+        return None
+    return base64.urlsafe_b64encode(bytes(data)).rstrip(b"=").decode()
+
+
 # Module-level counter so sequence numbers are monotonic across all sessions
 # within a single gateway process lifetime.
 _CLAIM_SEQUENCE: int = 0
@@ -206,11 +219,11 @@ class SessionManager:
             attestation_generated_at=generated_at_str,
             attestation_validity_seconds=report.attestation_validity_seconds,
             measurement_note=report.measurement_note,
-            raw_evidence=(
-                base64.urlsafe_b64encode(report.raw_evidence).rstrip(b"=").decode()
-                if report.raw_evidence is not None
-                else None
-            ),
+            raw_evidence=_b64(report.raw_evidence),
+            # #370: without these the quote is unauthenticated -- the verifier has
+            # the signature and chain checks but nothing to run them on.
+            quote_signature=_b64(report.quote_signature),
+            cert_chain=_b64(report.attestation_key_chain_pem),
         )
 
         bundle = ctx.policy_bundle

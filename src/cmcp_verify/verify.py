@@ -40,6 +40,57 @@ def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
     return hashlib.sha256(canonical).digest()
 
 
+def _decode_evidence(value: str | None) -> bytes | None:
+    """Decode a base64 evidence field, tolerating both alphabets and padding.
+
+    The gateway writes base64url without padding; older fields and hand-built
+    claims use standard base64. Accepting both keeps a decode quirk from
+    presenting as a verification failure.
+    """
+    if not value:
+        return None
+    padded = value + "=" * (-len(value) % 4)
+    try:
+        if "-" in padded or "_" in padded:
+            return base64.urlsafe_b64decode(padded)
+        return base64.b64decode(padded)
+    except Exception:  # noqa: BLE001 - undecodable evidence is absent evidence
+        return None
+
+
+def _evidence_field(claim_json: dict[str, Any], runtime: dict[str, Any], name: str) -> bytes | None:
+    """Read one evidence field, preferring the cmcp envelope.
+
+    ``gateway.attestation_evidence`` is where the gateway now puts signed
+    evidence (#370): ``trace.runtime`` is governed by agentrust-trace's
+    ``RuntimeInfo``, which is ``extra="forbid"``, so a claim carrying evidence
+    there fails schema validation before any platform branch runs. The
+    ``trace.runtime`` fallback is kept so claims and fixtures written against the
+    old shape still verify.
+    """
+    evidence = claim_json.get("gateway", {}).get("attestation_evidence") or {}
+    return _decode_evidence(evidence.get(name) or runtime.get(name))
+
+
+def _leaf_public_key_pem(chain_pem: bytes) -> bytes:
+    """Return the leaf (AK) certificate's public key as PEM.
+
+    The chain is leaf-first, so the attestation key is the first certificate.
+    Callers reach this only after the chain has verified, so a parse fault here
+    is not expected; it still returns empty bytes rather than raising, because
+    the signature check that consumes this already fails closed on an unloadable
+    key.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    try:
+        leaf = x509.load_pem_x509_certificates(chain_pem)[0]
+        return leaf.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    except Exception:  # noqa: BLE001
+        return b""
+
+
 _SW_ONLY_FIRMWARE = "software-only-dev-mode"
 _EXTERNAL_EVIDENCE_ERROR = "EXTERNAL_EVIDENCE_VERIFICATION_FAILED"
 _EXTERNAL_EVIDENCE_HASH_RE = re.compile(r"^sha(256|384):[0-9a-f]+$")
@@ -551,6 +602,7 @@ def verify_trace_claim(
     trusted_agent_manifest_keys: dict[str, bytes] | None = None,
     trusted_ark_pem: bytes | None = None,
     trusted_intel_root_pem: bytes | None = None,
+    trusted_tpm_ca_pem: bytes | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -771,10 +823,14 @@ def verify_trace_claim(
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = "software-only mode - not hardware-backed"
     elif platform == "tpm2":
-        from cmcp_verify.tpm import verify_tpm_measurement
+        from cmcp_verify.tpm import (
+            verify_ak_ek_chain,
+            verify_quote_signature,
+            verify_tpm_measurement,
+        )
 
-        raw_ev = _runtime.get("raw_evidence")
-        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        tpm_established_links: set[str] = set()
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         # The TPM quote commits the attestation nonce's first 32 bytes -- the RFC 7638
         # JWK Thumbprint of the TEE key -- as qualifying_data (§3.3). Re-derive it from
         # cnf.jwk.x so a substituted key is detected.
@@ -785,16 +841,102 @@ def verify_trace_claim(
             raw_evidence=raw_bytes,
             expected_qualifying_data=_expected_qd,
         )
-        if tpm_result.verified:
+
+        # Parsing an attest blob proves nothing on its own: magic, PCR digest and
+        # qualifying_data are all attacker-writable, so a forged TPMS_ATTEST used to
+        # reach the branch above and report verified (issue #370). The TPMT_SIGNATURE
+        # and the AK cert chain are what bind the blob to a key inside a TPM. Both
+        # travel with the claim (passport model, as SNP does with cert_chain); the
+        # manufacturer CA is pinned out of band by the operator.
+        quote_signature = _evidence_field(claim_json, _runtime, "quote_signature")
+        ak_chain_pem = _evidence_field(claim_json, _runtime, "cert_chain")
+        # Optional and separate: the EK certificate has its own path to the CA and
+        # cannot sit in the AK's issuance chain (an EK cannot sign). Present only
+        # when the producer bundles it.
+        ek_chain_pem = _evidence_field(claim_json, _runtime, "ek_cert_chain")
+
+        tpm_chain_ok = False
+        if raw_bytes is None:
+            # verify_tpm_measurement already failed closed on this.
+            unverified.append("ak_cert_chain")
+            details["ak_cert_chain"] = "raw_evidence not provided; quote signature unverifiable"
+        elif quote_signature is None or ak_chain_pem is None or trusted_tpm_ca_pem is None:
+            # Back-compatible fallback: evidence predating the signature/chain fields,
+            # or an operator who pinned no CA. Unverified, not an error -- same shape
+            # as the SNP no-chain path.
+            unverified.append("ak_cert_chain")
+            details["ak_cert_chain"] = (
+                "TPM quote signature and AK cert chain not verified ("
+                + ", ".join(
+                    reason
+                    for reason, absent in (
+                        ("no quote_signature in claim", quote_signature is None),
+                        ("no cert_chain in claim", ak_chain_pem is None),
+                        ("no trusted_tpm_ca_pem pinned", trusted_tpm_ca_pem is None),
+                    )
+                    if absent
+                )
+                + ")"
+            )
+        else:
+            # Two steps, per #370: the chain says the AK is endorsed by a TPM the
+            # operator trusts, the signature says this quote came from that AK.
+            # Neither is sufficient alone.
+            chain_verified, established, chain_reason = verify_ak_ek_chain(
+                ak_chain_pem,
+                trusted_ca_pem=trusted_tpm_ca_pem,
+                ek_chain_pem=ek_chain_pem,
+            )
+            if not chain_verified:
+                unverified.extend(["tpm_quote_signature", "ak_cert_chain"])
+                details["ak_cert_chain"] = chain_reason or "AK/EK chain verification failed"
+                failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
+            else:
+                ak_leaf_pem = _leaf_public_key_pem(ak_chain_pem)
+                sig_ok, tpm_sig_details = verify_quote_signature(
+                    raw_bytes, quote_signature, ak_leaf_pem
+                )
+                details.update(tpm_sig_details)
+                if sig_ok:
+                    tpm_chain_ok = True
+                    verified.append("tpm_quote_signature")
+                    verified.extend(established)
+                    tpm_established_links.update(established)
+                else:
+                    # Chain material was supplied and did not check out. Unlike the
+                    # absent-material case this is fatal: something signed this quote
+                    # that does not chain to the pinned root.
+                    unverified.append("tpm_quote_signature")
+                    failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
+
+        # The AK chain is the TPM hardware root of trust. As with the SNP VCEK chain
+        # (#370/#372), a claim whose quote signature is unverified must never report
+        # as fully VERIFIED even when the blob parses and the measurement matches.
+        if tpm_result.verified and tpm_chain_ok:
             verified.append("hardware_attestation")
             verified.extend(tpm_result.verified_fields)
+        elif tpm_result.verified and not tpm_chain_ok:
+            verified.extend(tpm_result.verified_fields)
+            unverified.append("hardware_attestation")
+            details["hardware_attestation"] = (
+                "TPM quote parsed but signature/AK chain not verified"
+            )
         else:
             unverified.append("hardware_attestation")
             failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
             if tpm_result.failure_reason:
                 details["tpm_failure"] = tpm_result.failure_reason
-        unverified.extend(tpm_result.unverified_fields)
+        # verify_tpm_measurement predates chain verification and reports
+        # ek_cert_chain as unverified unconditionally. When the AK chain actually
+        # carried an EK certificate and it checked out, that note is stale -- drop
+        # it rather than report the same field as both verified and unverified.
+        unverified.extend(
+            f for f in tpm_result.unverified_fields if f not in tpm_established_links
+        )
         details.update(tpm_result.details)
+        if "ek_cert_chain" in tpm_established_links:
+            details.pop("ek_cert_chain_validation", None)
+            details["ek_cert_chain"] = "EK certificate verified to the pinned manufacturer CA"
     elif platform == "azure-cvm-sev-snp":
         # Azure confidential VM: SEV-SNP behind a Hyper-V paravisor, vTPM-rooted.
         # The guest cannot control SNP REPORT_DATA (the paravisor binds the vTPM AK
