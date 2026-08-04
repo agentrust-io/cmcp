@@ -176,6 +176,9 @@ def test_close_session_claim_includes_agent_identity_binding() -> None:
     assert claim["gateway"]["agent_identity"]["manifest_id"] == ctx.agent_manifest.manifest_id
     assert claim["gateway"]["agent_identity"]["agent_id"] == ctx.agent_manifest.agent_id
     assert claim["gateway"]["agent_identity"]["subject_source"] == "config"
+    # #425: no code path supplies agent key bytes yet, so close_session() must
+    # never emit this field (exclude_none drops it entirely).
+    assert "agent_key_thumbprint" not in claim["gateway"]["agent_identity"]
 
 
 def test_close_session_attestation_stale_flag_false_when_fresh() -> None:

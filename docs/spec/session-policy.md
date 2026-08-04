@@ -181,6 +181,14 @@ This binding answers "who acted" for the session. It does not replace `trace.sub
 
 Offline verifiers SHOULD cross-check `gateway.agent_identity` against the signed manifest and trusted issuer key. This keeps the runtime boundary check and the evidence artifact self-checking.
 
+`gateway.agent_identity` MAY also carry `agent_key_thumbprint`: an RFC 7638 JWK thumbprint of the agent's own
+signing key, rendered as `sha256:<hex>`, distinct from `issuer_key_id` (the key that signed the manifest).
+It is optional and is omitted from every claim the current runtime can produce, since no code path here has
+access to agent key bytes yet. When a producer does populate it, it MUST only do so while `subject_source`
+names a live-authenticated source (currently `svid`) - never `config` or `manifest-dev`, which are
+operator-supplied assertions rather than proof of key possession. `cmcp_verify.verify_trace_claim` fails
+closed (`AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT`) on any claim that violates this.
+
 ## TRACE Claim Fields from Session State
 
 The following fields from session state are included in the TRACE attestation record for the session (written at session close):
@@ -189,4 +197,4 @@ The following fields from session state are included in the TRACE attestation re
 |-------|------|-------------|
 | `session_max_sensitivity` | string | The highest `max_sensitivity` value reached during the session. |
 | `session_reset_count` | integer | Number of times `POST /session/reset` was called during the session lifetime. Normally `0`; a non-zero value warrants review. |
-| `agent_identity` | object | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, subject source, issuer key ID, policy hash, and catalog hash. Present only when `agent_manifest` is configured and verified. |
+| `agent_identity` | object | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, subject source, issuer key ID, policy hash, catalog hash, and an optional `agent_key_thumbprint`. Present only when `agent_manifest` is configured and verified. |

@@ -351,6 +351,10 @@ class SessionManager:
         if not isinstance(binding, AgentManifestBinding):
             binding = None
         if binding is not None:
+            # agent_key_thumbprint (#425) intentionally omitted: AgentManifestBinding
+            # carries no agent key bytes today, so it defaults to None. Wire it here
+            # once a real key source exists, gated on subject_source being live-
+            # authenticated (see AgentIdentityOut's docstring in audit/trace_claim.py).
             agent_identity = AgentIdentityInfo(
                 manifest_id=binding.manifest_id,
                 agent_id=binding.agent_id,

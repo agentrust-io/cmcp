@@ -96,6 +96,12 @@ class AgentIdentityInfo:
     issuer_key_id: str
     policy_bundle_hash: str
     tool_catalog_hash: str
+    # #425: RFC 7638 JWK thumbprint of the agent's own signing key, "sha256:<hex>".
+    # Distinct from issuer_key_id (the key that signed the manifest). Always None
+    # today: no code path supplies agent key bytes, and it must never be set while
+    # subject_source is a non-live-authenticated source (config, manifest-dev) - see
+    # AgentIdentityOut for the full contract.
+    agent_key_thumbprint: str | None = None
 
 
 # ── Pydantic output models ─────────────────────────────────────────────────────
@@ -138,6 +144,18 @@ class CatalogSummary(BaseModel):
 
 
 class AgentIdentityOut(BaseModel):
+    """gateway.agent_identity: the Agent Manifest binding for this session.
+
+    agent_key_thumbprint (#425): RFC 7638 JWK thumbprint of the agent's own signing
+    key, rendered as "sha256:<hex>" - see tee/base.py's jwk_thumbprint() for the
+    reference pre-image (canonical JSON of the OKP {crv, kty, x} members). Optional
+    and, as of this field's introduction, always None: no runtime code path has
+    agent key bytes to hash yet. A future producer of this field MUST only set it
+    when subject_source names a live-authenticated source (currently just "svid"),
+    never "config" or "manifest-dev" - cmcp_verify.verify_trace_claim fails closed
+    on any claim that violates this.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     manifest_id: str
@@ -148,6 +166,7 @@ class AgentIdentityOut(BaseModel):
     issuer_key_id: str
     policy_bundle_hash: str
     tool_catalog_hash: str
+    agent_key_thumbprint: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
 
 
 class ToolTranscriptEntry(BaseModel):
@@ -433,6 +452,7 @@ def generate_trace_claim(
                 issuer_key_id=agent_identity.issuer_key_id,
                 policy_bundle_hash=agent_identity.policy_bundle_hash,
                 tool_catalog_hash=agent_identity.tool_catalog_hash,
+                agent_key_thumbprint=agent_identity.agent_key_thumbprint,
             )
             if agent_identity is not None
             else None

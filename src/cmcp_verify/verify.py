@@ -41,6 +41,10 @@ def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
 
 
 _SW_ONLY_FIRMWARE = "software-only-dev-mode"
+# #425: gateway.agent_identity.subject_source values that reflect a live-
+# authenticated credential rather than a config-supplied assertion. Mirrors
+# agent_manifest._SUBJECT_SOURCES minus "config"/"manifest-dev".
+_LIVE_AUTHENTICATED_SUBJECT_SOURCES = frozenset({"svid"})
 _EXTERNAL_EVIDENCE_ERROR = "EXTERNAL_EVIDENCE_VERIFICATION_FAILED"
 _EXTERNAL_EVIDENCE_HASH_RE = re.compile(r"^sha(256|384):[0-9a-f]+$")
 _ISSUER_KEY_ID_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -97,6 +101,7 @@ class VerificationError(StrEnum):
     CLAIM_MALFORMED = "CLAIM_MALFORMED"
     HARDWARE_ATTESTATION_FAILED = "HARDWARE_ATTESTATION_FAILED"
     AGENT_MANIFEST_MISMATCH = "AGENT_MANIFEST_MISMATCH"
+    AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT = "AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT"
 
 
 @dataclass
@@ -719,6 +724,28 @@ def verify_trace_claim(
                 unverified.append("agent_manifest.binding")
                 failure = failure or VerificationError.AGENT_MANIFEST_MISMATCH
                 details["agent_manifest"] = str(exc)
+
+    # Step 5b: agent_key_thumbprint subject binding (#425). Unconditional - runs
+    # whether or not the caller requested the Step 5 manifest cross-check, because
+    # this guards against a claim that asserts a key binding the gateway did not
+    # actually authenticate. A thumbprint is only meaningful if subject_source
+    # names a live-authenticated credential; "config"/"manifest-dev" are assertions
+    # an operator typed in, not proof of key possession.
+    identity_for_thumbprint = claim_json.get("gateway", {}).get("agent_identity")
+    if isinstance(identity_for_thumbprint, dict) and identity_for_thumbprint.get(
+        "agent_key_thumbprint"
+    ):
+        if identity_for_thumbprint.get("subject_source") not in _LIVE_AUTHENTICATED_SUBJECT_SOURCES:
+            unverified.append("agent_identity.agent_key_thumbprint")
+            failure = failure or VerificationError.AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT
+            details["agent_key_thumbprint"] = (
+                "gateway.agent_identity.agent_key_thumbprint is present but "
+                f"subject_source={identity_for_thumbprint.get('subject_source')!r} is not "
+                "live-authenticated - the claim asserts a key binding the gateway did "
+                "not actually authenticate"
+            )
+        else:
+            verified.append("agent_identity.agent_key_thumbprint")
 
     # Step 6: Attestation freshness
     age, is_fresh = _check_attestation_freshness(claim_json, max_attestation_age_seconds)
