@@ -61,6 +61,12 @@ def verify_trace_claim(
        verify_manifest() and cross-check gateway.agent_identity:
        manifest_id, agent_id/authenticated_subject, subject_source, policy hash,
        catalog hash, and manifest expiry.
+    5b. Unconditionally: if gateway.agent_identity.agent_key_thumbprint is
+        present, require subject_source to name a live-authenticated source
+        (currently just "svid"). Fails closed
+        (AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT) otherwise, since "config" and
+        "manifest-dev" are operator-supplied assertions, not proof of key
+        possession.
     6. Check attestation freshness (timestamp within max_attestation_age_seconds)
     7. Verify audit chain continuity (audit_chain_root, audit_chain_tip)
 

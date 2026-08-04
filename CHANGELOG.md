@@ -76,6 +76,11 @@ Five changes below the headline TPM fix, each one a case where cMCP reported mor
 - **SNP `report_data` mismatch is now fatal (#371, #390),** since that field carries the confirmation-key binding and the freshness nonce, and the dispatcher no longer reports `hardware_attestation` as verified while the VCEK chain is unverified (#370, #372); such a claim stays `PARTIALLY_VERIFIED`. Same defect class as the TPM headline, on the AMD path, fixed first.
 
 - **TCG event logs are replayed against the reported PCR values (#443)**, so a log that does not reproduce the quoted digests is detected rather than trusted as narrative.
+- **`gateway.agent_identity.agent_key_thumbprint` scaffold (#425).** SAGE (via l33tdawg, agentrust-io/.github discussion #15) wanted an offline check that a downstream signature came from the agent a TRACE Claim describes. Investigating turned up that the issue's own premise did not hold: `AgentManifestBinding` carries no agent public key anywhere, and `subject_source` is a static config value today, not a live-authenticated credential (`svid` is a valid value but nothing produces it). So there was no key material anywhere in the runtime to hash.
+
+  Landed as a nullable, additive field instead: `agent_key_thumbprint` (RFC 7638 JWK thumbprint, `sha256:<hex>`) on `AgentIdentityInfo`/`AgentIdentityOut`, always `None` today since no code path supplies agent key bytes. The real, non-speculative piece is on the verifier side: `cmcp_verify.verify_trace_claim` now fails closed (`AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT`) on any claim that carries the field while `subject_source` is not live-authenticated, so a future producer cannot launder a config-supplied identity into something that looks like a hardware-attested key binding.
+
+  Populating the field for real needs either an `agent_manifest_sdk` schema change carrying the agent's public key, or a live mTLS/challenge-response credential wired into `AgentManifestBinding` - both explicitly out of scope here, tracked in the issue thread.
 
 ### Fixed
 
