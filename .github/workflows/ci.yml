@@ -31,7 +31,10 @@ jobs:
         run: python -m pip install --upgrade pip setuptools && pip install -e ".[dev]"
 
       - name: Security scan
-        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit
+        # --skip-editable: pip-audit resolves the editable install of this package
+        # against PyPI and fails when the version is not published yet, so without
+        # it no version-bump PR can ever pass CI. Dependencies are still audited.
+        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable
 
       - name: Lint
         run: ruff check src/ tests/
