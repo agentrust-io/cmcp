@@ -32,17 +32,12 @@ dependencies = [
     # declaring ML-DSA-65 or hybrid crashed the verifier with an uncaught
     # RuntimeError on any install without the optional [pq] extra.
     "agent-manifest>=0.10",
-    # 49.0 is a security floor, not a compatibility one. Two advisories against
-    # 48.x land squarely on what this package does with attacker-supplied
-    # certificates in verify_ak_ek_chain and verify_vcek_chain:
-    #   CVE-2026-69249 - duplicate self-signed intermediates cause exponential
-    #     path building, so a claim can carry a chain that hangs the verifier.
-    #   CVE-2026-69248 - the verifier accepts wildcard DNS names, escaping
-    #     permittedSubtrees name constraints.
-    # Both are fixed in 49.0.0. The ceiling is imposed upstream, not here:
-    # agent-governance-toolkit-core pins cryptography<50.0 and agent-manifest
-    # pins <50, so 50.0.0 is unreachable until both lift (see #471).
-    "cryptography>=49.0",
+    # Cannot be raised past 48.x today, which leaves two reachable advisories
+    # unfixed. See #471: agent-governance-toolkit-core 4.x pins
+    # cryptography<49.0, and the only release that allows 49 (5.0.0) pins
+    # agentrust-trace<0.3.0 against the >=0.5 this package needs. Raising the
+    # floor here makes the dependency set unsatisfiable rather than secure.
+    "cryptography>=42.0",
     "pyyaml>=6.0",
     "httpx>=0.27",
     "anyio>=4.0",
