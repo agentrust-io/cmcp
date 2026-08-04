@@ -39,7 +39,14 @@ dependencies = [
     "starlette>=0.37",
     "uvicorn>=0.29",
     "click>=8.1",
-    "agent-governance-toolkit-core>=4.0",
+    # Held on the 4.x line deliberately, see #472. PolicyEvaluator imports
+    # agent_os.policies.backends.CedarBackend, which AGT removed in #3444 when
+    # the v4 policy language was replaced by ACS v5. 4.1.0 (tagged 2026-06-09)
+    # is the last release that ships it, and >=4.0 with no ceiling let pip pick
+    # a 5.x that would break policy evaluation entirely. The ceiling is the
+    # constraint that matters; the floor stays open so an agt-core 4.1.1 with
+    # the cryptography cap lift (#471) is taken automatically when it ships.
+    "agent-governance-toolkit-core>=4.1.0,<5.0",
     "cedarpy>=4.0",
 ]
 
