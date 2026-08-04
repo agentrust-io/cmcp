@@ -325,6 +325,47 @@ def test_generate_claim_agent_identity_binding():
         == "spiffe://factory.example/agent/material-movement/dev"
     )
     assert claim.gateway.agent_identity.subject_source == "config"
+    # #425: no code path supplies agent key bytes yet, so this is always absent.
+    assert claim.gateway.agent_identity.agent_key_thumbprint is None
+
+
+def test_generate_claim_agent_key_thumbprint_round_trips_when_supplied():
+    """#425 schema-level check: if a producer does supply agent_key_thumbprint,
+    generate_trace_claim carries it through untouched. Not exercised by any real
+    runtime path yet (see manager.py) - this only proves the plumbing works.
+    """
+    key = SigningKey()
+    chain = AuditChain("sess-002")
+    thumbprint = "sha256:" + "a" * 64
+    claim = generate_trace_claim(
+        session_id="sess-002",
+        signing_key=key,
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64,
+            enforcement_mode="enforcing",
+            policy_version="1.0.0",
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        agent_identity=AgentIdentityInfo(
+            manifest_id="0197739a-8c00-7000-8000-000000000001",
+            agent_id="spiffe://factory.example/agent/material-movement/dev",
+            authenticated_subject="spiffe://factory.example/agent/material-movement/dev",
+            subject_source="svid",
+            issuer="spiffe://factory.example/signing-authority/development",
+            issuer_key_id="a" * 64,
+            policy_bundle_hash="sha256:" + "0" * 64,
+            tool_catalog_hash="sha256:" + "1" * 64,
+            agent_key_thumbprint=thumbprint,
+        ),
+        do_sign=False,
+    )
+    assert claim.gateway.agent_identity is not None
+    assert claim.gateway.agent_identity.agent_key_thumbprint == thumbprint
 
 
 # ── RuntimeClaim Pydantic validation ─────────────────────────────────────────

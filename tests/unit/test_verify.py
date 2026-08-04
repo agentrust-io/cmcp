@@ -265,6 +265,36 @@ def test_agent_manifest_binding_mismatch_fails():
     assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
 
 
+# -- agent_key_thumbprint subject binding (#425) -------------------------------
+
+
+def test_agent_key_thumbprint_with_live_authenticated_subject_is_verified():
+    identity = _agent_identity()
+    identity.subject_source = "svid"
+    identity.agent_key_thumbprint = "sha256:" + "c" * 64
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "agent_identity.agent_key_thumbprint" in result.verified_fields
+    assert result.failure_reason != VerificationError.AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT
+
+
+def test_agent_key_thumbprint_with_config_subject_fails_closed():
+    identity = _agent_identity()  # subject_source="config" by default
+    identity.agent_key_thumbprint = "sha256:" + "c" * 64
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "agent_identity.agent_key_thumbprint" in result.unverified_fields
+    assert result.failure_reason == VerificationError.AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT
+
+
+def test_claim_without_agent_key_thumbprint_is_unaffected():
+    claim_dict, _ = _make_signed_claim(agent_identity=_agent_identity())
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "agent_identity.agent_key_thumbprint" not in result.verified_fields
+    assert "agent_identity.agent_key_thumbprint" not in result.unverified_fields
+    assert result.failure_reason != VerificationError.AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT
+
+
 # -- Attestation freshness ----------------------------------------------------
 
 
