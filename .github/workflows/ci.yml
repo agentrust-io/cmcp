@@ -34,7 +34,15 @@ jobs:
         # --skip-editable: pip-audit resolves the editable install of this package
         # against PyPI and fails when the version is not published yet, so without
         # it no version-bump PR can ever pass CI. Dependencies are still audited.
-        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable
+        #
+        # --ignore-vuln CVE-2026-69247: a Bleichenbacher oracle in PKCS#7
+        # EnvelopedData *decryption*. This package never decrypts PKCS#7; the only
+        # use is load_der_pkcs7_certificates / load_pem_pkcs7_certificates in
+        # tee/tpm.py, which parses a certificate bundle fetched from an AIA URL, so
+        # the oracle is unreachable here. It is fixed in cryptography 50.0.0, which
+        # agent-governance-toolkit-core (<50.0) and agent-manifest (<50) both make
+        # unreachable. Remove this ignore when those caps lift (#471).
+        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable --ignore-vuln CVE-2026-69247
 
       - name: Lint
         run: ruff check src/ tests/
