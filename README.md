@@ -64,9 +64,17 @@ Create `cmcp-config.yaml`:
 attestation:
   provider: auto
   enforcement_mode: advisory   # advisory eases first-run tuning; the default is `enforcing`
+listen_addr: "127.0.0.1:8443"  # pin loopback: dev mode runs without a bearer token
 policy_bundle_path: ./policies/
 catalog_path: ./catalog.json
 ```
+
+`listen_addr` is not optional here. `CMCP_DEV_MODE=1` deliberately skips the
+bearer token requirement so you can try things quickly, and on the published
+0.3.0 the default bind is `0.0.0.0:8443`, so omitting it stands up an
+unauthenticated gateway on every interface on your machine. Later versions
+default to loopback and refuse to bind a non-loopback address without
+`CMCP_BEARER_TOKEN`, but pin it explicitly and the config is correct on both.
 
 Start the gateway:
 
@@ -81,6 +89,11 @@ curl -X POST http://localhost:8443/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"salesforce.contacts","arguments":{"query":"Acme Corp"},"_cmcp":{"session_id":"s1","workflow_id":"demo-agent"}}}'
 ```
+
+Prefer a guided version? [agentrust-io.com/quickstart](https://agentrust-io.com/quickstart/)
+walks the same path in about ten minutes on a laptop, with no hardware and no
+signup: install, write one Cedar `forbid` rule, watch a tool call return 403
+`POLICY_DENY` before it reaches an upstream, then verify the signed receipt.
 
 See [docs/quickstart.md](docs/quickstart.md) for the full walkthrough: Cedar policy, tool catalog, first TRACE Claim, and verification (no hardware TEE required).
 
@@ -162,7 +175,7 @@ attestation:
 policy_bundle_path: policies/       # directory containing .cedar files and manifest.json
 catalog_path: catalog.json          # approved tool catalog
 
-listen_addr: "0.0.0.0:8443"
+listen_addr: "127.0.0.1:8443"     # tokenless dev mode is loopback-only; set CMCP_BEARER_TOKEN before binding wider
 max_response_size_bytes: 2097152    # 2 MB default
 policy_reload_interval_seconds: 0   # 0 = disabled; restart required to update policy
 ```
