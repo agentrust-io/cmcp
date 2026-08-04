@@ -35,7 +35,19 @@ jobs:
         # against PyPI and fails when the version is not published yet, so without
         # it no version-bump PR can ever pass CI. Dependencies are still audited.
         #
-        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable
+        # --ignore-vuln CVE-2026-69247: unreachable here, and it is the only one
+        # suppressed. It is a Bleichenbacher oracle in PKCS#7 EnvelopedData
+        # *decryption*, and nothing in this package decrypts PKCS#7. The only use is
+        # load_der_pkcs7_certificates / load_pem_pkcs7_certificates in tee/tpm.py,
+        # parsing a certificate bundle fetched from an AIA URL, which performs no
+        # RSA decryption.
+        #
+        # Deliberately NOT suppressed, so this step stays red until they are fixed:
+        # CVE-2026-69249 and CVE-2026-69248, both reachable through the untrusted
+        # cert_chain a claim carries into verify_ak_ek_chain / verify_vcek_chain.
+        # Both need cryptography>=49.0, which agt-core's pins currently make
+        # unreachable. #471 has the upstream fix. Do not add them here to go green.
+        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable --ignore-vuln CVE-2026-69247
 
       - name: Lint
         run: ruff check src/ tests/
