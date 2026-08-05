@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING for verifiers: claims now carry `gateway.attestation_evidence` (#469, #370).** Signed platform
+  evidence (`raw_evidence`, `quote_signature`, `cert_chain`, `ek_cert_chain`) travels inside the claim so the
+  verifier has something to check the TPM quote against. It could not live under `trace.runtime`, because
+  agentrust-trace's `RuntimeInfo` is `extra="forbid"` and rejected the claim as `CLAIM_MALFORMED` before the
+  platform branch ran, which is precisely what kept the chain verifiers unreachable.
+
+  The break is one-directional, and only for verifiers:
+
+  | | result |
+  |---|---|
+  | this verifier reading an older claim with no evidence | fine, the fields are optional and `trace.runtime` is still read as a fallback |
+  | a verifier older than 0.4.0 reading a claim from this gateway | `CLAIM_MALFORMED` on `gateway.attestation_evidence` |
+
+  `GatewayAddenda` and `RuntimeClaim` are both `extra="forbid"`, so any additive field anywhere in the claim is
+  rejected by a verifier built before it, and `verify_trace_claim` never reads `cmcp_version`. There is no
+  negotiation path, so "evidence travels with the claim" and "older verifiers keep working" cannot both hold.
+  Evidence transport won, since without it the TPM quote is unauthenticated. Anyone verifying claims from a
+  0.4.0 gateway must upgrade `cmcp-runtime` to 0.4.0, which is what ships `cmcp_verify`. Claims with no
+  evidence serialize byte-identically to 0.3.0, so software-only deployments are unaffected.
+
+  Minor rather than patch under SemVer: the wire format gained a field that older readers reject.
+
 ### Fixed
 
 - **`TPM2_NV_Certify` could never have worked as shipped in #459 (hardware, 2026-08-01).** Two defects, both found by running it against a real Azure Trusted Launch vTPM and neither catchable by the unit tests as written:
