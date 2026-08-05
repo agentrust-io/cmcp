@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cmcp-runtime"
-version = "0.3.0"
+version = "0.4.0"
 description = "Hardware-attested MCP runtime, TEE-enforced policy and TRACE Claim generation"
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,6 +32,11 @@ dependencies = [
     # declaring ML-DSA-65 or hybrid crashed the verifier with an uncaught
     # RuntimeError on any install without the optional [pq] extra.
     "agent-manifest>=0.10",
+    # Cannot be raised past 48.x today, which leaves two reachable advisories
+    # unfixed. See #471: agent-governance-toolkit-core 4.x pins
+    # cryptography<49.0, and the only release that allows 49 (5.0.0) pins
+    # agentrust-trace<0.3.0 against the >=0.5 this package needs. Raising the
+    # floor here makes the dependency set unsatisfiable rather than secure.
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "httpx>=0.27",
