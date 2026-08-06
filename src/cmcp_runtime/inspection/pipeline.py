@@ -222,8 +222,16 @@ def _stage4_injection_detection(
                     injection_score=score,
                 )
             return StageResult(stage="injection", decision="allow")
-        except Exception:  # nosec B110
-            pass  # Fall through to regex
+        except Exception:
+            # Falling through to the local patterns is the right behaviour, but
+            # doing it silently means a broken AGT detector looks identical to a
+            # working one while the weaker starter set is what actually ran.
+            _log.warning(
+                "AGT PromptInjectionDetector.detect() failed; "
+                "falling back to local patterns v%s",
+                _PATTERNS_VERSION,
+                exc_info=True,
+            )
 
     # Fallback: regex patterns
     patterns = custom_patterns or _COMPILED_PATTERNS
@@ -423,13 +431,35 @@ class InspectionPipeline:
         self._agt_redactor: Any = None
         self._agt_response_scanner: Any = None
         if _AGT_AVAILABLE:
+            # Constructed independently. Sharing one try block meant a failure in
+            # the first component skipped the other two, so a single upstream API
+            # change disabled three security components at once, silently.
             try:
                 _cfg = DetectionConfig(sensitivity=injection_sensitivity)
                 self._agt_injection_detector = PromptInjectionDetector(config=_cfg)
+            except Exception:
+                _log.warning(
+                    "AGT PromptInjectionDetector unavailable; "
+                    "stage 4 falls back to local patterns v%s",
+                    _PATTERNS_VERSION,
+                    exc_info=True,
+                )
+            try:
                 self._agt_redactor = CredentialRedactor()
+            except Exception:
+                _log.warning(
+                    "AGT CredentialRedactor unavailable; "
+                    "stage 3 falls back to local patterns",
+                    exc_info=True,
+                )
+            try:
                 self._agt_response_scanner = AGTResponseScanner()
-            except Exception:  # nosec B110
-                pass
+            except Exception:
+                _log.warning(
+                    "AGT MCPResponseScanner unavailable; "
+                    "stage 4 loses MCP-specific threat detection",
+                    exc_info=True,
+                )
 
     def run(
         self,
@@ -543,8 +573,17 @@ class InspectionPipeline:
                 injection_scanner = "timeout"
                 stage_results["injection"] = "deny"
                 agt_mcp_denied = True
-            except Exception:  # nosec B110
-                pass
+            except Exception:
+                # Unlike the timeout above this does not deny, because a scanner
+                # that errored has produced no verdict either way and stage 4's
+                # own detection still runs below. It must not be silent though:
+                # MCP-specific threat coverage is gone for this response.
+                _log.warning(
+                    "AGT MCPResponseScanner.scan_response() failed for %s; "
+                    "no MCP-specific threat coverage on this response",
+                    catalog_entry.tool_name,
+                    exc_info=True,
+                )
 
         # INJECT-002: wrap AGT PromptInjectionDetector with the same timeout bound.
         def _run_s4() -> StageResult:

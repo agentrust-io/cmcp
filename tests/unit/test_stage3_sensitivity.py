@@ -225,3 +225,49 @@ def test_suffixed_secret_still_tagged_despite_agt_3494():
     # AGT catches the bare key; only the local pass catches the suffixed one.
     assert "pii" in clean.sensitivity_tags
     assert "pii" in suffixed.sensitivity_tags
+
+
+# ── AGT component construction is independent (#476) ──────────────────────────
+#
+# All three components were built in one try block, so a failure constructing
+# the first left the other two unbuilt and all three silently None. One upstream
+# API change disabled three security components at once, with no log line.
+
+def test_one_failing_agt_component_does_not_disable_the_others():
+    from cmcp_runtime.inspection.pipeline import InspectionPipeline
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("upstream API changed")
+
+    with (
+        patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", True),
+        patch("cmcp_runtime.inspection.pipeline.DetectionConfig", _boom),
+        patch("cmcp_runtime.inspection.pipeline.CredentialRedactor", lambda: "redactor"),
+        patch("cmcp_runtime.inspection.pipeline.AGTResponseScanner", lambda: "scanner"),
+    ):
+        pipeline = InspectionPipeline()
+
+    # The detector failed, but the other two must still be constructed.
+    assert pipeline._agt_injection_detector is None
+    assert pipeline._agt_redactor == "redactor"
+    assert pipeline._agt_response_scanner == "scanner"
+
+
+def test_failing_agt_component_is_logged_not_swallowed(caplog: Any) -> None:
+    import logging
+
+    from cmcp_runtime.inspection.pipeline import InspectionPipeline
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("upstream API changed")
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cmcp_runtime.inspection.pipeline"),
+        patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", True),
+        patch("cmcp_runtime.inspection.pipeline.DetectionConfig", _boom),
+        patch("cmcp_runtime.inspection.pipeline.CredentialRedactor", lambda: "redactor"),
+        patch("cmcp_runtime.inspection.pipeline.AGTResponseScanner", lambda: "scanner"),
+    ):
+        InspectionPipeline()
+
+    assert any("PromptInjectionDetector unavailable" in r.message for r in caplog.records)
