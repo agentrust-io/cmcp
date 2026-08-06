@@ -160,3 +160,35 @@ def test_uppercase_tool_name_is_rejected(catalog_file):
     entry["tool_name"] = "CRM.Query"
     with pytest.raises(ConfigError, match="lowercase"):
         load_catalog(catalog_file([entry]))
+
+
+def test_unknown_sensitivity_level_is_rejected(catalog_file):
+    """An out-of-vocabulary sensitivity level must not load.
+
+    This guards a would-be fail-open path. SENSITIVITY_ORDER.get(level, 0) ranks
+    anything it does not recognise at 0, the same rank as "public", so a catalog
+    that slipped through with "secret" or "restricted" would silently be treated
+    as the least sensitive class the gateway has: policies keyed on
+    sensitivity_level would under-enforce and the session maximum would never
+    rise. Schema validation at load is what stops that, and this test pins it.
+    """
+    entry = dict(ENTRY_1, sensitivity_level="secret")
+    with pytest.raises(ConfigError, match="is not one of"):
+        load_catalog(catalog_file([entry]))
+
+
+def test_miscased_sensitivity_level_is_rejected(catalog_file):
+    """The vocabulary is case-sensitive, so "Confidential" is not "confidential"."""
+    entry = dict(ENTRY_1, sensitivity_level="Confidential")
+    with pytest.raises(ConfigError, match="is not one of"):
+        load_catalog(catalog_file([entry]))
+
+
+def test_every_known_sensitivity_level_loads(catalog_file):
+    """The accepted set is exactly the one the ordering table knows about."""
+    from cmcp_runtime.session.state import SENSITIVITY_ORDER
+
+    for level in SENSITIVITY_ORDER:
+        entry = dict(ENTRY_1, sensitivity_level=level)
+        cat = load_catalog(catalog_file([entry]))
+        assert cat.entries["crm.query"].sensitivity_level == level
