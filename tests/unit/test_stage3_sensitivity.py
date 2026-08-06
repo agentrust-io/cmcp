@@ -160,3 +160,68 @@ def test_no_duplicate_pii_from_catalog_and_field():
     with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", False):
         result = stage.run({"ssn": "123-45-6789"}, _make_entry("pii", output_schema=schema))
     assert result.sensitivity_tags.count("pii") == 1
+
+
+# ── Source 3 with AGT present: local patterns must still run (#476) ───────────
+#
+# The previous implementation called `_agt_redactor.find_credentials()`, a method
+# that has never existed on agt-core's CredentialRedactor (verified against the
+# pinned 4.1.0 wheel: the real names are find_matches / find_pii_matches). The
+# call raised AttributeError into a bare `except Exception: pass`, and because
+# the local patterns sat in the `else` branch of that check they never ran
+# either. With AGT installed, content-based classification was dead.
+
+class _RedactorMissingMethod:
+    """An agt-core CredentialRedactor without the method the caller expects."""
+
+
+class _RedactorRaising:
+    @staticmethod
+    def find_matches(_value: str) -> list[str]:
+        raise RuntimeError("upstream blew up")
+
+    @staticmethod
+    def find_pii_matches(_value: str) -> list[str]:
+        raise RuntimeError("upstream blew up")
+
+
+class _RedactorSuffixBlind:
+    """Reproduces microsoft/agent-governance-toolkit#3494: a secret with a
+    suffix glued to it is not matched at all, so AGT alone calls it clean."""
+
+    @staticmethod
+    def find_matches(value: str) -> list[str]:
+        return ["AKIA"] if "AKIAIOSFODNN7EXAMPLE" in value and "_old" not in value else []
+
+    @staticmethod
+    def find_pii_matches(_value: str) -> list[str]:
+        return []
+
+
+def test_local_patterns_still_run_when_agt_lacks_the_method():
+    stage = SensitivityClassificationStage()
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", True):
+        result = stage.run(
+            {"data": "SSN is 123-45-6789"}, _make_entry(), _RedactorMissingMethod()
+        )
+    assert "pii" in result.sensitivity_tags
+
+
+def test_local_patterns_still_run_when_agt_raises():
+    stage = SensitivityClassificationStage()
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", True):
+        result = stage.run(
+            {"data": "SSN is 123-45-6789"}, _make_entry(), _RedactorRaising()
+        )
+    assert "pii" in result.sensitivity_tags
+
+
+def test_suffixed_secret_still_tagged_despite_agt_3494():
+    stage = SensitivityClassificationStage()
+    blind = _RedactorSuffixBlind()
+    with patch("cmcp_runtime.inspection.pipeline._AGT_AVAILABLE", True):
+        clean = stage.run({"k": "AKIAIOSFODNN7EXAMPLE x@y.com"}, _make_entry(), blind)
+        suffixed = stage.run({"k": "AKIAIOSFODNN7EXAMPLE_old x@y.com"}, _make_entry(), blind)
+    # AGT catches the bare key; only the local pass catches the suffixed one.
+    assert "pii" in clean.sensitivity_tags
+    assert "pii" in suffixed.sensitivity_tags
