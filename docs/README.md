@@ -1,4 +1,8 @@
-﻿# cMCP Spec
+---
+title: The secure, confidential way to run MCP
+---
+
+# cMCP Spec
 
 cMCP Runtime is a hardware-attested MCP (Model Context Protocol) runtime. Every MCP tool call an agent makes passes through a TEE-isolated gateway that evaluates it against a Cedar policy bundle and produces a TRACE Claim: a signed, hardware-attested proof artifact a verifier can check without trusting the operator.
 
