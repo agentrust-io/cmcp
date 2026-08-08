@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-08
+
+**Anyone running 0.3.0 should upgrade.** On 0.3.0 a forged TPM quote was reported as hardware-attested: the `tpm2` branch of `verify_trace_claim` called only `verify_tpm_measurement`, which takes no signature parameter, so a `TPMS_ATTEST` with the correct magic and matching `qualifying_data` passed with no signature and no certificate chain (#370). The authenticated path existed and was tested; nothing in production called it. This release makes the quote signature and the AK certificate chain the gate on `hardware_attestation`, so evidence that does not chain to a pinned root can no longer report as verified.
+
 ### Changed
 
 - **BREAKING for verifiers: claims now carry `gateway.attestation_evidence` (#469, #370).** Signed platform
@@ -30,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence serialize byte-identically to 0.3.0, so software-only deployments are unaffected.
 
   Minor rather than patch under SemVer: the wire format gained a field that older readers reject.
+
+### Security
+
+Five changes below the headline TPM fix, each one a case where cMCP reported more assurance than it held. Collected here rather than scattered through Fixed, because an operator deciding whether to upgrade should be able to read them in one place.
+
+- **Tokenless development mode may now only bind a loopback address.** `CMCP_DEV_MODE=1` skips the bearer-token requirement, and the default `listen_addr` is `0.0.0.0:8443`, so the documented quickstart stood up an unauthenticated gateway on every interface of the host. Configuration is now refused unless the bind is loopback or `CMCP_BEARER_TOKEN` is set. The default bind is unchanged; what changed is that the unsafe combination no longer starts.
+
+- **A claim is no longer issued when the per-session TEE attestation call fails (#426).** `close_session` fell back to the shared startup report and signed a claim anyway. That report carries no chain-root commitment, so a strict verifier rejects it, but the runtime handed it out as if nothing were wrong. On a hardware platform this now raises `TeeFault` instead of issuing an unbound claim. Software-only dev mode keeps the previous fallback, where the binding was already best-effort.
+
+- **Unsigned PCR reads were labelled hardware-attested (#441).** A PCR read carries no signature and nothing binds it to a TPM, but the provider still reported `provider=tpm` when the quote failed, and the subprocess path never produces a quote at all. Both cases now downgrade to software-only with the note `tpm-pcr-read-unsigned`. Related: a PCR hex-parsing defect that corrupted the measurement itself (#437).
+
+- **SNP `report_data` mismatch is now fatal (#371, #390),** since that field carries the confirmation-key binding and the freshness nonce, and the dispatcher no longer reports `hardware_attestation` as verified while the VCEK chain is unverified (#370, #372); such a claim stays `PARTIALLY_VERIFIED`. Same defect class as the TPM headline, on the AMD path, fixed first.
+
+- **TCG event logs are replayed against the reported PCR values (#443)**, so a log that does not reproduce the quoted digests is detected rather than trusted as narrative.
 
 ### Fixed
 

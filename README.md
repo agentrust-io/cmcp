@@ -70,11 +70,12 @@ catalog_path: ./catalog.json
 ```
 
 `listen_addr` is not optional here. `CMCP_DEV_MODE=1` deliberately skips the
-bearer token requirement so you can try things quickly, and on the published
-0.3.0 the default bind is `0.0.0.0:8443`, so omitting it stands up an
-unauthenticated gateway on every interface on your machine. Later versions
-default to loopback and refuse to bind a non-loopback address without
-`CMCP_BEARER_TOKEN`, but pin it explicitly and the config is correct on both.
+bearer token requirement so you can try things quickly, and the default bind is
+still `0.0.0.0:8443`. On 0.3.0 that combination stood up an unauthenticated
+gateway on every interface on your machine. From 0.4.0 it is refused: tokenless
+dev mode may only bind a loopback address, and a non-loopback bind requires
+`CMCP_BEARER_TOKEN`. Pin `listen_addr` explicitly and the config is correct on
+both.
 
 Start the gateway:
 
