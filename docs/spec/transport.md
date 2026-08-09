@@ -90,6 +90,15 @@ Agent
 
 **Decision for Phase 1**: stdio transport is unsupported. Agents using stdio-only MCP servers must either migrate those servers to HTTP/SSE or use Option B as an undocumented workaround at their own risk.
 
+> **Under review (2026-08-09).** Both options above share an assumption that does not hold
+> once cMCP is in the path: that the *agent* spawns the MCP server. It does not — this
+> document's own agent-configuration section states that the agent reaches only the gateway
+> and that the runtime catalog is authoritative. [`stdio-transport.md`](stdio-transport.md)
+> proposes the gateway spawning the server as its own child *inside* the enclave, which
+> introduces no component outside the TEE and makes the server binary measurable before it
+> runs. It also states what that costs, which is that the server then executes inside the
+> same isolation domain as the policy evaluator.
+
 ---
 
 ## "Zero Code Changes" Claim: Precise Scope
