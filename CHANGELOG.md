@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`STATUS.md` understated the attestation default in two ways.** It gave the probe order as `tpm -> sev-snp -> tdx`, missing `azure-cvm`, which is probed *first* and exists precisely so an Azure confidential VM is not mistaken for a plain TPM host. And it said nothing about what happens when no hardware is found, which is the question an evaluator is actually asking.
+
+  The answer is better than the omission implied and is now stated: **auto never degrades to software.** With no hardware detected the gateway refuses to start unless `CMCP_DEV_MODE=1`, and `provider: software-only` requires that flag as well, so a software-mode gateway is always a deployment that asked for one rather than a silent downgrade. `tests/unit/test_tee.py` pins both, including that setting `CMCP_DEV_MODE` in the environment *after* config load does not bypass it.
+
+  Documentation only. No behaviour changed; the behaviour was already correct and the defaults table was selling it short.
+
 ### Added
 
 - **Server provenance checking (step 3).** The gateway consumes [`server-provenance-v1`](https://github.com/agentrust-io/trace-spec/blob/main/spec/server-provenance-v1.md) records via `agentrust-trace>=0.8`: it verifies the record against a **configured** publisher key, then compares the record's tool-catalog hash against the tools the server advertises to this gateway.

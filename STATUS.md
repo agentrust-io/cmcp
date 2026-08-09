@@ -8,7 +8,7 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 
 | Setting | Default |
 |---|---|
-| `attestation.provider` | `auto` (probe order `tpm -> sev-snp -> tdx`) |
+| `attestation.provider` | `auto` (probe order `azure-cvm -> tpm -> sev-snp -> tdx`). **Auto never degrades to software.** With no hardware detected the gateway refuses to start unless `CMCP_DEV_MODE=1`, and `provider: software-only` requires that flag too, so a software-mode gateway is always a deployment that asked for one. |
 | `attestation.enforcement_mode` | `enforcing` |
 | `attestation.staleness_policy` | `fail_closed` |
 | `attestation.validity_seconds` | `86400` |
