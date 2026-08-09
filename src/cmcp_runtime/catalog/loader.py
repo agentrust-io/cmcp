@@ -18,6 +18,7 @@ from cmcp_runtime.errors import (
     ToolNotInCatalog,
 )
 from cmcp_runtime.mcp.stdio import StdioSpawn
+from cmcp_runtime.session.state import SENSITIVITY_ORDER
 
 _CATALOG_ENTRY_SCHEMA_PATH = Path(__file__).parent.parent.parent.parent / "schemas" / "catalog-entry.schema.json"
 
@@ -145,13 +146,22 @@ def _validate_entry(raw: dict[str, Any], schema: dict[str, Any] | None) -> None:
         raise ConfigError(f"Catalog entry '{raw.get('tool_name', '?')}' schema violation: {exc.message}") from exc
 
 
-def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCatalog:
+def load_catalog(
+    catalog_path: str,
+    expected_hash: str | None = None,
+    extra_sensitivity_levels: frozenset[str] = frozenset(),
+) -> ToolCatalog:
     """
     Load and validate the tool catalog from a JSON file.
 
     Raises CatalogHashMismatch if expected_hash is provided and doesn't match.
     Raises CatalogToolNameCollision if two entries share a tool_name.
     Raises ConfigError on schema violation or file errors.
+
+    extra_sensitivity_levels (#479): deployment configured additions to the
+    built in sensitivity vocabulary, from Config.sensitivity.vocabulary. A
+    catalog entry's sensitivity_level must be a built in label or one of these,
+    or loading fails closed, same as the fixed six value set used to.
     """
     path = Path(catalog_path)
     try:
@@ -172,6 +182,14 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
             raise ConfigError("Each catalog entry must be a JSON object")
 
         _validate_entry(raw, entry_schema)
+
+        sensitivity_level = raw.get("sensitivity_level", "public")
+        allowed_sensitivity_levels = frozenset(SENSITIVITY_ORDER) | extra_sensitivity_levels
+        if sensitivity_level not in allowed_sensitivity_levels:
+            raise ConfigError(
+                f"Catalog entry '{raw.get('tool_name', '?')}' sensitivity_level "
+                f"'{sensitivity_level}' is not one of {sorted(allowed_sensitivity_levels)}"
+            )
 
         tool_name: str = raw["tool_name"]
         # POLICY-002: enforce lowercase-only tool names so ingress canonicalization

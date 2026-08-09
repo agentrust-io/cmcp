@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Configurable sensitivity vocabulary (#479).** The six built in sensitivity labels (`public`, `pii`, `confidential`, `hipaa_phi`, `mnpi`, `trade_secret`) were the only ones a catalog entry could ever declare, so a regulated deployment whose own scheme names a tier above `trade_secret`, an Open/Confidential/Secret/Top Secret ladder for example, had no way to catalogue it truthfully.
+
+  `sensitivity.vocabulary` in config now lets a deployment add new labels at any rank. It is additive only and enforced at two layers: config parsing rejects a vocabulary key that names a built in label outright, and `session/state.py`'s `effective_sensitivity_order()` merges the built in table in last regardless, so a built in name can never be shadowed even by a bug elsewhere in the chain. That guarantee is not cosmetic: response inspection's content pattern detectors emit the built in tags `pii` and `hipaa_phi` directly when they spot an SSN, an email, a diagnosis code and so on, and if either name had silently dropped out of the effective vocabulary those detections would have ranked at 0, the same fail open hole #478 closed for the catalog schema.
+
+  `SessionManager` and `PolicyEvaluator` each derive the effective vocabulary once from the same `Config`, so a session's `max_sensitivity` string and the `sensitivity_level` integer Cedar evaluates can never disagree about what a custom label ranks as. The catalog schema's `sensitivity_level` enum moved from the static JSON schema into a Python level check at load time against this same effective set, so the vocabulary stays closed, just not hardcoded.
+
+  Per call classification, letting a single call declare a class narrower than its tool's catalogued default, is the second half of #479 and is left for a follow up change.
+
 - **Server provenance checking (step 3).** The gateway consumes [`server-provenance-v1`](https://github.com/agentrust-io/trace-spec/blob/main/spec/server-provenance-v1.md) records via `agentrust-trace>=0.8`: it verifies the record against a **configured** publisher key, then compares the record's tool-catalog hash against the tools the server advertises to this gateway.
 
   It never falls back to the catalog's own approved definitions for that comparison. Comparing a record against our approval instead of against the server is the substitution that turns the whole check into theatre.

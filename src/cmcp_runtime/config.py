@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 
 from cmcp_runtime.errors import ConfigError
+from cmcp_runtime.session.state import SENSITIVITY_ORDER
 
 # TEE-002: read exactly once at import time so the value is immutable for the
 # lifetime of the process. No code may call os.environ.get("CMCP_DEV_MODE")
@@ -48,6 +49,19 @@ class KillSwitchConfig:
 
 
 @dataclass
+class SensitivityConfig:
+    """Deployment supplied additions to the built in sensitivity vocabulary (#479).
+
+    Additive only: a key here must not collide with a built in SENSITIVITY_ORDER
+    name (enforced when config loads), so a deployment can add new labels,
+    including tiers above trade_secret, without ever being able to remove or
+    rename a built in one. See session/state.py's effective_sensitivity_order().
+    """
+
+    vocabulary: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class AttestationConfig:
     provider: TEEProvider = TEEProvider.AUTO
     enforcement_mode: EnforcementMode = EnforcementMode.ENFORCING
@@ -81,6 +95,7 @@ class Config:
     attestation: AttestationConfig = field(default_factory=AttestationConfig)
     agent_manifest: AgentManifestConfig = field(default_factory=AgentManifestConfig)
     kill_switch: KillSwitchConfig = field(default_factory=KillSwitchConfig)
+    sensitivity: SensitivityConfig = field(default_factory=SensitivityConfig)
     policy_bundle_path: str = "policies/"
     catalog_path: str = "catalog.json"
     listen_addr: str = "0.0.0.0:8443"
@@ -95,6 +110,7 @@ _KNOWN_TOP_KEYS = {
     "attestation",
     "agent_manifest",
     "kill_switch",
+    "sensitivity",
     "policy_bundle_path",
     "catalog_path",
     "listen_addr",
@@ -108,6 +124,7 @@ _KNOWN_KILL_SWITCH_KEYS = {
     "deny_rate_threshold",
     "min_calls",
 }
+_KNOWN_SENSITIVITY_KEYS = {"vocabulary"}
 _KNOWN_ATTEST_KEYS = {
     "provider",
     "enforcement_mode",
@@ -253,6 +270,37 @@ def load_config(path: str) -> Config:
     if not isinstance(ks_min_calls, int) or ks_min_calls <= 0:
         raise ConfigError("kill_switch.min_calls must be a positive integer")
 
+    sens_raw = raw.get("sensitivity", {})
+    if sens_raw is None:
+        sens_raw = {}
+    if not isinstance(sens_raw, dict):
+        raise ConfigError("'sensitivity' must be a mapping")
+    for key in sens_raw:
+        if key not in _KNOWN_SENSITIVITY_KEYS:
+            raise ConfigError(
+                f"Unknown sensitivity key '{key}'. Valid keys: {sorted(_KNOWN_SENSITIVITY_KEYS)}"
+            )
+    vocab_raw = sens_raw.get("vocabulary", {})
+    if vocab_raw is None:
+        vocab_raw = {}
+    if not isinstance(vocab_raw, dict):
+        raise ConfigError("sensitivity.vocabulary must be a mapping")
+    sensitivity_vocabulary: dict[str, int] = {}
+    for label, rank in vocab_raw.items():
+        if not isinstance(label, str) or not label:
+            raise ConfigError("sensitivity.vocabulary keys must be non empty strings")
+        if label in SENSITIVITY_ORDER:
+            raise ConfigError(
+                f"sensitivity.vocabulary key '{label}' collides with a built in "
+                "sensitivity label. Custom labels may only add to the built in "
+                "set, never rename or replace one."
+            )
+        if isinstance(rank, bool) or not isinstance(rank, int) or rank < 0:
+            raise ConfigError(
+                f"sensitivity.vocabulary['{label}'] must be a non negative integer"
+            )
+        sensitivity_vocabulary[label] = rank
+
     try:
         provider = TEEProvider(attest_raw.get("provider", "auto"))
     except ValueError as err:
@@ -365,6 +413,7 @@ def load_config(path: str) -> Config:
             deny_rate_threshold=float(ks_threshold),
             min_calls=ks_min_calls,
         ),
+        sensitivity=SensitivityConfig(vocabulary=sensitivity_vocabulary),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,
         listen_addr=listen_addr,

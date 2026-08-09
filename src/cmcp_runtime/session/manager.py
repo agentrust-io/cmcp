@@ -26,13 +26,13 @@ from cmcp_runtime.audit.trace_claim import (
     ToolTranscriptEntry,
     generate_trace_claim,
 )
-from cmcp_runtime.config import KillSwitchConfig
+from cmcp_runtime.config import KillSwitchConfig, SensitivityConfig
 from cmcp_runtime.errors import KillSwitchTripped, TeeFault
 from cmcp_runtime.kill_switch import KillSwitchEvaluator
 from cmcp_runtime.observability.otel import otel_sink_from_env
 from cmcp_runtime.policy.decisions import claim_value
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
-from cmcp_runtime.session.state import SessionState
+from cmcp_runtime.session.state import SessionState, effective_sensitivity_order
 from cmcp_runtime.startup import RuntimeContext
 from cmcp_runtime.tee.base import AttestationReport, make_audit_bound_nonce
 
@@ -73,6 +73,13 @@ class SessionManager:
         if not isinstance(ks_cfg, KillSwitchConfig):
             ks_cfg = KillSwitchConfig()  # disabled by default if not configured
         self._kill_switch = KillSwitchEvaluator(ks_cfg)
+        sens_cfg = getattr(ctx.config, "sensitivity", None)
+        vocabulary = sens_cfg.vocabulary if isinstance(sens_cfg, SensitivityConfig) else {}
+        # #479: computed once so every session in this process shares one
+        # effective vocabulary, the same one PolicyEvaluator derives from the
+        # same Config, so a session's max_sensitivity and Cedar's
+        # sensitivity_level_int can never disagree about a custom label's rank.
+        self._sensitivity_order = effective_sensitivity_order(vocabulary)
         # AARM R8: telemetry export. Built once here rather than per session so
         # every chain shares one exporter, and empty unless CMCP_OTEL_ENABLED
         # asks for it. Sinks run after an entry is durable and cannot break the
@@ -109,7 +116,7 @@ class SessionManager:
             )
 
         session_id = str(uuid4())
-        state = SessionState(session_id=session_id)
+        state = SessionState(session_id=session_id, sensitivity_order=self._sensitivity_order)
         chain = AuditChain(
             session_id=session_id,
             store=self._ctx.audit_store,

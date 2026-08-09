@@ -161,6 +161,32 @@ def test_authorize_egress_passes_sensitivity_level_in_context():
     assert called_ctx["response_size_bytes"] == len(b"data")
 
 
+def test_authorize_egress_passes_custom_sensitivity_level_in_context():
+    """#479: a PolicyEvaluator built from a Config carrying a custom sensitivity
+    vocabulary ranks a deployment configured label correctly in Cedar context,
+    the same effective order SessionManager derives from that same Config."""
+    from cmcp_runtime.session.state import effective_sensitivity_order
+
+    with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:
+        mock = MagicMock()
+        mock.evaluate.return_value = MagicMock(
+            allowed=True, reason=None, evaluation_ms=0.1
+        )
+        MockBackend.return_value = mock
+
+        config = _make_config()
+        config.sensitivity.vocabulary = {"top_secret": 4}
+        evaluator = PolicyEvaluator(_make_bundle(), config)
+        custom_order = effective_sensitivity_order(config.sensitivity.vocabulary)
+        session = SessionState(
+            session_id="s3", max_sensitivity="top_secret", sensitivity_order=custom_order
+        )
+        evaluator.authorize_egress("crm.query", b"data", session)
+
+    called_ctx = mock.evaluate.call_args[0][0]
+    assert called_ctx["sensitivity_level"] == 4
+
+
 def test_authorize_egress_passes_injection_and_reset_counts():
     """injection_events count and reset_count are forwarded to Cedar context."""
     with patch("cmcp_runtime.policy.evaluator.CedarBackend") as MockBackend:

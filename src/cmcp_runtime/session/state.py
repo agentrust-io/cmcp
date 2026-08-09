@@ -19,9 +19,26 @@ SENSITIVITY_ORDER: dict[str, int] = {
 }
 
 
-def _max_sensitivity(a: str, b: str) -> str:
+def effective_sensitivity_order(extra: dict[str, int] | None = None) -> dict[str, int]:
+    """Built in vocabulary plus any deployment configured additions (#479).
+
+    Additive only: extra can add new labels, for example a regulator's own top
+    tier, but can never remove or shadow a built in name. SENSITIVITY_ORDER is
+    merged in last so a built in name always keeps its built in rank even if
+    something upstream of this function failed to reject a colliding key, since
+    config.py's parser is expected to reject that collision before this ever
+    runs. This matters because response inspection emits hardcoded tags such as
+    pii and hipaa_phi (inspection/pipeline.py); if one of those names silently
+    dropped out of the effective vocabulary it would rank at 0 by
+    SENSITIVITY_ORDER.get(tag, 0)'s fail open default, the same class of hole
+    the schema validation at catalog load time closes for #478.
+    """
+    return {**(extra or {}), **SENSITIVITY_ORDER}
+
+
+def _max_sensitivity(a: str, b: str, order: dict[str, int] = SENSITIVITY_ORDER) -> str:
     """Return whichever sensitivity level is higher. Ties return 'a'."""
-    if SENSITIVITY_ORDER.get(b, 0) > SENSITIVITY_ORDER.get(a, 0):
+    if order.get(b, 0) > order.get(a, 0):
         return b
     return a
 
@@ -57,6 +74,11 @@ class SessionState:
     attestation_stale: bool = False
     catalog_drift: bool = False
     kill_switch_triggered: bool = False
+    # #479: the effective vocabulary this session ranks tags against. Defaults to
+    # the built in table; SessionManager passes the deployment's configured one.
+    sensitivity_order: dict[str, int] = field(
+        default_factory=lambda: SENSITIVITY_ORDER, repr=False, compare=False
+    )
     # AUTH-002: guards concurrent mutations from tool-call coroutines and session-reset requests
     mutation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False, compare=False)
 
@@ -73,7 +95,7 @@ class SessionState:
         Called by InspectionPipeline after all stages complete.
         """
         for tag in sensitivity_tags:
-            new_max = _max_sensitivity(self.max_sensitivity, tag)
+            new_max = _max_sensitivity(self.max_sensitivity, tag, self.sensitivity_order)
             if new_max != self.max_sensitivity:
                 self.max_sensitivity = new_max
                 self.sensitivity_raised_at = datetime.now(tz=UTC).isoformat()

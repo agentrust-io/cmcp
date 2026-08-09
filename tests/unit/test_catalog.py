@@ -192,3 +192,30 @@ def test_every_known_sensitivity_level_loads(catalog_file):
         entry = dict(ENTRY_1, sensitivity_level=level)
         cat = load_catalog(catalog_file([entry]))
         assert cat.entries["crm.query"].sensitivity_level == level
+
+
+# ── #479: configurable sensitivity vocabulary ──────────────────────────────────
+
+
+def test_custom_sensitivity_level_rejected_without_extension(catalog_file):
+    """A deployment configured label is not legal until load_catalog is told
+    about it, same fail closed default as an unknown level."""
+    entry = dict(ENTRY_1, sensitivity_level="top_secret")
+    with pytest.raises(ConfigError, match="is not one of"):
+        load_catalog(catalog_file([entry]))
+
+
+def test_custom_sensitivity_level_accepted_with_extension(catalog_file):
+    entry = dict(ENTRY_1, sensitivity_level="top_secret")
+    cat = load_catalog(
+        catalog_file([entry]), extra_sensitivity_levels=frozenset({"top_secret"})
+    )
+    assert cat.entries["crm.query"].sensitivity_level == "top_secret"
+
+
+def test_extra_sensitivity_levels_does_not_loosen_built_in_check(catalog_file):
+    """extra_sensitivity_levels only adds labels, an unrelated typo is still
+    rejected even when some extension set is configured."""
+    entry = dict(ENTRY_1, sensitivity_level="secret")
+    with pytest.raises(ConfigError, match="is not one of"):
+        load_catalog(catalog_file([entry]), extra_sensitivity_levels=frozenset({"top_secret"}))

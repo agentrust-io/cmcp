@@ -206,16 +206,8 @@
     },
     "sensitivity_level": {
       "type": "string",
-      "enum": [
-        "public",
-        "pii",
-        "confidential",
-        "hipaa_phi",
-        "mnpi",
-        "trade_secret"
-      ],
       "default": "public",
-      "description": "Data sensitivity level of information this tool accesses or returns."
+      "description": "Data sensitivity level of information this tool accesses or returns. Validated at catalog load time against the built in vocabulary plus any deployment configured additions (#479), not enumerated here, since the legal set is config dependent."
     },
     "added_at": {
       "type": "string",

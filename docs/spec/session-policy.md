@@ -20,6 +20,17 @@ public < pii < confidential < hipaa_phi = mnpi = trade_secret
 
 `hipaa_phi`, `mnpi`, and `trade_secret` are all at the highest level. There is no ordering among them: a session that has seen MNPI is equally restricted as one that has seen PHI. Once a session reaches any of the three, the same egress rules apply.
 
+These six are fixed and always present. A deployment that needs to express a classification scheme its own regulation names, for example a public sector Open/Confidential/Secret/Top Secret ladder, adds new labels alongside them via `sensitivity.vocabulary` in config, rather than replacing the built in set (#479):
+
+```yaml
+sensitivity:
+  vocabulary:
+    secret: 4
+    top_secret: 5
+```
+
+This is additive only. A vocabulary key that names a built in label is rejected at config load, since response inspection's pattern based detectors (see [response-inspection.md](response-inspection.md)) emit the built in tags directly, `pii` and `hipaa_phi` among them, and those tags must always resolve to their real rank rather than an unrecognised one. `SessionManager` and `PolicyEvaluator` each derive the same effective vocabulary from the same config, so a session's `max_sensitivity` and the `sensitivity_level` integer Cedar sees can never disagree about what a custom label ranks as. The tool catalog's `sensitivity_level` field is validated at load time against this same effective set, so it stays a closed vocabulary, just not a hardcoded one.
+
 ### State Transitions
 
 State is monotonically increasing within a session. It never decreases automatically. The only way to return to a lower state is an explicit operator-authorized session reset (see below).

@@ -97,6 +97,61 @@ def test_unknown_agent_manifest_key_raises(config_file):
         load_config(path)
 
 
+# ── #479: configurable sensitivity vocabulary ──────────────────────────────────
+
+
+def test_sensitivity_vocabulary_loads(config_file):
+    path = config_file("sensitivity:\n  vocabulary:\n    top_secret: 4\n    secret: 5\n")
+    cfg = load_config(path)
+    assert cfg.sensitivity.vocabulary == {"top_secret": 4, "secret": 5}
+
+
+def test_sensitivity_vocabulary_defaults_to_empty(config_file):
+    path = config_file("attestation:\n  provider: tpm\n")
+    cfg = load_config(path)
+    assert cfg.sensitivity.vocabulary == {}
+
+
+def test_unknown_sensitivity_key_raises(config_file):
+    path = config_file("sensitivity:\n  surprise: value\n")
+    with pytest.raises(ConfigError, match="surprise"):
+        load_config(path)
+
+
+def test_sensitivity_vocabulary_non_mapping_raises(config_file):
+    path = config_file("sensitivity:\n  vocabulary: not_a_mapping\n")
+    with pytest.raises(ConfigError, match="mapping"):
+        load_config(path)
+
+
+def test_sensitivity_vocabulary_negative_rank_raises(config_file):
+    path = config_file("sensitivity:\n  vocabulary:\n    top_secret: -1\n")
+    with pytest.raises(ConfigError, match="non negative"):
+        load_config(path)
+
+
+def test_sensitivity_vocabulary_non_integer_rank_raises(config_file):
+    path = config_file("sensitivity:\n  vocabulary:\n    top_secret: high\n")
+    with pytest.raises(ConfigError, match="non negative"):
+        load_config(path)
+
+
+def test_sensitivity_vocabulary_boolean_rank_raises(config_file):
+    """A bool is an int subclass in Python, so True/False must be rejected
+    explicitly or a typo'd yaml boolean would silently become rank 0 or 1."""
+    path = config_file("sensitivity:\n  vocabulary:\n    top_secret: true\n")
+    with pytest.raises(ConfigError, match="non negative"):
+        load_config(path)
+
+
+def test_sensitivity_vocabulary_collision_with_built_in_raises(config_file):
+    """The additive only guarantee (#479): a deployment cannot rename or
+    shadow a built in label, only add new ones alongside it."""
+    path = config_file("sensitivity:\n  vocabulary:\n    confidential: 9\n")
+    with pytest.raises(ConfigError, match="collides"):
+        load_config(path)
+
+
 def test_agent_manifest_path_requires_trust_anchor(config_file):
     path = config_file("agent_manifest:\n  path: /etc/cmcp/agent-manifest.json\n")
     with pytest.raises(ConfigError, match="set together"):

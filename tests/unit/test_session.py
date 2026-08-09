@@ -6,7 +6,12 @@ import asyncio
 
 import pytest
 
-from cmcp_runtime.session.state import SENSITIVITY_ORDER, SessionState, _max_sensitivity
+from cmcp_runtime.session.state import (
+    SENSITIVITY_ORDER,
+    SessionState,
+    _max_sensitivity,
+    effective_sensitivity_order,
+)
 
 # ── _max_sensitivity ──────────────────────────────────────────────────────────
 
@@ -26,6 +31,29 @@ def test_sensitivity_order_monotonic():
     levels = ["public", "pii", "confidential"]
     for i in range(len(levels) - 1):
         assert SENSITIVITY_ORDER[levels[i]] < SENSITIVITY_ORDER[levels[i + 1]]
+
+
+# ── effective_sensitivity_order (#479) ─────────────────────────────────────────
+
+
+def test_effective_sensitivity_order_adds_new_labels():
+    order = effective_sensitivity_order({"top_secret": 4})
+    assert order["top_secret"] == 4
+    assert order["trade_secret"] == 3  # built ins untouched
+
+
+def test_effective_sensitivity_order_defaults_to_built_in_only():
+    assert effective_sensitivity_order(None) == SENSITIVITY_ORDER
+    assert effective_sensitivity_order({}) == SENSITIVITY_ORDER
+
+
+def test_effective_sensitivity_order_built_in_wins_on_collision():
+    """Defense in depth: even if a caller passes a colliding key, which
+    config.py's parser is supposed to reject before this ever runs, the built
+    in rank must win so a hardcoded inspection tag such as pii can never
+    silently rank at 0."""
+    order = effective_sensitivity_order({"pii": 99})
+    assert order["pii"] == SENSITIVITY_ORDER["pii"]
 
 
 # ── SessionState ──────────────────────────────────────────────────────────────
@@ -111,6 +139,26 @@ def test_update_highest_tag_wins_per_update():
     state.update_from_inspection("c1", ["pii", "mnpi", "confidential"], False, True)
     assert state.max_sensitivity in ("mnpi", "hipaa_phi", "trade_secret")
     assert SENSITIVITY_ORDER[state.max_sensitivity] == 3
+
+
+def test_update_ranks_against_custom_sensitivity_order():
+    """#479: a session built with a deployment configured vocabulary ranks a
+    new label correctly, and can rise above every built in label."""
+    custom_order = effective_sensitivity_order({"top_secret": 4})
+    state = SessionState(session_id="s1", sensitivity_order=custom_order)
+    state.update_from_inspection("c1", ["trade_secret"], False, True)
+    assert state.max_sensitivity == "trade_secret"
+    state.update_from_inspection("c2", ["top_secret"], False, True)
+    assert state.max_sensitivity == "top_secret"
+
+
+def test_update_default_sensitivity_order_does_not_know_custom_labels():
+    """Without a configured vocabulary, an unrecognised label ranks at 0, same
+    fail open default as any other unknown tag - the safety net is the catalog
+    schema check at load time (#478/#479), not this ranking function."""
+    state = SessionState(session_id="s1")
+    state.update_from_inspection("c1", ["top_secret"], False, True)
+    assert state.max_sensitivity == "public"
 
 
 # ── AUTH-002: asyncio.Lock guards concurrent mutations ────────────────────────

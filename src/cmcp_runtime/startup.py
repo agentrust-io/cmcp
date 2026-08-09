@@ -387,7 +387,11 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
     try:
-        catalog = load_catalog(config.catalog_path, expected_hash=catalog_expected_hash)
+        catalog = load_catalog(
+            config.catalog_path,
+            expected_hash=catalog_expected_hash,
+            extra_sensitivity_levels=frozenset(config.sensitivity.vocabulary),
+        )
     except CatalogHashMismatch as exc:
         _fatal(
             "CATALOG_HASH_MISMATCH",

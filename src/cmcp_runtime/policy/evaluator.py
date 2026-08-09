@@ -19,7 +19,7 @@ from cmcp_runtime.errors import PolicyDeny
 from cmcp_runtime.policy.annotations import parse_policy_annotations
 from cmcp_runtime.policy.bundle import PolicyBundle, PolicyStore
 from cmcp_runtime.policy.decisions import Decision, decision_for_deny
-from cmcp_runtime.session.state import SENSITIVITY_ORDER
+from cmcp_runtime.session.state import effective_sensitivity_order
 
 if TYPE_CHECKING:
     from cmcp_runtime.session.state import SessionState
@@ -59,6 +59,10 @@ class PolicyEvaluator:
 
     def __init__(self, bundle: PolicyBundle | PolicyStore, config: Config) -> None:
         self._mode = config.attestation.enforcement_mode
+        # #479: same effective vocabulary SessionManager derives from this same
+        # Config, so a session's max_sensitivity and this sensitivity_level_int
+        # can never disagree about what a custom label ranks as.
+        self._sensitivity_order = effective_sensitivity_order(config.sensitivity.vocabulary)
 
         # Normalise: always work with a PolicyStore internally.
         if isinstance(bundle, PolicyStore):
@@ -240,7 +244,7 @@ class PolicyEvaluator:
             # allowed tool response would be denied on the way back.
             "resource": tool_name,
             "egress": True,
-            "sensitivity_level": SENSITIVITY_ORDER.get(session.max_sensitivity, 0),
+            "sensitivity_level": self._sensitivity_order.get(session.max_sensitivity, 0),
             "injection_events": len(session.injection_events),
             "reset_count": session.reset_count,
             "response_size_bytes": len(response_bytes),

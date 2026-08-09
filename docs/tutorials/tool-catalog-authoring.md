@@ -121,6 +121,8 @@ Boolean. When `true`, Cedar policies can enforce that a Business Associate Agree
 
 String label for the data sensitivity of this tool's outputs. Common values: `"public"`, `"internal"`, `"confidential"`, `"pii"`. The session sensitivity tracker uses this: after a session calls a `"pii"` tool, all subsequent calls in the session carry `session_sensitivity: "pii"` in Cedar context.
 
+The legal set of values is the built in vocabulary plus anything a deployment has added in config under `sensitivity.vocabulary` (see [session-policy.md](../spec/session-policy.md#session-sensitivity-state-machine)), so a regulator specific top tier can be catalogued once that config addition is in place. An entry naming a level outside that set fails to load, closed by design.
+
 ### `added_at`
 
 ISO 8601 timestamp when this entry was approved. Included in the canonical hash and surfaced in the TRACE claim.
