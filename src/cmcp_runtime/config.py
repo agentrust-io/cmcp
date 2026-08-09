@@ -54,6 +54,14 @@ class AttestationConfig:
     validity_seconds: int = 86400
     staleness_policy: StalenessPolicy = StalenessPolicy.FAIL_CLOSED
     expected_measurement: str | None = None
+    allow_unmeasured_spawn: bool = False
+    """Permit spawning a stdio server whose binary the catalog does not pin.
+
+    Default off. A child runs inside the enclave, in the same isolation domain as
+    the policy evaluator and the audit chain, and the control that pays for that
+    is refusing to spawn what cannot be checked. Turning this on does not make
+    the spawn silent: every such call is recorded as ``spawn-unmeasured``.
+    """
 
 
 @dataclass
@@ -101,6 +109,7 @@ _KNOWN_ATTEST_KEYS = {
     "validity_seconds",
     "staleness_policy",
     "expected_measurement",
+    "allow_unmeasured_spawn",
 }
 _KNOWN_AGENT_MANIFEST_KEYS = {"path", "trust_anchor_path", "authenticated_subject"}
 
@@ -264,6 +273,10 @@ def load_config(path: str) -> Config:
     if expected_measurement is not None and not isinstance(expected_measurement, str):
         raise ConfigError("attestation.expected_measurement must be a string")
 
+    allow_unmeasured_spawn = attest_raw.get("allow_unmeasured_spawn", False)
+    if not isinstance(allow_unmeasured_spawn, bool):
+        raise ConfigError("attestation.allow_unmeasured_spawn must be a boolean")
+
     max_bytes = raw.get("max_response_size_bytes", 2 * 1024 * 1024)
     if not isinstance(max_bytes, int) or max_bytes <= 0:
         raise ConfigError("max_response_size_bytes must be a positive integer")
@@ -324,6 +337,7 @@ def load_config(path: str) -> Config:
             validity_seconds=validity_seconds,
             staleness_policy=staleness_policy,
             expected_measurement=expected_measurement,
+            allow_unmeasured_spawn=allow_unmeasured_spawn,
         ),
         agent_manifest=AgentManifestConfig(
             path=agent_manifest_path,

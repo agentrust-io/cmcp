@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **stdio transport: the gateway spawns the MCP server as its own child, inside the enclave (#484).** `docs/spec/transport.md` ruled stdio out and rejected two bridging options, correctly, because both put a translating component *outside* the TEE where it can inject or suppress calls before the gateway sees them. Both options assumed the agent spawns the server. It does not: that same document states the agent reaches only the gateway and that the runtime catalog is authoritative. So the child is a child of a process already inside the enclave, and nothing crosses the boundary that does not cross it today.
+
+  **This buys a binding no network upstream can have.** The gateway chooses when to `exec`, so it digests the entrypoint first and refuses to spawn on a mismatch. A pinned TLS fingerprint identifies an endpoint; a verified digest identifies code.
+
+  **And it costs something, which is in the spec rather than the footnotes.** The server then runs in the same isolation domain as the policy evaluator and the audit chain, and the gateway's launch measurement does not cover a process spawned later. The child's digest is therefore reported as its own evidence class, `spawn-measured` or `spawn-unmeasured`, never folded into `hardware_attestation`.
+
+  Defaults: `attestation.allow_unmeasured_spawn` is `false`, so a server the catalog does not pin is not spawned at all. Turning it on does not make the spawn silent; every such call is recorded as `spawn-unmeasured`.
+
+  Two design corrections came out of writing the tests. **Pinning the executable is nearly useless for an interpreted server** — the executable is the interpreter, so every Python MCP server on a host shares one digest and the pin would match a completely different server; `measure_target` pins the entrypoint instead. And **executable and readable are different properties**: a Windows Store Python is an App Execution Alias that runs fine and cannot be opened for reading, so an unmeasurable target is a refusal with an explanation rather than a crash.
+
+  Framing errors are fatal by design. A child that logs to stdout has desynchronized the JSON-RPC stream, and skipping to the next parsable line means guessing which bytes answered which call; a response whose id does not match its request is fatal for the same reason. stderr never enters the audit chain, because diagnostics carry payloads and the chain is meant to be shareable: content goes to the logger, only the byte count is exposed.
+
+  The catalog schema conditions its requirements on transport rather than relaxing them, so a network transport still requires `url` and `tls_fingerprint` while stdio requires `spawn`.
+
 ## [0.4.0] - 2026-08-08
 
 **Anyone running 0.3.0 should upgrade.** On 0.3.0 a forged TPM quote was reported as hardware-attested: the `tpm2` branch of `verify_trace_claim` called only `verify_tpm_measurement`, which takes no signature parameter, so a `TPMS_ATTEST` with the correct magic and matching `qualifying_data` passed with no signature and no certificate chain (#370). The authenticated path existed and was tested; nothing in production called it. This release makes the quote signature and the AK certificate chain the gate on `hardware_attestation`, so evidence that does not chain to a pinned root can no longer report as verified.

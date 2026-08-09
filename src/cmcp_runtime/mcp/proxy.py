@@ -29,6 +29,7 @@ from cmcp_runtime.catalog.loader import CatalogEntry, ToolCatalog
 from cmcp_runtime.config import Config
 from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
 from cmcp_runtime.mcp import tls_pinning
+from cmcp_runtime.mcp.stdio import StdioServer
 from cmcp_runtime.policy.decisions import audit_value
 from cmcp_runtime.policy.evaluator import PolicyEvaluator
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
@@ -172,6 +173,11 @@ class CMCPProxy:
         # fingerprint (#281). Created lazily so proxy construction stays sync
         # and tests need no event loop.
         self._http_clients: dict[str, httpx.AsyncClient] = {}
+        # Spawned stdio servers, one child per server for the life of this
+        # session and never pooled across sessions: a server that holds anything
+        # in memory would carry it from one agent's session into the next, and
+        # the audit chain cannot see that happen (docs/spec/stdio-transport.md).
+        self._stdio_servers: dict[str, StdioServer] = {}
         # Servers already warned about unenforceable pinning (warn once each).
         self._tls_pin_warned: set[str] = set()
 
@@ -252,6 +258,30 @@ class CMCPProxy:
             self._http_clients[key] = client
         return client
 
+    async def _stdio_for(self, entry: CatalogEntry) -> StdioServer:
+        """The child for this server, spawned on first use in this session."""
+        key = entry.server.display_name
+        server = self._stdio_servers.get(key)
+        if server is None:
+            if entry.server.spawn is None:
+                raise UpstreamUnavailable(
+                    f"catalog entry {entry.tool_name!r} declares stdio transport with no "
+                    "spawn block; there is nothing to start"
+                )
+            server = StdioServer(
+                entry.server.spawn,
+                allow_unmeasured=self._config.attestation.allow_unmeasured_spawn,
+            )
+            await server.start()
+            self._stdio_servers[key] = server
+        return server
+
+    async def aclose(self) -> None:
+        """Terminate spawned children. A session that ends leaves nothing running."""
+        for server in self._stdio_servers.values():
+            await server.close()
+        self._stdio_servers.clear()
+
     async def _forward_to_upstream(
         self,
         call_id: str,
@@ -270,6 +300,10 @@ class CMCPProxy:
         sent), UpstreamToolError when the upstream returns a JSON-RPC error
         object.
         """
+        if entry.server.is_stdio:
+            server = await self._stdio_for(entry)
+            return await server.call(call_id, tool_name, arguments)
+
         client = self._client_for_upstream(entry)
         payload = {
             "jsonrpc": "2.0",
@@ -866,17 +900,32 @@ class CMCPProxy:
         # egress check saw (post-scan, possibly sanitized) so a verifier can match
         # the audited response against what the caller actually received.
         response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
-        # Evidence class: tls-pinned when the upstream server has a real cert pin in the catalog.
+        # Evidence class: what a verifier can conclude about where this response
+        # came from. tls-pinned when a network upstream has a real cert pin;
+        # spawn-measured when the gateway digested a stdio server's entrypoint
+        # against the catalog before exec'ing it. The two are not comparable and
+        # are deliberately not collapsed: one identifies an endpoint, the other
+        # identifies code.
         from cmcp_runtime.mcp import tls_pinning as _tls_mod
-        _fp = entry.server.tls_fingerprint if entry else ""
-        evidence_class = (
-            "tls-pinned"
-            if entry
-            and entry.server.url.startswith("https://")
-            and _fp
-            and _fp != _tls_mod.PLACEHOLDER_FINGERPRINT
-            else "hash-only"
-        )
+        if entry is not None and entry.server.is_stdio:
+            spawned = self._stdio_servers.get(entry.server.display_name)
+            # A stdio response with no spawned server on record is not something
+            # to guess about; hash-only is the honest floor.
+            evidence_class = (
+                spawned.evidence_class
+                if spawned is not None and spawned.evidence_class
+                else "hash-only"
+            )
+        else:
+            _fp = entry.server.tls_fingerprint if entry else ""
+            evidence_class = (
+                "tls-pinned"
+                if entry
+                and entry.server.url.startswith("https://")
+                and _fp
+                and _fp != _tls_mod.PLACEHOLDER_FINGERPRINT
+                else "hash-only"
+            )
         external_execution_evidence = _extract_external_execution_evidence(agt_result)
         # INJECT-003: include injection scanner and pattern in audit detail when detected
         injection_detail: dict[str, str | int | float] | None = (

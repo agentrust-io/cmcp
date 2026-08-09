@@ -13,12 +13,14 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 | `attestation.staleness_policy` | `fail_closed` |
 | `attestation.validity_seconds` | `86400` |
 | `policy_reload_interval_seconds` | `0` (disabled; policy change requires an enclave restart) |
+| `attestation.allow_unmeasured_spawn` | `false` (a stdio server the catalog does not pin is not spawned) |
 
 ## Capabilities
 
 | Capability | Status | Notes |
 |---|---|---|
-| MCP interception + Cedar policy evaluation inside the TEE | Shipped | HTTP/SSE transport. `stdio` is not yet supported (bridge planned, Phase 2). |
+| MCP interception + Cedar policy evaluation inside the TEE | Shipped | HTTP/SSE transport. |
+| `stdio` transport | Shipped | The gateway spawns the server as its own child **inside the enclave**, rather than bridging from outside, which is what the two rejected options in [`docs/spec/transport.md`](docs/spec/transport.md) did. It measures the entrypoint against the catalog and refuses to spawn on a mismatch, so a stdio upstream carries a stronger binding than a network one: a TLS pin identifies an endpoint, a digest identifies code. The cost is real and stated in [`docs/spec/stdio-transport.md`](docs/spec/stdio-transport.md): the server then runs in the same isolation domain as the policy evaluator, and the gateway's launch measurement does not cover a child spawned later. Recorded as `spawn-measured`, or `spawn-unmeasured` when `attestation.allow_unmeasured_spawn` is on. |
 | Enforcement modes (`enforcing` / `advisory` / `silent`) | Shipped | Default is `enforcing`. |
 | Hash-chained audit log, TEE-sealed signing key | Shipped | |
 | `GatewayClaim` (TRACE Claim) generation + signing | Shipped | Normative schema: [`schemas/trace-claim.schema.json`](schemas/trace-claim.schema.json). |
