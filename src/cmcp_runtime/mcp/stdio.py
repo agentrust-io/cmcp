@@ -236,17 +236,50 @@ class StdioServer:
             digest,
         )
 
+    async def list_tools(self) -> list[dict[str, Any]] | None:
+        """The tools this server advertises, for the provenance catalog check.
+
+        Returns ``None`` rather than raising when the server will not answer. A
+        server that cannot be listed is not a server that failed provenance; it
+        is one whose provenance could not be checked, and the two are recorded
+        differently.
+        """
+        try:
+            body = await self._request("provenance-tools-list", "tools/list", {})
+        except (UpstreamUnavailable, UpstreamToolError) as exc:
+            logger.warning("could not list tools for provenance check: %s", exc)
+            return None
+        result = body.get("result")
+        tools = result.get("tools") if isinstance(result, dict) else None
+        return tools if isinstance(tools, list) else None
+
     async def call(self, call_id: str, tool_name: str, arguments: dict[str, Any]) -> str:
         """One JSON-RPC ``tools/call`` over the child's stdin/stdout."""
+        body = await self._request(
+            call_id, "tools/call", {"name": tool_name, "arguments": arguments}
+        )
+        if "error" in body:
+            error = body["error"] if isinstance(body["error"], dict) else {}
+            raise UpstreamToolError(
+                f"Upstream tool error from {tool_name}: "
+                f"{str(error.get('message', 'unknown'))[:200]}"
+            )
+        return _text_content(body.get("result"))
+
+    async def _request(
+        self, call_id: str, method: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Write one JSON-RPC request, read one response, check its framing.
+
+        Shared by ``call`` and ``list_tools`` so both get the same framing rules.
+        A second copy of this would be a second place for the desynchronization
+        handling to drift, and the whole argument for treating a parse failure as
+        fatal is that the alternative is guessing.
+        """
         if self._proc is None or self._proc.stdin is None or self._proc.stdout is None:
             raise UpstreamUnavailable("stdio server is not running")
 
-        request = {
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments},
-        }
+        request = {"jsonrpc": "2.0", "id": call_id, "method": method, "params": params}
         line = json.dumps(request, separators=(",", ":")).encode() + b"\n"
 
         # One call at a time. The framing carries an id, but interleaving writes
@@ -311,13 +344,7 @@ class StdioServer:
                 f"stdio server answered id {body.get('id')!r} for request {call_id!r}; "
                 "a mismatched response cannot be attributed and the session is terminated"
             )
-        if "error" in body:
-            error = body["error"] if isinstance(body["error"], dict) else {}
-            raise UpstreamToolError(
-                f"Upstream tool error from {tool_name}: "
-                f"{str(error.get('message', 'unknown'))[:200]}"
-            )
-        return _text_content(body.get("result"))
+        return body
 
     async def _collect_stderr(self) -> None:
         if self._proc is None or self._proc.stderr is None:

@@ -332,3 +332,56 @@ def test_json_rpc_request_shape(tmp_path) -> None:
         "params": {"name": "search", "arguments": {"q": "x"}},
     }
     assert json.loads(json.dumps(payload, separators=(",", ":"))) == payload
+
+
+# --- tools/list, for the provenance catalog check --------------------------
+
+
+async def test_list_tools_returns_what_the_server_advertises(tmp_path) -> None:
+    script = _script(
+        tmp_path,
+        """
+        import json, sys
+        for line in sys.stdin:
+            req = json.loads(line)
+            if req["method"] == "tools/list":
+                out = {"tools": [{"name": "search", "description": "d", "inputSchema": {}}]}
+            else:
+                out = {"content": [{"type": "text", "text": "x"}]}
+            sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":req["id"],"result":out}) + "\\n")
+            sys.stdout.flush()
+        """,
+    )
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    try:
+        tools = await server.list_tools()
+        assert tools is not None
+        assert tools[0]["name"] == "search"
+    finally:
+        await server.close()
+
+
+async def test_list_tools_returns_none_rather_than_raising(tmp_path) -> None:
+    """A server that will not be listed has not failed provenance.
+
+    It is a server whose provenance could not be checked, and the caller records
+    those differently. Raising here would collapse the two.
+    """
+    script = _script(
+        tmp_path,
+        """
+        import json, sys
+        for line in sys.stdin:
+            req = json.loads(line)
+            sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":req["id"],
+                "error":{"code":-32601,"message":"method not found"}}) + "\\n")
+            sys.stdout.flush()
+        """,
+    )
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    try:
+        assert await server.list_tools() is None
+    finally:
+        await server.close()

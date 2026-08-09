@@ -31,6 +31,8 @@ class ServerIdentity:
     transport: str  # "http-sse", "websocket", or "stdio"
     rotation_mode: str  # "key-pinned" (default) or "cert-pinned"
     spawn: StdioSpawn | None = None
+    provenance_record_path: str | None = None
+    publisher_jwk: dict[str, Any] | None = None
     """How to start a stdio server. Present only when transport is "stdio".
 
     A stdio server has no URL and no TLS certificate, so ``url`` and
@@ -207,6 +209,8 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
             transport=raw_server.get("transport", "http-sse"),
             rotation_mode=raw_server.get("rotation_mode", "key-pinned"),
             spawn=spawn,
+            provenance_record_path=(raw_server.get("provenance") or {}).get("record_path"),
+            publisher_jwk=(raw_server.get("provenance") or {}).get("publisher_jwk"),
         )
 
         raw_def = raw["approved_definition"]

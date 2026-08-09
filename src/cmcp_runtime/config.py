@@ -55,6 +55,11 @@ class AttestationConfig:
     staleness_policy: StalenessPolicy = StalenessPolicy.FAIL_CLOSED
     expected_measurement: str | None = None
     allow_unmeasured_spawn: bool = False
+    required_provenance_kind: str | None = None
+    """Minimum server-provenance assurance to route a call. ``None`` records the
+    outcome without enforcing it, which is the only default that works in an
+    ecosystem where almost no server has a record: a gateway that refuses to route
+    without one gets turned off on first contact and never turned back on."""
     """Permit spawning a stdio server whose binary the catalog does not pin.
 
     Default off. A child runs inside the enclave, in the same isolation domain as
@@ -110,6 +115,7 @@ _KNOWN_ATTEST_KEYS = {
     "staleness_policy",
     "expected_measurement",
     "allow_unmeasured_spawn",
+    "required_provenance_kind",
 }
 _KNOWN_AGENT_MANIFEST_KEYS = {"path", "trust_anchor_path", "authenticated_subject"}
 
@@ -277,6 +283,14 @@ def load_config(path: str) -> Config:
     if not isinstance(allow_unmeasured_spawn, bool):
         raise ConfigError("attestation.allow_unmeasured_spawn must be a boolean")
 
+    required_provenance_kind = attest_raw.get("required_provenance_kind", None)
+    _KINDS = ("publisher-asserted", "observer-attested", "tee-attested")
+    if required_provenance_kind is not None and required_provenance_kind not in _KINDS:
+        raise ConfigError(
+            "attestation.required_provenance_kind must be null or one of "
+            + ", ".join(_KINDS)
+        )
+
     max_bytes = raw.get("max_response_size_bytes", 2 * 1024 * 1024)
     if not isinstance(max_bytes, int) or max_bytes <= 0:
         raise ConfigError("max_response_size_bytes must be a positive integer")
@@ -338,6 +352,7 @@ def load_config(path: str) -> Config:
             staleness_policy=staleness_policy,
             expected_measurement=expected_measurement,
             allow_unmeasured_spawn=allow_unmeasured_spawn,
+            required_provenance_kind=required_provenance_kind,
         ),
         agent_manifest=AgentManifestConfig(
             path=agent_manifest_path,

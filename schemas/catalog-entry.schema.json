@@ -92,6 +92,25 @@
               "description": "File the digest covers; defaults to the resolved executable. Set this to the entrypoint for interpreted servers, where the executable is the interpreter and every server on the host would otherwise share one digest."
             }
           }
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "record_path",
+            "publisher_jwk"
+          ],
+          "description": "Server provenance record for this server (spec/server-provenance-v1.md in agentrust-io/trace-spec). Optional: absence is recorded as 'absent' rather than failing, since almost no MCP server has a record today.",
+          "properties": {
+            "record_path": {
+              "type": "string",
+              "description": "Path to the signed provenance record (JSON)."
+            },
+            "publisher_jwk": {
+              "type": "object",
+              "description": "Public key the record must verify under. Required: the key embedded in a record cannot be used to check that record, because a forgery supplies its own."
+            }
+          }
         }
       },
       "allOf": [

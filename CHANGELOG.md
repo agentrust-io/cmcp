@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Server provenance checking (step 3).** The gateway consumes [`server-provenance-v1`](https://github.com/agentrust-io/trace-spec/blob/main/spec/server-provenance-v1.md) records via `agentrust-trace>=0.8`: it verifies the record against a **configured** publisher key, then compares the record's tool-catalog hash against the tools the server advertises to this gateway.
+
+  It never falls back to the catalog's own approved definitions for that comparison. Comparing a record against our approval instead of against the server is the substitution that turns the whole check into theatre.
+
+  Five outcomes reach the audit chain and none is silent. `verified`; `catalog-mismatch`, which means the document is fine and the *server* is not; `invalid`; `unchecked`, which means the record verified but the tool list was unavailable so the comparison that catches a substituted server never ran; and `absent`. `unchecked` exists because reporting a signature check alone as `verified` is a document checking itself.
+
+  **Absence is recorded and non-fatal by default.** Almost no MCP server has a record, and a gateway that refuses to route without one is a gateway that gets turned off on first contact and never turned back on. `attestation.required_provenance_kind` sets a floor per deployment; a `catalog-mismatch` satisfies no floor, including the weakest.
+
+  A record with no configured publisher key is `invalid`, not `verified`: the key embedded in a record cannot be used to check that record, because a forgery supplies its own.
+
+### Added
+
 - **stdio transport: the gateway spawns the MCP server as its own child, inside the enclave (#484).** `docs/spec/transport.md` ruled stdio out and rejected two bridging options, correctly, because both put a translating component *outside* the TEE where it can inject or suppress calls before the gateway sees them. Both options assumed the agent spawns the server. It does not: that same document states the agent reaches only the gateway and that the runtime catalog is authoritative. So the child is a child of a process already inside the enclave, and nothing crosses the boundary that does not cross it today.
 
   **This buys a binding no network upstream can have.** The gateway chooses when to `exec`, so it digests the entrypoint first and refuses to spawn on a mismatch. A pinned TLS fingerprint identifies an endpoint; a verified digest identifies code.

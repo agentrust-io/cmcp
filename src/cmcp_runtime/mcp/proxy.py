@@ -32,6 +32,7 @@ from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.mcp.stdio import StdioServer
 from cmcp_runtime.policy.decisions import audit_value
 from cmcp_runtime.policy.evaluator import PolicyEvaluator
+from cmcp_runtime.provenance import ProvenanceResult, check_server_provenance
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_runtime.session.state import SessionState
 
@@ -178,6 +179,11 @@ class CMCPProxy:
         # in memory would carry it from one agent's session into the next, and
         # the audit chain cannot see that happen (docs/spec/stdio-transport.md).
         self._stdio_servers: dict[str, StdioServer] = {}
+        # Provenance outcome per server, decided once per session on first use.
+        # Cached because the answer cannot change within a session without the
+        # server being replaced underneath us, and re-listing tools on every call
+        # would make the check expensive enough to be turned off.
+        self._provenance: dict[str, ProvenanceResult] = {}
         # Servers already warned about unenforceable pinning (warn once each).
         self._tls_pin_warned: set[str] = set()
 
@@ -282,6 +288,52 @@ class CMCPProxy:
             await server.close()
         self._stdio_servers.clear()
 
+    async def _advertised_tools(self, entry: CatalogEntry) -> list[dict[str, Any]] | None:
+        """What the server offers *this gateway*, for the provenance comparison.
+
+        Returns ``None`` when the server will not say, which the caller records as
+        ``unchecked`` rather than as a pass. Never falls back to the catalog's own
+        approved definitions: comparing a record against our approval instead of
+        against the server is the substitution that turns the check into theatre.
+        """
+        if entry.server.is_stdio:
+            return await (await self._stdio_for(entry)).list_tools()
+        try:
+            client = self._client_for_upstream(entry)
+            resp = await client.post(
+                entry.server.url,
+                json={"jsonrpc": "2.0", "id": "provenance-tools-list",
+                      "method": "tools/list", "params": {}},
+            )
+            resp.raise_for_status()
+            result = resp.json().get("result")
+        except Exception as exc:  # noqa: BLE001 - any failure means "could not check"
+            logger.warning("could not list tools for provenance check: %s", exc)
+            return None
+        tools = result.get("tools") if isinstance(result, dict) else None
+        return tools if isinstance(tools, list) else None
+
+    async def _check_provenance(self, entry: CatalogEntry) -> ProvenanceResult:
+        key = entry.server.display_name
+        result = self._provenance.get(key)
+        if result is None:
+            advertised = (
+                await self._advertised_tools(entry)
+                if entry.server.provenance_record_path
+                else None
+            )
+            result = check_server_provenance(
+                entry.server.provenance_record_path,
+                entry.server.publisher_jwk,
+                advertised,
+            )
+            self._provenance[key] = result
+            logger.info(
+                "provenance: server=%s outcome=%s kind=%s",
+                key, result.outcome.value, result.kind or "-",
+            )
+        return result
+
     async def _forward_to_upstream(
         self,
         call_id: str,
@@ -300,6 +352,15 @@ class CMCPProxy:
         sent), UpstreamToolError when the upstream returns a JSON-RPC error
         object.
         """
+        provenance = await self._check_provenance(entry)
+        required = self._config.attestation.required_provenance_kind
+        if not provenance.meets(required):
+            raise UpstreamUnavailable(
+                f"server provenance is {provenance.outcome.value} and this deployment "
+                f"requires {required}: {entry.server.display_name}",
+                detail=provenance.detail,
+            )
+
         if entry.server.is_stdio:
             server = await self._stdio_for(entry)
             return await server.call(call_id, tool_name, arguments)

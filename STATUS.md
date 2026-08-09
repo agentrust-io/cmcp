@@ -14,6 +14,7 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 | `attestation.validity_seconds` | `86400` |
 | `policy_reload_interval_seconds` | `0` (disabled; policy change requires an enclave restart) |
 | `attestation.allow_unmeasured_spawn` | `false` (a stdio server the catalog does not pin is not spawned) |
+| `attestation.required_provenance_kind` | `null` (server provenance is recorded, not enforced) |
 
 ## Capabilities
 
@@ -32,6 +33,7 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 | `gpu-cc` (NVIDIA H100/H200/Blackwell, via NRAS) | Planned (v0.2) | |
 | Transparency-log anchoring for TRACE Claims | v0.2 | Write and lookup. |
 | Server-side (provider) attestation | Not yet (Phase 2) | Phase 1 attests the gateway boundary only. |
+| Server provenance checking | Shipped | Consumes [server-provenance-v1](https://github.com/agentrust-io/trace-spec/blob/main/spec/server-provenance-v1.md) records: verifies the signature against a configured publisher key, then compares the record's tool-catalog hash against the tools the server advertises **to this gateway**. Five outcomes reach the audit chain and none of them is silent: `verified`, `catalog-mismatch` (the document is fine and the server is not), `invalid`, `unchecked` (verified but the tool list was unavailable, so the comparison that matters never ran), `absent`. Absence is recorded and non-fatal by default, because almost no MCP server has a record and a gateway that refuses to route without one gets disabled on first contact. Set `attestation.required_provenance_kind` for a floor. |
 | Real-time policy update without enclave restart | Not yet | `policy_reload_interval_seconds` is `0`; a policy change requires a restart. |
 | AARM R4 five decision types | Shipped, with caveats | ALLOW, DENY, MODIFY, STEP_UP, DEFER are recorded in the audit chain. MODIFY is recorded as `redact`, DEFER is classified but not asynchronously enforced, and the TRACE Claim still carries the pre-AARM vocabulary. See [LIMITATIONS.md](LIMITATIONS.md). |
 | AARM R8 telemetry export | Shipped | OpenTelemetry spans mirroring audit entries. Opt in with `CMCP_OTEL_ENABLED=1` and `pip install cmcp-runtime[otel]`; a no-op otherwise. Exports digests, never payloads. The audit chain stays authoritative. |
