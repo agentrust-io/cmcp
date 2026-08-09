@@ -46,11 +46,13 @@ What is still open is the **binding** between the two, and it cannot be closed w
 
 One sharp edge worth recording, because it produced a false pass during implementation: the TCG EK EKU (`2.23.133.8.1`) does **not** identify an Endorsement Key. Azure's real vTPM chain carries it on the *issuing CAs* (`Azure Cloud Virtual TPM CA - 11` and `... CA 2025`), where it means "may issue EK certificates". Matching on the EKU alone reported `ek_cert_chain` verified for a chain containing no EK at all. Identification requires the EKU **and** `ca=False`.
 
-### 4.3 The gateway is not measured (#432, measurement landed, binding open)
+### 4.3 The gateway is not measured (#432, closed)
 
 PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and bootloader. Replacing the policy bundle or the gateway binary produced an identical measurement, so the stated purpose of the TPM path, protecting policy from tampering, was not enforced by the TPM.
 
-The gateway is now measured into an NV extend index at startup, before it serves traffic, per P2 below. What is still missing is the signed binding: the index value travels as an ordinary NV read, which the quote signature does not cover, so a verifier cannot yet distinguish a genuine value from one a compromised gateway reported. `TPM2_NV_Certify` closes that, and until it does the measurement is a local integrity control rather than remote-verifiable evidence.
+Both halves are now closed. The gateway is measured into an NV extend index at startup, before it serves traffic, and the value is bound by two `TPM2_NV_Certify` calls bracketing the extend, so both the pre and post values are TPM-signed and a verifier checks `post == H(pre || expected_gateway_digest)` with nothing collector-asserted and no verifier-side state. See P2 in section 5 for the construction and why one certify is not enough. Both were validated on an Azure Trusted Launch vTPM on 2026-08-01; the certify run found two defects in already-merged code, recorded in [hardware-validation.md](../testing/hardware-validation.md).
+
+What the appraisal does not give you: it proves the gateway extended a specific digest into a specific index, not that the digest corresponds to known-good code, unless the relying party supplies an expected value. Key provenance for the certifying key also remains host-dependent on Azure, per section 7.
 
 ### 4.4 PCR digests are uninterpretable (#433)
 
@@ -124,13 +126,13 @@ cMCP should describe three tiers rather than one attestation story.
 |---|---|---|
 | Confidential compute (TDX, SEV-SNP) | Vendor-signed report, memory encrypted | Host operator and local code execution |
 | TPM, target model in section 5 | AK-signed quote chained to a vendor CA, gateway measured into a non-resettable index, signing key sealed to that policy | Local code execution below the gateway measurement |
-| TPM, as implemented today | AK-signed quote over PCRs 0-7, gateway measured into a `TPM_NT_EXTEND` NV index, AK chain verified to a pinned root **where the host's AK certificate permits it** | Remote and passive adversaries, accidental drift, and forgery of the gateway measurement |
+| TPM, as implemented today | AK-signed quote over PCRs 0-7, gateway measured into a `TPM_NT_EXTEND` NV index and bound by a bracketing `TPM2_NV_Certify` pair, AK chain verified to a pinned root **where the host's AK certificate permits it** | Remote and passive adversaries, accidental drift, and forgery of the gateway measurement |
 
 Two things about row three, both load-bearing and neither visible in a one-line summary.
 
 **Chain verification is host-dependent, not a given.** Azure Trusted Launch runs two vTPM CA hierarchies concurrently: one chains to the root pinned in `cmcp_verify/tpm_roots.py` over AIA, the other carries no AIA extension at all and therefore cannot produce a chain. On the latter, evidence is signed and fresh but proves nothing about *where* the key lives, so key provenance is unavailable. See [hardware-validation.md](../testing/hardware-validation.md) and #453.
 
-**The gateway measurement is not yet signed evidence.** The NV index value travels as an ordinary read that no signature covers, so it is a local integrity control rather than something a relying party can appraise. `TPM2_NV_Certify` closes that and is the open half of #432.
+**The gateway measurement is signed evidence, but it does not carry known-good.** The NV index value is bound by a bracketing `TPM2_NV_Certify` pair, so a relying party can appraise it rather than take the collector's word for it (#432, closed, hardware-validated 2026-08-01). What the pair proves is that this gateway extended this digest. Whether that digest is the right one is a release-engineering question: without an expected value supplied by the relying party, the appraisal reports the pair as internally consistent and says so, rather than implying more.
 
 The gap between rows two and three is the remaining work in section 5. Naming it plainly is more useful to anyone evaluating the project than any claim we could round up to.
 
