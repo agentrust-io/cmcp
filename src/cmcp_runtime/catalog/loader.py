@@ -17,6 +17,7 @@ from cmcp_runtime.errors import (
     ConfigError,
     ToolNotInCatalog,
 )
+from cmcp_runtime.mcp.stdio import StdioSpawn
 
 _CATALOG_ENTRY_SCHEMA_PATH = Path(__file__).parent.parent.parent.parent / "schemas" / "catalog-entry.schema.json"
 
@@ -27,8 +28,18 @@ class ServerIdentity:
     url: str
     tls_fingerprint: str
     spiffe_id: str | None
-    transport: str  # "http-sse" or "websocket"
+    transport: str  # "http-sse", "websocket", or "stdio"
     rotation_mode: str  # "key-pinned" (default) or "cert-pinned"
+    spawn: StdioSpawn | None = None
+    """How to start a stdio server. Present only when transport is "stdio".
+
+    A stdio server has no URL and no TLS certificate, so ``url`` and
+    ``tls_fingerprint`` are empty for one and the schema does not require them.
+    """
+
+    @property
+    def is_stdio(self) -> bool:
+        return self.transport == "stdio"
 
 
 @dataclass
@@ -175,13 +186,27 @@ def load_catalog(catalog_path: str, expected_hash: str | None = None) -> ToolCat
             )
 
         raw_server = raw["server"]
+        raw_spawn = raw_server.get("spawn")
+        spawn = (
+            StdioSpawn(
+                command=raw_spawn["command"],
+                args=tuple(raw_spawn.get("args", ())),
+                binary_digest=raw_spawn.get("binary_digest"),
+                measure_target=raw_spawn.get("measure_target"),
+            )
+            if raw_spawn
+            else None
+        )
         server = ServerIdentity(
             display_name=raw_server["display_name"],
-            url=raw_server["url"],
-            tls_fingerprint=raw_server["tls_fingerprint"],
+            # Empty rather than absent for a stdio server: it has no endpoint,
+            # and inventing a URL for one would put a fiction in the audit chain.
+            url=raw_server.get("url", ""),
+            tls_fingerprint=raw_server.get("tls_fingerprint", ""),
             spiffe_id=raw_server.get("spiffe_id"),
             transport=raw_server.get("transport", "http-sse"),
             rotation_mode=raw_server.get("rotation_mode", "key-pinned"),
+            spawn=spawn,
         )
 
         raw_def = raw["approved_definition"]

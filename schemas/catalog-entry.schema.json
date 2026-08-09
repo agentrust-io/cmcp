@@ -23,8 +23,6 @@
       "additionalProperties": false,
       "required": [
         "display_name",
-        "url",
-        "tls_fingerprint",
         "transport"
       ],
       "properties": {
@@ -43,21 +41,109 @@
           "description": "Colon-separated SHA-256 TLS certificate fingerprint in OpenSSL format."
         },
         "spiffe_id": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^spiffe://",
           "description": "SPIFFE SVID for this server; required when SPIFFE is deployed, null otherwise."
         },
         "transport": {
           "type": "string",
-          "enum": ["http-sse", "websocket"],
-          "description": "Transport protocol; stdio is excluded from Phase 1."
+          "enum": [
+            "http-sse",
+            "websocket",
+            "stdio"
+          ],
+          "description": "Transport protocol. stdio means the gateway spawns the server as its own child inside the enclave; see docs/spec/stdio-transport.md."
+        },
+        "spawn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "command"
+          ],
+          "description": "How to start a stdio server. Required when transport is stdio, ignored otherwise.",
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Executable to run."
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Arguments."
+            },
+            "binary_digest": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "description": "Expected digest of measure_target. Absent means the server is not pinned, which requires attestation.allow_unmeasured_spawn and is recorded as spawn-unmeasured."
+            },
+            "measure_target": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "File the digest covers; defaults to the resolved executable. Set this to the entrypoint for interpreted servers, where the executable is the interpreter and every server on the host would otherwise share one digest."
+            }
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "A network transport needs an endpoint and a pin; stdio has neither.",
+          "if": {
+            "properties": {
+              "transport": {
+                "enum": [
+                  "http-sse",
+                  "websocket"
+                ]
+              }
+            },
+            "required": [
+              "transport"
+            ]
+          },
+          "then": {
+            "required": [
+              "url",
+              "tls_fingerprint"
+            ]
+          }
+        },
+        {
+          "$comment": "A stdio server needs to say what the gateway should spawn.",
+          "if": {
+            "properties": {
+              "transport": {
+                "const": "stdio"
+              }
+            },
+            "required": [
+              "transport"
+            ]
+          },
+          "then": {
+            "required": [
+              "spawn"
+            ]
+          }
+        }
+      ]
     },
     "approved_definition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["description", "input_schema"],
+      "required": [
+        "description",
+        "input_schema"
+      ],
       "properties": {
         "description": {
           "type": "string",
@@ -68,7 +154,10 @@
           "description": "JSON Schema describing the tool input parameters."
         },
         "output_schema": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "description": "JSON Schema describing the tool output; null if not specified."
         }
       }
@@ -80,7 +169,15 @@
     },
     "compliance_domain": {
       "type": "string",
-      "enum": ["hipaa_phi", "pci_data", "mnpi", "pii", "internal", "external", "public"],
+      "enum": [
+        "hipaa_phi",
+        "pci_data",
+        "mnpi",
+        "pii",
+        "internal",
+        "external",
+        "public"
+      ],
       "description": "Compliance classification domain for this tool."
     },
     "requires_baa": {
@@ -90,7 +187,14 @@
     },
     "sensitivity_level": {
       "type": "string",
-      "enum": ["public", "pii", "confidential", "hipaa_phi", "mnpi", "trade_secret"],
+      "enum": [
+        "public",
+        "pii",
+        "confidential",
+        "hipaa_phi",
+        "mnpi",
+        "trade_secret"
+      ],
       "default": "public",
       "description": "Data sensitivity level of information this tool accesses or returns."
     },
