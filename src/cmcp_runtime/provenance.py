@@ -21,7 +21,7 @@ import json
 import logging
 import pathlib
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["ProvenanceOutcome", "ProvenanceResult", "check_server_provenance"]
 
 
-class ProvenanceOutcome(str, Enum):
+class ProvenanceOutcome(StrEnum):
     """What the gateway concluded. Every value is recorded in the audit chain."""
 
     VERIFIED = "verified"
