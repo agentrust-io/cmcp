@@ -57,6 +57,21 @@ ECHO_SERVER = """
 """
 
 
+SIZED_SERVER = """
+    import json, sys
+    for line in sys.stdin:
+        req = json.loads(line)
+        sys.stdout.write(json.dumps({
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "result": {"content": [
+                {"type": "text", "text": "x" * req["params"]["arguments"]["n"]},
+            ]},
+        }) + "\\n")
+        sys.stdout.flush()
+"""
+
+
 def _spawn_for(script: str, digest: str | None) -> StdioSpawn:
     """Pin the script, not the interpreter.
 
@@ -147,6 +162,40 @@ async def test_round_trip(tmp_path) -> None:
     try:
         assert await server.call("c1", "search", {"q": "x"}) == "ok:search"
         assert await server.call("c2", "pay", {}) == "ok:pay"
+    finally:
+        await server.close()
+
+
+async def test_response_over_the_asyncio_default_limit_still_round_trips(tmp_path) -> None:
+    """A 200 KiB response is ordinary, and must not depend on asyncio's default.
+
+    ``create_subprocess_exec`` gives the child's stdout a 64 KiB stream limit
+    unless told otherwise, and ``readline`` raises a bare ``ValueError`` past it.
+    Left at the default, a file read or a search result would fail with a stray
+    exception and ``MAX_RESPONSE_BYTES`` would never be reached at all.
+    """
+    script = _script(tmp_path, SIZED_SERVER)
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    try:
+        assert await server.call("c1", "read", {"n": 200 * 1024}) == "x" * (200 * 1024)
+    finally:
+        await server.close()
+
+
+async def test_oversized_response_is_refused_with_a_reason(tmp_path, monkeypatch) -> None:
+    """Past the declared bound the answer is a refusal, not a raw ValueError.
+
+    The limit is monkeypatched rather than fed 8 MB so the test stays quick; it
+    is read at spawn time, so the child inherits whatever it is set to here.
+    """
+    monkeypatch.setattr("cmcp_runtime.mcp.stdio.MAX_RESPONSE_BYTES", 8 * 1024)
+    script = _script(tmp_path, SIZED_SERVER)
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    try:
+        with pytest.raises(UpstreamUnavailable, match="exceeds"):
+            await server.call("c1", "read", {"n": 64 * 1024})
     finally:
         await server.close()
 

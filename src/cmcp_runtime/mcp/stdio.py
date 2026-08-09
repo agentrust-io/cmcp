@@ -223,6 +223,11 @@ class StdioServer:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=self._env,
+            # asyncio's default stream limit is 64 KiB, which is smaller than a
+            # perfectly ordinary tool response. Left at the default, readline()
+            # raises before MAX_RESPONSE_BYTES is ever consulted, so the bound
+            # the gateway actually enforces has to be the bound it declares.
+            limit=MAX_RESPONSE_BYTES,
         )
         logger.info(
             "stdio server spawned: %s (%s, digest %s)",
@@ -256,7 +261,20 @@ class StdioServer:
                     f"stdio server closed its input: {self._spawn.command}", detail=str(exc)
                 ) from exc
 
-            raw = await self._proc.stdout.readline()
+            try:
+                raw = await self._proc.stdout.readline()
+            except ValueError as exc:
+                # A line longer than the limit, or one still unterminated at it.
+                # asyncio reports both as a bare ValueError, and an over-sized
+                # response is a refusal with a reason rather than a stray
+                # exception surfacing from inside the enclave.
+                await self.close()
+                raise UpstreamUnavailable(
+                    f"stdio server response exceeds {MAX_RESPONSE_BYTES} bytes without "
+                    f"a newline, so the JSON-RPC stream cannot be framed and the session "
+                    f"is terminated: {self._spawn.command}",
+                    detail=str(exc),
+                ) from exc
 
         if not raw:
             await self._collect_stderr()
