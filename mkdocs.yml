@@ -182,6 +182,7 @@ nav:
       - Error Codes: spec/error-codes.md
       - Failure Modes: spec/failure-modes.md
       - Threat Model: spec/threat-model.md
+      - Policy Hot-Reload: spec/policy-hot-reload.md
       - Phase 2 Server: spec/phase2-server.md
   - Testing:
       - Benchmarks: testing/benchmarks.md

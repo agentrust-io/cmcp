@@ -178,7 +178,7 @@ catalog_path: catalog.json          # approved tool catalog
 
 listen_addr: "127.0.0.1:8443"     # tokenless dev mode is loopback-only; set CMCP_BEARER_TOKEN before binding wider
 max_response_size_bytes: 2097152    # 2 MB default
-policy_reload_interval_seconds: 0   # 0 = disabled; restart required to update policy
+policy_reload_interval_seconds: 0   # leave at 0; above 0 is a trap in production, see docs/spec/policy-hot-reload.md
 ```
 
 Environment variables:

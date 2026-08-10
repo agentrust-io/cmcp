@@ -105,7 +105,7 @@ All fields are optional as a group. If `path` is set, `trust_anchor_path` must a
 | `catalog_path` | string | `catalog.json` | Path to the JSON tool catalog. Path traversal (`..` components) is rejected. |
 | `listen_addr` | string | `0.0.0.0:8443` | Address and port the gateway binds to. Default is `127.0.0.1:8443` in tokenless `CMCP_DEV_MODE=1`, otherwise `0.0.0.0:8443`. Tokenless dev mode requires loopback (e.g., `127.0.0.1:8443`, `localhost:8443`, `[::1]:8443`). Wildcard, LAN, public, and non-loopback hostname binds require `CMCP_BEARER_TOKEN`. |
 | `max_response_size_bytes` | integer | `2097152` | Maximum tool response size in bytes (2MB). Must be a positive integer. Responses exceeding this limit are rejected before inspection. |
-| `policy_reload_interval_seconds` | integer | `0` | Interval in seconds between automatic Cedar bundle reloads. `0` disables automatic reload. See note in the full example above. |
+| `policy_reload_interval_seconds` | integer | `0` | Interval in seconds between automatic Cedar bundle reloads. `0` disables automatic reload, and **`0` is the only value to use today.** Above `0` the reload re-validates the new bundle against the hash pinned at startup (`CMCP_POLICY_HASH`), so a bundle that actually changed is rejected and the old policy stays in force; the failed reload also does not advance the interval, making every later tool call re-read and re-hash the bundle on the enforcement path. It works only under `CMCP_DEV_MODE=1`, where no hash is pinned. See [Policy Hot-Reload](spec/policy-hot-reload.md). |
 
 ## Environment variables
 

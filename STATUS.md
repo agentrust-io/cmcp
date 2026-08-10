@@ -12,7 +12,7 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 | `attestation.enforcement_mode` | `enforcing` |
 | `attestation.staleness_policy` | `fail_closed` |
 | `attestation.validity_seconds` | `86400` |
-| `policy_reload_interval_seconds` | `0` (disabled; policy change requires an enclave restart) |
+| `policy_reload_interval_seconds` | `0` (disabled; policy change requires an enclave restart. Do not raise it: see the hot-reload row below) |
 | `attestation.allow_unmeasured_spawn` | `false` (a stdio server the catalog does not pin is not spawned) |
 | `attestation.required_provenance_kind` | `null` (server provenance is recorded, not enforced) |
 
@@ -34,7 +34,7 @@ picture is stated once. Developer Preview: interfaces may change before v1.0.
 | Transparency-log anchoring for TRACE Claims | v0.2 | Write and lookup. |
 | Server-side (provider) attestation | Not yet (Phase 2) | Phase 1 attests the gateway boundary only. |
 | Server provenance checking | Shipped | Consumes [server-provenance-v1](https://github.com/agentrust-io/trace-spec/blob/main/spec/server-provenance-v1.md) records: verifies the signature against a configured publisher key, then compares the record's tool-catalog hash against the tools the server advertises **to this gateway**. Five outcomes reach the audit chain and none of them is silent: `verified`, `catalog-mismatch` (the document is fine and the server is not), `invalid`, `unchecked` (verified but the tool list was unavailable, so the comparison that matters never ran), `absent`. Absence is recorded and non-fatal by default, because almost no MCP server has a record and a gateway that refuses to route without one gets disabled on first contact. Set `attestation.required_provenance_kind` for a floor. |
-| Real-time policy update without enclave restart | Not yet | `policy_reload_interval_seconds` is `0`; a policy change requires a restart. |
+| Real-time policy update without enclave restart | Not yet, and the knob that looks like it is a trap | `policy_reload_interval_seconds` defaults to `0`, and a policy change requires a restart. Setting it above `0` does **not** buy hot-reload in production: the reload re-validates the new bundle against the hash pinned at startup, so any genuinely changed bundle fails and the old policy keeps being enforced. Worse, the failure path does not advance the interval, so every subsequent tool call re-reads and re-hashes the whole bundle on the enforcement path. Leave it at `0`. See [policy-hot-reload.md](docs/spec/policy-hot-reload.md) for the measurements and the options. |
 | AARM R4 five decision types | Shipped, with caveats | ALLOW, DENY, MODIFY, STEP_UP, DEFER are recorded in the audit chain. MODIFY is recorded as `redact`, DEFER is classified but not asynchronously enforced, and the TRACE Claim still carries the pre-AARM vocabulary. See [LIMITATIONS.md](LIMITATIONS.md). |
 | AARM R8 telemetry export | Shipped | OpenTelemetry spans mirroring audit entries. Opt in with `CMCP_OTEL_ENABLED=1` and `pip install cmcp-runtime[otel]`; a no-op otherwise. Exports digests, never payloads. The audit chain stays authoritative. |
 | AARM R2/R3 declared intent | Not implemented | cMCP takes no declared-intent input, so the intent-alignment half of R2 and R3 is unmet. Adding one changes the MCP-facing surface. |
