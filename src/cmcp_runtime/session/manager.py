@@ -282,7 +282,9 @@ class SessionManager:
             if e.tool_name is None:
                 continue
             catalog_entry = catalog.entries.get(e.tool_name)
-            data_class = (
+            # #479 piece 2: prefer this call's own class, catalog floor already
+            # raised by any _cmcp.data_class declaration, over the catalog default.
+            data_class = e.effective_data_class or (
                 catalog_entry.sensitivity_level if catalog_entry is not None else "unknown"
             )
             transcript_entries.append(

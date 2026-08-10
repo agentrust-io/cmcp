@@ -34,7 +34,7 @@ from cmcp_runtime.policy.decisions import audit_value
 from cmcp_runtime.policy.evaluator import PolicyEvaluator
 from cmcp_runtime.provenance import ProvenanceResult, check_server_provenance
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
-from cmcp_runtime.session.state import SessionState
+from cmcp_runtime.session.state import SessionState, _max_sensitivity
 
 logger = logging.getLogger(__name__)
 
@@ -546,6 +546,7 @@ class CMCPProxy:
         tool_name: str,
         arguments: dict[str, Any],
         workflow_id: str | None = None,
+        declared_data_class: str | None = None,
     ) -> CallResult:
         """
         Execute one MCP tool call through the full enforcement pipeline.
@@ -558,6 +559,13 @@ class CMCPProxy:
           5. Audit chain write
           6. Session state update
           7. Call log record + suspicious-sequence check
+
+        declared_data_class (#479 piece 2): an optional class the caller declares
+        for this specific call via _cmcp.data_class, raising this call's effective
+        class above the tool's catalogued sensitivity_level. It can never lower
+        the effective class and an unrecognised value is harmless: both properties
+        fall directly out of _max_sensitivity's semantics, no separate validation
+        needed here.
 
         Returns CallResult regardless of allow/deny so the caller can always
         write a complete audit entry.
@@ -624,6 +632,18 @@ class CMCPProxy:
                 latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )
+
+        # #479 piece 2: this call's own class, catalog floor raised by any
+        # declared_data_class. _max_sensitivity can only return the higher of
+        # the two labels, ties favour the catalog value, so an unrecognised or
+        # lower declared value is harmless without any separate validation.
+        effective_data_class: str | None = (
+            _max_sensitivity(
+                entry.sensitivity_level, declared_data_class, self._session.sensitivity_order
+            )
+            if declared_data_class is not None
+            else None
+        )
 
         # Step 1b: break-glass warning - log and audit every call via an exception entry
         if entry.catalog_exception:
@@ -852,7 +872,11 @@ class CMCPProxy:
             async with self._session.mutation_lock:
                 self._session.update_from_inspection(
                     call_id=call_id,
-                    sensitivity_tags=[entry.sensitivity_level],
+                    sensitivity_tags=(
+                        [entry.sensitivity_level, declared_data_class]
+                        if declared_data_class is not None
+                        else [entry.sensitivity_level]
+                    ),
                     injection_detected=injection_detected,
                     response_allowed=False,
                 )
@@ -871,6 +895,7 @@ class CMCPProxy:
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
                 workflow_id=workflow_id,
+                effective_data_class=effective_data_class,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self._record_call(
@@ -899,8 +924,13 @@ class CMCPProxy:
 
         # Step 4: session update from response sensitivity
         # AUTH-002: lock protects against race with concurrent session reset requests.
-        # Sensitivity comes from the attested catalog entry's declared level.
-        response_sensitivity = [entry.sensitivity_level]
+        # Sensitivity comes from the attested catalog entry's declared level, raised
+        # by declared_data_class if the caller declared one (#479 piece 2).
+        response_sensitivity = (
+            [entry.sensitivity_level, declared_data_class]
+            if declared_data_class is not None
+            else [entry.sensitivity_level]
+        )
         injection_scanner = "agt_response_scanner" if injection_detected else None
         injection_pattern = (
             ",".join(sorted({str(t.get("category", "unknown")) for t in scan.threats}))
@@ -1015,6 +1045,7 @@ class CMCPProxy:
             workflow_id=workflow_id,
             detail=injection_detail,
             external_execution_evidence=external_execution_evidence,
+            effective_data_class=effective_data_class,
         )
 
         # Step 6: call log record + suspicious-sequence check

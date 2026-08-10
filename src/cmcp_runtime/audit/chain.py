@@ -76,6 +76,11 @@ class AuditEntry:
     # independent authority attested. Serialized uniformly (null when absent),
     # so receipt-less entries remain deterministic and schema-stable.
     external_execution_evidence: dict[str, str] | None = None
+    # #479 piece 2: this call's own data class, catalog floor raised by any
+    # _cmcp.data_class declaration, already validated by construction since
+    # _max_sensitivity can only return the higher of the two. None when no
+    # declaration was made, the transcript falls back to the catalog value.
+    effective_data_class: str | None = None
     entry_hash: str = field(default="")  # computed after construction
 
     def _canonical_body(self) -> bytes:
@@ -213,6 +218,7 @@ class AuditChain:
         detail: dict[str, str | int | float] | None = None,
         workflow_id: str | None = None,
         external_execution_evidence: dict[str, str] | None = None,
+        effective_data_class: str | None = None,
     ) -> AuditEntry:
         prev_hash = self._entries[-1].entry_hash if self._entries else "genesis"
         now = datetime.now(tz=UTC)
@@ -241,6 +247,7 @@ class AuditChain:
             detail=detail,
             workflow_id=workflow_id,
             external_execution_evidence=external_execution_evidence,
+            effective_data_class=effective_data_class,
             prev_entry_hash=prev_hash,
         )
         entry.entry_hash = entry.compute_hash()
