@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from cmcp_runtime.errors import ConfigError, PolicyHashMismatch
+from cmcp_runtime.policy import bundle as bundle_module
 from cmcp_runtime.policy.bundle import PolicyBundle, PolicyManifest, PolicyStore, load_policy_bundle
 
 MANIFEST = {
@@ -205,6 +206,103 @@ def test_policy_store_keeps_current_on_reload_failure():
     # Should return False (failure path) and preserve the original bundle.
     assert result is False
     assert store.bundle.bundle_hash == bundle.bundle_hash
+
+
+# ── The pinned-hash configuration, which is the only one production runs ──────
+#
+# Every test above constructs PolicyStore WITHOUT expected_hash. That is the
+# CMCP_DEV_MODE=1 shape, where reload genuinely works. Production requires
+# CMCP_POLICY_HASH, and passing it makes reload behave completely differently:
+# the pinned hash is re-validated on every reload, so a bundle that actually
+# changed is rejected. Testing only the unpinned shape is why that went unnoticed.
+# See docs/spec/policy-hot-reload.md.
+
+
+def test_pinned_hash_reload_cannot_install_a_changed_bundle(bundle_dir):
+    """With a pinned hash, a changed bundle is refused and the old policy stays.
+
+    This documents the defect rather than endorsing it: it is why
+    policy_reload_interval_seconds > 0 alongside a pinned hash is now refused at
+    startup. If a future signing-key model makes runtime change work, this test
+    should be replaced, not deleted quietly.
+    """
+    original = load_policy_bundle(str(bundle_dir))
+    store = PolicyStore(
+        bundle=original,
+        bundle_path=str(bundle_dir),
+        reload_interval_seconds=1,
+        expected_hash=original.bundle_hash,
+    )
+
+    # An operator flips allow-all to deny-all on disk.
+    (bundle_dir / "allow-all.cedar").write_text("forbid(principal, action, resource);")
+
+    start = store._last_reload_at
+    with patch("cmcp_runtime.policy.bundle.time") as mock_time:
+        mock_time.monotonic.return_value = start + 2
+        result = store.reload_if_stale()
+
+    assert result is False
+    assert store.bundle.bundle_hash == original.bundle_hash, (
+        "a pinned hash cannot authorise a bundle that changed"
+    )
+
+
+def test_unpinned_reload_does_install_a_changed_bundle(bundle_dir):
+    """The same edit, with no pin: the swap happens. The pin is the difference."""
+    original = load_policy_bundle(str(bundle_dir))
+    store = PolicyStore(
+        bundle=original,
+        bundle_path=str(bundle_dir),
+        reload_interval_seconds=1,
+        expected_hash=None,
+    )
+    (bundle_dir / "allow-all.cedar").write_text("forbid(principal, action, resource);")
+
+    start = store._last_reload_at
+    with patch("cmcp_runtime.policy.bundle.time") as mock_time:
+        mock_time.monotonic.return_value = start + 2
+        assert store.reload_if_stale() is True
+
+    assert store.bundle.bundle_hash != original.bundle_hash
+
+
+def test_a_failing_reload_costs_one_attempt_per_interval_not_one_per_call(bundle_dir):
+    """The load bound. A failing reload must not re-read the bundle every call.
+
+    reload_if_stale runs once per policy evaluation. Before the interval was
+    stamped ahead of the attempt, a failing reload left the staleness check true,
+    so 50 evaluations produced 50 full bundle reads plus 50 SHA-256 computations
+    on the enforcement hot path -- and in production the reload always failed.
+    """
+    original = load_policy_bundle(str(bundle_dir))
+    store = PolicyStore(
+        bundle=original,
+        bundle_path=str(bundle_dir),
+        reload_interval_seconds=60,
+        expected_hash=original.bundle_hash,
+    )
+    (bundle_dir / "allow-all.cedar").write_text("forbid(principal, action, resource);")
+
+    calls = 0
+    real_load = bundle_module.load_policy_bundle
+
+    def counting_load(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_load(*args, **kwargs)
+
+    start = store._last_reload_at
+    with (
+        patch.object(bundle_module, "load_policy_bundle", counting_load),
+        patch("cmcp_runtime.policy.bundle.time") as mock_time,
+    ):
+        # One interval has elapsed, and stays elapsed-but-not-twice.
+        mock_time.monotonic.return_value = start + 61
+        for _ in range(50):
+            store.reload_if_stale()
+
+    assert calls == 1, f"a failing reload re-read the bundle {calls} times across 50 evaluations"
 
 
 # ── POLICY-007: agent_os_version pinning ─────────────────────────────────────

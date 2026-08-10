@@ -1,6 +1,7 @@
 # Policy Hot-Reload
 
-**Document status:** Design proposal, nothing built  
+**Document status:** Direction decided (option A, signing key); the two
+direction-independent fixes have landed, the signing-key model has not been built  
 **Applies to:** cMCP Runtime gateway (`PolicyStore`, `startup`)  
 **Related config:** `policy_reload_interval_seconds`
 
@@ -11,8 +12,12 @@
 Hot-reload is not missing. It is implemented in `PolicyStore.reload_if_stale`, wired
 into `PolicyEvaluator`, and documented as a supported knob — and **it cannot swap a
 policy in any production configuration.** This document records why, measures what
-the current code does instead, and lays out the options for fixing it. No code
-changes accompany it.
+the current code does instead, and lays out the options for fixing it.
+
+The direction is now decided (option A, a pinned signing key) and the two fixes
+that did not depend on the direction have landed: the guaranteed-inert
+configuration is refused at startup, and a failing reload no longer re-reads the
+bundle on every request. The signing-key model itself is not built.
 
 `STATUS.md` says real-time policy update is "Not yet" because
 `policy_reload_interval_seconds` is `0`. That reads as "unimplemented, default off".
@@ -201,25 +206,71 @@ config error** rather than a warning at request time.
   restart, which for a confidential gateway means an attestation cycle. That is a
   real operational burden and the reason this item is on the list at all.
 
-## Recommendation is not the point yet, but two things are not optional
+## Decision (2026-08-10): option A, pin a signing key
 
-Whichever direction is chosen, two fixes stand on their own and do not depend on
-it:
+**Direction chosen: A.** Runtime policy change gets its authority from a pinned
+signing key rather than a pinned artifact hash. Nothing about it is implemented
+yet; what follows is what the decision commits us to, so the implementation issue
+starts from a settled model rather than reopening the choice.
 
-1. **A configuration that cannot work must not start.** `expected_hash` set
-   together with `reload_interval_seconds > 0` is, today, guaranteed-inert. Under
-   option E that pairing is the config error; under A/B/C/D it stops existing.
-   Either way it must never again be a thing an operator can switch on and believe.
-2. **The interval must be honoured on failure too.** `_last_reload_at` has to
-   advance whether or not the reload succeeded, or a failing reload turns into
-   per-request bundle I/O on the enforcement path. This is worth fixing even if
-   hot-reload is removed, because the same shape will reappear in the next thing
-   that polls.
+What it means concretely:
 
-And the test gap generalises past this feature: a code path whose only tests
-construct it in the configuration production never uses is a path with no tests.
-The reload tests should be parameterised over pinned and unpinned, so whichever
-option lands is exercised the way it will actually be deployed.
+- The bundle manifest gains a signature over its own canonical contents. The
+  manifest already carries `author_identity` and `commit_sha`, both currently
+  unsigned assertions; signing turns them into claims someone is accountable for.
+- The gateway pins a **public key** (a new setting, not `CMCP_POLICY_HASH`). A
+  reload verifies the new bundle's signature against it.
+- The manifest's `version` must increase monotonically across reloads, and a
+  bundle whose version does not is refused. Without this a validly signed *older*
+  bundle is a downgrade attack: an attacker who can write the bundle directory
+  replays yesterday's more permissive policy, and every signature still checks out.
+- `CMCP_POLICY_HASH` keeps its current meaning and stays the right choice for a
+  deployment that wants exactly one policy for the life of the process. It is a
+  pin on an artifact, so it remains incompatible with reload — the two are
+  alternatives, not layers, and configuring both is refused at startup (see below).
+- Evidence: a TRACE claim records the bundle hash it evaluated under **plus** the
+  signer identity and the bundle version, so a verifier can answer both "what
+  policy ran" and "who authorised it" for a process whose policy changed mid-life.
+
+Open sub-questions the implementation issue has to answer, none of which reopen
+the direction:
+
+- Where the pinned key comes from, and whether it can be rotated without a
+  restart. A key that can only change on restart is fine and is probably right,
+  since key rotation is rarer than policy change.
+- Revocation. A signing key that is compromised needs a way to stop being trusted
+  that is faster than a fleet restart, or the model's advantage over hash pinning
+  shrinks.
+- Whether the signature covers the bundle hash or the full canonical bundle. The
+  first is smaller and reuses `_canonical_bundle_hash`; the second is
+  self-contained.
+- What happens to a session already admitted under the previous bundle, which is
+  listed under Not in scope below and now needs an answer.
+
+## Two things that were not optional, and are now done
+
+Both stood on their own, independent of the direction, and both have landed:
+
+1. **A configuration that cannot work does not start.** `CMCP_POLICY_HASH`
+   together with `policy_reload_interval_seconds > 0` now aborts startup
+   (`POLICY_RELOAD_PINNED_HASH`). Under option A the two remain alternatives
+   rather than layers, so this refusal is durable rather than a stopgap: a pin on
+   an exact artifact and a policy that may change are contradictory whatever the
+   reload path is authorised by. Dev mode pins no hash and is unaffected, which is
+   the one configuration where reload actually works and is tested as such.
+2. **The interval is honoured on failure.** `_last_reload_at` is stamped *before*
+   the attempt, so an exception cannot skip it. A failing reload now costs one
+   attempt per interval instead of one full bundle read plus hash per request.
+   Worth doing regardless of what happens to hot-reload, because the same shape
+   reappears in anything else that polls on the enforcement path.
+
+The test gap generalised past this feature and was closed with it: a code path
+whose only tests construct it in the configuration production never uses is a path
+with no tests. The reload tests now cover pinned and unpinned side by side, one
+asserting that a pinned hash cannot install a changed bundle and one asserting
+that without the pin it can, so the difference the pin makes is visible in the
+suite rather than discovered later. The load bound has a test above it that counts
+the reads.
 
 ## Not in scope
 

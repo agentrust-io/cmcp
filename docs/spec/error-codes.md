@@ -10,6 +10,7 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 | `ATTESTATION_PROVIDER_UNSUPPORTED` | 500 | FATAL | No supported TEE provider detected and `CMCP_DEV_MODE` is not set | [attestation.md §1.1](attestation.md) |
 | `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` | 501 | FATAL | A recognized provider was explicitly selected but is not yet implemented (e.g. `opaque`) | [attestation.md §1.1](attestation.md) |
 | `POLICY_HASH_MISMATCH` | 500 | FATAL | Measured policy bundle hash does not match deployment manifest | [failure-modes.md FM-4](failure-modes.md) |
+| `POLICY_RELOAD_PINNED_HASH` | 500 | FATAL | `policy_reload_interval_seconds > 0` configured alongside a pinned `CMCP_POLICY_HASH`. Every reload is validated against that hash, so a changed bundle could never be installed; refused at startup rather than appearing to work | [policy-hot-reload.md](policy-hot-reload.md) |
 | `CATALOG_HASH_MISMATCH` | 500 | FATAL | Measured catalog hash does not match deployment manifest | [attestation.md §5](attestation.md) |
 | `AGENT_MANIFEST_BINDING_FAILED` | 500 | FATAL | Signed Agent Manifest signature, authenticated subject, policy hash, or catalog hash did not match the runtime session inputs | [session-policy.md](session-policy.md) |
 | `TOOL_NOT_IN_CATALOG` | 403 | WARN | Agent requested a tool not present in the attested catalog | [cedar-policy.md](cedar-policy.md) |

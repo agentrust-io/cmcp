@@ -345,6 +345,36 @@ def run_startup(config_path: str) -> RuntimeContext:
             "Set CMCP_DEV_MODE=1 only in development to skip this check.",
         )
         sys.exit(1)
+
+    # POLICY-003: a pinned hash and automatic reload cannot both be satisfied.
+    # The pin says "the policy is exactly this artifact, decided before the
+    # process started"; reload says "the policy may change while it runs". The
+    # reload path re-validates against this same pinned hash, so a bundle that
+    # actually changed is rejected and the old policy keeps being enforced --
+    # silently, at WARNING, while the failed reload re-reads and re-hashes the
+    # whole bundle on every subsequent tool call because the interval is only
+    # advanced on success.
+    #
+    # That combination could never do what an operator setting it intends, so it
+    # is refused here rather than discovered in production. Runtime policy change
+    # needs a trust anchor that survives the bundle changing: a pinned signing
+    # key, not a pinned artifact hash. See docs/spec/policy-hot-reload.md.
+    if policy_expected_hash is not None and config.policy_reload_interval_seconds > 0:
+        _fatal(
+            "POLICY_RELOAD_PINNED_HASH",
+            "policy_reload_interval_seconds > 0 cannot be combined with a pinned "
+            "CMCP_POLICY_HASH: every reload is validated against that hash, so a "
+            "changed bundle is always rejected and the policy never updates.",
+            detail=(
+                f"policy_reload_interval_seconds={config.policy_reload_interval_seconds}, "
+                "CMCP_POLICY_HASH is set. Set policy_reload_interval_seconds to 0. "
+                "Automatic reload currently works only under CMCP_DEV_MODE=1, where no "
+                "hash is pinned; see docs/spec/policy-hot-reload.md."
+            ),
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
     try:
         policy_bundle = load_policy_bundle(config.policy_bundle_path, expected_hash=policy_expected_hash)
     except PolicyHashMismatch as exc:

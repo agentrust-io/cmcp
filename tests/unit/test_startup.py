@@ -249,6 +249,51 @@ def test_startup_fails_when_policy_hash_unset_and_not_dev_mode(tmp_path):
     assert exc_info.value.code == 1
 
 
+def test_startup_refuses_reload_interval_alongside_a_pinned_policy_hash(tmp_path):
+    """POLICY-003: a pinned hash plus automatic reload can never update a policy.
+
+    Every reload re-validates against the pinned hash, so a changed bundle is
+    always rejected and the old policy keeps being enforced. Configuring both is
+    guaranteed-inert, so it is refused at startup instead of discovered in
+    production. See docs/spec/policy-hot-reload.md.
+    """
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    config_path.write_text(
+        f"policy_bundle_path: {policy_dir}\n"
+        f"catalog_path: {catalog_path}\n"
+        "policy_reload_interval_seconds: 60\n"
+    )
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+
+    from cmcp_runtime.policy.bundle import _canonical_bundle_hash
+
+    manifest_raw = json.loads((policy_dir / "manifest.json").read_text())
+    computed = _canonical_bundle_hash(manifest_raw, {"allow.cedar": CEDAR_POLICY}, SCHEMA)
+
+    env = {"CMCP_DEV_MODE": "0", "CMCP_POLICY_HASH": f"sha256:{computed}"}
+    with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
+
+
+def test_startup_allows_reload_interval_in_dev_mode(complete_setup):
+    """Dev mode pins no hash, so reload is the one place it actually works.
+
+    The refusal above must not become a blanket ban on the interval, or the only
+    working configuration would also be rejected.
+    """
+    config_path = Path(complete_setup)
+    config_path.write_text(config_path.read_text() + "policy_reload_interval_seconds: 60\n")
+    ctx = run_startup(str(config_path))
+    assert ctx.config.policy_reload_interval_seconds == 60
+
+
 def test_startup_fails_when_catalog_hash_unset_and_not_dev_mode(tmp_path, monkeypatch):
     """POLICY-002 (CRITICAL, issue #137): CMCP_CATALOG_HASH must be set outside dev mode."""
     config_path = tmp_path / "cmcp-config.yaml"

@@ -211,19 +211,32 @@ class PolicyStore:
         Returns True if a reload attempt was made (regardless of whether the
         bundle hash changed).  Thread-safe; uses an RLock so nested calls from
         the same thread are safe.
+
+        This runs on the enforcement path, once per policy evaluation, so the
+        interval is a load bound and not only a freshness knob: the attempt is
+        timestamped whether it succeeded or failed. Advancing it only on success
+        meant a failing reload left the staleness check true, so every subsequent
+        tool call re-read every policy file and recomputed the bundle hash. A
+        reload that keeps failing must cost one attempt per interval, not one per
+        request.
         """
         if self._reload_interval <= 0:
             return False
         with self._lock:
             if time.monotonic() - self._last_reload_at < self._reload_interval:
                 return False
+            # Stamped before the attempt, so an exception cannot skip it.
+            self._last_reload_at = time.monotonic()
             try:
                 new_bundle = load_policy_bundle(self._bundle_path, self._expected_hash)
                 if new_bundle.bundle_hash != self._bundle.bundle_hash:
                     self._bundle = new_bundle
                     logger.info("Policy bundle reloaded: hash=%s", new_bundle.bundle_hash)
-                self._last_reload_at = time.monotonic()
                 return True
             except Exception as exc:
-                logger.warning("Policy bundle reload failed (keeping current): %s", exc)
+                logger.warning(
+                    "Policy bundle reload failed (keeping current, retrying in %ds): %s",
+                    self._reload_interval,
+                    exc,
+                )
                 return False
