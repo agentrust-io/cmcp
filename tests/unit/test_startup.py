@@ -282,6 +282,88 @@ def test_startup_refuses_reload_interval_alongside_a_pinned_policy_hash(tmp_path
     assert exc_info.value.code == 1
 
 
+def test_startup_allows_reload_alongside_a_pinned_signing_key(tmp_path, monkeypatch):
+    """POLICY-004: a pinned signing key is the anchor that authorises change.
+
+    The POLICY-003 refusal must not extend to this: a hash pins one artifact and
+    cannot authorise a new one, but a key approves any bundle the authority signs,
+    which is exactly what reload needs. Both pins together is the supported
+    production shape.
+    """
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from cmcp_runtime.policy.bundle import load_policy_bundle, signing_pre_image
+
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    config_path.write_text(
+        f"policy_bundle_path: {policy_dir}\n"
+        f"catalog_path: {catalog_path}\n"
+        "policy_reload_interval_seconds: 60\n"
+    )
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
+    )
+    unsigned = load_policy_bundle(str(policy_dir))
+    signature = private.sign(signing_pre_image(unsigned.bundle_hash))
+    manifest = json.loads((policy_dir / "manifest.json").read_text())
+    manifest["signature"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+    (policy_dir / "manifest.json").write_text(json.dumps(manifest))
+
+    # Dev mode, because this host has no TEE and a non-dev start is refused for
+    # that unrelated reason. Both pins are still set, which is what exercises the
+    # POLICY-003 guard: hash + interval alone is refused, hash + interval + key
+    # must be allowed.
+    import cmcp_runtime.config as _cfg
+
+    monkeypatch.setattr(_cfg, "DEV_MODE", True)
+    catalog_hash = load_catalog(str(catalog_path)).catalog_hash
+    env = {
+        "CMCP_DEV_MODE": "1",
+        "CMCP_POLICY_HASH": unsigned.bundle_hash,
+        "CMCP_POLICY_SIGNING_KEY": public.hex(),
+        "CMCP_CATALOG_HASH": catalog_hash,
+    }
+    with patch.dict(os.environ, env, clear=True):
+        try:
+            ctx = run_startup(str(config_path))
+        except SystemExit as exc:  # pragma: no cover - diagnostic
+            pytest.fail(f"startup refused a signed reload configuration: exit {exc.code}")
+    assert ctx.config.policy_reload_interval_seconds == 60
+    assert ctx.policy_bundle.bundle.manifest.signature is not None
+
+
+@pytest.mark.parametrize("key", ["nonsense!!", "ab", "00" * 31])
+def test_startup_refuses_a_malformed_signing_key(tmp_path, key):
+    """A key that cannot be a 32-byte Ed25519 public key is a config error, not
+    something to pad, truncate, or ignore."""
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    config_path.write_text(f"policy_bundle_path: {policy_dir}\ncatalog_path: {catalog_path}\n")
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+
+    env = {"CMCP_DEV_MODE": "1", "CMCP_POLICY_SIGNING_KEY": key}
+    with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
+
+
 def test_startup_allows_reload_interval_in_dev_mode(complete_setup):
     """Dev mode pins no hash, so reload is the one place it actually works.
 

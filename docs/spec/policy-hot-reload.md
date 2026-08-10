@@ -1,7 +1,7 @@
 # Policy Hot-Reload
 
-**Document status:** Direction decided (option A, signing key); the two
-direction-independent fixes have landed, the signing-key model has not been built  
+**Document status:** Implemented (option A, signing key). Revocation is
+deliberately out of scope; see the limit stated below  
 **Applies to:** cMCP Runtime gateway (`PolicyStore`, `startup`)  
 **Related config:** `policy_reload_interval_seconds`
 
@@ -9,21 +9,21 @@ direction-independent fixes have landed, the signing-key model has not been buil
 
 ## Summary
 
-Hot-reload is not missing. It is implemented in `PolicyStore.reload_if_stale`, wired
-into `PolicyEvaluator`, and documented as a supported knob — and **it cannot swap a
-policy in any production configuration.** This document records why, measures what
-the current code does instead, and lays out the options for fixing it.
+Hot-reload was never missing. It was implemented in `PolicyStore.reload_if_stale`,
+wired into `PolicyEvaluator`, and documented as a supported knob — and **it could
+not swap a policy in any production configuration.** The sections below record why,
+with the measurements, because the shape of that mistake is worth keeping.
 
-The direction is now decided (option A, a pinned signing key) and the two fixes
-that did not depend on the direction have landed: the guaranteed-inert
-configuration is refused at startup, and a failing reload no longer re-reads the
-bundle on every request. The signing-key model itself is not built.
+**Now:** policy can change at runtime when the gateway pins a **signing key**
+rather than an artifact hash (option A, built). The guaranteed-inert configuration
+is refused at startup, a failing reload no longer re-reads the bundle on every
+request, and a signed bundle whose version increases is installed without a
+restart. Revocation is not implemented and that limit is stated rather than
+implied.
 
-`STATUS.md` says real-time policy update is "Not yet" because
-`policy_reload_interval_seconds` is `0`. That reads as "unimplemented, default off".
-The truth is worse and more specific: it is implemented, it is off by default, and
-turning it on in production buys a warning log line every request instead of a
-policy update.
+The rest of this document is the analysis that got there, kept because the
+diagnosis matters more than the fix: a status file said "not yet" while the code
+said "implemented and inert", and nothing failed.
 
 ## What is actually there
 
@@ -232,20 +232,55 @@ What it means concretely:
   signer identity and the bundle version, so a verifier can answer both "what
   policy ran" and "who authorised it" for a process whose policy changed mid-life.
 
-Open sub-questions the implementation issue has to answer, none of which reopen
-the direction:
+### As built
 
-- Where the pinned key comes from, and whether it can be rotated without a
-  restart. A key that can only change on restart is fine and is probably right,
-  since key rotation is rarer than policy change.
-- Revocation. A signing key that is compromised needs a way to stop being trusted
-  that is faster than a fleet restart, or the model's advantage over hash pinning
-  shrinks.
-- Whether the signature covers the bundle hash or the full canonical bundle. The
-  first is smaller and reuses `_canonical_bundle_hash`; the second is
-  self-contained.
-- What happens to a session already admitted under the previous bundle, which is
-  listed under Not in scope below and now needs an answer.
+```bash
+export CMCP_POLICY_SIGNING_KEY=<raw Ed25519 public key, base64url or hex>
+# and in cmcp-config.yaml
+policy_reload_interval_seconds: 60
+```
+
+| Decision | Answer |
+|---|---|
+| Signature covers | The **bundle hash**, domain-separated: `sha256(cmcp-policy-bundle-v1\|<bundle_hash>)`. Reuses the hash the gateway already computes and measures. |
+| Where the signature lives | `signature` in `manifest.json`, base64url. It is **excluded from the hashed manifest**, because it cannot be inside the pre-image it signs. Same idiom the delegation credential uses. Every bundle hash issued before signing existed is unchanged, since stripping an absent key is a no-op. |
+| Monotonic version | Enforced on reload when a key is pinned. Versions are compared as tuples of integers, so `1.10.0` beats `1.9.0`; an unorderable version is refused **at load**, not at the first reload. |
+| Key rotation | Restart only. Rotation is rarer than policy change, and this is a deliberate choice rather than an omission. |
+| Revocation | **Not implemented.** See the limit below. |
+| In-flight sessions | The new bundle applies from the next evaluation, including for sessions already open. |
+| Unsigned bundles | Still valid when no key is pinned. Signing is opt-in; a deployment pinning a hash needs none of it. |
+| Unsigned bundle *with* a key pinned | Refused. Having asked for signed policy, being handed unsigned policy is a refusal, not a downgrade to the unsigned path. |
+
+### Why the version check is not optional
+
+Without it the signing-key model **is** a downgrade attack. Anyone who can write
+the bundle directory replays yesterday's more permissive bundle: the authority
+really signed it, the signature really verifies, and the gateway installs a policy
+the operator already retired. Monotonicity is what makes "signed by the authority"
+mean "the authority's *current* intent". `test_a_replayed_older_signed_bundle_is_refused`
+constructs exactly that attack and fails if the check is removed, which was
+verified by removing it.
+
+### The limit: no revocation
+
+A compromised signing key stops being trusted by changing
+`CMCP_POLICY_SIGNING_KEY` and restarting. There is no revocation list, no key set,
+and no expiry.
+
+Stated plainly because it bounds what this buys: **faster policy change, not
+faster key change.** A deployment whose threat model includes a compromised policy
+signing key needing revocation inside a fleet-restart window is not served by
+this, and should keep pinning a hash. Adding revocation later is compatible with
+what is built — it constrains which keys are acceptable, and does not change the
+signature or the version rule.
+
+### In-flight sessions
+
+A session admitted under the previous bundle is evaluated against the new one from
+its next call. This is what an operator tightening a policy during an incident
+expects, and it is the reason reload was wanted at all. The cost is that a
+long-running session can see its effective permissions narrow with no signal; a
+session-facing notification was considered and is not built.
 
 ## Two things that were not optional, and are now done
 
@@ -277,5 +312,5 @@ the reads.
 - Catalog hot-reload. `CMCP_CATALOG_HASH` has exactly the same pin, and
   `load_catalog` the same shape, so whatever is decided here should be applied
   there deliberately rather than by copy. It is not analysed in this document.
-- What a reloaded policy means for an in-flight session that has already been
-  admitted under the previous bundle.
+- Revocation of a policy signing key, which is a real gap rather than a
+  non-goal: see "The limit: no revocation" above.

@@ -37,6 +37,20 @@ class PolicyHashMismatch(CMCPError):
     http_status = 500
 
 
+class PolicySignatureInvalid(CMCPError):
+    """A policy bundle's manifest signature is absent, malformed, or does not
+    verify under the pinned signing key; or its version did not increase.
+
+    POLICY-004. Distinct from PolicyHashMismatch, which says the bundle is not the
+    one exact artifact that was pinned. This says nobody authorised to change
+    policy authorised *this* bundle, which is the question a deployment asks when
+    it allows policy to change at runtime at all.
+    """
+
+    code = "POLICY_SIGNATURE_INVALID"
+    http_status = 500
+
+
 class CatalogHashMismatch(CMCPError):
     code = "CATALOG_HASH_MISMATCH"
     http_status = 500

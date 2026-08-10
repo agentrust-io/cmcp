@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -89,6 +90,37 @@ def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
         sort_keys=True,
     ).encode()
     return hashlib.sha256(canonical).digest()
+
+
+def _decode_ed25519_public_key(value: str) -> bytes:
+    """Decode a raw Ed25519 public key given as base64url or hex.
+
+    Both spellings are accepted because operators paste whichever their tooling
+    emits, and a 32-byte key is unambiguous either way. Anything that is not
+    exactly 32 bytes is refused rather than padded or truncated.
+    """
+    text = value.strip()
+    raw: bytes | None = None
+    if len(text) == 64:
+        try:
+            raw = bytes.fromhex(text)
+        except ValueError:
+            raw = None
+    if raw is None:
+        try:
+            padding = 4 - (len(text) % 4)
+            raw = base64.urlsafe_b64decode(text + ("=" * padding if padding != 4 else ""))
+        except (binascii.Error, ValueError) as exc:
+            raise ConfigError(
+                "CMCP_POLICY_SIGNING_KEY must be a raw Ed25519 public key in "
+                "base64url or hex"
+            ) from exc
+    if len(raw) != 32:
+        raise ConfigError(
+            "CMCP_POLICY_SIGNING_KEY must decode to exactly 32 bytes "
+            f"(an Ed25519 public key); got {len(raw)}"
+        )
+    return raw
 
 
 def _fatal(code: str, message: str, **fields: Any) -> None:
@@ -346,6 +378,19 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
 
+    # POLICY-004: the pinned policy signing key. This is the anchor that survives
+    # the bundle changing, and therefore the only one that can authorise runtime
+    # policy change: a hash pins one artifact, a key approves any artifact the
+    # authority signs. See docs/spec/policy-hot-reload.md.
+    policy_signing_key: bytes | None = None
+    raw_signing_key = os.environ.get("CMCP_POLICY_SIGNING_KEY")
+    if raw_signing_key:
+        try:
+            policy_signing_key = _decode_ed25519_public_key(raw_signing_key)
+        except ConfigError as exc:
+            _fatal("POLICY_SIGNING_KEY_INVALID", str(exc), action="startup_aborted")
+            sys.exit(1)
+
     # POLICY-003: a pinned hash and automatic reload cannot both be satisfied.
     # The pin says "the policy is exactly this artifact, decided before the
     # process started"; reload says "the policy may change while it runs". The
@@ -359,7 +404,11 @@ def run_startup(config_path: str) -> RuntimeContext:
     # is refused here rather than discovered in production. Runtime policy change
     # needs a trust anchor that survives the bundle changing: a pinned signing
     # key, not a pinned artifact hash. See docs/spec/policy-hot-reload.md.
-    if policy_expected_hash is not None and config.policy_reload_interval_seconds > 0:
+    if (
+        policy_expected_hash is not None
+        and config.policy_reload_interval_seconds > 0
+        and policy_signing_key is None
+    ):
         _fatal(
             "POLICY_RELOAD_PINNED_HASH",
             "policy_reload_interval_seconds > 0 cannot be combined with a pinned "
@@ -376,7 +425,11 @@ def run_startup(config_path: str) -> RuntimeContext:
         sys.exit(1)
 
     try:
-        policy_bundle = load_policy_bundle(config.policy_bundle_path, expected_hash=policy_expected_hash)
+        policy_bundle = load_policy_bundle(
+            config.policy_bundle_path,
+            expected_hash=policy_expected_hash,
+            signing_key=policy_signing_key,
+        )
     except PolicyHashMismatch as exc:
         _fatal(
             "POLICY_HASH_MISMATCH",
@@ -396,6 +449,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         bundle_path=config.policy_bundle_path,
         reload_interval_seconds=config.policy_reload_interval_seconds,
         expected_hash=policy_expected_hash,
+        signing_key=policy_signing_key,
     )
     if config.policy_reload_interval_seconds > 0:
         logger.info(
