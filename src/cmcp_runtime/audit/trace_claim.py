@@ -100,6 +100,11 @@ class AgentIdentityInfo:
     issuer_key_id: str
     policy_bundle_hash: str
     tool_catalog_hash: str
+    # AARM R2: digest of the issuer-signed declared intent (agent-manifest spec
+    # 3.9), or None when the issuer declared none. The digest, never the
+    # statement: this claim is built to be shared, and an intent statement is
+    # business context.
+    intent_hash: str | None = None
     # #425: RFC 7638 JWK thumbprint of the agent's own signing key, "sha256:<hex>".
     # Distinct from issuer_key_id (the key that signed the manifest). Always None
     # today: no code path supplies agent key bytes, and it must never be set while
@@ -170,6 +175,7 @@ class AgentIdentityOut(BaseModel):
     issuer_key_id: str
     policy_bundle_hash: str
     tool_catalog_hash: str
+    intent_hash: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
     agent_key_thumbprint: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
 
 
@@ -500,6 +506,7 @@ def generate_trace_claim(
                 issuer_key_id=agent_identity.issuer_key_id,
                 policy_bundle_hash=agent_identity.policy_bundle_hash,
                 tool_catalog_hash=agent_identity.tool_catalog_hash,
+                intent_hash=agent_identity.intent_hash,
                 agent_key_thumbprint=agent_identity.agent_key_thumbprint,
             )
             if agent_identity is not None

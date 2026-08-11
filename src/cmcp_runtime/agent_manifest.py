@@ -36,6 +36,16 @@ class AgentManifestBinding:
     issuer_key_id: str
     policy_bundle_hash: str
     tool_catalog_hash: str
+    #: AARM R2. sha256 digest of the manifest's signed `intent` object, or None
+    #: when the issuer declared none. Derived via agent_manifest.intent_hash
+    #: rather than recomputed here, so the digest a receipt carries is the one
+    #: the specification defines (agent-manifest spec 3.9).
+    #:
+    #: The digest travels, not the statement. Every other identity field in the
+    #: claim is a hash for the same reason: the claim is meant to be shareable,
+    #: and an intent statement is business context. A verifier that wants the
+    #: text fetches the manifest it already has to fetch to check the signature.
+    intent_hash: str | None = None
 
 
 def _b64url_decode(value: str) -> bytes:
@@ -285,4 +295,8 @@ def verify_agent_manifest_binding(
         issuer_key_id=key_id,
         policy_bundle_hash=manifest_policy,
         tool_catalog_hash=manifest_catalog,
+        # Read after the signature has been verified above, never before: an
+        # intent taken from an unverified manifest is an intent anyone could
+        # have written, which is the failure the field exists to prevent.
+        intent_hash=agent_manifest_sdk.intent_hash(manifest),
     )

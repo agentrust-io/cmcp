@@ -384,6 +384,9 @@ class SessionManager:
                 issuer_key_id=binding.issuer_key_id,
                 policy_bundle_hash=binding.policy_bundle_hash,
                 tool_catalog_hash=binding.tool_catalog_hash,
+                # AARM R2. None when the bound manifest declares no intent,
+                # which is the common case and not a failure.
+                intent_hash=binding.intent_hash,
             )
 
         # AUDIT-005: increment the module-level counter to get a monotonic sequence number.

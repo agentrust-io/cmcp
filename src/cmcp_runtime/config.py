@@ -104,6 +104,12 @@ class Config:
     audit_db_path: str = "audit.db"  # AUDIT-001: durable audit chain storage
     dev_mode: bool = False
     bearer_token: str | None = None
+    #: AARM R6. A named conformance profile tightens defaults that stay
+    #: permissive for developers. None is the default, and nothing changes.
+    #: "aarm" requires an Agent Manifest binding, because R6 says every receipt
+    #: MUST be bound to an agent identity while the developer default leaves
+    #: binding optional. Naming the profile is what lets both be true.
+    conformance_profile: str | None = None
 
 
 _KNOWN_TOP_KEYS = {
@@ -117,7 +123,13 @@ _KNOWN_TOP_KEYS = {
     "max_response_size_bytes",
     "policy_reload_interval_seconds",
     "audit_db_path",
+    "conformance_profile",
 }
+
+#: Named conformance profiles. Deliberately a closed set: an unrecognised
+#: profile name must be a config error rather than silently enforcing nothing,
+#: which is how a deployment ends up believing it is conformant when it is not.
+_KNOWN_CONFORMANCE_PROFILES = {"aarm"}
 _KNOWN_KILL_SWITCH_KEYS = {
     "enabled",
     "window_seconds",
@@ -392,6 +404,15 @@ def load_config(path: str) -> Config:
     if trust_anchor_path is not None:
         _check_no_traversal("agent_manifest.trust_anchor_path", trust_anchor_path)
 
+    profile = raw.get("conformance_profile")
+    if profile is not None and (
+        not isinstance(profile, str) or profile not in _KNOWN_CONFORMANCE_PROFILES
+    ):
+        raise ConfigError(
+            f"conformance_profile must be one of "
+            f"{sorted(_KNOWN_CONFORMANCE_PROFILES)}, got {profile!r}"
+        )
+
     return Config(
         attestation=AttestationConfig(
             provider=provider,
@@ -420,6 +441,7 @@ def load_config(path: str) -> Config:
         max_response_size_bytes=max_bytes,
         policy_reload_interval_seconds=policy_reload_interval,
         audit_db_path=audit_db_path,
+        conformance_profile=profile,
         dev_mode=dev_mode,
         bearer_token=bearer_token,
     )

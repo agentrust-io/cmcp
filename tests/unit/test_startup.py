@@ -420,3 +420,59 @@ def test_startup_fails_on_unknown_tee_provider_name(complete_setup):
         run_startup(complete_setup)
 
     assert exc_info.value.code == 1
+
+
+# ── AARM R6: the named conformance profile ────────────────────────────────────
+
+
+def _minimal_setup(tmp_path: Path, extra_config: str = "") -> Path:
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    config_path.write_text(
+        f"policy_bundle_path: {policy_dir}\ncatalog_path: {catalog_path}\n" + extra_config
+    )
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+    return config_path
+
+
+def test_aarm_profile_refuses_to_start_without_a_manifest_binding(tmp_path, monkeypatch):
+    """R6 binds every receipt to an agent identity. Claiming the profile without
+    a manifest configured would be a claim the deployment cannot honour."""
+    import cmcp_runtime.config as _cfg
+
+    monkeypatch.setattr(_cfg, "DEV_MODE", True)
+    config_path = _minimal_setup(tmp_path, "conformance_profile: aarm\n")
+    monkeypatch.setenv("CMCP_DEV_MODE", "1")
+    with pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
+
+
+def test_the_permissive_default_is_untouched(tmp_path, monkeypatch):
+    """No profile named, no manifest configured: starts, as it always has. The
+    whole point of naming the profile is that the default does not move."""
+    import cmcp_runtime.config as _cfg
+
+    monkeypatch.setattr(_cfg, "DEV_MODE", True)
+    config_path = _minimal_setup(tmp_path)
+    monkeypatch.setenv("CMCP_DEV_MODE", "1")
+    ctx = run_startup(str(config_path))
+    assert ctx.agent_manifest is None
+    assert ctx.config.conformance_profile is None
+
+
+def test_an_unknown_profile_is_a_config_error(tmp_path, monkeypatch):
+    """An unrecognised profile must not silently enforce nothing, which is how a
+    deployment ends up believing it is conformant when it is not."""
+    import cmcp_runtime.config as _cfg
+
+    monkeypatch.setattr(_cfg, "DEV_MODE", True)
+    config_path = _minimal_setup(tmp_path, "conformance_profile: aarm-v2-maybe\n")
+    monkeypatch.setenv("CMCP_DEV_MODE", "1")
+    with pytest.raises(SystemExit):
+        run_startup(str(config_path))

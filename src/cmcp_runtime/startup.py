@@ -506,6 +506,27 @@ def run_startup(config_path: str) -> RuntimeContext:
     # fail-closed: signature, subject, policy hash, and catalog hash must agree
     # before any session can be created.
     agent_manifest: AgentManifestBinding | None = None
+
+    # AARM R6: every receipt MUST be bound to an agent identity. The developer
+    # default leaves binding optional, because requiring it out of the box would
+    # stop anyone trying cMCP in five minutes. A deployment claiming conformance
+    # says so by name, and then the requirement is real rather than aspirational.
+    if config.conformance_profile == "aarm" and (
+        config.agent_manifest.path is None
+        or config.agent_manifest.trust_anchor_path is None
+    ):
+        _fatal(
+            "CONFORMANCE_PROFILE_UNSATISFIED",
+            "conformance_profile 'aarm' requires an Agent Manifest binding: "
+            "AARM R6 binds every receipt to an agent identity.",
+            detail=(
+                "set agent_manifest.path and agent_manifest.trust_anchor_path, "
+                "or remove conformance_profile to run with the permissive default"
+            ),
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
     if config.agent_manifest.path is not None and config.agent_manifest.trust_anchor_path is not None:
         try:
             manifest = load_agent_manifest(config.agent_manifest.path)
