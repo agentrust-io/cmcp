@@ -44,6 +44,13 @@ clean environments before upload. It checks release-tag/version agreement,
 metadata and runtime versions, import provenance outside the checkout, core
 configuration construction, and the installed `cmcp` console entry point.
 
+### Release container build
+
+The release container uses a multi-stage build: the builder creates a wheelhouse
+from production dependencies only, while the runtime installs it offline and
+runs as numeric UID/GID 10001. Do not add editable installs, the `dev` extra, or
+root execution to the runtime stage.
+
 ## Commit format
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):

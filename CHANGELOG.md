@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upstream stdio children and provenance verdicts are now cached by complete execution and trust identity rather than the non-unique human-readable `display_name`. Distinct catalog servers sharing a label can no longer reuse another server's process or provenance result.
 - Built wheels now include the catalog-entry JSON Schema, and catalog loading fails closed if that schema is absent or unreadable. Previously source-tree tests validated catalog structure, but installed wheels omitted the schema and silently skipped that validation.
 - PyPI publication now installs and smoke-tests the exact wheel and source distribution before upload, including release-tag/version agreement, import provenance, runtime configuration, and the packaged CLI.
+- The runtime container now uses a patch-pinned Python slim base, builds a non-editable production wheelhouse in a separate stage, excludes development dependencies and build tooling from the final image, and runs as an unprivileged numeric UID/GID.
 
 ### Changed
 
