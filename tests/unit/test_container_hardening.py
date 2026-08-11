@@ -45,6 +45,8 @@ def test_container_prs_build_without_registry_write() -> None:
 
     assert "pull_request" in triggers
     assert build["with"]["push"] == "${{ startsWith(github.ref, 'refs/tags/') }}"
+    assert "steps.tag.outputs.tag || github.sha" in build["with"]["tags"]
+    assert "cmcp-gateway:latest" in build["with"]["tags"]
     assert all(
         "startsWith(github.ref, 'refs/tags/')" in step.get("if", "")
         for step in steps

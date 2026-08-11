@@ -48,7 +48,9 @@ jobs:
         with:
           context: .
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
-          tags: ghcr.io/agentrust-io/cmcp-gateway:${{ github.sha }}
+          tags: |
+            ghcr.io/agentrust-io/cmcp-gateway:${{ steps.tag.outputs.tag || github.sha }}
+            ghcr.io/agentrust-io/cmcp-gateway:latest
 
       - name: Install cosign
         if: startsWith(github.ref, 'refs/tags/')
