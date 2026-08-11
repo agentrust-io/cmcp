@@ -50,6 +50,9 @@ The release container uses a multi-stage build: the builder creates a wheelhouse
 from production dependencies only, while the runtime installs it offline and
 runs as numeric UID/GID 10001. Do not add editable installs, the `dev` extra, or
 root execution to the runtime stage.
+Dockerfile, schema, and container-workflow pull requests build the image without
+registry credentials or a push; publishing, signing, and provenance attestation
+remain restricted to version tags.
 
 ## Commit format
 
