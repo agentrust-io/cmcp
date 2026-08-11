@@ -2,6 +2,10 @@
 
 The tool catalog is the operator-controlled allowlist of MCP tools the gateway will route. Every entry is hashed into the TRACE claim at startup; adding, removing, or changing any field changes `catalog_hash` and invalidates prior attestations.
 
+The catalog-entry JSON Schema ships inside the Python distribution and is a
+mandatory startup dependency. CMCP refuses to load a catalog if the schema is
+missing or unreadable; it never degrades to partial hand-written validation.
+
 ## What you'll learn
 
 - The full structure of `catalog.json` and what each field controls

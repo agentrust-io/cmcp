@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import cmcp_runtime.catalog.loader as catalog_loader
 from cmcp_runtime.catalog.loader import ToolCatalog, load_catalog
 from cmcp_runtime.errors import (
     CatalogHashMismatch,
@@ -63,6 +64,14 @@ def catalog_file(tmp_path: Path):
         p.write_text(json.dumps(entries))
         return str(p)
     return _write
+
+
+def test_missing_catalog_schema_fails_closed(catalog_file, tmp_path, monkeypatch):
+    missing_schema = tmp_path / "missing-catalog-entry.schema.json"
+    monkeypatch.setattr(catalog_loader, "_CATALOG_ENTRY_SCHEMA_PATH", missing_schema)
+
+    with pytest.raises(ConfigError, match="schema is missing"):
+        load_catalog(catalog_file([ENTRY_1]))
 
 
 def test_load_valid_catalog(catalog_file):

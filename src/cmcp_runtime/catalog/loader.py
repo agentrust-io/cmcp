@@ -20,7 +20,17 @@ from cmcp_runtime.errors import (
 from cmcp_runtime.mcp.stdio import StdioSpawn
 from cmcp_runtime.session.state import SENSITIVITY_ORDER
 
-_CATALOG_ENTRY_SCHEMA_PATH = Path(__file__).parent.parent.parent.parent / "schemas" / "catalog-entry.schema.json"
+_PACKAGED_ENTRY_SCHEMA_PATH = (
+    Path(__file__).parent.parent / "schemas" / "catalog-entry.schema.json"
+)
+_SOURCE_ENTRY_SCHEMA_PATH = (
+    Path(__file__).parent.parent.parent.parent / "schemas" / "catalog-entry.schema.json"
+)
+_CATALOG_ENTRY_SCHEMA_PATH = (
+    _PACKAGED_ENTRY_SCHEMA_PATH
+    if _PACKAGED_ENTRY_SCHEMA_PATH.exists()
+    else _SOURCE_ENTRY_SCHEMA_PATH
+)
 
 
 @dataclass
@@ -131,15 +141,19 @@ def _catalog_hash(raw_entries: list[dict[str, Any]]) -> str:
     return f"sha256:{_sha256_hex(canonical.encode())}"
 
 
-def _load_entry_schema() -> dict[str, Any] | None:
-    if _CATALOG_ENTRY_SCHEMA_PATH.exists():
+def _load_entry_schema() -> dict[str, Any]:
+    if not _CATALOG_ENTRY_SCHEMA_PATH.is_file():
+        raise ConfigError(
+            "Catalog entry schema is missing from the CMCP installation; "
+            "refusing to load a catalog without structural validation"
+        )
+    try:
         return dict(json.loads(_CATALOG_ENTRY_SCHEMA_PATH.read_text()))
-    return None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"Cannot load catalog entry schema: {exc}") from exc
 
 
-def _validate_entry(raw: dict[str, Any], schema: dict[str, Any] | None) -> None:
-    if schema is None:
-        return
+def _validate_entry(raw: dict[str, Any], schema: dict[str, Any]) -> None:
     try:
         jsonschema.validate(raw, schema)
     except jsonschema.ValidationError as exc:
