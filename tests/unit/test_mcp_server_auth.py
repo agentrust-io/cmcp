@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from starlette.testclient import TestClient
 
 from cmcp_runtime.mcp.server import MCPServer
@@ -123,6 +124,34 @@ def test_content_length_check_rejects_before_body_read():
         headers={"Content-Type": "application/json", "Content-Length": "9999"},
     )
     assert resp.status_code == 413
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        "valid JSON but not an object",
+        1,
+        {"jsonrpc": "2.0", "method": [], "id": 1},
+        {"jsonrpc": "2.0", "method": "tools/call", "params": [], "id": 1},
+    ],
+)
+def test_structurally_invalid_json_rpc_returns_bounded_400(payload):
+    server = _make_server()
+    client = TestClient(server.app, raise_server_exceptions=False)
+
+    response = client.post("/mcp", json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "jsonrpc": "2.0",
+        "error": {
+            "code": -32600,
+            "message": "Invalid Request",
+            "data": {"error_code": "MCP_INVALID_REQUEST"},
+        },
+        "id": payload.get("id") if isinstance(payload, dict) else None,
+    }
 
 
 # ── NET-002: /health rate limit ───────────────────────────────────────────────

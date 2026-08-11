@@ -20,6 +20,7 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 | `CATALOG_TOOL_NAME_COLLISION` | 500 | FATAL | Two catalog entries register the same `tool_name` | [tool-identity.md](tool-identity.md) |
 | `CATALOG_DRIFT_DETECTED` | 409 | ERROR | Upstream server changed a tool definition since catalog was sealed | [attestation.md §5](attestation.md) |
 | `MCP_PARSE_FAILURE` | 400 | WARN | Incoming MCP JSON-RPC message failed to parse | [failure-modes.md FM-5](failure-modes.md) |
+| `MCP_INVALID_REQUEST` | 400 | WARN | Parsed JSON is not a valid JSON-RPC request shape | [failure-modes.md FM-5](failure-modes.md) |
 | `RESPONSE_SIZE_EXCEEDED` | 413 | WARN | Tool response exceeds `max_response_size_bytes` | [response-inspection.md Stage 1](response-inspection.md) |
 | `RESPONSE_INJECTION_DETECTED` | 403 | ERROR | Response inspection detected indirect injection pattern | [response-inspection.md Stage 4](response-inspection.md) |
 | `RESPONSE_SCHEMA_VIOLATION_STRICT` | 409 | WARN | Tool response contains fields outside approved `output_schema` (strict mode) | [response-inspection.md Stage 2](response-inspection.md) |

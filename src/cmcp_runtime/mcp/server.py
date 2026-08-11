@@ -42,6 +42,22 @@ logger = logging.getLogger(__name__)
 _AUTH_EXEMPT_PATHS = {"/health", "/readyz"}
 
 
+def _invalid_request(rpc_id: Any = None) -> JSONResponse:
+    """Return a bounded JSON-RPC Invalid Request response."""
+    return JSONResponse(
+        {
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32600,
+                "message": "Invalid Request",
+                "data": {"error_code": "MCP_INVALID_REQUEST"},
+            },
+            "id": rpc_id,
+        },
+        status_code=400,
+    )
+
+
 async def _unhandled_error_handler(request: Request, exc: Exception) -> Response:
     """NET-004: return generic 500 without leaking exception class or message."""
     logger.error(
@@ -254,11 +270,18 @@ class MCPServer:
                 status_code=400,
             )
 
+        if not isinstance(msg, dict):
+            return _invalid_request()
+
         rpc_id = msg.get("id")
         method = msg.get("method", "")
+        if not isinstance(method, str):
+            return _invalid_request(rpc_id)
         params = msg.get("params", {})
 
         if method == "tools/call":
+            if not isinstance(params, dict):
+                return _invalid_request(rpc_id)
             return await self._handle_tool_call(rpc_id, params)
         if method == "tools/list":
             return await self._handle_tools_list(rpc_id)

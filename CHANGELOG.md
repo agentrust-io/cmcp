@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The MCP ingress now rejects non-object JSON-RPC messages, non-string methods, and non-object `tools/call` parameters with a bounded `MCP_INVALID_REQUEST` response. Structurally invalid attacker input no longer reaches attribute errors, HTTP 500 responses, or exception trace logging.
+
 ### Changed
 
 - **`STATUS.md` understated the attestation default in two ways.** It gave the probe order as `tpm -> sev-snp -> tdx`, missing `azure-cvm`, which is probed *first* and exists precisely so an Azure confidential VM is not mistaken for a plain TPM host. And it said nothing about what happens when no hardware is found, which is the question an evaluator is actually asking.
