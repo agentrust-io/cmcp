@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The unauthenticated health/readiness rate limiter now expires inactive source-address entries and caps tracked clients at 10,000. Source-address churn can no longer grow the in-memory limiter map for the lifetime of the gateway.
 - Upstream stdio children and provenance verdicts are now cached by complete execution and trust identity rather than the non-unique human-readable `display_name`. Distinct catalog servers sharing a label can no longer reuse another server's process or provenance result.
 - Built wheels now include the catalog-entry JSON Schema, and catalog loading fails closed if that schema is absent or unreadable. Previously source-tree tests validated catalog structure, but installed wheels omitted the schema and silently skipped that validation.
+- PyPI publication now installs and smoke-tests the exact wheel and source distribution before upload, including release-tag/version agreement, import provenance, runtime configuration, and the packaged CLI.
 
 ### Changed
 

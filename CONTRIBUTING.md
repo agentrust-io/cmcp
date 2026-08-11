@@ -37,6 +37,13 @@ pytest tests/unit/ -v          # unit tests
 
 All four must pass before a PR is mergeable.
 
+### Release artifact verification
+
+The PyPI workflow installs the exact wheel and source distribution into separate
+clean environments before upload. It checks release-tag/version agreement,
+metadata and runtime versions, import provenance outside the checkout, core
+configuration construction, and the installed `cmcp` console entry point.
+
 ## Commit format
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
