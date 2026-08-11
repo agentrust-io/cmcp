@@ -65,6 +65,43 @@ class CallResult:
     advice: dict[str, str] | None = None
 
 
+def _server_execution_key(entry: CatalogEntry) -> tuple[str, ...]:
+    """Return the security-relevant identity used to pool one upstream."""
+    server = entry.server
+    if server.is_stdio:
+        spawn = server.spawn
+        return (
+            "stdio",
+            spawn.command if spawn else "",
+            *(spawn.args if spawn else ()),
+            "measure_target=" + (spawn.measure_target if spawn and spawn.measure_target else ""),
+            "binary_digest=" + (spawn.binary_digest if spawn and spawn.binary_digest else ""),
+        )
+    return (
+        "network",
+        server.transport,
+        server.url,
+        server.tls_fingerprint,
+        server.spiffe_id or "",
+        server.rotation_mode,
+    )
+
+
+def _server_provenance_key(entry: CatalogEntry) -> tuple[str, ...]:
+    """Bind a cached provenance verdict to endpoint and configured authority."""
+    server = entry.server
+    publisher_key = (
+        json.dumps(server.publisher_jwk, sort_keys=True, separators=(",", ":"))
+        if server.publisher_jwk is not None
+        else ""
+    )
+    return (
+        *_server_execution_key(entry),
+        "record=" + (server.provenance_record_path or ""),
+        "publisher_jwk=" + publisher_key,
+    )
+
+
 def _cedar_safe(value: Any) -> Any:
     """
     Coerce a JSON value into types Cedar can ingest.
@@ -178,12 +215,12 @@ class CMCPProxy:
         # session and never pooled across sessions: a server that holds anything
         # in memory would carry it from one agent's session into the next, and
         # the audit chain cannot see that happen (docs/spec/stdio-transport.md).
-        self._stdio_servers: dict[str, StdioServer] = {}
+        self._stdio_servers: dict[tuple[str, ...], StdioServer] = {}
         # Provenance outcome per server, decided once per session on first use.
         # Cached because the answer cannot change within a session without the
         # server being replaced underneath us, and re-listing tools on every call
         # would make the check expensive enough to be turned off.
-        self._provenance: dict[str, ProvenanceResult] = {}
+        self._provenance: dict[tuple[str, ...], ProvenanceResult] = {}
         # Servers already warned about unenforceable pinning (warn once each).
         self._tls_pin_warned: set[str] = set()
 
@@ -266,7 +303,7 @@ class CMCPProxy:
 
     async def _stdio_for(self, entry: CatalogEntry) -> StdioServer:
         """The child for this server, spawned on first use in this session."""
-        key = entry.server.display_name
+        key = _server_execution_key(entry)
         server = self._stdio_servers.get(key)
         if server is None:
             if entry.server.spawn is None:
@@ -314,7 +351,7 @@ class CMCPProxy:
         return tools if isinstance(tools, list) else None
 
     async def _check_provenance(self, entry: CatalogEntry) -> ProvenanceResult:
-        key = entry.server.display_name
+        key = _server_provenance_key(entry)
         result = self._provenance.get(key)
         if result is None:
             advertised = (
@@ -969,7 +1006,7 @@ class CMCPProxy:
         # identifies code.
         from cmcp_runtime.mcp import tls_pinning as _tls_mod
         if entry is not None and entry.server.is_stdio:
-            spawned = self._stdio_servers.get(entry.server.display_name)
+            spawned = self._stdio_servers.get(_server_execution_key(entry))
             # A stdio response with no spawned server on record is not something
             # to guess about; hash-only is the honest floor.
             evidence_class = (

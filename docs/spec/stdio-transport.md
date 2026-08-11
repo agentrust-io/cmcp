@@ -7,6 +7,13 @@ Supersedes: the stdio section of [transport.md](transport.md), if accepted
 Stability: Unstable, no code written
 ---
 
+## Cache identity
+
+Spawned children are pooled per session by executable, arguments, measurement
+target, and pinned digest—not by the server's human-readable display name.
+Display names need not be unique and are not security identities. Provenance
+verdicts additionally bind the configured record and publisher key.
+
 ## Why revisit a settled decision
 
 [`transport.md`](transport.md) records that stdio is out of scope, and its reasoning is

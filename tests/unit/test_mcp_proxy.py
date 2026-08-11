@@ -16,6 +16,7 @@ from cmcp_runtime.catalog.loader import (
 )
 from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
 from cmcp_runtime.errors import PolicyDeny
+from cmcp_runtime.mcp.proxy import _server_execution_key, _server_provenance_key
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
 from tests.unit.conftest import wire_mock_gateway
@@ -49,6 +50,32 @@ def _make_entry(tool_name: str = "test.tool") -> CatalogEntry:
 def _make_catalog(*tools: str) -> ToolCatalog:
     entries = {t: _make_entry(t) for t in (tools or ("test.tool",))}
     return ToolCatalog(entries=entries, catalog_hash="sha256:" + "1" * 64)
+
+
+def test_server_cache_keys_bind_actual_identity_not_display_label():
+    first = _make_entry("first.tool")
+    second = _make_entry("second.tool")
+    second.server.display_name = first.server.display_name
+    second.server.url = "https://different.example.com/mcp"
+
+    assert _server_execution_key(first) != _server_execution_key(second)
+    assert _server_provenance_key(first) != _server_provenance_key(second)
+
+
+def test_same_server_identity_is_reused_across_tools():
+    first = _make_entry("first.tool")
+    second = _make_entry("second.tool")
+
+    assert _server_execution_key(first) == _server_execution_key(second)
+
+
+def test_provenance_cache_key_binds_publisher_authority():
+    first = _make_entry("first.tool")
+    second = _make_entry("second.tool")
+    first.server.publisher_jwk = {"kty": "OKP", "x": "first"}
+    second.server.publisher_jwk = {"kty": "OKP", "x": "second"}
+
+    assert _server_provenance_key(first) != _server_provenance_key(second)
 
 
 def _make_evaluator(allow: bool = True, would_deny: bool = False) -> PolicyEvaluator:

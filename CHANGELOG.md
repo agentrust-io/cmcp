@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The MCP ingress now rejects non-object JSON-RPC messages, non-string methods, and non-object `tools/call` parameters with a bounded `MCP_INVALID_REQUEST` response. Structurally invalid attacker input no longer reaches attribute errors, HTTP 500 responses, or exception trace logging.
 - The unauthenticated health/readiness rate limiter now expires inactive source-address entries and caps tracked clients at 10,000. Source-address churn can no longer grow the in-memory limiter map for the lifetime of the gateway.
+- Upstream stdio children and provenance verdicts are now cached by complete execution and trust identity rather than the non-unique human-readable `display_name`. Distinct catalog servers sharing a label can no longer reuse another server's process or provenance result.
 
 ### Changed
 
