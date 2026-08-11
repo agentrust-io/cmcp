@@ -66,6 +66,7 @@ Status: Draft v0.1 | Covers: Phase 1 cMCP Runtime
 | Repudiation | Tool server denies a call was made | Audit entry records call, tool server identity, and response hash | Tool server can deny it produced a specific response (only response hash is recorded, not content) |
 | Information Disclosure | A3 returns more data than requested | Response schema validation strips surplus fields (redact mode) | Strict mode may be too disruptive; redact mode requires correct schema in catalog |
 | Denial of Service | A3 returns oversized responses | Stage 1 size check (default 2MB limit) | DDoS via many simultaneous large responses |
+| Denial of Service | A4 churns source addresses against unauthenticated probes | Per-IP windows expire and the limiter caps tracked client cardinality | Distributed traffic can still exhaust the configured request budget |
 | Elevation of Privilege | A5 calls escalating sequence of individually-authorized tools crossing compliance boundary | Call graph tracking + session sensitivity policy | Runtime uses temporal adjacency, not true data provenance; sophisticated cross-system flows may not be detected |
 
 ### Tool Catalog

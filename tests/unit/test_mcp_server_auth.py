@@ -156,7 +156,9 @@ def test_structurally_invalid_json_rpc_returns_bounded_400(payload):
 
 # ── NET-002: /health rate limit ───────────────────────────────────────────────
 
-def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> MCPServer:
+def _make_server_with_low_rate_limit(
+    requests_per_minute: int = 3, max_clients: int = 10_000
+) -> MCPServer:
     """Create a server with a very low rate limit for testing."""
     from starlette.middleware import Middleware
 
@@ -178,6 +180,7 @@ def _make_server_with_low_rate_limit(requests_per_minute: int = 3) -> MCPServer:
                 _RateLimitMiddleware,
                 paths=frozenset({"/health"}),
                 requests_per_minute=requests_per_minute,
+                max_clients=max_clients,
             )
         ],
         exception_handlers={},
@@ -239,6 +242,31 @@ def test_rate_limit_middleware_paths_only():
     for _ in range(5):
         resp = client.get("/health")
         assert resp.status_code == 200
+
+
+def test_rate_limit_caps_tracked_client_addresses():
+    server = _make_server_with_low_rate_limit(max_clients=2)
+
+    with TestClient(server.app, client=("192.0.2.1", 1001)) as first_client:
+        assert first_client.get("/health").status_code == 200
+    with TestClient(server.app, client=("192.0.2.2", 1002)) as second_client:
+        assert second_client.get("/health").status_code == 200
+    with TestClient(server.app, client=("192.0.2.3", 1003)) as third_client:
+        response = third_client.get("/health")
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "RATE_LIMITED"
+
+
+def test_rate_limit_reclaims_inactive_client_addresses():
+    from cmcp_runtime.mcp.server import _RateLimitMiddleware
+
+    limiter = _RateLimitMiddleware(MagicMock(), paths=frozenset({"/health"}), max_clients=1)
+    limiter._counts["192.0.2.1"] = [100.0]
+
+    limiter._prune_inactive_clients(cutoff=100.0)
+
+    assert "192.0.2.1" not in limiter._counts
 
 
 # ── CONF-007: /readyz structured readiness probe ────────────────────────────────────

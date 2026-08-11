@@ -86,13 +86,23 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         *,
         paths: frozenset[str],
         requests_per_minute: int = 60,
+        max_clients: int = 10_000,
     ) -> None:
         super().__init__(app)
         self._paths = paths
         self._limit = requests_per_minute
         self._window = 60.0
+        self._max_clients = max_clients
         self._counts: dict[str, list[float]] = defaultdict(list)
         self._lock = asyncio.Lock()
+
+    def _prune_inactive_clients(self, cutoff: float) -> None:
+        expired_clients = [
+            client for client, timestamps in self._counts.items()
+            if not timestamps or timestamps[-1] <= cutoff
+        ]
+        for client in expired_clients:
+            del self._counts[client]
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         if request.url.path not in self._paths:
@@ -101,6 +111,16 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.monotonic()
         async with self._lock:
             cutoff = now - self._window
+            # Reclaim clients whose complete window has expired. Without this,
+            # one request from each spoofed/churned address grows the map for
+            # the process lifetime.
+            self._prune_inactive_clients(cutoff)
+            if ip not in self._counts and len(self._counts) >= self._max_clients:
+                return JSONResponse(
+                    {"error": "Too Many Requests", "error_code": "RATE_LIMITED"},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                )
             hits = self._counts[ip]
             # Prune timestamps outside the window
             while hits and hits[0] <= cutoff:
