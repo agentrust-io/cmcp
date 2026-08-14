@@ -503,9 +503,17 @@ class CMCPProxy:
         tool_name: str,
         arguments: dict[str, Any],
         workflow_id: str | None = None,
+        call_data_class: str | None = None,
     ) -> dict[str, Any]:
-        """Build the Cedar evaluation context from call details + session state."""
+        """Build Cedar context, conservatively including this call's class."""
         entry = self._catalog.lookup(tool_name)
+        effective_sensitivity = self._session.max_sensitivity
+        if entry is not None:
+            effective_sensitivity = _max_sensitivity(
+                effective_sensitivity,
+                call_data_class or entry.sensitivity_level,
+                self._session.sensitivity_order,
+            )
         ctx: dict[str, Any] = {
             "tool_name": tool_name,
             # Cedar resource entity: the backend builds Resource::"<resource>" from
@@ -519,7 +527,10 @@ class CMCPProxy:
             "compliance_domain": entry.compliance_domain if entry else "external",
             "baa_covered": (not entry.requires_baa) if entry else False,
             "destination_class": "external",
-            "session_max_sensitivity": self._session.max_sensitivity,
+            # Policy sees the running session maximum raised by this call's
+            # effective class. A caller declaration is never trusted to lower
+            # either the catalog floor or sensitivity accumulated earlier.
+            "session_max_sensitivity": effective_sensitivity,
             "attestation_platform": self._attestation_platform,
         }
         if workflow_id is not None:
@@ -702,7 +713,9 @@ class CMCPProxy:
             )
 
         # Step 2: Cedar policy evaluation
-        cedar_context = self._build_cedar_context(tool_name, arguments, workflow_id)
+        cedar_context = self._build_cedar_context(
+            tool_name, arguments, workflow_id, effective_data_class
+        )
         policy_rule: str | None = None
         ingress_advice: dict[str, str] = {}
         try:

@@ -197,6 +197,47 @@ async def test_declared_data_class_raises_session_above_catalog_floor():
 
 
 @pytest.mark.asyncio
+async def test_declared_data_class_gates_the_declaring_call():
+    """#506: Cedar must see the raised class on this call, not only the next."""
+    entry = _make_entry()
+    entry.sensitivity_level = "pii"
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    evaluator = _make_evaluator()
+    proxy, _, _ = _make_proxy(catalog=catalog, evaluator=evaluator)
+
+    await proxy.call_tool("c1", "test.tool", {}, declared_data_class="confidential")
+
+    context = evaluator.evaluate.call_args.args[0]
+    assert context["session_max_sensitivity"] == "confidential"
+
+
+@pytest.mark.asyncio
+async def test_declared_data_class_cannot_lower_declaring_call_floor():
+    entry = _make_entry()
+    entry.sensitivity_level = "confidential"
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    evaluator = _make_evaluator()
+    proxy, _, _ = _make_proxy(catalog=catalog, evaluator=evaluator)
+
+    await proxy.call_tool("c1", "test.tool", {}, declared_data_class="pii")
+
+    context = evaluator.evaluate.call_args.args[0]
+    assert context["session_max_sensitivity"] == "confidential"
+
+
+@pytest.mark.asyncio
+async def test_declared_data_class_cannot_lower_accumulated_session():
+    evaluator = _make_evaluator()
+    proxy, session, _ = _make_proxy(evaluator=evaluator)
+    session.max_sensitivity = "trade_secret"
+
+    await proxy.call_tool("c1", "test.tool", {}, declared_data_class="pii")
+
+    context = evaluator.evaluate.call_args.args[0]
+    assert context["session_max_sensitivity"] == "trade_secret"
+
+
+@pytest.mark.asyncio
 async def test_declared_data_class_below_floor_does_not_lower_session():
     """A declared_data_class ranked below the catalog floor must not lower the
     effective class - only ever raise, never lower."""
