@@ -1,10 +1,4 @@
-"""
-Cedar policy evaluation via AGT's CedarBackend - implements issues #68, #73.
-
-AGT provides three evaluation modes: cedarpy (native Python), cli (subprocess),
-and builtin (mock). cMCP selects the best available mode at instantiation and
-measures the policy bundle hash into the TEE attestation report separately.
-"""
+"""Cedar policy evaluation for cMCP - implements issues #68, #73, #472."""
 
 from __future__ import annotations
 
@@ -12,12 +6,11 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from agent_os.policies.backends import CedarBackend
-
 from cmcp_runtime.config import Config, EnforcementMode
 from cmcp_runtime.errors import PolicyDeny
 from cmcp_runtime.policy.annotations import parse_policy_annotations
 from cmcp_runtime.policy.bundle import PolicyBundle, PolicyStore
+from cmcp_runtime.policy.cedar import CedarBackend
 from cmcp_runtime.policy.decisions import Decision, decision_for_deny
 from cmcp_runtime.session.state import effective_sensitivity_order
 
@@ -50,7 +43,7 @@ class PolicyDecision:
 
 class PolicyEvaluator:
     """
-    Wraps AGT's CedarBackend with cMCP enforcement modes.
+    Wraps cMCP's narrow Cedar adapter with cMCP enforcement modes.
 
     The bundle is loaded and hash-verified by load_policy_bundle() before this
     class is instantiated. CedarBackend receives the already-loaded policy content
@@ -83,11 +76,7 @@ class PolicyEvaluator:
             content for _, content in sorted(initial_bundle.policy_files.items())
         )
 
-        self._backend = CedarBackend(
-            policy_content=combined_policy,
-            mode="auto",  # cedarpy > cli > builtin
-        )
-        self._combined_policy = combined_policy
+        self._backend = CedarBackend(policy_content=combined_policy)
         self._annotations = parse_policy_annotations(combined_policy)
         logger.info(
             "PolicyEvaluator ready: bundle_hash=%s enforcement=%s backend=%s",
@@ -104,40 +93,25 @@ class PolicyEvaluator:
             combined_policy = "\n\n".join(
                 content for _, content in sorted(bundle.policy_files.items())
             )
-            self._backend = CedarBackend(policy_content=combined_policy, mode="auto")
-            self._combined_policy = combined_policy
+            self._backend = CedarBackend(policy_content=combined_policy)
             self._annotations = parse_policy_annotations(combined_policy)
             self._current_hash = bundle.bundle_hash
             logger.info("PolicyEvaluator backend refreshed: new_hash=%s", self._current_hash)
 
-    def _advice_for_deny(self, context: dict[str, Any]) -> dict[str, str]:
+    def _advice_for_deny(self, policy_ids: tuple[str, ...]) -> dict[str, str]:
         """
         Best-effort: recover the annotations of the forbid policies that caused
         a deny, to return as structured advice (e.g. HITL escalation payloads).
 
-        AGT's CedarBackend does not expose cedarpy's diagnostics.reasons, so
-        this re-evaluates the same request directly with cedarpy purely for
-        diagnostics - the authorization decision itself is never taken from
-        here. Runs only on the deny path; returns {} on any failure.
+        Matched policy ids come from the same cedarpy authorization result used
+        for the decision. This method remains best-effort and returns {} when
+        annotations or diagnostics are unavailable.
         """
         if not self._annotations:
             return {}
         try:
-            import cedarpy
-
-            request = self._backend._build_cedar_request(context)
-            response = cedarpy.is_authorized(
-                request={
-                    "principal": request["principal"],
-                    "action": request["action"],
-                    "resource": request["resource"],
-                    "context": request.get("context", {}),
-                },
-                policies=self._combined_policy,
-                entities=getattr(self._backend, "_entities", []),
-            )
             advice: dict[str, str] = {}
-            for policy_id in response.diagnostics.reasons:
+            for policy_id in policy_ids:
                 advice.update(self._annotations.get(policy_id, {}))
             return advice
         except Exception:
@@ -175,7 +149,7 @@ class PolicyEvaluator:
 
         # Cedar denied - recover advice annotations from the matched policies,
         # then apply enforcement mode.
-        advice = self._advice_for_deny(context)
+        advice = self._advice_for_deny(tuple(getattr(result, "policy_ids", ())))
 
         if self._mode == EnforcementMode.ENFORCING:
             raise PolicyDeny(
