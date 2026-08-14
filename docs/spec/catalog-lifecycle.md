@@ -1,6 +1,6 @@
 # Catalog lifecycle: immutable until restart
 
-**Status:** Decided and enforced  
+**Status:** Decided and enforced
 **Decision:** A running cMCP process never reloads or mutates its approved catalog.
 
 The catalog binds tool names to upstream identities, TLS pins, measured stdio
