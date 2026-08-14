@@ -91,6 +91,13 @@ def test_unknown_key_raises(config_file):
         load_config(path)
 
 
+def test_catalog_reload_knob_is_reserved_and_requires_restart(config_file):
+    """#495: adding a parser field alone must not enable catalog mutation."""
+    path = config_file("catalog_reload_interval_seconds: 60\n")
+    with pytest.raises(ConfigError, match="CATALOG_RESTART_REQUIRED"):
+        load_config(path)
+
+
 def test_unknown_agent_manifest_key_raises(config_file):
     path = config_file("agent_manifest:\n  surprise: value\n")
     with pytest.raises(ConfigError, match="surprise"):

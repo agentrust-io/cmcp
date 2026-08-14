@@ -14,6 +14,7 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 | `POLICY_SIGNATURE_INVALID` | 500 | FATAL | A policy bundle's manifest signature is absent, malformed, or does not verify under the pinned `CMCP_POLICY_SIGNING_KEY`; or its `version` did not increase, which would allow a genuinely signed older bundle to be replayed | [policy-hot-reload.md](policy-hot-reload.md) |
 | `CONFORMANCE_PROFILE_UNSATISFIED` | 500 | FATAL | A named `conformance_profile` requires something the deployment has not configured; `aarm` requires an Agent Manifest binding (AARM R6) | [../../STATUS.md](../../STATUS.md) |
 | `CATALOG_HASH_MISMATCH` | 500 | FATAL | Measured catalog hash does not match deployment manifest | [attestation.md §5](attestation.md) |
+| `CATALOG_RESTART_REQUIRED` | startup | FATAL | Runtime catalog mutation was configured, but routing authority remains immutable until a newly pinned gateway restart | [catalog-lifecycle.md](catalog-lifecycle.md) |
 | `AGENT_MANIFEST_BINDING_FAILED` | 500 | FATAL | Signed Agent Manifest signature, authenticated subject, policy hash, or catalog hash did not match the runtime session inputs | [session-policy.md](session-policy.md) |
 | `TOOL_NOT_IN_CATALOG` | 403 | WARN | Agent requested a tool not present in the attested catalog | [cedar-policy.md](cedar-policy.md) |
 | `POLICY_DENY` | 403 | INFO | Cedar policy evaluation returned deny for this call | [cedar-policy.md](cedar-policy.md) |

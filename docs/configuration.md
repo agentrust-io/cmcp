@@ -122,6 +122,11 @@ Environment variables control secrets and mode flags that must not appear in con
 | `CMCP_POLICY_HASH` | SHA-256 hash of the approved policy bundle. Required in non-dev mode and checked by startup before Agent Manifest binding. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (startup policy integrity check) |
 | `CMCP_CATALOG_HASH` | SHA-256 hash of the approved `catalog.json`. Required in non-dev mode. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (additional startup check) |
 
+The catalog is immutable for the process lifetime. Updating routing, tool
+definitions, TLS pins, or measured child identities requires a new pinned hash
+and a gateway restart. Hot-reload configuration is rejected with
+`CATALOG_RESTART_REQUIRED`; see [Catalog lifecycle](spec/catalog-lifecycle.md).
+
 ## Enforcement modes
 
 | Mode | Behavior | Use case |

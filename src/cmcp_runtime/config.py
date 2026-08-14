@@ -126,6 +126,14 @@ _KNOWN_TOP_KEYS = {
     "conformance_profile",
 }
 
+# #495: catalog identity and routing are immutable for the process lifetime.
+# Keep likely reload knobs in a separate denylist so merely adding one to the
+# normal parser allowlist cannot silently enable mutation later.
+_FORBIDDEN_CATALOG_MUTATION_KEYS = {
+    "catalog_reload_interval_seconds",
+    "catalog_reload_path",
+}
+
 #: Named conformance profiles. Deliberately a closed set: an unrecognised
 #: profile name must be a config error rather than silently enforcing nothing,
 #: which is how a deployment ends up believing it is conformant when it is not.
@@ -229,6 +237,13 @@ def load_config(path: str) -> Config:
 
     if not isinstance(raw, dict):
         raise ConfigError("Config must be a YAML mapping at the top level")
+
+    forbidden_catalog_keys = set(raw) & _FORBIDDEN_CATALOG_MUTATION_KEYS
+    if forbidden_catalog_keys:
+        raise ConfigError(
+            "CATALOG_RESTART_REQUIRED: runtime catalog mutation is unsupported; "
+            f"remove {sorted(forbidden_catalog_keys)} and restart with a newly pinned catalog"
+        )
 
     for key in raw:
         if key not in _KNOWN_TOP_KEYS:
