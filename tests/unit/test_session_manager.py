@@ -387,3 +387,42 @@ def test_close_session_fails_closed_on_hardware_platform_when_tee_fails() -> Non
 
     with pytest.raises(TeeFault, match="chain-root commitment"):
         mgr.close_session(state.session_id, state, chain)
+
+
+# ── #479 piece 2: per call data class in the transcript ────────────────────────
+
+
+def _fake_catalog_entry(sensitivity_level: str) -> MagicMock:
+    entry = MagicMock()
+    entry.sensitivity_level = sensitivity_level
+    entry.compliance_domain = "external"
+    return entry
+
+
+def test_transcript_prefers_effective_data_class_over_catalog() -> None:
+    ctx = _make_ctx()
+    ctx.catalog.entries = {"t": _fake_catalog_entry("pii")}
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    chain.append(
+        "tool_call",
+        call_id="c1",
+        tool_name="t",
+        policy_decision="allow",
+        effective_data_class="confidential",
+    )
+    claim = mgr.close_session(state.session_id, state, chain)
+    entries = claim["trace"]["tool_transcript"]["entries"]
+    assert entries[0]["data_class"] == "confidential"
+
+
+def test_transcript_falls_back_to_catalog_when_no_effective_data_class() -> None:
+    """No behaviour change for calls that never declared a class (#479 piece 2)."""
+    ctx = _make_ctx()
+    ctx.catalog.entries = {"t": _fake_catalog_entry("pii")}
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
+    claim = mgr.close_session(state.session_id, state, chain)
+    entries = claim["trace"]["tool_transcript"]["entries"]
+    assert entries[0]["data_class"] == "pii"

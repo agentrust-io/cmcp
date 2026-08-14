@@ -184,6 +184,62 @@ async def test_proxy_updates_session_state_on_allow():
 
 
 @pytest.mark.asyncio
+async def test_declared_data_class_raises_session_above_catalog_floor():
+    """#479 piece 2: a declared_data_class above the catalog floor raises
+    session.max_sensitivity past what the catalog alone would give."""
+    entry = _make_entry()
+    entry.sensitivity_level = "pii"
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    proxy, session, _ = _make_proxy(catalog=catalog)
+
+    await proxy.call_tool("c1", "test.tool", {}, declared_data_class="confidential")
+    assert session.max_sensitivity == "confidential"
+
+
+@pytest.mark.asyncio
+async def test_declared_data_class_below_floor_does_not_lower_session():
+    """A declared_data_class ranked below the catalog floor must not lower the
+    effective class - only ever raise, never lower."""
+    entry = _make_entry()
+    entry.sensitivity_level = "confidential"
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    proxy, session, _ = _make_proxy(catalog=catalog)
+
+    await proxy.call_tool("c1", "test.tool", {}, declared_data_class="pii")
+    assert session.max_sensitivity == "confidential"
+
+
+@pytest.mark.asyncio
+async def test_unrecognised_declared_data_class_is_harmless():
+    """An unrecognised declared_data_class ranks 0 and cannot beat a real
+    catalog floor - no separate validation needed."""
+    entry = _make_entry()
+    entry.sensitivity_level = "pii"
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    proxy, session, _ = _make_proxy(catalog=catalog)
+
+    await proxy.call_tool("c1", "test.tool", {}, declared_data_class="not_a_real_label")
+    assert session.max_sensitivity == "pii"
+
+
+@pytest.mark.asyncio
+async def test_audit_entry_carries_effective_data_class_when_declared():
+    proxy, _, chain = _make_proxy()
+    await proxy.call_tool("c1", "test.tool", {}, declared_data_class="confidential")
+    tool_call_entries = [e for e in chain.entries if e.entry_type == "tool_call"]
+    assert tool_call_entries[-1].effective_data_class == "confidential"
+
+
+@pytest.mark.asyncio
+async def test_audit_entry_effective_data_class_none_when_not_declared():
+    """No behaviour change for callers that never use _cmcp.data_class."""
+    proxy, _, chain = _make_proxy()
+    await proxy.call_tool("c1", "test.tool", {})
+    tool_call_entries = [e for e in chain.entries if e.entry_type == "tool_call"]
+    assert tool_call_entries[-1].effective_data_class is None
+
+
+@pytest.mark.asyncio
 async def test_proxy_advisory_deny_returns_allowed_with_flag():
     evaluator = _make_evaluator(allow=True, would_deny=True)
     proxy, _, _ = _make_proxy(evaluator=evaluator, mode=EnforcementMode.ADVISORY)

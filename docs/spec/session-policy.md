@@ -31,6 +31,8 @@ sensitivity:
 
 This is additive only. A vocabulary key that names a built in label is rejected at config load, since response inspection's pattern based detectors (see [response-inspection.md](response-inspection.md)) emit the built in tags directly, `pii` and `hipaa_phi` among them, and those tags must always resolve to their real rank rather than an unrecognised one. `SessionManager` and `PolicyEvaluator` each derive the same effective vocabulary from the same config, so a session's `max_sensitivity` and the `sensitivity_level` integer Cedar sees can never disagree about what a custom label ranks as. The tool catalog's `sensitivity_level` field is validated at load time against this same effective set, so it stays a closed vocabulary, just not a hardcoded one.
 
+A single call can also declare its own class above its tool's catalogued floor, via `_cmcp.data_class` on the request (see [connecting-agent-frameworks.md](../tutorials/connecting-agent-frameworks.md#declare-a-per-call-data-class)), for a tool whose catalogued level is a floor rather than the true class of every call it serves. The two pieces compose: a deployment adds a label via `sensitivity.vocabulary`, and a call declares that label via `_cmcp.data_class` in the same session. The declaration can only raise the effective class, both for the session's `max_sensitivity` and for that call's own row in the signed transcript, never lower it, the same `_max_sensitivity` comparison this vocabulary section describes is what enforces that.
+
 ### State Transitions
 
 State is monotonically increasing within a session. It never decreases automatically. The only way to return to a lower state is an explicit operator-authorized session reset (see below).

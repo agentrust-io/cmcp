@@ -342,9 +342,20 @@ class MCPServer:
             cmcp_params = {}
         raw_workflow = cmcp_params.get("workflow_id")
         workflow_id: str | None = raw_workflow if isinstance(raw_workflow, str) else None
+        # #479 piece 2: the caller may declare a class for this specific call.
+        raw_data_class = cmcp_params.get("data_class")
+        declared_data_class: str | None = (
+            raw_data_class if isinstance(raw_data_class, str) else None
+        )
 
         try:
-            result = await self._proxy.call_tool(call_id, tool_name, arguments, workflow_id=workflow_id)
+            result = await self._proxy.call_tool(
+                call_id,
+                tool_name,
+                arguments,
+                workflow_id=workflow_id,
+                declared_data_class=declared_data_class,
+            )
         except Exception as exc:
             logger.error("TEE_FAULT during call_tool: call_id=%s error=%s", call_id, exc)
             return JSONResponse(

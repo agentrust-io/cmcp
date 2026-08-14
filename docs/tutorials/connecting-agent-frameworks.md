@@ -118,6 +118,25 @@ Set `_cmcp.workflow_id` in the request `params` to associate tool calls with a n
 
 `workflow_id` appears in the audit chain entries for every call made under that identifier.
 
+### Declare a per call data class
+
+Set `_cmcp.data_class` in the request `params` when a specific call touches data more sensitive than the tool's own catalogued `sensitivity_level`, for example one model call tool that sometimes carries `pii` and sometimes `confidential` data (#479):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "model.chat",
+    "arguments": {"prompt": "..."},
+    "_cmcp": {"data_class": "confidential"}
+  }
+}
+```
+
+The declared value can only raise the effective class for this call above the tool's catalogued floor, never lower it, and it composes with any labels a deployment has added under `sensitivity.vocabulary` in config. An unrecognised value is silently ignored rather than rejected, the same treatment an unrecognised built in content pattern tag gets: it simply cannot rank above the catalogued floor. The effective class, not the raw declaration, is what appears in the signed transcript for that call, and it also raises the session's own `max_sensitivity` for the rest of the session.
+
 ---
 
 ## Raw `httpx` client

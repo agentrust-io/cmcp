@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Per call classification, letting a single call declare a class narrower than its tool's catalogued default, is the second half of #479 and is left for a follow up change.
 
+- **Per call sensitivity classification (#479).** One catalogued tool can serve many classes of data, a model call tool catalogued at `pii` might, on a specific call, actually carry `confidential` data (agentrust-io/demos#36 is the motivating example). The signed transcript could only ever show the tool's single catalogued value, and the session's own sensitivity tracking never rose past what the catalog alone said either, an enforcement gap for later calls in the session, not only a record keeping one.
+
+  A call may now declare a class for itself via `_cmcp.data_class` on the request. It composes with the vocabulary work above: a deployment adds a label in config, a call declares it per call. The declared value needs no separate validation, `_max_sensitivity` already is the validator: it returns whichever of two labels ranks higher and ties favour the catalog value, so an unrecognised or lower declared value is harmless by construction, and a legitimately higher one raises both the session's `max_sensitivity` and, independently, that specific call's own row in the signed transcript, without inheriting whatever the session had already accumulated from earlier calls.
+
+  `AuditEntry` gained one new field, `effective_data_class`, `None` on every call that never declares one, so nothing changes for a caller that does not use `_cmcp.data_class`.
+
 - **Server provenance checking (step 3).** The gateway consumes [`server-provenance-v1`](https://github.com/agentrust-io/trace-spec/blob/main/spec/server-provenance-v1.md) records via `agentrust-trace>=0.8`: it verifies the record against a **configured** publisher key, then compares the record's tool-catalog hash against the tools the server advertises to this gateway.
 
   It never falls back to the catalog's own approved definitions for that comparison. Comparing a record against our approval instead of against the server is the substitution that turns the whole check into theatre.

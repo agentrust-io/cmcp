@@ -154,9 +154,15 @@ async def test_server_extracts_workflow_id_from_cmcp_params():
     original = proxy.call_tool
     captured: dict = {}
 
-    async def _spy(call_id, tool_name, arguments, *, workflow_id=None):
+    async def _spy(call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None):
         captured["workflow_id"] = workflow_id
-        return await original(call_id, tool_name, arguments, workflow_id=workflow_id)
+        return await original(
+            call_id,
+            tool_name,
+            arguments,
+            workflow_id=workflow_id,
+            declared_data_class=declared_data_class,
+        )
 
     proxy.call_tool = _spy
 
@@ -175,6 +181,88 @@ async def test_server_extracts_workflow_id_from_cmcp_params():
     })
     assert resp.status_code == 200
     assert captured.get("workflow_id") == "workflow_x"
+
+
+@pytest.mark.asyncio
+async def test_server_extracts_data_class_from_cmcp_params():
+    """#479 piece 2: MCPServer passes data_class from request _cmcp field to
+    call_tool as declared_data_class."""
+    from starlette.testclient import TestClient
+
+    from cmcp_runtime.mcp.server import MCPServer
+
+    proxy, _, chain = _make_proxy()
+    original = proxy.call_tool
+    captured: dict = {}
+
+    async def _spy(call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None):
+        captured["declared_data_class"] = declared_data_class
+        return await original(
+            call_id,
+            tool_name,
+            arguments,
+            workflow_id=workflow_id,
+            declared_data_class=declared_data_class,
+        )
+
+    proxy.call_tool = _spy
+
+    server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=True)
+
+    resp = client.post("/mcp", json={
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "test.tool",
+            "arguments": {},
+            "_cmcp": {"data_class": "confidential"},
+        },
+    })
+    assert resp.status_code == 200
+    assert captured.get("declared_data_class") == "confidential"
+
+
+@pytest.mark.asyncio
+async def test_server_malformed_data_class_does_not_fail_call():
+    """A non string _cmcp.data_class must not 500 the call path, same treatment
+    as a malformed workflow_id."""
+    from starlette.testclient import TestClient
+
+    from cmcp_runtime.mcp.server import MCPServer
+
+    proxy, _, chain = _make_proxy()
+    original = proxy.call_tool
+    captured: dict = {}
+
+    async def _spy(call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None):
+        captured["declared_data_class"] = declared_data_class
+        return await original(
+            call_id,
+            tool_name,
+            arguments,
+            workflow_id=workflow_id,
+            declared_data_class=declared_data_class,
+        )
+
+    proxy.call_tool = _spy
+
+    server = MCPServer(proxy)
+    client = TestClient(server.app, raise_server_exceptions=True)
+
+    resp = client.post("/mcp", json={
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "test.tool",
+            "arguments": {},
+            "_cmcp": {"data_class": 12345},
+        },
+    })
+    assert resp.status_code == 200
+    assert captured.get("declared_data_class") is None
 
 
 @pytest.mark.asyncio
