@@ -109,6 +109,21 @@ def start(config: str, enforcement: str | None) -> None:
     uvicorn.run(server.app, host=host, port=port)
 
 
+@main.command("client-bridge")
+@click.option("--gateway-url", required=True,
+              help="Running cMCP MCP endpoint, e.g. https://gateway.example/mcp.")
+@click.option("--token-env", default="CMCP_BEARER_TOKEN", show_default=True,
+              help="Environment variable containing the bearer token.")
+def client_bridge(gateway_url: str, token_env: str) -> None:
+    """Expose a running cMCP gateway as a local MCP stdio server."""
+    from cmcp_runtime.mcp.client_bridge import run_bridge
+
+    try:
+        run_bridge(gateway_url, token_env)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @main.command()
 @click.argument("claim_file", type=click.Path(exists=True))
 @click.option("--policy-hash", default=None,

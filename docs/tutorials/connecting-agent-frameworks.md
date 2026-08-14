@@ -1,5 +1,9 @@
 # Connecting Agent Frameworks
 
+Already using a client configured with an `mcpServers` block? Start with
+[Try cMCP from an existing MCP client](existing-mcp-clients.md); no agent code
+is required.
+
 Wire a real agent: LangChain, LlamaIndex, or a plain HTTP client: to the cMCP gateway so every tool call passes through policy enforcement.
 
 ## What you'll learn
