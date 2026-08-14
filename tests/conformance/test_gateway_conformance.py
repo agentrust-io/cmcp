@@ -156,6 +156,7 @@ def test_mcp_initialize(client: TestClient) -> None:
     assert body["id"] == 1
     result = body["result"]
     assert "protocolVersion" in result
+    assert result["protocolVersion"] == "2026-07-28"
     assert "capabilities" in result
 
 

@@ -63,7 +63,7 @@ Identity of the upstream MCP server that provides this tool:
   "url": "https://salesforce-mcp.internal:443",
   "tls_fingerprint": "sha256:<hex of DER cert>",
   "spiffe_id": "spiffe://example.org/ns/prod/salesforce",
-  "transport": "http-sse",
+  "transport": "streamable-http",
   "rotation_mode": "key-pinned"
 }
 ```
@@ -74,7 +74,7 @@ Identity of the upstream MCP server that provides this tool:
 | `url` | Yes | Full URL including port |
 | `tls_fingerprint` | Yes | SHA-256 of the server's DER-encoded TLS certificate (see [TLS pinning](./tls-pinning.md)) |
 | `spiffe_id` | No | SPIFFE/SVID identity if the server uses workload identity |
-| `transport` | No | Default `"http-sse"` |
+| `transport` | Yes | Use `"streamable-http"` for current MCP servers, `"http-sse"` only for legacy 2024-11-05 deployments, or `"stdio"` for a measured child process. Unknown values fail startup. |
 | `rotation_mode` | No | Default `"key-pinned"` |
 
 ### `approved_definition`

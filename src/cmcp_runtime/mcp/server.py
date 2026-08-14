@@ -30,6 +30,7 @@ from starlette.routing import Route
 
 from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
 from cmcp_runtime.mcp.proxy import CMCPProxy
+from cmcp_runtime.mcp.streamable_http import PROTOCOL_VERSION
 
 if TYPE_CHECKING:
     from cmcp_runtime.audit.chain import AuditChain
@@ -310,7 +311,7 @@ class MCPServer:
                 "jsonrpc": "2.0",
                 "id": rpc_id,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": PROTOCOL_VERSION,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "cmcp-runtime", "version": "0.1.0"},
                 },

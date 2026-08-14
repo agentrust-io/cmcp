@@ -28,6 +28,13 @@ class _MockMCPHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         request = json.loads(self.rfile.read(length))
         tool = request["params"]["name"]
+        assert self.headers["Accept"] == "application/json, text/event-stream"
+        assert self.headers["MCP-Protocol-Version"] == "2026-07-28"
+        assert self.headers["Mcp-Method"] == "tools/call"
+        assert self.headers["Mcp-Name"] == tool
+        assert request["params"]["_meta"][
+            "io.modelcontextprotocol/protocolVersion"
+        ] == "2026-07-28"
         if tool == "test.fail":
             body = {
                 "jsonrpc": "2.0",
@@ -42,9 +49,19 @@ class _MockMCPHandler(BaseHTTPRequestHandler):
                     "content": [{"type": "text", "text": f"echo:{tool}"}]
                 },
             }
-        payload = json.dumps(body).encode()
+        if tool == "test.sse":
+            notification = json.dumps({
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": {"progress": 1},
+            })
+            payload = f"data: {notification}\n\ndata: {json.dumps(body)}\n\n".encode()
+            content_type = "text/event-stream; charset=utf-8"
+        else:
+            payload = json.dumps(body).encode()
+            content_type = "application/json"
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -86,7 +103,7 @@ def _make_proxy(server_url: str):
         approved_by="test",
     )
     catalog = ToolCatalog(
-        entries={"test.echo": entry, "test.fail": entry},
+        entries={"test.echo": entry, "test.fail": entry, "test.sse": entry},
         catalog_hash="sha256:" + "1" * 64,
     )
     config = Config(attestation=AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING))
@@ -116,6 +133,13 @@ async def test_forward_raises_on_jsonrpc_error(mock_server):
     proxy, entry = _make_proxy(mock_server)
     with pytest.raises(UpstreamToolError, match="tool exploded"):
         await proxy._forward_to_upstream("c1", entry, "test.fail", {})
+
+
+@pytest.mark.asyncio
+async def test_forward_accepts_request_scoped_sse(mock_server):
+    proxy, entry = _make_proxy(mock_server)
+    text = await proxy._forward_to_upstream("c-sse", entry, "test.sse", {})
+    assert text == "echo:test.sse"
 
 
 @pytest.mark.asyncio

@@ -142,6 +142,20 @@ def test_catalog_defaults_sensitivity_level(catalog_file):
     assert cat.entries["crm.query"].sensitivity_level == "public"
 
 
+def test_streamable_http_transport_loads(catalog_file):
+    entry = dict(ENTRY_1)
+    entry["server"] = dict(entry["server"], transport="streamable-http")
+    cat = load_catalog(catalog_file([entry]))
+    assert cat.entries["crm.query"].server.transport == "streamable-http"
+
+
+def test_unimplemented_websocket_transport_fails_closed(catalog_file):
+    entry = dict(ENTRY_1)
+    entry["server"] = dict(entry["server"], transport="websocket")
+    with pytest.raises(ConfigError, match="schema violation"):
+        load_catalog(catalog_file([entry]))
+
+
 def test_catalog_empty_is_valid(catalog_file):
     cat = load_catalog(catalog_file([]))
     assert len(cat.entries) == 0

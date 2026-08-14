@@ -52,7 +52,7 @@
           "type": "string",
           "enum": [
             "http-sse",
-            "websocket",
+            "streamable-http",
             "stdio"
           ],
           "description": "Transport protocol. stdio means the gateway spawns the server as its own child inside the enclave; see docs/spec/stdio-transport.md."
@@ -121,7 +121,7 @@
               "transport": {
                 "enum": [
                   "http-sse",
-                  "websocket"
+                  "streamable-http"
                 ]
               }
             },

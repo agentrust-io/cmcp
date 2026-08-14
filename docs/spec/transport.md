@@ -6,7 +6,23 @@ Last updated: 2026-06-04
 Stability: Unstable , expect breaking changes before v1.0
 ---
 
-Covers: Phase 1 transport scope, stdio gap analysis, SPIFFE-to-TEE attestation binding.
+Covers: Streamable HTTP scope, stdio gap analysis, SPIFFE-to-TEE attestation binding.
+
+## Current network transport
+
+cMCP speaks the stateless MCP 2026-07-28 Streamable HTTP contract to network
+servers. Every upstream request is a new POST carrying matching protocol
+metadata in the body and `MCP-Protocol-Version`, `Mcp-Method`, and (where
+applicable) `Mcp-Name` headers. The gateway advertises both JSON and SSE and
+accepts a request-scoped SSE stream only when it ends with the matching final
+JSON-RPC response. A missing response, malformed event, unsupported content
+type, or mismatched response id fails closed.
+
+The catalog value for new network entries is `streamable-http`. The
+`http-sse` value remains loadable for existing catalogs, but names the legacy
+2024-11-05 transport and should not be used for new entries. `websocket` is
+rejected because cMCP has no WebSocket implementation; silently sending such
+an entry over HTTP would misrepresent the measured catalog.
 
 Closes #20, #21.
 

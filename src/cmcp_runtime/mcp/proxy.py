@@ -30,6 +30,11 @@ from cmcp_runtime.config import Config
 from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
 from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.mcp.stdio import StdioServer
+from cmcp_runtime.mcp.streamable_http import (
+    build_request,
+    parameter_headers,
+    parse_response,
+)
 from cmcp_runtime.policy.decisions import audit_value
 from cmcp_runtime.policy.evaluator import PolicyEvaluator
 from cmcp_runtime.provenance import ProvenanceResult, check_server_provenance
@@ -337,13 +342,16 @@ class CMCPProxy:
             return await (await self._stdio_for(entry)).list_tools()
         try:
             client = self._client_for_upstream(entry)
+            payload, headers = build_request(
+                "provenance-tools-list", "tools/list", {}
+            )
             resp = await client.post(
                 entry.server.url,
-                json={"jsonrpc": "2.0", "id": "provenance-tools-list",
-                      "method": "tools/list", "params": {}},
+                json=payload,
+                headers=headers,
             )
             resp.raise_for_status()
-            result = resp.json().get("result")
+            result = parse_response(resp, "provenance-tools-list").get("result")
         except Exception as exc:  # noqa: BLE001 - any failure means "could not check"
             logger.warning("could not list tools for provenance check: %s", exc)
             return None
@@ -403,16 +411,19 @@ class CMCPProxy:
             return await server.call(call_id, tool_name, arguments)
 
         client = self._client_for_upstream(entry)
-        payload = {
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments},
-        }
+        payload, headers = build_request(
+            call_id,
+            "tools/call",
+            {"name": tool_name, "arguments": arguments},
+            name=tool_name,
+        )
         try:
-            resp = await client.post(entry.server.url, json=payload)
+            headers.update(
+                parameter_headers(entry.approved_definition.input_schema, arguments)
+            )
+            resp = await client.post(entry.server.url, json=payload, headers=headers)
             resp.raise_for_status()
-            body = resp.json()
+            body = parse_response(resp, call_id)
         except tls_pinning.TLSPinMismatchError as exc:
             raise UpstreamUnavailable(
                 f"Upstream TLS certificate fingerprint does not match the attested "

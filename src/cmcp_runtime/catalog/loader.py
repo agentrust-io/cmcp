@@ -39,7 +39,7 @@ class ServerIdentity:
     url: str
     tls_fingerprint: str
     spiffe_id: str | None
-    transport: str  # "http-sse", "websocket", or "stdio"
+    transport: str  # "streamable-http", legacy "http-sse", or "stdio"
     rotation_mode: str  # "key-pinned" (default) or "cert-pinned"
     spawn: StdioSpawn | None = None
     provenance_record_path: str | None = None
