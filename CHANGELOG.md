@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The catalog schema conditions its requirements on transport rather than relaxing them, so a network transport still requires `url` and `tls_fingerprint` while stdio requires `spawn`.
 
+### Fixed
+
+- **The AIA chain walk for a TPM attestation key had no margin above the one depth it was measured against (#514).** `TPMProvider._chain_from_leaf` stops walking the certificate chain at `_AIA_MAX_DEPTH`, and that constant was `4`, exactly the length of the one real Azure hierarchy measured so far: leaf, Azure Cloud Virtual TPM CA - 11, Azure Cloud Virtual TPM CA 2025, root. Split out of #453, whose own investigation found a second real hierarchy, `Global Virtual TPM CA - 03`, that reaches the same root in only 3 certificates. Two different depths already exist on real fleet hardware, so a cap sized to match one of them exactly leaves zero room for a future or differently configured hierarchy that needs one more hop: the walk would stop one certificate short of the root, and the resulting chain would ship without it.
+
+  Not a loop logic bug: the walk correctly builds any chain up to the cap, including one where the root arrives on the last allowed certificate. The cap is now `6`, two hops above the deeper of the two known depths rather than matching either exactly, and the walk logs a warning when it stops without reaching a self signed root, so a future truncation is visible in the logs immediately rather than only surfacing later as a chain verification failure that looks identical to a chain that legitimately reaches an untrusted root.
+
 ## [0.4.0] - 2026-08-08
 
 **Anyone running 0.3.0 should upgrade.** On 0.3.0 a forged TPM quote was reported as hardware-attested: the `tpm2` branch of `verify_trace_claim` called only `verify_tpm_measurement`, which takes no signature parameter, so a `TPMS_ATTEST` with the correct magic and matching `qualifying_data` passed with no signature and no certificate chain (#370). The authenticated path existed and was tested; nothing in production called it. This release makes the quote signature and the AK certificate chain the gate on `hardware_attestation`, so evidence that does not chain to a pinned root can no longer report as verified.

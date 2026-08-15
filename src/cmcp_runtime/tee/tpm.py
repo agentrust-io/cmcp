@@ -37,8 +37,17 @@ _PLATFORM_AK_CERT_NV_INDEX = 0x01C101D0
 
 # Walking the certificate AIA extension is what lets a relying party verify offline
 # later: the chain travels with the evidence instead of being fetched at audit time.
+#
+# #514: the two Azure hierarchies measured on real hardware so far are leaf, Azure
+# Cloud Virtual TPM CA - 11, Azure Cloud Virtual TPM CA 2025, root (4 certificates)
+# and leaf, Global Virtual TPM CA - 03, root (3 certificates), see #453. This value
+# is set two hops above the deeper of the two rather than matching either exactly,
+# since matching one of them exactly is what left the walk with no room at all for
+# a future or differently configured hierarchy that needs one more hop. It is a
+# judgment call pending more fleet data, not a value derived from a documented
+# Azure guarantee.
 _AIA_FETCH_TIMEOUT_SECONDS = 5
-_AIA_MAX_DEPTH = 4
+_AIA_MAX_DEPTH = 6
 
 # TPM2_NV_Read is bounded by TPM2_PT_NV_BUFFER_MAX; query it and cap by this.
 _NV_READ_CHUNK_BYTES = 512
@@ -362,6 +371,20 @@ class TPMProvider(TEEProvider):
             if issuer is None:
                 break
             chain.append(issuer)
+
+        # #514: tell "the walk reached a real, self signed root" apart from "the
+        # walk stopped only because the depth cap was hit" in the log, before a
+        # truncated chain turns into a confusing chain verification failure
+        # downstream that looks identical to a chain that legitimately reaches an
+        # untrusted root.
+        if len(chain) >= _AIA_MAX_DEPTH and chain[-1].subject != chain[-1].issuer:
+            logger.warning(
+                "AIA chain walk stopped at the %d certificate depth cap without "
+                "reaching a self signed root; the shipped chain is likely "
+                "truncated. issuer=%r",
+                _AIA_MAX_DEPTH,
+                chain[-1].issuer.rfc4514_string(),
+            )
 
         from cryptography.hazmat.primitives.serialization import Encoding
 

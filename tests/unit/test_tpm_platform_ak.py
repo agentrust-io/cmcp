@@ -8,12 +8,14 @@ the first implementation fail on a 1596-byte certificate.
 from __future__ import annotations
 
 import datetime
+import logging
+from unittest.mock import patch
 
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
 
 from cmcp_runtime.tee.tpm import TPMProvider
 
@@ -68,6 +70,76 @@ def _self_signed(cn: str = "unit-test-ak") -> x509.Certificate:
         .not_valid_after(now + datetime.timedelta(days=365))
         .sign(key, hashes.SHA256())
     )
+
+
+def _build_chain(depth: int) -> list[x509.Certificate]:
+    """Build a synthetic chain of `depth` certificates, leaf first, each signed by
+    the next and carrying an AIA extension pointing at the next by URL, terminating
+    in a self signed root (#514)."""
+    keys = [rsa.generate_private_key(public_exponent=65537, key_size=2048) for _ in range(depth)]
+    names = [
+        x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"unit-test-{i}")])
+        for i in range(depth)
+    ]
+    now = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+    certs: list[x509.Certificate] = []
+    for i in range(depth):
+        is_root = i == depth - 1
+        issuer = names[i] if is_root else names[i + 1]
+        signing_key = keys[i] if is_root else keys[i + 1]
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(names[i])
+            .issuer_name(issuer)
+            .public_key(keys[i].public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + datetime.timedelta(days=365))
+        )
+        if not is_root:
+            url = f"https://example.test/cert{i + 1}.der"
+            builder = builder.add_extension(
+                x509.AuthorityInformationAccess([
+                    x509.AccessDescription(
+                        AuthorityInformationAccessOID.CA_ISSUERS,
+                        x509.UniformResourceIdentifier(url),
+                    )
+                ]),
+                critical=False,
+            )
+        certs.append(builder.sign(signing_key, hashes.SHA256()))
+    return certs
+
+
+class _FakeAiaResponse:
+    """Minimal urlopen() context manager stand-in serving one certificate's DER."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def __enter__(self) -> _FakeAiaResponse:
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def _fake_urlopen_for(certs: list[x509.Certificate]):
+    """Serve certs[i] DER bytes for the URL _build_chain() gave cert i-1's AIA."""
+    der_by_url = {
+        f"https://example.test/cert{i + 1}.der": certs[i + 1].public_bytes(
+            serialization.Encoding.DER
+        )
+        for i in range(len(certs) - 1)
+    }
+
+    def _urlopen(url: str, timeout: float | None = None) -> _FakeAiaResponse:
+        return _FakeAiaResponse(der_by_url[url])
+
+    return _urlopen
 
 
 def test_nv_read_chunks_within_the_buffer_limit() -> None:
@@ -146,3 +218,39 @@ def test_certifies_matches_only_the_key_in_the_leaf() -> None:
 @pytest.mark.parametrize("blob", [b"", b"\x30\x82", b"\xff" * 64])
 def test_chain_from_malformed_input_never_raises(blob: bytes) -> None:
     assert TPMProvider._chain_from_leaf(blob) == b""
+
+
+def test_chain_walk_reaches_root_deeper_than_previously_known_azure_depth() -> None:
+    """#514: the two Azure hierarchies measured on real hardware are 4 and 3
+    certificates deep. A chain one hop deeper than the deeper of the two must not
+    be truncated by the widened depth cap."""
+    certs = _build_chain(5)
+
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen_for(certs)):
+        chain = TPMProvider._chain_from_leaf(certs[0].public_bytes(serialization.Encoding.DER))
+
+    loaded = x509.load_pem_x509_certificates(chain)
+    assert len(loaded) == 5
+    assert loaded[-1].subject == loaded[-1].issuer  # reached the real, self signed root
+
+
+def test_chain_walk_past_the_depth_cap_logs_a_truncation_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#514: when a chain needs more hops than the cap allows, the walk stops
+    without reaching the root, and that must be visible in the logs rather than
+    only surfacing later as a chain-verification failure that looks identical to
+    a chain that legitimately reaches an untrusted root."""
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._AIA_MAX_DEPTH", 2)
+    certs = _build_chain(3)
+
+    with (
+        patch("urllib.request.urlopen", side_effect=_fake_urlopen_for(certs)),
+        caplog.at_level(logging.WARNING, logger="cmcp_runtime.tee.tpm"),
+    ):
+        chain = TPMProvider._chain_from_leaf(certs[0].public_bytes(serialization.Encoding.DER))
+
+    loaded = x509.load_pem_x509_certificates(chain)
+    assert len(loaded) == 2
+    assert loaded[-1].subject != loaded[-1].issuer  # truncated, not the real root
+    assert any("depth cap" in record.message for record in caplog.records)
