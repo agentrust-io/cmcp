@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`initialize` answered every handshake with a revision that has no `initialize` (#509).** Third on the to-do list in #496 was "stop hardcoding the downstream protocol version", and #509 did it by replacing the hardcoded `2024-11-05` in the `initialize` result with `PROTOCOL_VERSION`. That constant is `2026-07-28`: the revision that **removed** the handshake. So the gateway answered every `initialize` by naming a protocol in which the request just made does not exist, and in which each later request must carry `_meta` plus the mirrored `MCP-Protocol-Version` / `Mcp-Method` headers a handshake-era client has no way to know it should send. Confirmed against every revision a real client offers: asked `2025-06-18`, `2025-03-26` or `2024-11-05`, the gateway answered `2026-07-28` in all three cases.
+
+  The direction of the swap is the whole defect. `PROTOCOL_VERSION` is correct on the **outbound** leg, where the gateway is the client and #509 got it right; it is wrong on the **inbound** one, where reaching `initialize` at all is proof the caller is handshake-era. `initialize` now negotiates over `_LEGACY_PROTOCOL_VERSIONS` only, echoing the client's request when the gateway speaks it and otherwise answering with the newest handshake-era revision. A client that asks for `2026-07-28` at a handshake is deliberately not humoured: it cannot be speaking a revision with no handshake, so confirming it would agree on a protocol neither side is using. `server.py` no longer imports `PROTOCOL_VERSION`; #509 introduced that import solely for this misuse.
+
+  `tests/unit/test_initialize_protocol_version.py` pins the negotiation and asserts the outbound constant is untouched. Verified by mutation: reverting only the `initialize` line while keeping the new constant fails 9 of its 10 tests.
+
 ### Security
 
 - The MCP ingress now rejects non-object JSON-RPC messages, non-string methods, and non-object `tools/call` parameters with a bounded `MCP_INVALID_REQUEST` response. Structurally invalid attacker input no longer reaches attribute errors, HTTP 500 responses, or exception trace logging.

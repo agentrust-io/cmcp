@@ -30,7 +30,6 @@ from starlette.routing import Route
 
 from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
 from cmcp_runtime.mcp.proxy import CMCPProxy
-from cmcp_runtime.mcp.streamable_http import PROTOCOL_VERSION
 
 if TYPE_CHECKING:
     from cmcp_runtime.audit.chain import AuditChain
@@ -41,6 +40,31 @@ logger = logging.getLogger(__name__)
 
 # Endpoints exempt from bearer-token auth (Kubernetes liveness / readiness probes)
 _AUTH_EXEMPT_PATHS = {"/health", "/readyz"}
+
+# Revisions the gateway can negotiate at `initialize`, newest first.
+#
+# `initialize` belongs to the handshake era only. `PROTOCOL_VERSION` (#509) is
+# the revision the gateway speaks *outbound* to upstream servers, and it is
+# 2026-07-28 - the revision that removed `initialize` altogether. It must never
+# be the answer to a handshake: it names a protocol in which this request does
+# not exist, and in which every subsequent request must carry `_meta` and the
+# mirrored `MCP-Protocol-Version` / `Mcp-Method` headers that a handshake-era
+# client has no way to send.
+_LEGACY_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+
+
+def _negotiate_protocol_version(params: dict[str, Any]) -> str:
+    """Pick the revision to answer `initialize` with.
+
+    Echo the client's request when the gateway speaks it, otherwise answer with
+    the newest handshake-era revision and let the client decide whether it can
+    continue. The gateway advertises `tools` only, so the revision affects
+    transport framing rather than the surface exposed here.
+    """
+    requested = params.get("protocolVersion")
+    if isinstance(requested, str) and requested in _LEGACY_PROTOCOL_VERSIONS:
+        return requested
+    return _LEGACY_PROTOCOL_VERSIONS[0]
 
 
 def _invalid_request(rpc_id: Any = None) -> JSONResponse:
@@ -311,7 +335,9 @@ class MCPServer:
                 "jsonrpc": "2.0",
                 "id": rpc_id,
                 "result": {
-                    "protocolVersion": PROTOCOL_VERSION,
+                    "protocolVersion": _negotiate_protocol_version(
+                        params if isinstance(params, dict) else {}
+                    ),
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "cmcp-runtime", "version": "0.1.0"},
                 },
