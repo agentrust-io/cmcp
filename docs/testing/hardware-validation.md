@@ -134,8 +134,12 @@ qualifying-data binding equalling the nonce (with a different nonce correctly
 leaving `qualifying_data` unverified).
 
 ```
-CMCP_TPM_FIXTURE_DIR=<capture dir> pytest tests/unit/test_tpm_verify.py
+pytest tests/unit/test_tpm_verify.py
 ```
+
+The committed capture is loaded from
+`tests/fixtures/hardware/azure-vtpm-2026-07-27` by default. Set
+`CMCP_TPM_FIXTURE_DIR=<capture dir>` to replay a newly captured vector instead.
 
 This run also surfaced an interop gap, fixed alongside it. The parser required
 the outer `TPM2B_ATTEST` two-byte size prefix, but `tpm2_quote -m` writes a bare

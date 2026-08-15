@@ -1,0 +1,21 @@
+{
+  "provider_detect": true,
+  "provider": "azure-cvm-sev-snp",
+  "measurement": "sha384:06b638f60392bdf52667f5523892eefb8807d9052a07b6396a33271a9e5fb8100dd01720bf9347d7edec8955a1ca2c65",
+  "report_data": "1111111111111111111111111111111111111111111111111111111111111111",
+  "evidence_bytes": 13004,
+  "ark_subject": "CN=ARK-Milan,O=Advanced Micro Devices,ST=CA,L=Santa Clara,C=US,OU=Engineering",
+  "verified": true,
+  "failure_reason": null,
+  "verified_fields": [
+    "measurement",
+    "runtime_data_binding",
+    "ak_binding",
+    "quote_nonce_binding",
+    "vcek_cert_chain",
+    "report_signature"
+  ],
+  "unverified_fields": [],
+  "wrong_nonce_rejected": true,
+  "wrong_nonce_reason": "quote_nonce_mismatch"
+}

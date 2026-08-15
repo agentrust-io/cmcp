@@ -364,14 +364,9 @@ def test_tpm2_qualifying_data_rejected_on_key_substitution() -> None:
     assert "qualifying_data" in result.unverified_fields
 
 
-# ── Real hardware fixture (env-gated; not committed) ────────────────────────────
+# ── Real hardware fixture ───────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(
-    not os.environ.get("CMCP_TPM_FIXTURE_DIR"),
-    reason="set CMCP_TPM_FIXTURE_DIR to a dir with quote.msg + nonce.hex (a real TPM "
-    "capture; see docs/testing/hardware-validation.md) to run the hardware test",
-)
 def test_real_tpm_quote() -> None:
     """Parse a genuine Azure vTPM quote and check the qualifying-data binding.
 
@@ -382,7 +377,13 @@ def test_real_tpm_quote() -> None:
     """
     import pathlib
 
-    d = pathlib.Path(os.environ["CMCP_TPM_FIXTURE_DIR"])
+    d = pathlib.Path(
+        os.environ.get("CMCP_TPM_FIXTURE_DIR")
+        or pathlib.Path(__file__).parents[1]
+        / "fixtures"
+        / "hardware"
+        / "azure-vtpm-2026-07-27"
+    )
     attest = (d / "quote.msg").read_bytes()
     nonce = bytes.fromhex((d / "nonce.hex").read_text().strip())
 
