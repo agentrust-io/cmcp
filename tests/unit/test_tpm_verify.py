@@ -7,8 +7,6 @@ import os
 import struct
 from datetime import UTC, datetime
 
-import pytest
-
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.trace_claim import (
