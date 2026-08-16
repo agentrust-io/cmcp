@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The direction of the swap is the whole defect. `PROTOCOL_VERSION` is correct on the **outbound** leg, where the gateway is the client and #509 got it right; it is wrong on the **inbound** one, where reaching `initialize` at all is proof the caller is handshake-era. `initialize` now negotiates over `_LEGACY_PROTOCOL_VERSIONS` only, echoing the client's request when the gateway speaks it and otherwise answering with the newest handshake-era revision. A client that asks for `2026-07-28` at a handshake is deliberately not humoured: it cannot be speaking a revision with no handshake, so confirming it would agree on a protocol neither side is using. `server.py` no longer imports `PROTOCOL_VERSION`; #509 introduced that import solely for this misuse.
 
+  That set now leads with **`2025-11-25`**, the newest revision that still defines `initialize`. It had been omitted, so a client offering the latest handshake revision was answered `2025-06-18` instead. The lifecycle spec requires a server to echo a version it supports and says a client that does not support the server's answer SHOULD disconnect, which makes a needless downgrade the same class of defect as the one above, one revision over.
+
+  Non-object `initialize` params are now rejected with `-32600` rather than treated as an empty object. `InitializeRequestParams` is an object with required members, so answering a malformed handshake with a successful negotiation blessed a validation gap. This matches how #500 already rejects non-object `tools/call` params. Absent `params` remains legal and negotiates the newest revision.
+
   `tests/unit/test_initialize_protocol_version.py` pins the negotiation and asserts the outbound constant is untouched. Verified by mutation: reverting only the `initialize` line while keeping the new constant fails 9 of its 10 tests.
 
 ### Security

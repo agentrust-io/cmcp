@@ -84,11 +84,76 @@ def test_a_client_asking_for_the_stateless_revision_is_not_humoured(client):
     {"protocolVersion": "1999-01-01", "capabilities": {}},
     {"capabilities": {}},
     {},
-    ["positional", "params"],
 ])
-def test_unnegotiable_params_fall_back_to_the_newest_legacy_revision(client, params):
-    """Unknown, absent, or non-object params still yield a usable answer."""
+def test_unnegotiable_params_fall_back_to_the_newest_supported_revision(client, params):
+    """An unknown or absent version still yields a usable answer.
+
+    The lifecycle spec: absent support for the requested version, the server
+    MUST answer with another it supports, and that SHOULD be the latest.
+
+    Scope note. These cases assert the *version fallback* only. Two of them are
+    incomplete against the schema, which marks `protocolVersion`, `capabilities`
+    and `clientInfo` all required on `InitializeRequestParams`, and the gateway
+    does not enforce members. That leniency is deliberate and unchanged by this
+    branch: the shape check above rejects a `params` that cannot be an
+    `InitializeRequestParams` at all, while member validation would be a
+    behaviour change of its own, and would have to decide what happens to a
+    handshake with no `params` at all. Read these as "negotiation still
+    resolves", not as "this payload is conformant".
+    """
     assert _initialize(client, params) == _LEGACY_PROTOCOL_VERSIONS[0]
+
+
+def test_the_newest_handshake_revision_is_2025_11_25():
+    """`2025-11-25` is the last revision that defines `initialize`.
+
+    Answering a client that offers it with anything older is a downgrade, and
+    the spec says a client that does not support the server's answer SHOULD
+    disconnect - so the fallback is not a harmless one.
+    """
+    assert _LEGACY_PROTOCOL_VERSIONS[0] == "2025-11-25"
+
+
+def test_2025_11_25_is_echoed_and_not_downgraded(client):
+    """The exact case that regressed, hardcoded on purpose.
+
+    `test_initialize_echoes_the_requested_revision` is parametrized over
+    `_LEGACY_PROTOCOL_VERSIONS`, so dropping a revision from that tuple also
+    drops its own test case. A test that draws its inputs from the constant
+    under test cannot catch the constant being wrong, so this one names the
+    revision literally.
+    """
+    negotiated = _initialize(client, {
+        "protocolVersion": "2025-11-25",
+        "capabilities": {},
+        "clientInfo": {"name": "claude-code", "version": "1.0.0"},
+    })
+    assert negotiated == "2025-11-25"
+    assert negotiated != "2025-06-18"
+
+
+def test_unknown_version_falls_back_to_2025_11_25(client):
+    """Fallback target named literally, for the same reason."""
+    assert _initialize(client, {
+        "protocolVersion": "1999-01-01", "capabilities": {},
+    }) == "2025-11-25"
+
+
+@pytest.mark.parametrize("params", [
+    ["positional", "params"],
+    "a string",
+    42,
+])
+def test_non_object_initialize_params_are_rejected(client, params):
+    """`InitializeRequestParams` is an object, so a non-object is not a
+    negotiation the gateway should complete."""
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == -32600
+    assert "result" not in resp.json()
 
 
 def test_outbound_constant_is_unchanged():
