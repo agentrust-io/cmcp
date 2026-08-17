@@ -44,6 +44,16 @@ This installs:
 - `cmcp` - the gateway CLI
 - `cmcp_verify` - the Python library for verifying TRACE Claims (no separate CLI install needed)
 
+### Termux (Android)
+
+`pip install cmcp-runtime` fails to build two dependencies on Termux/ARM out of the box.
+
+**1. cedarpy/maturin cannot detect the Android API level.** Fix: `export ANDROID_API_LEVEL=$(getprop ro.build.version.sdk)` before installing.
+
+**2. pynacl fails to build against libsodium.** Fix: `pkg install libsodium pkg-config` then `export SODIUM_INSTALL=system SODIUM_LIB_DIR=$PREFIX/lib SODIUM_INC_DIR=$PREFIX/include`.
+
+With both fixes set, `pip install cmcp-runtime` completes normally.
+
 ---
 
 ## Configuration
