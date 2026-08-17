@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmcp.agentrust-io.com/schemas/catalog-approval.schema.json",
+  "title": "cMCP Detached Catalog Approval v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile", "catalog_id", "sequence", "previous_record_hash", "previous_catalog_hash", "new_catalog_hash", "change_set_digest", "approval_policy", "automated_checks_digest", "approvals"],
+  "properties": {
+    "profile": {"const": "tag:agentrust-io.com,2026:cmcp-catalog-approval-v1"},
+    "catalog_id": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "previous_record_hash": {"$ref": "#/$defs/digest"},
+    "previous_catalog_hash": {"$ref": "#/$defs/digest"},
+    "new_catalog_hash": {"$ref": "#/$defs/digest"},
+    "change_set_digest": {"$ref": "#/$defs/digest"},
+    "automated_checks_digest": {"$ref": "#/$defs/digest"},
+    "approval_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy_id", "policy_hash", "threshold", "distinct_principals", "distinct_roles"],
+      "properties": {
+        "policy_id": {"type": "string", "minLength": 1},
+        "policy_hash": {"$ref": "#/$defs/digest"},
+        "threshold": {"type": "integer", "minimum": 1},
+        "distinct_principals": {"type": "boolean"},
+        "distinct_roles": {"type": "boolean"}
+      }
+    },
+    "approvals": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "object", "additionalProperties": false,
+        "required": ["principal_id", "issuer", "key_id", "role", "approved_at", "expires_at", "signature"],
+        "properties": {
+          "principal_id": {"type": "string", "minLength": 1},
+          "issuer": {"type": "string", "minLength": 1},
+          "key_id": {"type": "string", "minLength": 1},
+          "role": {"type": "string", "minLength": 1},
+          "approved_at": {"type": "integer", "minimum": 0},
+          "expires_at": {"type": "integer", "minimum": 1},
+          "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"}
+        }
+      }
+    }
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}
+}
