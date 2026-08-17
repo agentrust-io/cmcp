@@ -251,9 +251,14 @@ class SessionManager:
             }
             for exc in catalog.exceptions
         ]
+        # #521: this was hardcoded False, so the claim carried a drift field that
+        # could never be true. Both drift kinds count: our own catalog changing
+        # under a running gateway, and an upstream server advertising a tool that
+        # no longer matches its approved definition. The second stays visible here
+        # even under warn_only, where the calls were routed anyway.
         catalog_info = ToolCatalogInfo(
             hash=catalog.catalog_hash,
-            drift_detected=False,
+            drift_detected=bool(state.catalog_drift or state.upstream_drift_tools),
         )
 
         # Build call summary from chain entries.

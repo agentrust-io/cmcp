@@ -40,6 +40,27 @@ class StalenessPolicy(StrEnum):
     WARN_ONLY = "warn_only"
 
 
+class DriftPolicy(StrEnum):
+    FAIL_CLOSED = "fail_closed"
+    WARN_ONLY = "warn_only"
+
+
+@dataclass
+class CatalogConfig:
+    """Behaviour when an upstream server stops matching its approved entry."""
+
+    drift_policy: DriftPolicy = DriftPolicy.FAIL_CLOSED
+    """What to do when a server advertises a tool whose definition differs from
+    the approved one (threat model P4.2, rug-pull via tool-definition mutation).
+
+    Fail closed by default. A mismatch means the server is not offering what was
+    reviewed, and the premise of this gateway is that the approved definition is
+    the one that runs. ``warn_only`` records the drift and routes the call anyway.
+    It exists so an operator can measure how noisy their own fleet is before
+    turning enforcement on, not as a resting state.
+    """
+
+
 @dataclass
 class KillSwitchConfig:
     enabled: bool = False
@@ -96,6 +117,7 @@ class Config:
     agent_manifest: AgentManifestConfig = field(default_factory=AgentManifestConfig)
     kill_switch: KillSwitchConfig = field(default_factory=KillSwitchConfig)
     sensitivity: SensitivityConfig = field(default_factory=SensitivityConfig)
+    catalog: CatalogConfig = field(default_factory=CatalogConfig)
     policy_bundle_path: str = "policies/"
     catalog_path: str = "catalog.json"
     listen_addr: str = "0.0.0.0:8443"
@@ -366,6 +388,15 @@ def load_config(path: str) -> Config:
             + ", ".join(_KINDS)
         )
 
+    catalog_raw = raw.get("catalog", {})
+    if not isinstance(catalog_raw, dict):
+        raise ConfigError("catalog must be a mapping")
+    try:
+        drift_policy = DriftPolicy(catalog_raw.get("drift_policy", "fail_closed"))
+    except ValueError as err:
+        valid = [d.value for d in DriftPolicy]
+        raise ConfigError(f"catalog.drift_policy must be one of {valid}") from err
+
     max_bytes = raw.get("max_response_size_bytes", 2 * 1024 * 1024)
     if not isinstance(max_bytes, int) or max_bytes <= 0:
         raise ConfigError("max_response_size_bytes must be a positive integer")
@@ -450,6 +481,7 @@ def load_config(path: str) -> Config:
             min_calls=ks_min_calls,
         ),
         sensitivity=SensitivityConfig(vocabulary=sensitivity_vocabulary),
+        catalog=CatalogConfig(drift_policy=drift_policy),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,
         listen_addr=listen_addr,

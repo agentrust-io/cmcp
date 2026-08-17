@@ -50,6 +50,7 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
         attestation_generated_at=ctx.attestation_report.attestation_generated_at,
         attestation_validity_seconds=ctx.attestation_report.attestation_validity_seconds,
         attestation_platform=attestation_platform,
+        catalog_scanner=ctx.catalog_scanner,
     )
     # AUTH-001: the token validated in run_startup must reach the server, otherwise
     # every protected endpoint is reachable unauthenticated.

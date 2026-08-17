@@ -134,6 +134,61 @@ def _compute_definition_hash(definition: dict[str, Any]) -> str:
     return f"sha256:{_sha256_hex(canonical.encode())}"
 
 
+def definition_digest(
+    description: str,
+    input_schema: dict[str, Any] | None,
+    output_schema: dict[str, Any] | None,
+) -> str:
+    """Canonical digest of the semantic triple that identifies a tool.
+
+    Deliberately distinct from ``definition_hash``. That one covers the catalog
+    entry exactly as written on disk, which is what you want for detecting an
+    edited catalog file and the wrong thing for comparing against an upstream
+    server: the server never sees our file layout, so an extra or reordered key
+    on our side would read as drift on theirs. This digest covers only what both
+    sides can be expected to agree on.
+
+    Uses the same canonical JSON form as :func:`_compute_definition_hash`, so the
+    two can never disagree about how a value is serialised.
+    """
+    canonical = json.dumps(
+        {
+            "description": description,
+            "input_schema": input_schema or {},
+            "output_schema": output_schema,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return f"sha256:{_sha256_hex(canonical.encode())}"
+
+
+def approved_definition_digest(definition: ApprovedDefinition) -> str:
+    """Digest of an approved definition, for the upstream drift comparison."""
+    return definition_digest(
+        definition.description,
+        definition.input_schema,
+        definition.output_schema,
+    )
+
+
+def advertised_definition_digest(tool: dict[str, Any]) -> str:
+    """Digest of a tool as an upstream server advertises it over MCP.
+
+    MCP ``tools/list`` uses camelCase (``inputSchema``) while the catalog uses
+    snake_case. Both spellings are accepted so a server that happens to answer in
+    the catalog's shape is not reported as drifted for a naming difference.
+    """
+    input_schema = tool.get("inputSchema", tool.get("input_schema"))
+    output_schema = tool.get("outputSchema", tool.get("output_schema"))
+    return definition_digest(
+        str(tool.get("description", "")),
+        input_schema if isinstance(input_schema, dict) else {},
+        output_schema if isinstance(output_schema, dict) else None,
+    )
+
+
 def _catalog_hash(raw_entries: list[dict[str, Any]]) -> str:
     """SHA-256 of canonical JSON of entries sorted by tool_name."""
     sorted_entries = sorted(raw_entries, key=lambda e: e["tool_name"])

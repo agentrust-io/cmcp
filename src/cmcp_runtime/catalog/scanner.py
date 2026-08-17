@@ -29,21 +29,35 @@ except ImportError:
 
 @dataclass
 class CatalogScanResult:
-    """Result of scanning the full tool catalog at load time."""
+    """Result of scanning the full tool catalog at load time.
+
+    ``available`` is the difference between "we looked and found nothing" and
+    "we never looked". Callers must not read ``safe`` without it: this scanner
+    is backed by an optional dependency, and a control that reports safe when it
+    is simply absent is worse than one that reports nothing at all.
+    """
 
     safe: bool
     tools_scanned: int
     tools_flagged: int
     threats: list[dict[str, str]]  # [{tool_name, threat_type, severity, description}]
+    available: bool = True
 
 
 @dataclass
 class DriftResult:
-    """Result of a rug-pull / drift check on a single tool."""
+    """Result of a rug-pull / drift check on a single tool.
+
+    As with :class:`CatalogScanResult`, ``drifted=False`` means nothing on its
+    own when ``available`` is False. The authoritative drift decision is the
+    digest comparison in the proxy, which needs no optional dependency; this
+    scanner only classifies what kind of change it was.
+    """
 
     tool_name: str
     drifted: bool
     threats: list[dict[str, str]]
+    available: bool = True
 
 
 class CatalogScanner:
@@ -84,10 +98,11 @@ class CatalogScanner:
         """
         if not self._available or self._scanner is None:
             return CatalogScanResult(
-                safe=True,
-                tools_scanned=len(catalog.entries),
+                safe=False,
+                tools_scanned=0,
                 tools_flagged=0,
                 threats=[],
+                available=False,
             )
 
         all_threats: list[dict[str, str]] = []
@@ -152,7 +167,9 @@ class CatalogScanner:
         if the definition has changed since the catalog was sealed.
         """
         if not self._available or self._scanner is None:
-            return DriftResult(tool_name=tool_name, drifted=False, threats=[])
+            return DriftResult(
+                tool_name=tool_name, drifted=False, threats=[], available=False
+            )
 
         try:
             threats = self._scanner.check_rug_pull(

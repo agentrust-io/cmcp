@@ -133,21 +133,46 @@ def test_check_drift_detects_rug_pull():
     assert result.threats[0]["threat_type"] == "rug_pull"
 
 
-# ── When AGT is not available (graceful fallback) ─────────────────────────────
+# ── When AGT is not available (reports unavailable, never safe) ───────────────
+#
+# #521: these two previously asserted safe=True and tools_scanned=1 with the
+# dependency absent, so a deployment without agent-os-kernel got a clean bill of
+# health it had not earned, and nothing downstream could tell that apart from a
+# scan that ran and found nothing. Absence is now reported as absence.
 
-def test_scan_catalog_safe_without_agt():
+def test_scan_catalog_reports_unavailable_without_agt():
     with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", False):
         scanner = CatalogScanner()
         result = scanner.scan_catalog(_make_catalog("crm.query"))
 
-    assert result.safe is True
-    assert result.tools_scanned == 1
+    assert result.available is False
+    assert result.safe is False, "absent must not read as safe"
+    assert result.tools_scanned == 0, "nothing was scanned, so the count is zero"
     assert result.threats == []
 
 
-def test_check_drift_returns_clean_without_agt():
+def test_check_drift_reports_unavailable_without_agt():
     with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", False):
         scanner = CatalogScanner()
         result = scanner.check_drift("crm.query", "CRM", {})
 
+    assert result.available is False
+    # drifted stays False because this scanner genuinely does not know. The
+    # enforcing answer comes from the digest comparison in the proxy, which needs
+    # no optional dependency. See tests/unit/test_upstream_catalog_drift.py.
     assert result.drifted is False
+
+
+def test_available_is_true_when_agt_is_present():
+    with patch("cmcp_runtime.catalog.scanner._AGT_AVAILABLE", True), \
+         patch("cmcp_runtime.catalog.scanner.MCPSecurityScanner") as MockScanner:
+            mock_instance = MagicMock()
+            mock_instance.scan_tool.return_value = []
+            mock_instance.register_tool.return_value = MagicMock()
+            MockScanner.return_value = mock_instance
+
+            scanner = CatalogScanner()
+            result = scanner.scan_catalog(_make_catalog("crm.query"))
+
+    assert result.available is True
+    assert result.safe is True

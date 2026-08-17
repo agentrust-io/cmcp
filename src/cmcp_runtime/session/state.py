@@ -73,6 +73,14 @@ class SessionState:
     suspicious_sequences: int = 0
     attestation_stale: bool = False
     catalog_drift: bool = False
+    upstream_drift_tools: list[str] = field(default_factory=list)
+    """Tools whose upstream server advertised a definition that does not match
+    the approved one (P4.2). Tracked separately from ``catalog_drift`` for two
+    reasons: it names *which* tools drifted, and under
+    ``catalog.drift_policy: warn_only`` the calls still route, so ``catalog_drift``
+    stays False while the session is demonstrably no longer what was approved.
+    A TRACE claim must report drift in both cases.
+    """
     kill_switch_triggered: bool = False
     # #479: the effective vocabulary this session ranks tags against. Defaults to
     # the built in table; SessionManager passes the deployment's configured one.
@@ -122,6 +130,7 @@ class SessionState:
         self.sensitivity_raised_at = None
         self.sensitivity_raised_by_call = None
         self.suspicious_sequences = 0
+        self.upstream_drift_tools = []
         self.reset_count += 1
         self.attestation_stale = False
         self.catalog_drift = False

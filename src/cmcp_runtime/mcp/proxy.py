@@ -25,8 +25,14 @@ from agent_os.mcp_gateway import GovernancePolicy, MCPGateway  # type: ignore[at
 from agent_os.mcp_response_scanner import MCPResponseScanner
 
 from cmcp_runtime.audit.chain import AuditChain
-from cmcp_runtime.catalog.loader import CatalogEntry, ToolCatalog
-from cmcp_runtime.config import Config
+from cmcp_runtime.catalog.loader import (
+    CatalogEntry,
+    ToolCatalog,
+    advertised_definition_digest,
+    approved_definition_digest,
+)
+from cmcp_runtime.catalog.scanner import CatalogScanner
+from cmcp_runtime.config import Config, DriftPolicy
 from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
 from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.mcp.stdio import StdioServer
@@ -182,6 +188,7 @@ class CMCPProxy:
         attestation_validity_seconds: int = 86400,
         catalog_hash: str | None = None,
         attestation_platform: str = "unknown",
+        catalog_scanner: CatalogScanner | None = None,
     ) -> None:
         self._catalog = catalog
         self._policy = policy_evaluator
@@ -228,6 +235,12 @@ class CMCPProxy:
         self._provenance: dict[tuple[str, ...], ProvenanceResult] = {}
         # Servers already warned about unenforceable pinning (warn once each).
         self._tls_pin_warned: set[str] = set()
+        # #521: servers whose advertised tool definitions have been compared against
+        # the catalog. Cached per server for the same reason provenance is: one
+        # tools/list round trip per server per session is affordable, one per call
+        # is not, and a check expensive enough to hurt is a check that gets disabled.
+        self._drift_checked: set[tuple[str, ...]] = set()
+        self._catalog_scanner = catalog_scanner
 
     def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
         """
@@ -357,6 +370,92 @@ class CMCPProxy:
             return None
         tools = result.get("tools") if isinstance(result, dict) else None
         return tools if isinstance(tools, list) else None
+
+    async def _check_upstream_drift(self, entry: CatalogEntry) -> bool:
+        """Compare what a server advertises against what we approved (P4.2).
+
+        Runs once per server per session, on first contact. Returns True when the
+        call must be denied.
+
+        The authoritative comparison is a digest of the semantic triple
+        (description, input schema, output schema), computed with the standard
+        library on both sides. That matters: the AGT scanner is an optional
+        dependency, and a control that stops working when a dependency is missing
+        is not a control. The scanner only classifies what kind of change it was.
+
+        A server that will not answer ``tools/list`` is recorded as unchecked and
+        is NOT denied. Denying would take out every deployment whose servers do
+        not implement it, and this check would be switched off within a day. That
+        is a real gap and LIMITATIONS.md says so rather than leaving it implied.
+        """
+        key = _server_provenance_key(entry)
+        if key in self._drift_checked:
+            return self._session.catalog_drift
+        self._drift_checked.add(key)
+
+        advertised = await self._advertised_tools(entry)
+        if advertised is None:
+            logger.info(
+                "upstream drift: server=%s outcome=unchecked (server would not list tools)",
+                key,
+            )
+            return self._session.catalog_drift
+
+        by_name = {
+            t.get("name"): t
+            for t in advertised
+            if isinstance(t, dict) and isinstance(t.get("name"), str)
+        }
+        drifted: list[tuple[str, str]] = []
+        for tool_name, catalog_entry in self._catalog.entries.items():
+            if _server_provenance_key(catalog_entry) != key:
+                continue
+            offered = by_name.get(tool_name)
+            if offered is None:
+                drifted.append((tool_name, "withdrawn"))
+                continue
+            if advertised_definition_digest(offered) != approved_definition_digest(
+                catalog_entry.approved_definition
+            ):
+                drifted.append((tool_name, "definition_changed"))
+
+        if not drifted:
+            logger.info("upstream drift: server=%s outcome=match", key)
+            return self._session.catalog_drift
+
+        fail_closed = self._config.catalog.drift_policy is DriftPolicy.FAIL_CLOSED
+        for tool_name, kind in drifted:
+            classification = kind
+            if self._catalog_scanner is not None and (offered := by_name.get(tool_name)):
+                result = self._catalog_scanner.check_drift(
+                    tool_name=tool_name,
+                    server_name=entry.server.display_name or entry.server.url,
+                    current_definition=offered,
+                )
+                if result.available and result.threats:
+                    classification = ";".join(
+                        t.get("threat_type", "?") for t in result.threats
+                    )
+            logger.error(
+                "UPSTREAM_CATALOG_DRIFT tool=%s server=%s kind=%s policy=%s",
+                tool_name,
+                key,
+                classification,
+                self._config.catalog.drift_policy.value,
+            )
+            if tool_name not in self._session.upstream_drift_tools:
+                self._session.upstream_drift_tools.append(tool_name)
+            self._audit.append(
+                "catalog_drift",
+                tool_name=tool_name,
+                detail={"kind": kind, "classification": classification, "source": "upstream"},
+                session_sensitivity_before=self._session.max_sensitivity,
+                session_sensitivity_after=self._session.max_sensitivity,
+            )
+
+        if fail_closed:
+            self._session.catalog_drift = True
+        return self._session.catalog_drift
 
     async def _check_provenance(self, entry: CatalogEntry) -> ProvenanceResult:
         key = _server_provenance_key(entry)
@@ -688,6 +787,35 @@ class CMCPProxy:
                 would_have_denied=False,
                 response=None,
                 deny_reason=deny_reason,
+                latency_us=int(elapsed_ms * 1000),
+                audit_entry_hash=self._audit.chain_tip,
+            )
+
+        # Step 1a (#521): does this server still offer what we approved? First
+        # contact with each server only, so the cost is one tools/list per server
+        # per session. Placed after the catalog lookup because it needs the entry
+        # to know which server to ask, and before the policy decision because a
+        # server that has been swapped underneath us should not reach Cedar at all.
+        if await self._check_upstream_drift(entry):
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"catalog": "deny"},
+                call_id=call_id,
+                catalog_entry=entry,
+                policy_decision="deny",
+            )
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=False,
+                response=None,
+                deny_reason="catalog_drift",
                 latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )

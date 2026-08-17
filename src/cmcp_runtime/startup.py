@@ -22,6 +22,7 @@ from cmcp_runtime.agent_manifest import (
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.store import SqliteAuditStore
 from cmcp_runtime.catalog.loader import ToolCatalog, load_catalog
+from cmcp_runtime.catalog.scanner import CatalogScanner
 from cmcp_runtime.config import Config, load_config
 from cmcp_runtime.errors import (
     AttestationProviderUnsupported,
@@ -68,6 +69,11 @@ class RuntimeContext:
     signing_key: SigningKey
     policy_bundle: PolicyStore
     catalog: ToolCatalog
+    # #521: carries the tool fingerprints registered at startup, which is what
+    # lets check_drift classify a later mutation. None only in tests that build a
+    # context by hand; the proxy treats that as "no classification available"
+    # and still enforces via digest comparison.
+    catalog_scanner: CatalogScanner | None = None
     audit_store: SqliteAuditStore | None = None
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
@@ -502,6 +508,32 @@ def run_startup(config_path: str) -> RuntimeContext:
         catalog.catalog_hash,
     )
 
+    # Step 5a (#521): scan the catalog and register every tool's fingerprint, which
+    # is what makes CatalogScanner.check_drift able to classify a later mutation.
+    # Advisory by design: the scanner is backed by an optional dependency, so it
+    # cannot be the control. The enforcing check is the digest comparison in the
+    # proxy, which needs nothing beyond the standard library. Log the difference
+    # between "scanned and clean" and "never scanned" rather than letting an absent
+    # dependency read as a pass.
+    catalog_scanner = CatalogScanner()
+    scan = catalog_scanner.scan_catalog(catalog)
+    if not scan.available:
+        logger.warning(
+            "Catalog security scan UNAVAILABLE: agent-os-kernel not installed. "
+            "Load-time typosquat and hidden-instruction checks did not run, and "
+            "upstream drift will be detected by digest comparison but not classified."
+        )
+    elif scan.safe:
+        logger.info("Catalog security scan clean: %d tools scanned", scan.tools_scanned)
+    else:
+        for threat in scan.threats:
+            logger.error(
+                "CATALOG_THREAT tool=%s type=%s severity=%s",
+                threat.get("tool_name"),
+                threat.get("threat_type"),
+                threat.get("severity"),
+            )
+
     # Step 5b: optional Agent Manifest binding (#302). When configured, this is
     # fail-closed: signature, subject, policy hash, and catalog hash must agree
     # before any session can be created.
@@ -597,6 +629,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         signing_key=signing_key,
         policy_bundle=policy_store,
         catalog=catalog,
+        catalog_scanner=catalog_scanner,
         audit_store=audit_store,
         spiffe=spiffe_result,
         nras_appraisal=nras_appraisal,
