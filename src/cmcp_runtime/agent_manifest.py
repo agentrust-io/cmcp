@@ -68,15 +68,80 @@ def signing_pre_image(manifest: dict[str, Any]) -> bytes:
     return agent_manifest_sdk.signing_pre_image(manifest)
 
 
-def load_agent_manifest(path: str) -> dict[str, Any]:
+@dataclass(frozen=True)
+class LoadedAgentManifest:
+    """A manifest document plus the envelope it arrived in, if any.
+
+    Both are needed because the two spec versions put the signature in
+    different places (ADR-0011). In v0.1 the signature is a detached block
+    inside the JSON document, so the document is the whole story. In v0.2 the
+    COSE_Sign1 structure *is* the signature, so a v0.2 document handed over as
+    a bare dict has no signature at all and the SDK reports SIGNATURE_MISSING.
+    Carrying the envelope bytes alongside the decoded document is what lets the
+    verifier be given the artifact it can actually appraise.
+    """
+
+    manifest: dict[str, Any]
+    envelope: bytes | None = None
+
+
+def load_agent_manifest_document(path: str) -> LoadedAgentManifest:
+    """Load a manifest from *path*, JSON or COSE envelope.
+
+    The file is sniffed rather than switched on its extension: a COSE envelope
+    is CBOR and never parses as JSON, so trying JSON first and falling back is
+    unambiguous, and an operator does not have to name the file correctly for
+    the gateway to read it.
+    """
     try:
-        with Path(path).open() as f:
-            manifest = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
         raise ConfigError(f"Cannot read Agent Manifest: {exc}") from exc
+
+    try:
+        manifest = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return LoadedAgentManifest(manifest=_decode_cose_envelope(raw), envelope=raw)
+
     if not isinstance(manifest, dict):
         raise ConfigError("Agent Manifest must be a JSON object")
-    return manifest
+    # A v0.2 document without an envelope is the one failure worth naming
+    # precisely: the SDK would report a missing signature, which reads as a
+    # malformed manifest rather than a manifest handed over in the wrong form.
+    if manifest.get("version") == agent_manifest_sdk.COSE_MANIFEST_VERSION and (
+        "signature" not in manifest
+    ):
+        raise ConfigError(
+            "Agent Manifest declares version "
+            f"{agent_manifest_sdk.COSE_MANIFEST_VERSION} but was supplied as bare "
+            "JSON. From v0.2 the COSE_Sign1 envelope is the signature "
+            "(agent-manifest ADR-0011); supply the envelope, not its payload."
+        )
+    return LoadedAgentManifest(manifest=manifest)
+
+
+def _decode_cose_envelope(raw: bytes) -> dict[str, Any]:
+    """Structurally decode a COSE envelope. No signature appraisal happens
+    here: that is the verifier's job, and doing it in a loader would invite a
+    caller to treat a decoded manifest as a verified one."""
+    try:
+        decoded = agent_manifest_sdk.decode_cose_manifest(raw)
+    except Exception as exc:  # noqa: BLE001 - CoseError and friends -> ConfigError
+        raise ConfigError(
+            f"Cannot read Agent Manifest: not JSON and not a COSE envelope ({exc})"
+        ) from exc
+    if not isinstance(decoded.manifest, dict):
+        raise ConfigError("Agent Manifest COSE payload must be a JSON object")
+    return decoded.manifest
+
+
+def load_agent_manifest(path: str) -> dict[str, Any]:
+    """Backwards-compatible loader returning the document only.
+
+    Callers that verify a signature want load_agent_manifest_document, because
+    a v0.2 envelope cannot be verified from the document alone.
+    """
+    return load_agent_manifest_document(path).manifest
 
 
 def load_agent_manifest_trust_anchor(path: str) -> dict[str, bytes]:
@@ -172,9 +237,13 @@ def _verify_with_sdk(
     policy_bundle_hash: str | None = None,
     tool_catalog_hash: str | None = None,
     require_runtime_artifacts: bool = False,
+    envelope: bytes | None = None,
 ) -> None:
+    # The envelope is handed to the verifier when there is one, because for a
+    # v0.2 manifest the envelope is the signature. Passing the decoded payload
+    # instead would ask the SDK to appraise a document with nothing to appraise.
     result = agent_manifest_sdk.verify_manifest(
-        manifest,
+        envelope if envelope is not None else manifest,
         agent_manifest_sdk.VerificationContext(
             policy_bundle_hash=policy_bundle_hash,
             tool_catalog_hash=tool_catalog_hash,
@@ -188,8 +257,10 @@ def _verify_with_sdk(
 def verify_agent_manifest_signature(
     manifest: dict[str, Any],
     trusted_keys: dict[str, bytes],
+    *,
+    envelope: bytes | None = None,
 ) -> None:
-    _verify_with_sdk(manifest, trusted_keys)
+    _verify_with_sdk(manifest, trusted_keys, envelope=envelope)
 
 
 def _require_hash(value: Any, field: str) -> str:
@@ -246,8 +317,14 @@ def verify_agent_manifest_binding(
     authenticated_subject_source: str | None = None,
     allow_dev_subject_from_manifest: bool = False,
     now: datetime | None = None,
+    envelope: bytes | None = None,
 ) -> AgentManifestBinding:
-    """Verify manifest signature and bind it to runtime session inputs."""
+    """Verify manifest signature and bind it to runtime session inputs.
+
+    *envelope* carries the COSE bytes for a v0.2 manifest. The binding fields
+    are read from the decoded document either way: what the envelope changes is
+    which artifact the signature is checked over, not where identity lives.
+    """
     manifest_id, agent_id, issuer, key_id, manifest_policy, manifest_catalog = (
         _manifest_binding_fields(manifest)
     )
@@ -265,6 +342,7 @@ def verify_agent_manifest_binding(
         policy_bundle_hash=policy_bundle_hash,
         tool_catalog_hash=tool_catalog_hash,
         require_runtime_artifacts=True,
+        envelope=envelope,
     )
 
     subject = authenticated_subject

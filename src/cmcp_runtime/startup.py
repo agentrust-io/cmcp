@@ -15,7 +15,7 @@ from typing import Any
 
 from cmcp_runtime.agent_manifest import (
     AgentManifestBinding,
-    load_agent_manifest,
+    load_agent_manifest_document,
     load_agent_manifest_trust_anchor,
     verify_agent_manifest_binding,
 )
@@ -561,13 +561,14 @@ def run_startup(config_path: str) -> RuntimeContext:
 
     if config.agent_manifest.path is not None and config.agent_manifest.trust_anchor_path is not None:
         try:
-            manifest = load_agent_manifest(config.agent_manifest.path)
+            loaded = load_agent_manifest_document(config.agent_manifest.path)
             trusted_keys = load_agent_manifest_trust_anchor(
                 config.agent_manifest.trust_anchor_path
             )
             agent_manifest = verify_agent_manifest_binding(
-                manifest,
+                loaded.manifest,
                 trusted_keys,
+                envelope=loaded.envelope,
                 authenticated_subject=config.agent_manifest.authenticated_subject,
                 policy_bundle_hash=policy_bundle.bundle_hash,
                 tool_catalog_hash=catalog.catalog_hash,
