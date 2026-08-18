@@ -6,6 +6,7 @@ import hashlib
 import urllib.request
 from dataclasses import dataclass, field
 
+from agent_manifest import TdxVerificationError, parse_tdx_quote_signature
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -209,13 +210,8 @@ _QUOTE_HEADER_LEN = 48
 _TD_REPORT_BODY_LEN = 584
 _SIGNED_REGION_LEN = _QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN  # 632
 _TD_BODY_REPORT_DATA_OFF = 520   # report_data sits after the RTMRs in the TD body
-_QE_REPORT_LEN = 384
 _QE_REPORT_DATA_OFF = 320        # report_data offset within the SGX QE report
 _ATT_KEY_TYPE_ECDSA_P256 = 2
-# Intel DCAP certification-data types, each preceded by a uint16 type + uint32 size.
-_CERT_TYPE_PCK_CHAIN = 5
-_CERT_TYPE_QE_REPORT = 6
-_CERT_DATA_HEADER_LEN = 6
 
 
 def _raw_p256_sig_to_der(sig64: bytes) -> bytes:
@@ -255,58 +251,42 @@ class _ParsedQuote:
 def parse_td_quote(quote: bytes) -> _ParsedQuote:
     """Parse an Intel TDX ECDSA v4 quote. Raises ValueError on malformed input.
 
-    Handles the nested type-6 QE certification data: the bytes after the
-    attestation key are a certification-data header, and the QE report, its PCK
-    signature, the auth data and the type-5 PCK chain live inside it. Reading the
-    QE report directly after the attestation key lands six bytes early and
-    rejects every genuine quote.
+    The signature section is parsed by ``agent_manifest.parse_tdx_quote_signature``
+    so the nested type-6 QE certification-data layout has one canonical copy: the
+    bytes after the attestation key are a certification-data header, and the QE
+    report, its PCK signature, the auth data and the type-5 PCK chain live inside
+    it. Reading the QE report directly after the attestation key lands six bytes
+    early and rejects every genuine quote. Delegating also inherits that parser's
+    fail-closed bounds checks on the quote's own declared lengths, which Python
+    slicing would otherwise clamp into a silently short value.
+
+    ``report_data`` is not part of the signature section, so it is still read here
+    from the signed TD report body.
     """
     if len(quote) < _SIGNED_REGION_LEN + 4:
         raise ValueError("quote too short for header + TD report body + sig length")
+    # The shared parser does not constrain att_key_type; cMCP only supports
+    # ECDSA-P256 quotes, so keep rejecting anything else before parsing.
     att_key_type = int.from_bytes(quote[2:4], "little")
     if att_key_type != _ATT_KEY_TYPE_ECDSA_P256:
         raise ValueError(f"unsupported att_key_type {att_key_type} (expected ECDSA-P256)")
-    signed_region = quote[:_SIGNED_REGION_LEN]
+    try:
+        sig = parse_tdx_quote_signature(quote)
+    except TdxVerificationError as exc:  # keep parse_td_quote's ValueError contract
+        raise ValueError(str(exc)) from exc
+
     body = quote[_QUOTE_HEADER_LEN:_SIGNED_REGION_LEN]
     report_data = body[_TD_BODY_REPORT_DATA_OFF:_TD_BODY_REPORT_DATA_OFF + 64]
-    off = _SIGNED_REGION_LEN
-    sig_len = int.from_bytes(quote[off:off + 4], "little")
-    off += 4
-    sig_data = quote[off:off + sig_len]
-    if len(sig_data) < 64 + 64 + _CERT_DATA_HEADER_LEN:
-        raise ValueError("signature data truncated")
-    quote_sig = sig_data[0:64]
-    att_pubkey_raw = sig_data[64:128]
-
-    cert_type = int.from_bytes(sig_data[128:130], "little")
-    if cert_type != _CERT_TYPE_QE_REPORT:
-        raise ValueError(
-            f"unsupported certification data type {cert_type} "
-            f"(expected {_CERT_TYPE_QE_REPORT}, QE report)"
-        )
-    cert_size = int.from_bytes(sig_data[130:134], "little")
-    cert_data = sig_data[134:134 + cert_size]
-    if len(cert_data) < _QE_REPORT_LEN + 64 + 2 + _CERT_DATA_HEADER_LEN:
-        raise ValueError("QE certification data truncated")
-
-    qe_report = cert_data[0:_QE_REPORT_LEN]
-    qe_report_sig = cert_data[_QE_REPORT_LEN:_QE_REPORT_LEN + 64]
-    p = _QE_REPORT_LEN + 64
-    qe_auth_len = int.from_bytes(cert_data[p:p + 2], "little")
-    p += 2
-    qe_auth_data = cert_data[p:p + qe_auth_len]
-    p += qe_auth_len
-    pck_type = int.from_bytes(cert_data[p:p + 2], "little")
-    if pck_type != _CERT_TYPE_PCK_CHAIN:
-        raise ValueError(
-            f"unsupported PCK certification type {pck_type} "
-            f"(expected {_CERT_TYPE_PCK_CHAIN}, PEM chain)"
-        )
-    pck_size = int.from_bytes(cert_data[p + 2:p + 6], "little")
-    p += 6
-    pck_chain_pem = cert_data[p:p + pck_size]
-    return _ParsedQuote(signed_region, report_data, quote_sig, att_pubkey_raw,
-                        qe_report, qe_report_sig, qe_auth_data, pck_chain_pem)
+    return _ParsedQuote(
+        signed_region=sig.signed_body,
+        report_data=report_data,
+        quote_sig=sig.quote_signature,
+        att_pubkey_raw=sig.attestation_key,
+        qe_report=sig.qe_report,
+        qe_report_sig=sig.qe_report_signature,
+        qe_auth_data=sig.qe_auth_data,
+        pck_chain_pem=sig.pck_chain_pem,
+    )
 
 
 def verify_tdx_quote(

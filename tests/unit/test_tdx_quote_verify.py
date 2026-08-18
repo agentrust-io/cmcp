@@ -165,6 +165,67 @@ def test_parse_rejects_flat_signature_layout() -> None:
         parse_td_quote(bytes(flat))
 
 
+# Offsets into a well-formed quote, used to mutate the declared lengths below.
+# Every one of these lengths is attacker-controlled: Python slicing clamps an
+# overstated length instead of raising, so the parser must reject the mismatch
+# rather than verify a silently shorter buffer than the producer declared.
+_SIG_LEN_OFF = _QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN      # uint32 signature-data size
+_SIG_OFF = _SIG_LEN_OFF + 4
+_QE_CERT_SIZE_OFF = _SIG_OFF + 130                          # uint32, after type-6 header
+_CERT_DATA_OFF = _SIG_OFF + 134
+_QE_AUTH_LEN_OFF = _CERT_DATA_OFF + 384 + 64                # uint16 QE auth data size
+
+
+def test_parse_matches_shared_agent_manifest_parser() -> None:
+    """The adapter must map the canonical parser's output field for field."""
+    from agent_manifest import parse_tdx_quote_signature
+
+    quote, _root = _build_quote(qe_auth=b"qe-auth-bytes")
+    pq = parse_td_quote(quote)
+    shared = parse_tdx_quote_signature(quote)
+
+    assert pq.signed_region == shared.signed_body
+    assert pq.signed_region == quote[:_QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN]
+    assert pq.quote_sig == shared.quote_signature
+    assert pq.att_pubkey_raw == shared.attestation_key
+    assert pq.qe_report == shared.qe_report
+    assert pq.qe_report_sig == shared.qe_report_signature
+    assert pq.qe_auth_data == shared.qe_auth_data == b"qe-auth-bytes"
+    assert pq.pck_chain_pem == shared.pck_chain_pem
+    # report_data is not part of the signature section; cMCP still reads it from
+    # the signed TD body, so the adapter has to supply it itself.
+    assert pq.report_data == _RD
+
+
+def test_parse_rejects_oversized_declared_signature_size() -> None:
+    """An overstated signature-data length must fail closed, not be clamped."""
+    quote, _root = _build_quote()
+    tampered = bytearray(quote)
+    declared = int.from_bytes(tampered[_SIG_LEN_OFF:_SIG_LEN_OFF + 4], "little")
+    tampered[_SIG_LEN_OFF:_SIG_LEN_OFF + 4] = (declared + 64).to_bytes(4, "little")
+    with pytest.raises(ValueError, match="signature data"):
+        parse_td_quote(bytes(tampered))
+
+
+def test_parse_rejects_oversized_qe_certification_size() -> None:
+    """An overstated type-6 QE certification-data length must fail closed."""
+    quote, _root = _build_quote()
+    tampered = bytearray(quote)
+    declared = int.from_bytes(tampered[_QE_CERT_SIZE_OFF:_QE_CERT_SIZE_OFF + 4], "little")
+    tampered[_QE_CERT_SIZE_OFF:_QE_CERT_SIZE_OFF + 4] = (declared + 64).to_bytes(4, "little")
+    with pytest.raises(ValueError, match="QE certification data"):
+        parse_td_quote(bytes(tampered))
+
+
+def test_parse_rejects_oversized_qe_auth_size() -> None:
+    """A QE auth length running past the certification data must fail closed."""
+    quote, _root = _build_quote()
+    tampered = bytearray(quote)
+    tampered[_QE_AUTH_LEN_OFF:_QE_AUTH_LEN_OFF + 2] = (0xFFFF).to_bytes(2, "little")
+    with pytest.raises(ValueError, match="QE auth data"):
+        parse_td_quote(bytes(tampered))
+
+
 @pytest.mark.skipif(
     not os.environ.get("CMCP_TDX_FIXTURE_DIR"),
     reason="set CMCP_TDX_FIXTURE_DIR to a dir with a real tdx_quote.bin (see "
@@ -206,10 +267,11 @@ def test_real_tdx_quote() -> None:
     reason="set CMCP_TDX_FIXTURE_DIR to a dir with a real tdx_quote.bin",
 )
 def test_real_tdx_quote_agrees_with_agent_manifest() -> None:
-    """cMCP and the shared agent-manifest verifier must agree on a real quote.
+    """cMCP and Agent Manifest must agree on verification of a real TDX quote.
 
-    Both carry the DCAP v4 layout until the shared parse is published; this pins
-    them together so they cannot drift apart silently again.
+    cMCP delegates the DCAP v4 signature-section parse to Agent Manifest; this
+    hardware-gated test keeps the complete verification paths aligned against
+    genuine evidence.
     """
     from agent_manifest import verify_tdx_quote as am_verify
 
