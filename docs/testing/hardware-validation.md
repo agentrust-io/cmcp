@@ -13,7 +13,7 @@ been verified end to end by `cmcp_verify`, and the run is recorded below.
 | Platform | Report parsing | Certificate chain | Report signature | Verified against real hardware evidence |
 |---|---|---|---|---|
 | AMD SEV-SNP (Azure CVM, vTPM-rooted) | Yes | Yes, to the real AMD ARK-Milan root | Yes | **Yes**, 2026-07-27, both from a stored capture and **live inside a running CVM** |
-| Intel TDX (GCP C3, non-paravisor) | Yes | Yes, to the pinned Intel SGX Root CA | Yes | **Yes**, 2026-07-27, capture of 2026-07-21 |
+| Intel TDX (GCP C3, non-paravisor) | Yes | Yes, to the pinned Intel SGX Root CA | Yes | **Yes**, 2026-07-27, capture of 2026-07-21. DCAP quote path only; the TDREPORT path is unvalidated, see below |
 | TPM 2.0 (Azure vTPM, Trusted Launch) | Yes | Not yet (`ek_cert_chain` stays unverified, see #431) | Yes | **Yes**, 2026-07-31. AK-signed quote verified end to end, tampered copies rejected; certificate chain still open |
 | NVIDIA GPU CC (H100/H200) | Not implemented | | | No |
 
@@ -112,6 +112,18 @@ CMCP_TDX_FIXTURE_DIR=<capture dir> pytest tests/unit/test_tdx_quote_verify.py
 The capture directory holds `tdx_quote.bin`. Optional: `collateral/intel_root_ca.pem`
 to override the pinned root, and `report_data.hex` to assert the report_data
 binding. The quote is not committed: the PCK certificate identifies the CPU.
+
+What this run does not cover: the TDREPORT path. `verify_tdx_measurement()`
+parses the 1024-byte TDREPORT_STRUCT returned by the `TDX_CMD_GET_REPORT0`
+ioctl, which is a different artifact from the DCAP quote captured here, and no
+real TDREPORT has been checked against it. #371 found both of its field offsets
+wrong -- `MRTD` read from inside `REPORTMACSTRUCT.report_data` and `REPORTDATA`
+read from the leading RESERVED block -- and #527 corrected them against the
+published Intel TDX Module ABI. The correction is asserted against the ABI and
+against a property no hardware is needed to state (a measurement must not move
+when only the nonce moves), which is not the same as a capture. The row above
+covers quote verification; read it as covering measurement provenance only once
+a TDREPORT capture appears here.
 
 This run is what found the parser defect fixed alongside this page. Real DCAP v4
 quotes nest the Quoting Enclave material under a type-6
