@@ -1055,9 +1055,22 @@ def verify_trace_claim(
             raw_quote=raw_quote,
             trusted_intel_root_pem=trusted_intel_root_pem,
         )
-        if tdx_result.verified:
+        # The DCAP quote signature is the TDX hardware root of trust, the exact
+        # counterpart of the SNP VCEK chain above. A TDREPORT on its own is an
+        # unsigned buffer the host could have written, so a claim whose quote
+        # signature is unverified must never be reported as fully VERIFIED
+        # (issues #370/#371) -- it stays PARTIALLY_VERIFIED, the rule #390
+        # already applies to SNP.
+        quote_ok = "dcap_quote_signature" not in tdx_result.unverified_fields
+        if tdx_result.verified and quote_ok:
             verified.append("hardware_attestation")
             verified.extend(tdx_result.verified_fields)
+        elif tdx_result.verified and not quote_ok:
+            verified.extend(tdx_result.verified_fields)
+            unverified.append("hardware_attestation")
+            details["hardware_attestation"] = (
+                "TDREPORT checked but DCAP quote signature not verified"
+            )
         else:
             unverified.append("hardware_attestation")
             failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED

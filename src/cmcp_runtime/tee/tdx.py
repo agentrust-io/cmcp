@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
+from cmcp_runtime.tee.tdreport import MRTD_OFFSET as _MRTD_OFFSET
+from cmcp_runtime.tee.tdreport import MRTD_SIZE as _MRTD_SIZE
 
 _TDX_GUEST_DEVICE = Path("/dev/tdx_guest")
 
@@ -16,9 +18,13 @@ _TDX_GUEST_DEVICE = Path("/dev/tdx_guest")
 # Derived from: _IOWR(0x40, 0x00, struct tdx_report_req) where req is 0x88 bytes.
 _TDX_CMD_GET_REPORT0 = 0xC0884000
 
-# MRTD field in TDREPORT: bytes 0x90..0xC0 (48 bytes)
-_MRTD_OFFSET = 0x90
-_MRTD_END = 0xC0
+# MRTD lives in TDINFO_STRUCT at 0x210 of TDREPORT, per the Intel TDX Module
+# ABI, and the offsets are imported from cmcp_runtime.tee.tdreport so the
+# producer and the verifier can never read different bytes. This file used
+# 0x90, which is inside REPORTMACSTRUCT.report_data, so the "measurement"
+# was 48 bytes of the nonce this process had just written (issue #371).
+_MRTD_END = _MRTD_OFFSET + _MRTD_SIZE
+
 
 
 class _TdxReportReq(ctypes.LittleEndianStructure):

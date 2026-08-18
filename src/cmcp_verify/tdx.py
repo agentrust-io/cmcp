@@ -1,8 +1,8 @@
 """Intel TDX attestation verification -- implements issue #70."""
 from __future__ import annotations
 
-import ctypes
 import hashlib
+import hmac
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -12,33 +12,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.hashes import SHA256
 
+# TDREPORT_STRUCT layout lives in one place, shared with the producer, so the
+# two can never read different bytes again (issue #371).
+from cmcp_runtime.tee.tdreport import REPORT_DATA_SIZE, TDREPORT_SIZE
+from cmcp_runtime.tee.tdreport import TdReport as _TdReport
 
-class _TdReport(ctypes.LittleEndianStructure):
-    """Named-field representation of the raw TDREPORT buffer returned by the
-    TDX_CMD_GET_REPORT0 ioctl (1024 bytes).
-
-    This layout places ``mrtd`` at offset 0x90 (144 bytes), matching the
-    offset used by the Linux kernel TDX guest driver and Intel TDX Module
-    Spec for the MRTD field within TDREPORT_STRUCT.  All unused bytes are
-    grouped into padding arrays; ctypes computes every field offset so no
-    magic integers appear in application code.
-
-    Total size: 0x400 (1024) bytes.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("_pre_mrtd",   ctypes.c_uint8 * 0x90),            # 0x000 -- 144 bytes
-        ("mrtd",        ctypes.c_uint8 * 48),               # 0x090 -- 48 bytes (TD measurement)
-        ("_post_mrtd",  ctypes.c_uint8 * (1024 - 0x90 - 48)),  # 0x0C0 -- 832 bytes
-    ]
-
-
-assert ctypes.sizeof(_TdReport) == 1024, (
-    f"_TdReport size mismatch: got {ctypes.sizeof(_TdReport)}, expected 1024"
-)
-
-_TDREPORT_MIN_SIZE = ctypes.sizeof(_TdReport)
+_TDREPORT_MIN_SIZE = TDREPORT_SIZE
 
 # Intel DCAP QE identity endpoint (used to confirm DCAP service reachability)
 _DCAP_QE_IDENTITY_URL = (
@@ -122,7 +101,7 @@ def verify_tdx_measurement(
         try:
             # Parse via ctypes struct for named field access (HW-007)
             tdreport = _TdReport.from_buffer_copy(raw_evidence[:_TDREPORT_MIN_SIZE])
-            mrtd_bytes = bytes(tdreport.mrtd)
+            mrtd_bytes = bytes(tdreport.td_info.mrtd)
             computed = "sha384:" + hashlib.sha384(mrtd_bytes).hexdigest()
             if computed == measurement:
                 result.verified_fields.append("measurement")
@@ -135,17 +114,32 @@ def verify_tdx_measurement(
                 result.details["dcap_chain"] = "requires_intel_dcap_service"
                 return result
 
-            # Check report_data if provided (nonce -- mismatch is not fatal)
-            # REPORTDATA is at offset 0x08 in REPORTMACSTRUCT (first 256 bytes)
-            # For a simple check: compare the first 64 bytes of REPORTDATA area
-            # The exact offset varies by TDREPORT version; use a best-effort check
+            # Check the report_data binding -- a mismatch is FATAL (issue #371),
+            # matching the SEV-SNP rule from #390. report_data carries the
+            # confirmation-key binding and the freshness nonce, so a mismatch
+            # left advisory means the report is not demonstrably about this key
+            # or this request. It is read from REPORTMACSTRUCT at 0x80, its
+            # documented ABI offset; the previous 0x08 pointed into the leading
+            # RESERVED block, which a real report leaves zeroed, so every
+            # non-zero expectation silently failed and was silently ignored.
             if report_data_hex is not None:
-                report_data_area = raw_evidence[0x08:0x08 + 64]
-                expected_rd = bytes.fromhex(report_data_hex[:128])
-                if len(expected_rd) < 64:
-                    expected_rd = expected_rd + b"\x00" * (64 - len(expected_rd))
-                if report_data_area == expected_rd:
+                extracted_rd = bytes(tdreport.report_mac.report_data)
+                expected_rd = bytes.fromhex(report_data_hex[:REPORT_DATA_SIZE * 2])
+                if len(expected_rd) < REPORT_DATA_SIZE:
+                    # Zero-pad: the guest writes a short nonce into a 64-byte
+                    # field, so the trailing zeros are part of what was signed.
+                    expected_rd += bytes(REPORT_DATA_SIZE - len(expected_rd))
+                if hmac.compare_digest(extracted_rd, expected_rd):
                     result.verified_fields.append("report_data")
+                else:
+                    result.verified = False
+                    result.failure_reason = "report_data_mismatch"
+                    result.details["report_data_expected"] = expected_rd[:16].hex()
+                    result.details["report_data_actual"] = extracted_rd[:16].hex()
+                    result.unverified_fields.extend(
+                        ["dcap_quote_signature", "tcb_status"]
+                    )
+                    return result
 
         except Exception:  # noqa: BLE001
             result.verified = False
