@@ -10,6 +10,7 @@ These are the end-to-end cases: a real signed envelope through cmcp's own
 binding path, a v0.1 manifest still working unchanged, and the two ways the
 wrong artifact can be supplied.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import agent_manifest as sdk
 import pytest
+from agent_manifest import _cose as sdk_cose
 
 from cmcp_runtime.agent_manifest import (
     load_agent_manifest,
@@ -178,6 +180,27 @@ def test_v02_payload_as_bare_json_names_the_real_problem(tmp_path: Path) -> None
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(_manifest("0.2")), encoding="utf-8")
     with pytest.raises(ConfigError, match="COSE"):
+        load_agent_manifest_document(str(path))
+
+
+def test_v01_payload_inside_v02_envelope_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AM-VEC-COSE-012 at the cMCP boundary: route on the signed payload's
+    version, not merely on the outer envelope being valid COSE_Sign1."""
+    keypair = sdk.generate_ed25519()
+    manifest = _manifest("0.1")
+    manifest["@context"] = "https://agentmanifest.agentrust-io.com/v0.1/context.json"
+
+    # Production issuance correctly refuses to construct this downgrade. Bypass
+    # only that producer guard to build the adversarial, correctly signed wire
+    # artifact; the consumer decoder and verifier remain unmodified.
+    monkeypatch.setattr(sdk_cose, "_require_v02", lambda _manifest: None)
+    envelope = sdk.sign_manifest_cose(manifest, keypair)
+    path = tmp_path / "v01-in-v02.cose"
+    path.write_bytes(envelope)
+
+    with pytest.raises(ConfigError, match="payload declares manifest version 0.1"):
         load_agent_manifest_document(str(path))
 
 
