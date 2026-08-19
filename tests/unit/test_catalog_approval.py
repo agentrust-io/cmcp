@@ -170,7 +170,7 @@ def test_malformed_field_types_fail_closed() -> None:
 def test_signature_encoding_is_validated() -> None:
     record, first, second = _record()
     trusted = _trusted(first, second)
-    for bad in ("not base64!!", "c2hvcnQ"):
+    for bad in ("not base64!!", "c2hvcnQ", "A"):
         broken = copy.deepcopy(record)
         broken["approvals"][0]["signature"] = bad
         with pytest.raises(CatalogApprovalError, match="base64url|64 bytes"):
@@ -347,3 +347,33 @@ def test_negative_approved_at_is_rejected_like_the_schema() -> None:
         jsonschema.validate(negative, SCHEMA)
     with pytest.raises(CatalogApprovalError):
         _verify(negative, _trusted(first, second))
+
+
+def test_policy_distinctness_flags_must_be_booleans() -> None:
+    """A truthy string must not stand in for a policy flag the verifier branches on."""
+    record, first, second = _record()
+    mangled = copy.deepcopy(record)
+    mangled["approval_policy"]["distinct_roles"] = "yes"
+    with pytest.raises(CatalogApprovalError, match="distinctness flags"):
+        _verify(mangled, _trusted(first, second))
+
+
+def test_unknown_profile_and_malformed_members_fail_closed() -> None:
+    record, first, second = _record()
+    trusted = _trusted(first, second)
+    wrong_profile = copy.deepcopy(record)
+    wrong_profile["profile"] = "tag:example.com,2026:something-else"
+    with pytest.raises(CatalogApprovalError, match="profile"):
+        _verify(wrong_profile, trusted)
+    wrong_shape = copy.deepcopy(record)
+    wrong_shape["change_set_digest"] = "not-a-digest"
+    with pytest.raises(CatalogApprovalError, match="must be a sha256 digest"):
+        _verify(wrong_shape, trusted)
+    bad_digest = copy.deepcopy(record)
+    bad_digest["change_set_digest"] = "sha256:" + "z" * 64
+    with pytest.raises(CatalogApprovalError, match="lowercase hexadecimal"):
+        _verify(bad_digest, trusted)
+    stray_field = copy.deepcopy(record)
+    stray_field["approvals"][0]["note"] = "looks harmless"
+    with pytest.raises(CatalogApprovalError, match="approval has missing or unknown fields"):
+        _verify(stray_field, trusted)
