@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
+import pathlib
 
+import jsonschema
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -17,6 +20,8 @@ from cmcp_runtime.catalog.approval import (
 )
 
 CATALOG_ID = "gateway-prod"
+GENESIS_PREVIOUS_RECORD_HASH = "sha256:" + "0" * 64
+SCHEMA = json.loads((pathlib.Path(__file__).parents[2] / "schemas" / "catalog-approval.schema.json").read_text())
 
 
 def _record(threshold: int = 2, distinct: bool = True) -> tuple[dict, Ed25519PrivateKey, Ed25519PrivateKey]:
@@ -170,3 +175,175 @@ def test_signature_encoding_is_validated() -> None:
         broken["approvals"][0]["signature"] = bad
         with pytest.raises(CatalogApprovalError, match="base64url|64 bytes"):
             _verify(broken, trusted)
+
+
+def _resign(record: dict, keys: dict[str, Ed25519PrivateKey]) -> dict:
+    """Re-sign every approval after the record body changed."""
+    record["approvals"] = [
+        sign_approval(record, {k: v for k, v in approval.items() if k != "signature"}, keys[approval["key_id"]])
+        for approval in record["approvals"]
+    ]
+    return record
+
+
+def test_threshold_shortfall_is_rejected() -> None:
+    """One approval must not satisfy a 2-of-N policy."""
+    record, first, second = _record(threshold=2)
+    short = copy.deepcopy(record)
+    short["approvals"] = [short["approvals"][0]]
+    with pytest.raises(CatalogApprovalMismatch, match="threshold is not satisfied"):
+        _verify(short, _trusted(first, second))
+
+
+def test_repeated_role_rejected_under_distinct_role_policy() -> None:
+    """Distinct principals sharing one role must not satisfy a distinct-role policy."""
+    record, first, second = _record(threshold=2, distinct=True)
+    trusted = _trusted(first, second)
+    trusted["k2"] = TrustedReviewer("bob", "idp", second.public_key(), "security")
+    shared = copy.deepcopy(record)
+    shared["approvals"][1]["role"] = "security"
+    _resign(shared, {"k1": first, "k2": second})
+    with pytest.raises(CatalogApprovalMismatch, match="repeats a role"):
+        _verify(shared, trusted)
+
+
+def test_approval_identity_must_match_the_trusted_key() -> None:
+    """principal_id, issuer, and role are claims about the key, not free text."""
+    record, first, second = _record()
+    wrong_principal = _trusted(first, second) | {"k1": TrustedReviewer("carol", "idp", first.public_key(), "security")}
+    with pytest.raises(CatalogApprovalMismatch, match="principal or issuer"):
+        _verify(record, wrong_principal)
+    wrong_issuer = _trusted(first, second) | {"k1": TrustedReviewer("alice", "other-idp", first.public_key(), "security")}
+    with pytest.raises(CatalogApprovalMismatch, match="principal or issuer"):
+        _verify(record, wrong_issuer)
+    wrong_role = _trusted(first, second) | {"k1": TrustedReviewer("alice", "idp", first.public_key(), "owner")}
+    with pytest.raises(CatalogApprovalMismatch, match="role does not match"):
+        _verify(record, wrong_role)
+
+
+def test_validity_interval_boundaries() -> None:
+    """approved_at is inclusive, expires_at is exclusive, and the interval must be ordered."""
+    record, first, second = _record()
+    trusted = _trusted(first, second)
+    assert _verify(record, trusted, now=100)["verified"]
+    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
+        _verify(record, trusted, now=99)
+    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
+        _verify(record, trusted, now=200)
+    inverted = copy.deepcopy(record)
+    for approval in inverted["approvals"]:
+        approval["approved_at"], approval["expires_at"] = 200, 100
+    _resign(inverted, {"k1": first, "k2": second})
+    with pytest.raises(CatalogApprovalError, match="validity interval is invalid"):
+        _verify(inverted, trusted, now=150)
+
+
+def test_genesis_record_is_representable() -> None:
+    """The first record in a chain has no predecessor, so previous_record_hash is all zeroes.
+
+    The convention is asserted here rather than in the schema, which still demands a
+    previous_record_hash without defining what a sequence 1 record puts there.
+    """
+    record, first, second = _record()
+    genesis = copy.deepcopy(record)
+    genesis["sequence"] = 1
+    genesis["previous_record_hash"] = GENESIS_PREVIOUS_RECORD_HASH
+    _resign(genesis, {"k1": first, "k2": second})
+    jsonschema.validate(genesis, SCHEMA)
+    assert _verify(
+        genesis,
+        _trusted(first, second),
+        expected_sequence=1,
+        expected_previous_record_hash=GENESIS_PREVIOUS_RECORD_HASH,
+    )["verified"]
+
+
+def _unknown_field(record: dict) -> None:
+    record["unexpected"] = True
+
+
+def _zero_sequence(record: dict) -> None:
+    record["sequence"] = 0
+
+
+def _bool_sequence(record: dict) -> None:
+    record["sequence"] = True
+
+
+def _zero_threshold(record: dict) -> None:
+    record["approval_policy"]["threshold"] = 0
+
+
+def _empty_catalog_id(record: dict) -> None:
+    record["catalog_id"] = ""
+
+
+def _missing_chain_field(record: dict) -> None:
+    del record["previous_record_hash"]
+
+
+def _missing_policy_field(record: dict) -> None:
+    del record["approval_policy"]["distinct_roles"]
+
+
+def _no_approvals(record: dict) -> None:
+    record["approvals"] = []
+
+
+def _bool_timestamps(record: dict) -> None:
+    record["approvals"][0]["approved_at"] = False
+    record["approvals"][0]["expires_at"] = True
+
+
+def _bad_signature_alphabet(record: dict) -> None:
+    record["approvals"][0]["signature"] = "not base64!!"
+
+
+def _malformed_digest(record: dict) -> None:
+    record["new_catalog_hash"] = "sha256:" + "z" * 64
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        _unknown_field,
+        _zero_sequence,
+        _bool_sequence,
+        _zero_threshold,
+        _empty_catalog_id,
+        _missing_chain_field,
+        _missing_policy_field,
+        _no_approvals,
+        _bool_timestamps,
+        _bad_signature_alphabet,
+        _malformed_digest,
+    ],
+)
+def test_schema_and_verifier_reject_the_same_records(mutate) -> None:
+    """Anything the shipped schema rejects the verifier must reject too.
+
+    The verifier reimplements structural validation by hand and does not load the
+    schema, so the two can only be kept in step by asserting it.
+    """
+    record, first, second = _record()
+    jsonschema.validate(record, SCHEMA)
+    assert _verify(record, _trusted(first, second))["verified"]
+
+    mutated = copy.deepcopy(record)
+    mutate(mutated)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(mutated, SCHEMA)
+    with pytest.raises(CatalogApprovalError):
+        _verify(mutated, _trusted(first, second))
+
+
+@pytest.mark.xfail(strict=True, reason="the verifier does not enforce the schema's minimum on timestamps; pending the schema-wiring decision from the #517 follow-up")
+def test_negative_approved_at_is_rejected_like_the_schema() -> None:
+    record, first, second = _record()
+    negative = copy.deepcopy(record)
+    negative["approvals"][0]["approved_at"] = -1
+    _resign(negative, {"k1": first, "k2": second})
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(negative, SCHEMA)
+    with pytest.raises(CatalogApprovalError):
+        _verify(negative, _trusted(first, second))
