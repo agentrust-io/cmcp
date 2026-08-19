@@ -17,6 +17,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 PROFILE = "tag:agentrust-io.com,2026:cmcp-catalog-approval-v1"
 
+# RFC 8785 numbers are IEEE 754 doubles, so integers stay exact only to 2**53 - 1.
+_MAX_EXACT_INT = 2**53 - 1
+
 
 class CatalogApprovalError(ValueError):
     """The detached approval record is malformed or cannot be trusted."""
@@ -34,9 +37,46 @@ class TrustedReviewer:
     role: str | None = None
 
 
+def _utf16_order(key: Any) -> bytes:
+    """Sort key placing object members in RFC 8785 order.
+
+    Section 3.2.3 orders members by their UTF-16 code units, which is not the
+    code point order `sort_keys` applies. Comparing UTF-16BE bytes is the same
+    comparison, since every code unit occupies two bytes.
+    """
+    if not isinstance(key, str):
+        raise CatalogApprovalError("canonical JSON object keys must be strings")
+    try:
+        return key.encode("utf-16-be")
+    except UnicodeEncodeError as exc:
+        raise CatalogApprovalError("canonical JSON cannot encode an unpaired surrogate") from exc
+
+
+def _canonical_members(value: Any) -> Any:
+    """Rebuild containers in canonical order, refusing what JCS cannot pin down."""
+    if isinstance(value, dict):
+        return {k: _canonical_members(v) for k, v in sorted(value.items(), key=lambda kv: _utf16_order(kv[0]))}
+    if isinstance(value, list):
+        return [_canonical_members(item) for item in value]
+    if isinstance(value, float):
+        raise CatalogApprovalError("canonical JSON does not accept floating point numbers")
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > _MAX_EXACT_INT:
+        raise CatalogApprovalError("integer is outside the range RFC 8785 serializes exactly")
+    return value
+
+
 def canonical_json(value: Any) -> bytes:
-    """Return the RFC 8785-compatible JSON form used by cMCP records."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    """Return the RFC 8785 (JCS) form used by cMCP records.
+
+    JCS emits UTF-8 and escapes only what ECMAScript `JSON.stringify` escapes, so
+    `ensure_ascii` would put ASCII escapes where an interoperating producer puts
+    UTF-8 bytes, giving two different signing inputs for one record.
+    """
+    text = json.dumps(_canonical_members(value), ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    try:
+        return text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise CatalogApprovalError("canonical JSON cannot encode an unpaired surrogate") from exc
 
 
 def digest_json(value: Any) -> str:

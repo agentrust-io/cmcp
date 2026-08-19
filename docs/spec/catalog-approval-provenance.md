@@ -15,6 +15,15 @@ bootstrap trust. It rejects unknown fields, revoked or expired keys, invalid
 signatures, duplicate principals or roles when the policy requires distinctness,
 and records whose `new_catalog_hash` differs from the runtime catalog hash.
 
+The signing input is RFC 8785 (JCS): UTF-8 output, object members ordered by
+their UTF-16 code units, and no escaping beyond what ECMAScript `JSON.stringify`
+performs. A record whose identities are not ASCII therefore signs the same bytes
+here as under any other JCS implementation. Where JCS cannot pin a value down,
+cMCP refuses it rather than emit bytes another implementation would read
+differently: floating point numbers, integers outside the exact range of an IEEE
+754 double, non-string object keys, and unpaired surrogates are rejected as
+malformed. Approval records carry none of them.
+
 The record chain is not a freshness oracle. A verifier must obtain the expected
 previous-record checkpoint from an external pin or transparency receipt. A
 valid chain presented from an old checkpoint remains an old, valid chain rather
