@@ -6,7 +6,15 @@ This document describes how cMCP is governed: who holds what role, how decisions
 
 ## Upstream governance body
 
-cMCP is a project of the **Agentic AI Foundation**. The Foundation sets the overall direction for the agentrust-io ecosystem, holds the project's trademarks, and provides a neutral venue for resolving disputes that cannot be resolved within the project itself. Foundation policies supersede this document where they conflict.
+AAIF hosting for cMCP is **proposed, not accepted**. [CHARTER.md](CHARTER.md) is the
+authoritative record: it is a pre-acceptance draft, and the "cMCP" and "cMCP-compatible"
+marks are currently held by OPAQUE Systems, Inc.
+
+On acceptance the Foundation would set overall direction for the agentrust-io ecosystem, hold
+the project's trademarks, and provide a neutral venue for resolving disputes that cannot be
+resolved within the project itself, and Foundation policies would supersede this document
+where they conflict. Until acceptance, this document governs and nothing here should be read
+as a binding foundation commitment.
 
 ---
 
@@ -16,7 +24,7 @@ The project lead is responsible for the technical direction of cMCP, final say o
 
 | Name | Affiliation | GitHub |
 |------|-------------|--------|
-| Imran Siddique | OPAQUE Systems | @imransiddique |
+| Imran Siddique | OPAQUE Systems | @imran-siddique |
 
 The project lead role is subject to Foundation confirmation. Succession is decided by a 2/3 maintainer vote, ratified by the Foundation.
 
@@ -69,10 +77,12 @@ An explicit vote is conducted by opening a GitHub Discussion tagged `vote`. It r
 
 ### Dispute resolution
 
-If a PR or proposal reaches an impasse, any Maintainer may call for a formal vote. If the vote does not resolve the dispute, the project lead makes the final call. If the dispute involves the project lead, the matter is escalated to the Agentic AI Foundation for binding resolution. A 2/3 majority of Maintainers is required to override a project lead decision through Foundation escalation.
+If a PR or proposal reaches an impasse, any Maintainer may call for a formal vote. If the vote does not resolve the dispute, the project lead makes the final call. A 2/3 majority of Maintainers is required to override a project lead decision.
+
+Where the dispute involves the project lead, there is currently no external venue: AAIF hosting is proposed and not accepted, so the Foundation cannot arbitrate for this project yet. Until acceptance such a dispute is resolved by a 2/3 majority of the remaining Maintainers. On acceptance, escalation to the Foundation for binding resolution replaces that fallback.
 
 ---
 
 ## Amendments
 
-Changes to this document require an explicit vote (see above) and ratification by the Agentic AI Foundation.
+Changes to this document require an explicit vote (see above). Ratification by the Agentic AI Foundation becomes an additional requirement only once AAIF hosting is accepted; requiring it today would make this document unamendable, since there is no Foundation relationship to ratify through.
