@@ -337,7 +337,7 @@ def test_schema_and_verifier_reject_the_same_records(mutate) -> None:
         _verify(mutated, _trusted(first, second))
 
 
-@pytest.mark.xfail(strict=True, reason="the verifier does not enforce the schema's minimum on timestamps; pending the schema-wiring decision from the #517 follow-up")
+@pytest.mark.xfail(strict=True, reason="the verifier does not enforce the schema's minimum on timestamps; pending the schema-wiring decision in #533")
 def test_negative_approved_at_is_rejected_like_the_schema() -> None:
     record, first, second = _record()
     negative = copy.deepcopy(record)
