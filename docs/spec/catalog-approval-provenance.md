@@ -30,6 +30,11 @@ approval presented N times, not N approvals, and without that rule a threshold
 of N is satisfiable by a single key whenever the policy does not demand
 distinct principals, or demands distinct roles while the key's trusted entry
 pins no role.
+The key identifier is the reviewer key's identity for both of those rules. A
+verifier that registers one key under two identifiers has neither: the record
+can present it twice toward one threshold, and revoking one identifier leaves
+the other usable. `trusted_reviewers` must therefore map distinct identifiers to
+distinct keys.
 `catalog_id` is always checked. `sequence`, `previous_record_hash`, and
 `previous_catalog_hash` are checked when the caller supplies the corresponding
 checkpoint, which it must obtain externally as described below.
