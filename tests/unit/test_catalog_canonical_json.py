@@ -10,6 +10,7 @@ from cmcp_runtime.catalog.approval import (
     CatalogApprovalError,
     TrustedReviewer,
     canonical_json,
+    compute_policy_hash,
     digest_json,
     sign_approval,
     verify_catalog_change,
@@ -70,7 +71,7 @@ def test_a_non_ascii_reviewer_identity_signs_and_verifies() -> None:
         "previous_catalog_hash": "sha256:" + "2" * 64,
         "new_catalog_hash": "sha256:" + "3" * 64,
         "change_set_digest": digest_json({"added": ["dossier.lecture"], "removed": []}),
-        "approval_policy": {**policy, "policy_hash": digest_json(policy)},
+        "approval_policy": {**policy, "policy_hash": compute_policy_hash(policy)},
         "automated_checks_digest": digest_json({"ci": "réussi"}),
         "approvals": [],
     }
@@ -81,6 +82,9 @@ def test_a_non_ascii_reviewer_identity_signs_and_verifies() -> None:
     result = verify_catalog_change(
         record,
         {"k1": TrustedReviewer("josé", "idp", key.public_key(), "sécurité")},
-        runtime_catalog_hash=record["new_catalog_hash"], now=150,
+        runtime_catalog_hash=record["new_catalog_hash"],
+        expected_policy_hash=record["approval_policy"]["policy_hash"],
+        expected_catalog_id=record["catalog_id"],
+        now=150,
     )
     assert result["verified"]
