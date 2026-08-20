@@ -24,7 +24,12 @@ record-supplied.
 
 The verifier rejects unknown fields, revoked or expired keys, invalid
 signatures, repeated principals or roles when the policy requires distinctness,
-and records whose `new_catalog_hash` differs from the runtime catalog hash.
+and records whose `new_catalog_hash` differs from the runtime catalog hash. A
+reviewer key counts once regardless of policy: a repeated signature is one
+approval presented N times, not N approvals, and without that rule a threshold
+of N is satisfiable by a single key whenever the policy does not demand
+distinct principals, or demands distinct roles while the key's trusted entry
+pins no role.
 `catalog_id` is always checked. `sequence`, `previous_record_hash`, and
 `previous_catalog_hash` are checked when the caller supplies the corresponding
 checkpoint, which it must obtain externally as described below.

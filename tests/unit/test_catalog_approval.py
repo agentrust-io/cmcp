@@ -377,3 +377,40 @@ def test_unknown_profile_and_malformed_members_fail_closed() -> None:
     stray_field["approvals"][0]["note"] = "looks harmless"
     with pytest.raises(CatalogApprovalError, match="approval has missing or unknown fields"):
         _verify(stray_field, trusted)
+
+
+def test_one_key_cannot_satisfy_a_threshold_by_signing_twice() -> None:
+    """A repeated signature is one approval pasted N times, not N approvals.
+
+    Both cases verified before this guard existed: a policy that does not demand
+    distinct principals counted the same approval three times, and a policy that
+    demands distinct roles counted one key twice when its trusted entry pins no role.
+    """
+    record, first, _ = _record(threshold=3, distinct=False)
+    repeated = copy.deepcopy(record)
+    repeated["approvals"] = [copy.deepcopy(repeated["approvals"][0]) for _ in range(3)]
+    trusted = {"k1": TrustedReviewer("alice", "idp", first.public_key(), "security")}
+    with pytest.raises(CatalogApprovalMismatch, match="reuses a reviewer key"):
+        _verify(repeated, trusted)
+
+
+def test_a_roleless_trusted_key_cannot_claim_two_roles() -> None:
+    """distinct_roles must not be satisfiable by one key asserting two role strings."""
+    policy = {"policy_id": "catalog-policy-v1", "threshold": 2, "distinct_principals": False, "distinct_roles": True}
+    first = Ed25519PrivateKey.generate()
+    record = {
+        "profile": PROFILE, "catalog_id": CATALOG_ID, "sequence": 2,
+        "previous_record_hash": "sha256:" + "1" * 64,
+        "previous_catalog_hash": "sha256:" + "2" * 64,
+        "new_catalog_hash": "sha256:" + "3" * 64,
+        "change_set_digest": digest_json({"added": ["ehr.read"], "removed": []}),
+        "approval_policy": {**policy, "policy_hash": compute_policy_hash(policy)},
+        "automated_checks_digest": digest_json({"ci": "passed"}),
+        "approvals": [],
+    }
+    record["approvals"] = [
+        sign_approval(record, {"principal_id": "alice", "issuer": "idp", "key_id": "k1", "role": role, "approved_at": 100, "expires_at": 200}, first)
+        for role in ("security", "owner")
+    ]
+    with pytest.raises(CatalogApprovalMismatch, match="reuses a reviewer key"):
+        _verify(record, {"k1": TrustedReviewer("alice", "idp", first.public_key())})

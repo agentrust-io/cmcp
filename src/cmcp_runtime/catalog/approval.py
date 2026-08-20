@@ -210,6 +210,7 @@ def verify_catalog_change(
         raise CatalogApprovalMismatch("approval threshold is not satisfied")
     principals: set[str] = set()
     roles: set[str] = set()
+    keys_used: set[str] = set()
     valid = 0
     for approval in approvals:
         if not isinstance(approval, dict) or set(approval) != {"principal_id", "issuer", "key_id", "role", "approved_at", "expires_at", "signature"}:
@@ -240,7 +241,10 @@ def verify_catalog_change(
             raise CatalogApprovalMismatch("approval set repeats a principal under a distinct-principal policy")
         if policy["distinct_roles"] and approval["role"] in roles:
             raise CatalogApprovalMismatch("approval set repeats a role under a distinct-role policy")
+        if key_id in keys_used:
+            raise CatalogApprovalMismatch("approval set reuses a reviewer key")
         valid += 1
         principals.add(approval["principal_id"])
         roles.add(approval["role"])
+        keys_used.add(key_id)
     return {"verified": True, "valid_approvals": valid, "new_catalog_hash": record["new_catalog_hash"]}
