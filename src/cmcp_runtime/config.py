@@ -137,6 +137,7 @@ class Config:
 _KNOWN_TOP_KEYS = {
     "attestation",
     "agent_manifest",
+    "catalog",
     "kill_switch",
     "sensitivity",
     "policy_bundle_path",
@@ -160,6 +161,7 @@ _FORBIDDEN_CATALOG_MUTATION_KEYS = {
 #: profile name must be a config error rather than silently enforcing nothing,
 #: which is how a deployment ends up believing it is conformant when it is not.
 _KNOWN_CONFORMANCE_PROFILES = {"aarm"}
+_KNOWN_CATALOG_KEYS = {"drift_policy"}
 _KNOWN_KILL_SWITCH_KEYS = {
     "enabled",
     "window_seconds",
@@ -391,6 +393,11 @@ def load_config(path: str) -> Config:
     catalog_raw = raw.get("catalog", {})
     if not isinstance(catalog_raw, dict):
         raise ConfigError("catalog must be a mapping")
+    for key in catalog_raw:
+        if key not in _KNOWN_CATALOG_KEYS:
+            raise ConfigError(
+                f"Unknown catalog key '{key}'. Valid keys: {sorted(_KNOWN_CATALOG_KEYS)}"
+            )
     try:
         drift_policy = DriftPolicy(catalog_raw.get("drift_policy", "fail_closed"))
     except ValueError as err:

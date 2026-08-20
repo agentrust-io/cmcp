@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cmcp_runtime.config import Config, EnforcementMode, TEEProvider, load_config
+from cmcp_runtime.config import Config, DriftPolicy, EnforcementMode, TEEProvider, load_config
 from cmcp_runtime.errors import ConfigError
 
 
@@ -101,6 +101,38 @@ def test_catalog_reload_knob_is_reserved_and_requires_restart(config_file):
 def test_unknown_agent_manifest_key_raises(config_file):
     path = config_file("agent_manifest:\n  surprise: value\n")
     with pytest.raises(ConfigError, match="surprise"):
+        load_config(path)
+
+
+# ── #523: configurable upstream catalog drift policy ──────────────────────
+
+
+def test_catalog_drift_policy_loads(config_file):
+    path = config_file("catalog:\n  drift_policy: warn_only\n")
+    cfg = load_config(path)
+    assert cfg.catalog.drift_policy is DriftPolicy.WARN_ONLY
+
+
+def test_catalog_drift_policy_defaults_to_fail_closed(config_file):
+    cfg = load_config(config_file(""))
+    assert cfg.catalog.drift_policy is DriftPolicy.FAIL_CLOSED
+
+
+def test_invalid_catalog_drift_policy_raises(config_file):
+    path = config_file("catalog:\n  drift_policy: ignore\n")
+    with pytest.raises(ConfigError, match="catalog.drift_policy"):
+        load_config(path)
+
+
+def test_catalog_config_must_be_mapping(config_file):
+    path = config_file("catalog: warn_only\n")
+    with pytest.raises(ConfigError, match="catalog must be a mapping"):
+        load_config(path)
+
+
+def test_unknown_catalog_key_raises(config_file):
+    path = config_file("catalog:\n  drift_polciy: warn_only\n")
+    with pytest.raises(ConfigError, match="drift_polciy"):
         load_config(path)
 
 

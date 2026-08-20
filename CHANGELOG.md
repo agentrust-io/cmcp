@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ASCII-only records serialize to the same bytes as before, pinned by test, so nothing that verifies today stops verifying. #517 asks for JCS reuse precisely so a record can cross implementations, and nothing consumes these records at runtime yet, so the encoding is still free to correct.
 
+- **`catalog.drift_policy` was unreachable from configuration (#523).** The parser defined
+  the setting, but strict top-level validation rejected every `catalog:` block before it
+  could be read. The block and its only supported key are now explicitly allowlisted;
+  `fail_closed` remains the default, and misspelled nested keys fail closed.
+
 - **cMCP could not verify a v0.2 Agent Manifest at all (agent-manifest#315, phase 4 of agent-manifest#243).** The pin moved to `agent-manifest>=0.11`, which carries the COSE verifier, and nothing here ever presented a v0.2 manifest to it. It could not have worked: `load_agent_manifest` read JSON and `_verify_with_sdk` passed a dict, and from v0.2 the COSE_Sign1 structure **is** the signature (ADR-0011), so a v0.2 document handed over as a dict has nothing to appraise. The SDK correctly reported a missing signature, and an operator would have read that as a malformed manifest rather than a manifest supplied in the wrong form.
 
   `load_agent_manifest_document()` now returns the decoded document alongside the envelope bytes it arrived in, and the envelope is what reaches `verify_manifest` when there is one. The file is sniffed rather than switched on its extension: a COSE envelope is CBOR and never parses as JSON, so trying JSON first is unambiguous and an operator does not have to name the file correctly for the gateway to read it. A v0.2 payload supplied as bare JSON is now named as such. `load_agent_manifest()` keeps its dict-returning signature for callers that only read identity fields.
