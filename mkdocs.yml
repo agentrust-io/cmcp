@@ -78,7 +78,7 @@ plugins:
         secure version of MCP, this is the AgenTrust runtime for it.
       sections:
         Getting started:
-          - README.md
+          - index.md
           - quickstart.md
           - concepts.md
           - configuration.md
@@ -149,8 +149,9 @@ extra_css:
   - https://agentrust-io.com/design-system.css
 
 nav:
-  - Home: README.md
+  - Home: index.md
   - Quick Start: quickstart.md
+  - Specification index: spec-index.md
   - How It Works: concepts.md
   - Configuration: configuration.md
   - Tutorials:

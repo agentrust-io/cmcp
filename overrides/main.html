@@ -15,7 +15,7 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{{ config.site_name }}">
-  <meta property="og:title" content="{% if page and page.title and not page.is_homepage %}{{ page.title }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
+  <meta property="og:title" content="{% if page and page.title %}{{ page.title }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
   <meta property="og:description" content="{{ page_desc }}">
   <meta property="og:url" content="{{ page_url }}">
   <meta property="og:image" content="{{ config.site_url }}assets/og.png">
@@ -24,7 +24,7 @@
   <meta property="og:image:alt" content="cMCP: an AgenTrust open standard">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{% if page and page.title and not page.is_homepage %}{{ page.title }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
+  <meta name="twitter:title" content="{% if page and page.title %}{{ page.title }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
   <meta name="twitter:description" content="{{ page_desc }}">
   <meta name="twitter:image" content="{{ config.site_url }}assets/og.png">
 

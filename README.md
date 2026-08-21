@@ -7,8 +7,8 @@
 ### Enforce MCP tool policy inside a TEE, where the agent it governs cannot reach it
 
 <p align="center">
-  <a href="https://agentrust-io.github.io/cmcp">
-    <img src="https://img.shields.io/badge/Documentation-agentrust--io.github.io%2Fcmcp-7c3aed?style=for-the-badge" alt="Documentation" height="36">
+  <a href="https://cmcp.agentrust-io.com">
+    <img src="https://img.shields.io/badge/Documentation-cmcp.agentrust--io.com-7c3aed?style=for-the-badge" alt="Documentation" height="36">
   </a>
 </p>
 
