@@ -45,6 +45,13 @@ agent_manifest:
   trust_anchor_path: ./manifest-public-key.json
   authenticated_subject: spiffe://factory.example/agent/material-movement/dev
 
+catalog:
+  # fail_closed (default): deny calls when an upstream server advertises a
+  # changed or withdrawn approved tool definition.
+  # warn_only: route the call but record the drift in the audit chain and
+  # TRACE Claim so an operator can measure a rollout before enforcing.
+  drift_policy: fail_closed
+
 # Path to the directory containing .cedar policy files and manifest.json.
 # Must not contain '..' components. Relative paths are resolved from the
 # working directory at startup.
@@ -96,6 +103,14 @@ All fields are optional as a group. If `path` is set, `trust_anchor_path` must a
 | `path`                  | string | none    | Path to the signed Agent Manifest JSON document. Path traversal (`..` components) is rejected.                                                                                                                         |
 | `trust_anchor_path`     | string | none    | Path to a JSON trust anchor containing the issuer Ed25519 public key, either as `{ "key_id": "...", "public_key_base64url": "..." }` or `{ "keys": [...] }`.                                                           |
 | `authenticated_subject` | string | none    | SPIFFE URI for the authenticated agent subject. This must equal `manifest.agent_id`. In production this should come from the agent SVID/mTLS identity; the config field is the current runtime input for that subject. |
+
+### catalog
+
+The gateway compares an upstream server's advertised tool definitions with the approved catalog once per server per session, on first contact. Drift is always written to the audit chain and TRACE Claim; this setting controls whether the session also fails closed.
+
+| Field          | Type   | Default       | Description                                                                                                                                                                        |
+| -------------- | ------ | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `drift_policy` | string | `fail_closed` | Action when an approved tool definition changed or was withdrawn. Valid values: `fail_closed` (deny calls in the session) and `warn_only` (route calls while recording the drift). |
 
 ### top-level fields
 
