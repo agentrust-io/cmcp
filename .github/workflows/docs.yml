@@ -15,6 +15,7 @@ on:
       - "ROADMAP.md"
       - "LIMITATIONS.md"
       - "CNAME"
+      - "overrides/**"
   workflow_dispatch:
 
 permissions:
