@@ -16,6 +16,31 @@ if TYPE_CHECKING:
     from cmcp_runtime.startup import RuntimeContext
 
 
+def _marker(preferred: str, fallback: str, stream: object) -> str:
+    """Return `preferred` if `stream` can encode it, else `fallback`.
+
+    A Windows console defaults to a legacy code page, and writing "✓" to
+    it raises UnicodeEncodeError. That killed `cmcp validate-config` on its
+    own success path: the config was valid, and the command still exited
+    non-zero with a codec traceback. The marker is decoration, so it degrades
+    rather than taking the command down with it.
+    """
+    encoding = getattr(stream, "encoding", None) or "ascii"
+    try:
+        preferred.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return fallback
+    return preferred
+
+
+def _ok() -> str:
+    return _marker("✓", "OK", sys.stdout)
+
+
+def _bad() -> str:
+    return _marker("✗", "ERROR", sys.stderr)
+
+
 def build_server(ctx: RuntimeContext) -> MCPServer:
     """
     Compose the running gateway from a validated RuntimeContext.
@@ -249,10 +274,11 @@ def validate_config(config: str) -> None:
 
     try:
         load_config(config)
-        click.echo(f"✓ Config valid: {config}")
     except Exception as exc:
-        click.echo(f"✗ Config invalid: {exc}", err=True)
+        click.echo(f"{_bad()} Config invalid: {exc}", err=True)
         raise SystemExit(1) from exc
+
+    click.echo(f"{_ok()} Config valid: {config}")
 
 
 @main.command("validate-bundle")
@@ -265,7 +291,7 @@ def validate_bundle(bundle_path: str, expected_hash: str) -> None:
     try:
         bundle = load_policy_bundle(bundle_path)
     except Exception as exc:
-        click.echo(f"✗ Bundle load error: {exc}", err=True)
+        click.echo(f"{_bad()} Bundle load error: {exc}", err=True)
         raise SystemExit(1) from exc
 
     bundle_hash = bundle.bundle_hash
@@ -274,10 +300,10 @@ def validate_bundle(bundle_path: str, expected_hash: str) -> None:
     actual_hex = bundle_hash.removeprefix("sha256:")
 
     if actual_hex == expected_hex:
-        click.echo(f"✓ Bundle valid: {bundle_hash}")
+        click.echo(f"{_ok()} Bundle valid: {bundle_hash}")
     else:
         click.echo(
-            f"✗ Bundle hash mismatch: expected {expected_hash}, got {bundle_hash}",
+            f"{_bad()} Bundle hash mismatch: expected {expected_hash}, got {bundle_hash}",
             err=True,
         )
         raise SystemExit(1)
