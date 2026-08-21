@@ -124,5 +124,5 @@ def test_a_failed_success_message_is_never_relabelled_as_invalid(tmp_path, monke
         cli.validate_config.callback(config=str(config))
 
     assert not any("Config invalid" in m for m in seen), (
-        "a printing failure was relabelled as a validation failure: %r" % seen
+        f"a printing failure was relabelled as a validation failure: {seen!r}"
     )
