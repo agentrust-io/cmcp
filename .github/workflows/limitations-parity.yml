@@ -1,0 +1,75 @@
+name: Limitations parity
+
+# The SEV-SNP platform-state caveat in LIMITATIONS.md is shared verbatim with
+# agentrust-io/trace-spec and agentrust-io/ca2a, because the gap it describes is a
+# property of the shared TEE provider layer rather than of any one project. Three
+# hand-maintained copies of a security caveat drift, and the copy that goes stale
+# is the one that quietly overstates what the project checks.
+#
+# The full text stays in this file on purpose: LIMITATIONS.md exists to state the
+# bounds where a reader will actually meet them, not to send them somewhere else.
+# This job keeps the copies honest instead of thinning them out.
+#
+# Same shape as the schema-parity check in agentrust-io/agentrust-io.github.io.
+# Only the text between the markers is compared. The project-specific paragraph
+# after the end marker is this repository's own.
+
+on:
+  push:
+    branches: [main]
+    paths: ['LIMITATIONS.md', '.github/workflows/limitations-parity.yml']
+  pull_request:
+    paths: ['LIMITATIONS.md', '.github/workflows/limitations-parity.yml']
+  schedule:
+    # trace-spec can change without anything happening here, so also check daily.
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the shared block with trace-spec
+        run: |
+          set -euo pipefail
+          src=https://raw.githubusercontent.com/agentrust-io/trace-spec/main/LIMITATIONS.md
+          begin='<!-- shared:platform-state-appraisal begin -->'
+          end='<!-- shared:platform-state-appraisal end -->'
+
+          extract() {
+            awk -v b="$begin" -v e="$end" '
+              index($0, b) { grab = 1; next }
+              index($0, e) { grab = 0 }
+              grab { print }
+            ' "$1"
+          }
+
+          if ! curl -fsSL "$src" -o /tmp/upstream.md; then
+            echo "::error::could not fetch $src"
+            exit 1
+          fi
+
+          extract LIMITATIONS.md > /tmp/local.txt
+          extract /tmp/upstream.md > /tmp/remote.txt
+
+          if [ ! -s /tmp/local.txt ]; then
+            echo "::error::LIMITATIONS.md has no shared:platform-state-appraisal block"
+            exit 1
+          fi
+          if [ ! -s /tmp/remote.txt ]; then
+            echo "::error::trace-spec/LIMITATIONS.md has no shared:platform-state-appraisal block"
+            exit 1
+          fi
+
+          if diff -u /tmp/remote.txt /tmp/local.txt; then
+            echo "ok  shared block matches trace-spec"
+          else
+            echo "::error::the shared block has drifted from trace-spec/LIMITATIONS.md."
+            echo "::error::Edit it in trace-spec first, then copy the block here."
+            exit 1
+          fi

@@ -8,7 +8,7 @@ This document describes what cMCP does not prevent, where its guarantees end, an
 Cedar policy evaluation is only as correct as the policy the operator wrote and approved. cMCP measures the policy bundle hash into the TEE attestation report, which proves the policy that ran is the policy that was approved. It does not evaluate whether that policy achieves the intended security outcome. A policy that contains `permit(principal, action, resource);` without conditions permits every tool call. Policy correctness is the operator's responsibility; policy review is a separate control.
 
 **Compromised TEE firmware or microcode**
-Hardware attestation proves the workload hash was measured in silicon. It does not protect against vulnerabilities in the TEE firmware or CPU microcode itself (Spectre-class side channels, cache timing, power analysis, fault injection targeting the TEE boundary). Protection at this level is the responsibility of the hardware vendor. Operators must keep TEE firmware and microcode up to date; see [Compensating Controls](docs/spec/threat-model.md#compensating-controls-operator-responsibilities) in the threat model.
+Hardware attestation proves the workload hash was measured in silicon. It does not protect against vulnerabilities in the TEE firmware or CPU microcode itself (Spectre-class side channels, cache timing, power analysis, fault injection targeting the TEE boundary). Protection at this level is the responsibility of the hardware vendor. Operators must keep TEE firmware and microcode up to date; see [Compensating Controls](https://cmcp.agentrust-io.com/spec/threat-model/#compensating-controls-operator-responsibilities) in the threat model.
 
 **Azure confidential VMs: attestation is vTPM-rooted, one hop longer**
 On Azure confidential VMs (`AzureCVMProvider`), SEV-SNP runs behind a Hyper-V paravisor: there is no `/dev/sev-guest`, and the guest cannot write the SNP `REPORT_DATA` field (the paravisor sets it to `sha256(runtime_data)`, binding the vTPM attestation key). cMCP therefore does not bind its key/audit-root directly into the SNP report on Azure. Instead it commits the nonce into an AK-signed TPM quote, and the SNP report (verified via the VCEK→ASK→ARK chain) attests that the AK is genuine SNP silicon. The trust root is still AMD, but the chain is one hop longer than direct-silicon binding, and it additionally trusts the paravisor's binding of the vTPM AK into `REPORT_DATA`. Bare-metal / non-paravisor SNP guests (`SEVSNPProvider`) bind directly into the report and do not add this hop.
@@ -46,7 +46,7 @@ When configured, cMCP verifies a signed Agent Manifest against a trusted issuer 
 cMCP intercepts tool calls at the MCP protocol boundary. It does not observe or modify LLM inference, the contents of the agent's context window, or model outputs that do not produce a tool call. A model could hallucinate a response, leak sensitive context in a chat reply, or receive a poisoned tool response that influences subsequent reasoning -- none of these are visible to the gateway. cMCP controls the tool boundary, not the model boundary.
 
 **Response injection evasion via novel patterns**
-The response inspector uses pattern-based detection for prompt injection in tool responses. Pattern-based detection has false negatives. A sufficiently sophisticated injection may evade the current pattern list. The pattern list must be maintained and updated by the operator as new injection techniques emerge; see [Compensating Controls](docs/spec/threat-model.md#compensating-controls-operator-responsibilities).
+The response inspector uses pattern-based detection for prompt injection in tool responses. Pattern-based detection has false negatives. A sufficiently sophisticated injection may evade the current pattern list. The pattern list must be maintained and updated by the operator as new injection techniques emerge; see [Compensating Controls](https://cmcp.agentrust-io.com/spec/threat-model/#compensating-controls-operator-responsibilities).
 
 **APM and telemetry payload capture**
 The TEE prevents plaintext from leaving the enclave to any destination not covered by the egress policy. This protection is structural only when the egress policy explicitly denies APM and telemetry endpoints. If the operator allowlists those endpoints in the Cedar policy, the TEE boundary does not prevent payload capture by the APM agent. A TRACE Claim with an egress policy that permits APM or SDK telemetry endpoints does not provide this protection. Verifiers must inspect the policy bundle hash and confirm the policy excludes those endpoints.
@@ -60,7 +60,7 @@ The catalog binds each tool name to a specific upstream server identity, which p
 
 - **No hardware root of trust.** The signing key is held in software and is accessible to any process running as the same user. A privileged operator can extract it.
 - **No verifiable measurement.** The `trace.runtime.measurement` field is all zeros in dev mode. There is no hardware-measured enclave identity, so a verifier cannot confirm which binary ran.
-- **Threat classes T1 through T4 are not covered.** These are the rogue administrator, host OS compromise, post-incident audit log reconstruction, and policy substitution threats described in the [threat model](docs/spec/threat-model.md). All four require a hardware TEE to close. In software-only mode, all four remain open.
+- **Threat classes T1 through T4 are not covered.** These are the rogue administrator, host OS compromise, post-incident audit log reconstruction, and policy substitution threats described in the [threat model](https://cmcp.agentrust-io.com/spec/threat-model/). All four require a hardware TEE to close. In software-only mode, all four remain open.
 - **TRACE Claims are partially verified only.** The `cmcp_verify` library returns `status: partially_verified` and reports `hardware_attestation: software-only mode -- not hardware-backed`. Claims produced in dev mode must not be presented as hardware-attested proof to auditors or regulators.
 
 ## What attestation verification establishes, and what it does not
@@ -99,6 +99,12 @@ Two gaps are worth stating plainly for the TPM path:
 
 ## Platform state is not appraised
 
+<!-- The marked block below is shared verbatim with trace-spec and ca2a.
+     trace-spec/LIMITATIONS.md is the source and the limitations-parity
+     workflow checks this copy against it, so edit it there, not here.
+     The paragraph after the end marker is this project's own. -->
+
+<!-- shared:platform-state-appraisal begin -->
 The SEV-SNP path here establishes that a report is authentic and which workload it
 describes: report signature, the VCEK to ASK to ARK chain with the ARK pinned by the
 operator, and measurement binding. Those are the right four checks and they are not
@@ -108,17 +114,22 @@ in dispute.
 report carries that separately in `PLATFORM_INFO` at offset 0x40: whether SMT is on,
 whether ECC is enabled, whether ciphertext hiding is enforced, and whether the
 firmware completed its boot-time DRAM alias check, which is AMD's mitigation for
-BadRAM (security bulletin SB-3015). `agent-manifest` parses and can appraise these fields as of 2026-08-20; cMCP does not yet call that appraisal.
+BadRAM (security bulletin SB-3015).
 
 The practical consequence: a report from a machine with SMT enabled and the alias
 check never completed verifies exactly as cleanly as one from a machine with neither
 condition. If that distinction matters to your deployment, it has to be asserted
-explicitly, and today cMCP does not assert it for you.
+explicitly.
 
 Related: [google/go-sev-guest#195](https://github.com/google/go-sev-guest/issues/195),
 where the reference verifier's own platform-info policy field is documented as a
 ceiling while four of its seven fields are enforced as minimums. Worth reading before
 writing any policy over these bits.
+<!-- shared:platform-state-appraisal end -->
+
+**In cMCP.** [`agent-manifest`](https://manifest.agentrust-io.com/limitations/) parses these fields and can
+enforce a policy over them as of 2026-08-20. cMCP does not yet call that appraisal, so
+cMCP does not assert it for you.
 
 ## What cMCP does not do
 
@@ -167,4 +178,4 @@ Expected component breakdown for a 10-rule policy bundle:
 | Audit entry hash computation | approximately 0.1ms |
 | Network routing overhead | 0.5 to 2ms |
 
-These are targets from [docs/testing/benchmarks.md](docs/testing/benchmarks.md). Actual results on real TEE hardware will vary by provider and payload size; benchmark results are committed per provider to `benchmarks/` in CI.
+These are targets from [the benchmark methodology](https://cmcp.agentrust-io.com/testing/benchmarks/). Actual results on real TEE hardware will vary by provider and payload size; benchmark results are committed per provider to `benchmarks/` in CI.

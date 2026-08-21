@@ -61,7 +61,7 @@ cMCP moves the decision and the evidence inside a TEE. The policy bundle is meas
 
     What is attested against real silicon, what is parsed, and what is not appraised at all.
 
-    [Limitations](https://github.com/agentrust-io/cmcp/blob/main/LIMITATIONS.md)
+    [Limitations](limitations.md)
 
 </div>
 
