@@ -9,6 +9,8 @@ from pathlib import Path
 
 import cmcp_runtime
 import cmcp_verify
+from cmcp_runtime.catalog.approval import CATALOG_APPROVAL_SCHEMA_PATH
+from cmcp_runtime.catalog.loader import CATALOG_ENTRY_SCHEMA_PATH
 from cmcp_runtime.config import Config
 
 
@@ -35,6 +37,13 @@ def main() -> None:
             raise SystemExit(
                 f"smoke test imported checkout source {module_path}, not the distribution"
             )
+
+    for schema_path in (CATALOG_ENTRY_SCHEMA_PATH, CATALOG_APPROVAL_SCHEMA_PATH):
+        resolved = schema_path.resolve()
+        if not resolved.is_file():
+            raise SystemExit(f"schema {resolved} is missing from the distribution")
+        if resolved.is_relative_to(forbidden_root):
+            raise SystemExit(f"schema resolved to checkout source {resolved}, not the distribution")
 
     config = Config()
     if config.max_response_size_bytes <= 0:

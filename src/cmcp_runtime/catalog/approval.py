@@ -7,8 +7,10 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import jsonschema
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
@@ -17,10 +19,20 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 PROFILE = "tag:agentrust-io.com,2026:cmcp-catalog-approval-v1"
 
+_PACKAGED_SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "catalog-approval.schema.json"
+_SOURCE_SCHEMA_PATH = (
+    Path(__file__).parent.parent.parent.parent / "schemas" / "catalog-approval.schema.json"
+)
+CATALOG_APPROVAL_SCHEMA_PATH = (
+    _PACKAGED_SCHEMA_PATH if _PACKAGED_SCHEMA_PATH.exists() else _SOURCE_SCHEMA_PATH
+)
+
+# The first record in a chain has no predecessor. The schema cannot express "absent"
+# for a required digest, so the convention is the all-zero one.
+GENESIS_PREVIOUS_RECORD_HASH = "sha256:" + "0" * 64
+
 # RFC 8785 numbers are IEEE 754 doubles, so integers stay exact only to 2**53 - 1.
 _MAX_EXACT_INT = 2**53 - 1
-
-_B64URL = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 
 
 class CatalogApprovalError(ValueError):
@@ -98,9 +110,8 @@ def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def _decode(value: Any) -> bytes:
-    if not isinstance(value, str) or not value or any(c not in _B64URL for c in value):
-        raise CatalogApprovalError("signature must be an unpadded base64url string")
+def _decode(value: str) -> bytes:
+    """Decode a signature the schema has already constrained to unpadded base64url."""
     try:
         raw = base64.urlsafe_b64decode(value + "=" * ((4 - len(value) % 4) % 4))
     except (ValueError, TypeError) as exc:
@@ -133,16 +144,36 @@ def _require_digest(value: Any, field: str) -> str:
     return value
 
 
-def _require_str(value: Any, field: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise CatalogApprovalError(f"{field} must be a non-empty string")
-    return value
+_schema_cache: dict[str, Any] | None = None
 
 
-def _require_int(value: Any, field: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise CatalogApprovalError(f"{field} must be an integer")
-    return value
+def _approval_schema() -> dict[str, Any]:
+    """Return the record schema, refusing to verify without it.
+
+    `loader.py` refuses to load a catalog when its schema is missing from the
+    installation rather than validating structure by hand, and an approval record
+    carries more weight than a catalog entry, not less.
+    """
+    global _schema_cache
+    if _schema_cache is None:
+        if not CATALOG_APPROVAL_SCHEMA_PATH.is_file():
+            raise CatalogApprovalError(
+                "catalog approval schema is missing from the CMCP installation; "
+                "refusing to verify a record without structural validation"
+            )
+        try:
+            _schema_cache = dict(json.loads(CATALOG_APPROVAL_SCHEMA_PATH.read_text()))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CatalogApprovalError(f"cannot load catalog approval schema: {exc}") from exc
+    return _schema_cache
+
+
+def _validate_against_schema(record: Any) -> None:
+    try:
+        jsonschema.validate(record, _approval_schema())
+    except jsonschema.ValidationError as exc:
+        where = "/".join(str(part) for part in exc.absolute_path) or "record"
+        raise CatalogApprovalError(f"schema violation at {where}: {exc.message}") from exc
 
 
 def verify_catalog_change(
@@ -165,21 +196,13 @@ def verify_catalog_change(
     cannot declare its own threshold or distinctness rules. The chain checkpoints
     stay optional because they must come from an external pin or transparency
     receipt, which the record itself cannot supply.
+
+    Structure is the schema's to decide. The checks below cover only what JSON
+    Schema cannot express: the runtime hash binding, the policy pin, reviewer
+    identity and key rules, and the signatures.
     """
-    if not isinstance(record, dict) or record.get("profile") != PROFILE:
-        raise CatalogApprovalError("unknown or missing catalog approval profile")
-    required = {
-        "catalog_id", "sequence", "previous_record_hash", "previous_catalog_hash",
-        "new_catalog_hash", "change_set_digest", "approval_policy", "automated_checks_digest",
-        "approvals",
-    }
-    if set(record) != {"profile", *required}:
-        raise CatalogApprovalError("record contains missing or unknown fields")
-    if _require_int(record["sequence"], "sequence") < 1:
-        raise CatalogApprovalError("sequence must be a positive integer")
-    for field in ("previous_record_hash", "previous_catalog_hash", "new_catalog_hash", "change_set_digest", "automated_checks_digest"):
-        _require_digest(record[field], field)
-    if _require_str(record["catalog_id"], "catalog_id") != expected_catalog_id:
+    _validate_against_schema(record)
+    if record["catalog_id"] != expected_catalog_id:
         raise CatalogApprovalMismatch("record does not apply to the expected catalog")
     if expected_sequence is not None and record["sequence"] != expected_sequence:
         raise CatalogApprovalMismatch("record is not the expected sequence number")
@@ -191,32 +214,20 @@ def verify_catalog_change(
         raise CatalogApprovalMismatch("new_catalog_hash does not match runtime catalog hash")
 
     policy = record["approval_policy"]
-    if not isinstance(policy, dict) or set(policy) != {"policy_id", "policy_hash", "threshold", "distinct_principals", "distinct_roles"}:
-        raise CatalogApprovalError("approval_policy has missing or unknown fields")
-    _require_str(policy["policy_id"], "approval_policy.policy_id")
-    _require_digest(policy["policy_hash"], "approval_policy.policy_hash")
-    if not isinstance(policy["distinct_principals"], bool) or not isinstance(policy["distinct_roles"], bool):
-        raise CatalogApprovalError("approval_policy distinctness flags must be booleans")
     threshold = policy["threshold"]
-    if _require_int(threshold, "approval threshold") < 1:
-        raise CatalogApprovalError("approval threshold must be a positive integer")
     if compute_policy_hash(policy) != policy["policy_hash"]:
         raise CatalogApprovalError("approval_policy.policy_hash does not cover the policy body")
     if policy["policy_hash"] != _require_digest(expected_policy_hash, "expected_policy_hash"):
         raise CatalogApprovalMismatch("record cites a policy the verifier does not trust")
     instant = int(time.time()) if now is None else now
     approvals = record["approvals"]
-    if not isinstance(approvals, list) or len(approvals) < threshold:
+    if len(approvals) < threshold:
         raise CatalogApprovalMismatch("approval threshold is not satisfied")
     principals: set[str] = set()
     roles: set[str] = set()
     keys_used: set[str] = set()
     valid = 0
     for approval in approvals:
-        if not isinstance(approval, dict) or set(approval) != {"principal_id", "issuer", "key_id", "role", "approved_at", "expires_at", "signature"}:
-            raise CatalogApprovalError("approval has missing or unknown fields")
-        for field in ("principal_id", "issuer", "key_id", "role"):
-            _require_str(approval[field], f"approval.{field}")
         key_id = approval["key_id"]
         reviewer = trusted_reviewers.get(key_id)
         if key_id in revoked_key_ids:
@@ -227,8 +238,7 @@ def verify_catalog_change(
             raise CatalogApprovalMismatch("approval principal or issuer does not match trusted key")
         if reviewer.role is not None and approval["role"] != reviewer.role:
             raise CatalogApprovalMismatch("approval role does not match trusted key")
-        approved_at = _require_int(approval["approved_at"], "approval.approved_at")
-        if _require_int(approval["expires_at"], "approval.expires_at") <= approved_at:
+        if approval["expires_at"] <= approval["approved_at"]:
             raise CatalogApprovalError("approval validity interval is invalid")
         if instant < approval["approved_at"] or instant >= approval["expires_at"]:
             raise CatalogApprovalMismatch("approval is not currently valid")
