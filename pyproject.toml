@@ -81,6 +81,7 @@ packages = ["src/cmcp_runtime", "src/cmcp_verify"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "schemas/catalog-entry.schema.json" = "cmcp_runtime/schemas/catalog-entry.schema.json"
+"schemas/catalog-approval.schema.json" = "cmcp_runtime/schemas/catalog-approval.schema.json"
 
 
 [tool.pytest.ini_options]

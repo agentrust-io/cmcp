@@ -9,7 +9,7 @@
     "profile": {"const": "tag:agentrust-io.com,2026:cmcp-catalog-approval-v1"},
     "catalog_id": {"type": "string", "minLength": 1},
     "sequence": {"type": "integer", "minimum": 1},
-    "previous_record_hash": {"$ref": "#/$defs/digest"},
+    "previous_record_hash": {"$ref": "#/$defs/digest", "description": "Digest of the preceding record. The first record in a chain has no predecessor and uses the all-zero digest, \"sha256:\" followed by 64 zeros, so that no predecessor is distinguishable from a real chain link."},
     "previous_catalog_hash": {"$ref": "#/$defs/digest"},
     "new_catalog_hash": {"$ref": "#/$defs/digest"},
     "change_set_digest": {"$ref": "#/$defs/digest"},

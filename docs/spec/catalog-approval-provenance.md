@@ -48,6 +48,19 @@ differently: floating point numbers, integers outside the exact range of an IEEE
 754 double, non-string object keys, and unpaired surrogates are rejected as
 malformed. Approval records carry none of them.
 
+The schema is the structural authority. `verify_catalog_change` loads
+`schemas/catalog-approval.schema.json` and validates the record against it before
+any other check, and refuses to verify at all when the schema is missing from the
+installation, as the catalog loader does for `catalog-entry.schema.json`. The
+checks the verifier keeps in code are the ones JSON Schema cannot express: the
+runtime hash binding, the policy pin, reviewer identity and key rules, and the
+signatures.
+
+The first record in a chain has no predecessor, and the schema cannot express
+absence for a required digest. That record sets `previous_record_hash` to the
+all-zero digest, `sha256:` followed by 64 zeros, so no predecessor is
+distinguishable from a real chain link rather than left to producer convention.
+
 The record chain is not a freshness oracle. A verifier must obtain the expected
 previous-record checkpoint from an external pin or transparency receipt. A
 valid chain presented from an old checkpoint remains an old, valid chain rather
