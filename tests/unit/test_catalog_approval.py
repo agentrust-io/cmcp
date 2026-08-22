@@ -59,7 +59,7 @@ def _verify(record: dict, trusted: dict[str, TrustedReviewer], **overrides: obje
         "runtime_catalog_hash": record["new_catalog_hash"],
         "expected_policy_hash": record["approval_policy"]["policy_hash"],
         "expected_catalog_id": CATALOG_ID,
-        "now": 150,
+        "validity_instant": 150,
     }
     kwargs.update(overrides)
     return verify_catalog_change(record, trusted, **kwargs)  # type: ignore[arg-type]
@@ -126,8 +126,8 @@ def test_tampering_expiry_revocation_and_duplicate_principal_fail() -> None:
         _verify(tampered, trusted, runtime_catalog_hash=tampered["new_catalog_hash"])
     with pytest.raises(CatalogApprovalMismatch, match="revoked"):
         _verify(record, trusted, revoked_key_ids=frozenset({"k1"}))
-    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
-        _verify(record, trusted, now=10_000)
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        _verify(record, trusted, validity_instant=10_000)
     with pytest.raises(CatalogApprovalMismatch, match="not trusted"):
         _verify(record, {"k1": trusted["k1"]})
 
@@ -167,7 +167,7 @@ def test_malformed_field_types_fail_closed() -> None:
         sign_approval(boolean_times, {"principal_id": "alice", "issuer": "idp", "key_id": "k1", "role": "security", "approved_at": False, "expires_at": True}, first)
     ]
     with pytest.raises(CatalogApprovalError, match="approvals/0/(approved_at|expires_at)"):
-        _verify(boolean_times, trusted, now=0)
+        _verify(boolean_times, trusted, validity_instant=0)
 
 
 def test_signature_encoding_is_validated() -> None:
@@ -225,20 +225,20 @@ def test_approval_identity_must_match_the_trusted_key() -> None:
 
 
 def test_validity_interval_boundaries() -> None:
-    """approved_at is inclusive, expires_at is exclusive, and the interval must be ordered."""
+    """Against a supplied instant: approved_at inclusive, expires_at exclusive, interval ordered."""
     record, first, second = _record()
     trusted = _trusted(first, second)
-    assert _verify(record, trusted, now=100)["verified"]
-    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
-        _verify(record, trusted, now=99)
-    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
-        _verify(record, trusted, now=200)
+    assert _verify(record, trusted, validity_instant=100)["verified"]
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        _verify(record, trusted, validity_instant=99)
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        _verify(record, trusted, validity_instant=200)
     inverted = copy.deepcopy(record)
     for approval in inverted["approvals"]:
         approval["approved_at"], approval["expires_at"] = 200, 100
     _resign(inverted, {"k1": first, "k2": second})
     with pytest.raises(CatalogApprovalError, match="validity interval is invalid"):
-        _verify(inverted, trusted, now=150)
+        _verify(inverted, trusted, validity_instant=150)
 
 
 def test_genesis_record_is_representable() -> None:
@@ -453,3 +453,31 @@ def test_an_unreadable_schema_fails_closed(tmp_path: pathlib.Path, monkeypatch: 
     monkeypatch.setattr(approval_module, "_schema_cache", None)
     with pytest.raises(CatalogApprovalError, match="cannot load catalog approval schema"):
         _verify(record, _trusted(first, second))
+
+
+def test_a_record_stays_verifiable_after_its_approvals_expire() -> None:
+    """The point of #533: a provenance record an auditor cannot replay is not provenance.
+
+    The approvals below are valid for [100, 200). Under the verification clock this
+    record stopped verifying the moment that window closed.
+    """
+    record, first, second = _record()
+    trusted = _trusted(first, second)
+    kwargs: dict = {
+        "runtime_catalog_hash": record["new_catalog_hash"],
+        "expected_policy_hash": record["approval_policy"]["policy_hash"],
+        "expected_catalog_id": CATALOG_ID,
+    }
+    assert verify_catalog_change(record, trusted, **kwargs)["verified"]
+    assert verify_catalog_change(record, trusted, validity_instant=150, **kwargs)["verified"]
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        verify_catalog_change(record, trusted, validity_instant=10**9, **kwargs)
+
+
+def test_revocation_is_judged_now_not_at_the_approval_instant() -> None:
+    """A key revoked today must not validate a record presented today, however old the record."""
+    record, first, second = _record()
+    trusted = _trusted(first, second)
+    assert _verify(record, trusted, validity_instant=None)["verified"]
+    with pytest.raises(CatalogApprovalMismatch, match="revoked"):
+        _verify(record, trusted, validity_instant=None, revoked_key_ids=frozenset({"k2"}))

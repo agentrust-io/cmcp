@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -183,7 +182,7 @@ def verify_catalog_change(
     runtime_catalog_hash: str,
     expected_policy_hash: str,
     expected_catalog_id: str,
-    now: int | None = None,
+    validity_instant: int | None = None,
     revoked_key_ids: frozenset[str] = frozenset(),
     expected_sequence: int | None = None,
     expected_previous_record_hash: str | None = None,
@@ -196,6 +195,13 @@ def verify_catalog_change(
     cannot declare its own threshold or distinctness rules. The chain checkpoints
     stay optional because they must come from an external pin or transparency
     receipt, which the record itself cannot supply.
+
+    `approved_at` and `expires_at` bound when a signature could have been produced,
+    not how long the record stays verifiable. `validity_instant` is the instant the
+    caller judges that against, a pinned checkpoint or transparency-receipt timestamp
+    where one exists, and each approval's own `approved_at` where none is supplied,
+    so a record remains replayable after its approvals expire. Revocation is
+    separate and is always judged at verification time.
 
     Structure is the schema's to decide. The checks below cover only what JSON
     Schema cannot express: the runtime hash binding, the policy pin, reviewer
@@ -219,7 +225,6 @@ def verify_catalog_change(
         raise CatalogApprovalError("approval_policy.policy_hash does not cover the policy body")
     if policy["policy_hash"] != _require_digest(expected_policy_hash, "expected_policy_hash"):
         raise CatalogApprovalMismatch("record cites a policy the verifier does not trust")
-    instant = int(time.time()) if now is None else now
     approvals = record["approvals"]
     if len(approvals) < threshold:
         raise CatalogApprovalMismatch("approval threshold is not satisfied")
@@ -230,6 +235,8 @@ def verify_catalog_change(
     for approval in approvals:
         key_id = approval["key_id"]
         reviewer = trusted_reviewers.get(key_id)
+        # Revocation is deliberately not judged at validity_instant. Whether a key was
+        # valid when it signed and whether it is revoked now are different questions.
         if key_id in revoked_key_ids:
             raise CatalogApprovalMismatch(f"reviewer key {key_id!r} is revoked")
         if reviewer is None:
@@ -240,8 +247,9 @@ def verify_catalog_change(
             raise CatalogApprovalMismatch("approval role does not match trusted key")
         if approval["expires_at"] <= approval["approved_at"]:
             raise CatalogApprovalError("approval validity interval is invalid")
+        instant = approval["approved_at"] if validity_instant is None else validity_instant
         if instant < approval["approved_at"] or instant >= approval["expires_at"]:
-            raise CatalogApprovalMismatch("approval is not currently valid")
+            raise CatalogApprovalMismatch("approval was not valid at the instant being verified")
         signature = _decode(approval["signature"])
         try:
             reviewer.key.verify(signature, _approval_input(record, approval))

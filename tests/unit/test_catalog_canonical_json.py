@@ -85,6 +85,6 @@ def test_a_non_ascii_reviewer_identity_signs_and_verifies() -> None:
         runtime_catalog_hash=record["new_catalog_hash"],
         expected_policy_hash=record["approval_policy"]["policy_hash"],
         expected_catalog_id=record["catalog_id"],
-        now=150,
+        validity_instant=150,
     )
     assert result["verified"]
