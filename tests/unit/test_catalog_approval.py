@@ -3,12 +3,16 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
+import tomllib
 
 import jsonschema
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cmcp_runtime.catalog import approval as approval_module
 from cmcp_runtime.catalog.approval import (
+    CATALOG_APPROVAL_SCHEMA_PATH,
+    GENESIS_PREVIOUS_RECORD_HASH,
     PROFILE,
     CatalogApprovalError,
     CatalogApprovalMismatch,
@@ -20,8 +24,7 @@ from cmcp_runtime.catalog.approval import (
 )
 
 CATALOG_ID = "gateway-prod"
-GENESIS_PREVIOUS_RECORD_HASH = "sha256:" + "0" * 64
-SCHEMA = json.loads((pathlib.Path(__file__).parents[2] / "schemas" / "catalog-approval.schema.json").read_text())
+SCHEMA = json.loads(CATALOG_APPROVAL_SCHEMA_PATH.read_text())
 
 
 def _record(threshold: int = 2, distinct: bool = True) -> tuple[dict, Ed25519PrivateKey, Ed25519PrivateKey]:
@@ -56,7 +59,7 @@ def _verify(record: dict, trusted: dict[str, TrustedReviewer], **overrides: obje
         "runtime_catalog_hash": record["new_catalog_hash"],
         "expected_policy_hash": record["approval_policy"]["policy_hash"],
         "expected_catalog_id": CATALOG_ID,
-        "now": 150,
+        "validity_instant": 150,
     }
     kwargs.update(overrides)
     return verify_catalog_change(record, trusted, **kwargs)  # type: ignore[arg-type]
@@ -123,8 +126,8 @@ def test_tampering_expiry_revocation_and_duplicate_principal_fail() -> None:
         _verify(tampered, trusted, runtime_catalog_hash=tampered["new_catalog_hash"])
     with pytest.raises(CatalogApprovalMismatch, match="revoked"):
         _verify(record, trusted, revoked_key_ids=frozenset({"k1"}))
-    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
-        _verify(record, trusted, now=10_000)
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        _verify(record, trusted, validity_instant=10_000)
     with pytest.raises(CatalogApprovalMismatch, match="not trusted"):
         _verify(record, {"k1": trusted["k1"]})
 
@@ -145,7 +148,7 @@ def test_duplicate_principal_rejected_even_with_surplus_approvals() -> None:
 def test_malformed_record_fails_closed() -> None:
     record, _, _ = _record()
     record["unexpected"] = True
-    with pytest.raises(CatalogApprovalError, match="unknown"):
+    with pytest.raises(CatalogApprovalError, match="Additional properties"):
         _verify(record, {})
 
 
@@ -157,14 +160,14 @@ def test_malformed_field_types_fail_closed() -> None:
     unhashable["approvals"] = [
         sign_approval(unhashable, {"principal_id": "alice", "issuer": "idp", "key_id": "k1", "role": {"nested": "obj"}, "approved_at": 100, "expires_at": 200}, first)
     ]
-    with pytest.raises(CatalogApprovalError, match="approval.role"):
+    with pytest.raises(CatalogApprovalError, match="approvals/0/role"):
         _verify(unhashable, trusted)
     boolean_times = copy.deepcopy(record)
     boolean_times["approvals"] = [
         sign_approval(boolean_times, {"principal_id": "alice", "issuer": "idp", "key_id": "k1", "role": "security", "approved_at": False, "expires_at": True}, first)
     ]
-    with pytest.raises(CatalogApprovalError, match="must be an integer"):
-        _verify(boolean_times, trusted, now=0)
+    with pytest.raises(CatalogApprovalError, match="approvals/0/(approved_at|expires_at)"):
+        _verify(boolean_times, trusted, validity_instant=0)
 
 
 def test_signature_encoding_is_validated() -> None:
@@ -173,7 +176,7 @@ def test_signature_encoding_is_validated() -> None:
     for bad in ("not base64!!", "c2hvcnQ", "A"):
         broken = copy.deepcopy(record)
         broken["approvals"][0]["signature"] = bad
-        with pytest.raises(CatalogApprovalError, match="base64url|64 bytes"):
+        with pytest.raises(CatalogApprovalError, match="base64url|64 bytes|approvals/0/signature"):
             _verify(broken, trusted)
 
 
@@ -222,20 +225,20 @@ def test_approval_identity_must_match_the_trusted_key() -> None:
 
 
 def test_validity_interval_boundaries() -> None:
-    """approved_at is inclusive, expires_at is exclusive, and the interval must be ordered."""
+    """Against a supplied instant: approved_at inclusive, expires_at exclusive, interval ordered."""
     record, first, second = _record()
     trusted = _trusted(first, second)
-    assert _verify(record, trusted, now=100)["verified"]
-    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
-        _verify(record, trusted, now=99)
-    with pytest.raises(CatalogApprovalMismatch, match="not currently valid"):
-        _verify(record, trusted, now=200)
+    assert _verify(record, trusted, validity_instant=100)["verified"]
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        _verify(record, trusted, validity_instant=99)
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        _verify(record, trusted, validity_instant=200)
     inverted = copy.deepcopy(record)
     for approval in inverted["approvals"]:
         approval["approved_at"], approval["expires_at"] = 200, 100
     _resign(inverted, {"k1": first, "k2": second})
     with pytest.raises(CatalogApprovalError, match="validity interval is invalid"):
-        _verify(inverted, trusted, now=150)
+        _verify(inverted, trusted, validity_instant=150)
 
 
 def test_genesis_record_is_representable() -> None:
@@ -337,8 +340,8 @@ def test_schema_and_verifier_reject_the_same_records(mutate) -> None:
         _verify(mutated, _trusted(first, second))
 
 
-@pytest.mark.xfail(strict=True, reason="the verifier does not enforce the schema's minimum on timestamps; pending the schema-wiring decision in #533")
 def test_negative_approved_at_is_rejected_like_the_schema() -> None:
+    """The divergence #531 could only document: the schema sets a minimum, and now the verifier applies it."""
     record, first, second = _record()
     negative = copy.deepcopy(record)
     negative["approvals"][0]["approved_at"] = -1
@@ -354,7 +357,7 @@ def test_policy_distinctness_flags_must_be_booleans() -> None:
     record, first, second = _record()
     mangled = copy.deepcopy(record)
     mangled["approval_policy"]["distinct_roles"] = "yes"
-    with pytest.raises(CatalogApprovalError, match="distinctness flags"):
+    with pytest.raises(CatalogApprovalError, match="approval_policy/distinct_roles"):
         _verify(mangled, _trusted(first, second))
 
 
@@ -363,19 +366,19 @@ def test_unknown_profile_and_malformed_members_fail_closed() -> None:
     trusted = _trusted(first, second)
     wrong_profile = copy.deepcopy(record)
     wrong_profile["profile"] = "tag:example.com,2026:something-else"
-    with pytest.raises(CatalogApprovalError, match="profile"):
+    with pytest.raises(CatalogApprovalError, match="schema violation at profile"):
         _verify(wrong_profile, trusted)
     wrong_shape = copy.deepcopy(record)
     wrong_shape["change_set_digest"] = "not-a-digest"
-    with pytest.raises(CatalogApprovalError, match="must be a sha256 digest"):
+    with pytest.raises(CatalogApprovalError, match="schema violation at change_set_digest"):
         _verify(wrong_shape, trusted)
     bad_digest = copy.deepcopy(record)
     bad_digest["change_set_digest"] = "sha256:" + "z" * 64
-    with pytest.raises(CatalogApprovalError, match="lowercase hexadecimal"):
+    with pytest.raises(CatalogApprovalError, match="schema violation at change_set_digest"):
         _verify(bad_digest, trusted)
     stray_field = copy.deepcopy(record)
     stray_field["approvals"][0]["note"] = "looks harmless"
-    with pytest.raises(CatalogApprovalError, match="approval has missing or unknown fields"):
+    with pytest.raises(CatalogApprovalError, match="Additional properties"):
         _verify(stray_field, trusted)
 
 
@@ -414,3 +417,67 @@ def test_a_roleless_trusted_key_cannot_claim_two_roles() -> None:
     ]
     with pytest.raises(CatalogApprovalMismatch, match="reuses a reviewer key"):
         _verify(record, {"k1": TrustedReviewer("alice", "idp", first.public_key())})
+
+
+def test_verification_refuses_when_the_schema_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Follows loader.py: no structural validation available means no verification."""
+    record, first, second = _record()
+    monkeypatch.setattr(approval_module, "CATALOG_APPROVAL_SCHEMA_PATH", pathlib.Path("no-such-schema.json"))
+    monkeypatch.setattr(approval_module, "_schema_cache", None)
+    with pytest.raises(CatalogApprovalError, match="missing from the CMCP installation"):
+        _verify(record, _trusted(first, second))
+
+
+def test_every_schema_the_runtime_loads_ships_in_the_wheel() -> None:
+    """force-include is the only thing putting these next to the code; nothing else notices if it goes."""
+    pyproject = tomllib.loads((pathlib.Path(__file__).parents[2] / "pyproject.toml").read_text())
+    force_include = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    for schema in ("catalog-entry.schema.json", "catalog-approval.schema.json"):
+        assert force_include.get(f"schemas/{schema}") == f"cmcp_runtime/schemas/{schema}"
+
+
+def test_a_malformed_expected_policy_hash_is_rejected() -> None:
+    """The caller's pin is not schema-validated, so the verifier still checks its shape."""
+    record, first, second = _record()
+    with pytest.raises(CatalogApprovalError, match="must be a sha256 digest"):
+        _verify(record, _trusted(first, second), expected_policy_hash="not-a-digest")
+    with pytest.raises(CatalogApprovalError, match="lowercase hexadecimal"):
+        _verify(record, _trusted(first, second), expected_policy_hash="sha256:" + "Z" * 64)
+
+
+def test_an_unreadable_schema_fails_closed(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record, first, second = _record()
+    broken = tmp_path / "catalog-approval.schema.json"
+    broken.write_text("{ not json")
+    monkeypatch.setattr(approval_module, "CATALOG_APPROVAL_SCHEMA_PATH", broken)
+    monkeypatch.setattr(approval_module, "_schema_cache", None)
+    with pytest.raises(CatalogApprovalError, match="cannot load catalog approval schema"):
+        _verify(record, _trusted(first, second))
+
+
+def test_a_record_stays_verifiable_after_its_approvals_expire() -> None:
+    """The point of #533: a provenance record an auditor cannot replay is not provenance.
+
+    The approvals below are valid for [100, 200). Under the verification clock this
+    record stopped verifying the moment that window closed.
+    """
+    record, first, second = _record()
+    trusted = _trusted(first, second)
+    kwargs: dict = {
+        "runtime_catalog_hash": record["new_catalog_hash"],
+        "expected_policy_hash": record["approval_policy"]["policy_hash"],
+        "expected_catalog_id": CATALOG_ID,
+    }
+    assert verify_catalog_change(record, trusted, **kwargs)["verified"]
+    assert verify_catalog_change(record, trusted, validity_instant=150, **kwargs)["verified"]
+    with pytest.raises(CatalogApprovalMismatch, match="not valid at the instant"):
+        verify_catalog_change(record, trusted, validity_instant=10**9, **kwargs)
+
+
+def test_revocation_is_judged_now_not_at_the_approval_instant() -> None:
+    """A key revoked today must not validate a record presented today, however old the record."""
+    record, first, second = _record()
+    trusted = _trusted(first, second)
+    assert _verify(record, trusted, validity_instant=None)["verified"]
+    with pytest.raises(CatalogApprovalMismatch, match="revoked"):
+        _verify(record, trusted, validity_instant=None, revoked_key_ids=frozenset({"k2"}))

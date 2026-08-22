@@ -26,7 +26,7 @@ _PACKAGED_ENTRY_SCHEMA_PATH = (
 _SOURCE_ENTRY_SCHEMA_PATH = (
     Path(__file__).parent.parent.parent.parent / "schemas" / "catalog-entry.schema.json"
 )
-_CATALOG_ENTRY_SCHEMA_PATH = (
+CATALOG_ENTRY_SCHEMA_PATH = (
     _PACKAGED_ENTRY_SCHEMA_PATH
     if _PACKAGED_ENTRY_SCHEMA_PATH.exists()
     else _SOURCE_ENTRY_SCHEMA_PATH
@@ -197,13 +197,13 @@ def _catalog_hash(raw_entries: list[dict[str, Any]]) -> str:
 
 
 def _load_entry_schema() -> dict[str, Any]:
-    if not _CATALOG_ENTRY_SCHEMA_PATH.is_file():
+    if not CATALOG_ENTRY_SCHEMA_PATH.is_file():
         raise ConfigError(
             "Catalog entry schema is missing from the CMCP installation; "
             "refusing to load a catalog without structural validation"
         )
     try:
-        return dict(json.loads(_CATALOG_ENTRY_SCHEMA_PATH.read_text()))
+        return dict(json.loads(CATALOG_ENTRY_SCHEMA_PATH.read_text()))
     except (OSError, json.JSONDecodeError) as exc:
         raise ConfigError(f"Cannot load catalog entry schema: {exc}") from exc
 

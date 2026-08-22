@@ -48,6 +48,32 @@ differently: floating point numbers, integers outside the exact range of an IEEE
 754 double, non-string object keys, and unpaired surrogates are rejected as
 malformed. Approval records carry none of them.
 
+The schema is the structural authority. `verify_catalog_change` loads
+`schemas/catalog-approval.schema.json` and validates the record against it before
+any other check, and refuses to verify at all when the schema is missing from the
+installation, as the catalog loader does for `catalog-entry.schema.json`. The
+checks the verifier keeps in code are the ones JSON Schema cannot express: the
+runtime hash binding, the policy pin, reviewer identity and key rules, and the
+signatures.
+
+The first record in a chain has no predecessor, and the schema cannot express
+absence for a required digest. That record sets `previous_record_hash` to the
+all-zero digest, `sha256:` followed by 64 zeros, so no predecessor is
+distinguishable from a real chain link rather than left to producer convention.
+
+`approved_at` and `expires_at` bound when the signature could have been produced.
+They are not a lifetime on the record. The verifier judges them against
+`validity_instant`, supplied by the caller, which should be a pinned checkpoint
+or transparency-receipt timestamp where the caller has one. Where none is
+supplied, each approval is judged at its own `approved_at`, so a record remains
+verifiable after its approvals expire and an auditor can replay the chain later.
+Judged against the verification clock instead, the record would be an
+authorization token with a lifetime rather than a provenance record.
+
+Revocation is a separate question and is always judged at verification time. A
+key revoked today must not validate a record presented today, however old the
+record and whatever instant its approvals are judged at.
+
 The record chain is not a freshness oracle. A verifier must obtain the expected
 previous-record checkpoint from an external pin or transparency receipt. A
 valid chain presented from an old checkpoint remains an old, valid chain rather
