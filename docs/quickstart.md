@@ -387,7 +387,16 @@ cmcp verify claim.json \
   --catalog-hash "$(python3 -c "import json; print(json.load(open('claim.json'))['gateway']['catalog']['hash'])")"
 ```
 
-On a real TEE host the `hardware_attestation` check passes and the overall result becomes `verified`.
+On a real TPM 2.0 host, pass a verifier-owned CA certificate bundle to authenticate the
+attestation-key chain:
+
+```bash
+cmcp verify claim.json --trusted-tpm-ca /etc/cmcp/trust/tpm-ca-roots.pem
+```
+
+The TPM trust bundle is necessary but not sufficient: the claim must also carry a valid
+signed quote and attestation-key evidence. This option is TPM-only; it does not configure
+AMD SEV-SNP or Intel TDX trust anchors.
 
 The `cmcp_verify` Python library is also available for programmatic checks (`from cmcp_verify import verify_trace_claim, ApprovedHashes`).
 

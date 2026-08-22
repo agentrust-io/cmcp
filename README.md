@@ -198,7 +198,7 @@ Environment variables:
 | `cmcp start` | `--config PATH` (required) | Start the gateway |
 | `cmcp validate-config` | `--config PATH` (required) | Validate `cmcp-config.yaml` without starting |
 | `cmcp validate-bundle` | `--bundle-path PATH` (required), `--expected-hash sha256:<hex>` (required) | Verify a Cedar bundle hash before deployment |
-| `cmcp verify` | `CLAIM_FILE` (required); `--policy-hash`, `--catalog-hash`, `--max-age`, `--trusted-key`, `--audit-bundle`, `--agent-manifest`, `--agent-manifest-trust-anchor` | Verify a signed TRACE Claim (signature, schema, freshness, audit chain, and pinned hashes) |
+| `cmcp verify` | `CLAIM_FILE` (required); `--policy-hash`, `--catalog-hash`, `--max-age`, `--trusted-key`, `--trusted-tpm-ca`, `--audit-bundle`, `--agent-manifest`, `--agent-manifest-trust-anchor` | Verify a signed TRACE Claim (signature, schema, freshness, audit chain, pinned hashes, and trust anchors) |
 
 ---
 

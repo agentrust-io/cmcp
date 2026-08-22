@@ -10,11 +10,13 @@ import pytest
 from click.testing import CliRunner
 from starlette.testclient import TestClient
 
+import cmcp_verify
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.cli import build_server, main
 from cmcp_runtime.config import AttestationConfig, Config
 from cmcp_runtime.policy.bundle import PolicyStore
 from cmcp_runtime.startup import RuntimeContext
+from cmcp_verify.tpm_roots import AZURE_VTPM_ROOT_2023_PEM
 
 
 @pytest.fixture
@@ -135,3 +137,58 @@ def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):
     ])
     assert result.exit_code == 1
     assert "RESULT: FAIL" in result.output
+
+
+def test_verify_threads_only_the_tpm_ca_bundle(claim_and_bundle, tmp_path, monkeypatch):
+    claim_file, _, _, _ = claim_and_bundle
+    ca_path = tmp_path / "tpm-ca.pem"
+    ca_path.write_bytes(AZURE_VTPM_ROOT_2023_PEM)
+
+    captured: dict[str, object] = {}
+    real_verify = cmcp_verify.verify_trace_claim
+
+    def capture_verify(*args, **kwargs):
+        captured.update(kwargs)
+        return real_verify(*args, **kwargs)
+
+    monkeypatch.setattr(cmcp_verify, "verify_trace_claim", capture_verify)
+
+    result = CliRunner().invoke(
+        main,
+        ["verify", str(claim_file), "--trusted-tpm-ca", str(ca_path)],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert result.output.endswith("RESULT: FAIL (partially_verified)\n")
+    assert captured["trusted_tpm_ca_pem"] == AZURE_VTPM_ROOT_2023_PEM
+    assert "trusted_ark_pem" not in captured
+    assert "trusted_intel_root_pem" not in captured
+
+
+def test_verify_rejects_invalid_tpm_ca_bundle(claim_and_bundle, tmp_path, monkeypatch):
+    claim_file, _, _, _ = claim_and_bundle
+    ca_path = tmp_path / "not-a-certificate.pem"
+    ca_path.write_text("this is not a PEM certificate")
+
+    def must_not_verify(*args, **kwargs):
+        pytest.fail("verify_trace_claim must not run with an invalid TPM CA bundle")
+
+    monkeypatch.setattr(cmcp_verify, "verify_trace_claim", must_not_verify)
+
+    result = CliRunner().invoke(
+        main,
+        ["verify", str(claim_file), "--trusted-tpm-ca", str(ca_path)],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "TPM CA bundle must contain PEM-encoded X.509 certificates" in result.output
+
+
+def test_verify_help_keeps_the_new_trust_anchor_tpm_only():
+    result = CliRunner().invoke(main, ["verify", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--trusted-tpm-ca" in result.output
+    assert "TPM 2.0 claims only" in result.output
+    assert "--trusted-amd" not in result.output
+    assert "--trusted-intel" not in result.output

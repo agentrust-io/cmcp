@@ -88,6 +88,33 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
     )
 
 
+def _load_tpm_ca_bundle(path: str | None) -> bytes | None:
+    """Load and parse-check a caller-pinned TPM CA certificate bundle."""
+    if path is None:
+        return None
+
+    from cryptography import x509
+
+    try:
+        with open(path, "rb") as bundle_file:
+            bundle = bundle_file.read()
+    except OSError as exc:
+        raise click.ClickException(f"Could not read TPM CA bundle {path!r}: {exc}") from exc
+
+    try:
+        certificates = x509.load_pem_x509_certificates(bundle)
+    except ValueError as exc:
+        raise click.ClickException(
+            "TPM CA bundle must contain PEM-encoded X.509 certificates"
+        ) from exc
+    if not certificates:
+        raise click.ClickException(
+            "TPM CA bundle must contain PEM-encoded X.509 certificates"
+        )
+
+    return bundle
+
+
 @click.group()
 @click.version_option(__version__, prog_name="cmcp")
 def main() -> None:
@@ -166,6 +193,12 @@ def client_bridge(gateway_url: str, token_env: str) -> None:
               help="Signed Agent Manifest to cross-check against the Trust Record.")
 @click.option("--agent-manifest-trust-anchor", default=None, type=click.Path(exists=True),
               help="JSON issuer public key trust anchor for --agent-manifest.")
+@click.option(
+    "--trusted-tpm-ca",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    help="TPM 2.0 claims only: verifier-pinned CA certificate bundle (PEM).",
+)
 def verify(
     claim_file: str,
     policy_hash: str | None,
@@ -175,6 +208,7 @@ def verify(
     audit_bundle: str | None,
     agent_manifest: str | None,
     agent_manifest_trust_anchor: str | None,
+    trusted_tpm_ca: str | None,
 ) -> None:
     """Verify a signed TRACE Claim (and optionally its audit bundle).
 
@@ -218,6 +252,7 @@ def verify(
         )
         raise SystemExit(1)
 
+    tpm_ca_bundle = _load_tpm_ca_bundle(trusted_tpm_ca)
     result = verify_trace_claim(
         claim,
         approved,
@@ -225,6 +260,7 @@ def verify(
         trusted_public_key_hex=trusted_key,
         agent_manifest=manifest_json,
         trusted_agent_manifest_keys=manifest_keys,
+        trusted_tpm_ca_pem=tpm_ca_bundle,
     )
 
     def _line(name: str, ok: bool, note: str = "") -> None:
