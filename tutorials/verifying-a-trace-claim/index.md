@@ -81,6 +81,23 @@ result = verify_trace_claim(
 
 ______________________________________________________________________
 
+## Verify a TPM claim from the CLI
+
+For a TPM 2.0 claim, supply the attestation-key CA certificates your verifier trusts:
+
+```
+cmcp verify claim.json \
+  --policy-hash sha256:abc123... \
+  --catalog-hash sha256:def456... \
+  --trusted-tpm-ca /etc/cmcp/trust/tpm-ca-roots.pem
+```
+
+The PEM file may contain one or more verifier-approved CA certificates. Keep it in a verifier-controlled trust store; do not obtain the trust bundle from the claim or the runtime that produced the claim. A valid CA bundle is one input to TPM verification, not a substitute for the signed quote and attestation-key evidence carried by the claim.
+
+`--trusted-tpm-ca` is deliberately TPM-only. It does not configure AMD SEV-SNP or Intel TDX trust anchors, and it does not change how claims from those platforms are evaluated.
+
+______________________________________________________________________
+
 ## Read the VerificationResult
 
 `VerificationResult` has these fields:
