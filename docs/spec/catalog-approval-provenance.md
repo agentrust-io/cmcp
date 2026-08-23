@@ -74,6 +74,13 @@ Revocation is a separate question and is always judged at verification time. A
 key revoked today must not validate a record presented today, however old the
 record and whatever instant its approvals are judged at.
 
+Because a record replays indefinitely, revocation is the only thing that stops a
+historical approval from counting. An operator's revocation list is therefore
+load-bearing rather than a backstop: a key that should no longer count towards a
+threshold stops counting when it is revoked, and not before. Nothing else expires
+it, and membership of the trusted set plus revocation is the whole of the
+key-state check.
+
 The record chain is not a freshness oracle. A verifier must obtain the expected
 previous-record checkpoint from an external pin or transparency receipt. A
 valid chain presented from an old checkpoint remains an old, valid chain rather
