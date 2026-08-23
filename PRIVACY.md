@@ -1,6 +1,6 @@
 # Privacy
 
-cMCP is a self-hosted gateway that you deploy and operate. agentrust-io and OPAQUE run no service on your behalf and receive no data from your deployment: cMCP sends no telemetry, analytics, or usage data to us.
+cMCP is a self-hosted gateway that you deploy and operate. The cMCP project runs no service on your behalf and receives no data from your deployment: cMCP sends no telemetry, analytics, or usage data to the project.
 
 What cMCP processes: as an MCP gateway, cMCP handles the MCP requests and responses that pass through it in order to enforce policy and produce attestation. This traffic is processed inside the trusted execution environment (TEE) you run and is governed by your own configuration and your privacy commitments to your users. cMCP is designed so that a privileged operator cannot silently exfiltrate this data.
 

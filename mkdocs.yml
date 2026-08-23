@@ -198,6 +198,7 @@ nav:
       - Hardware Validation: testing/hardware-validation.md
   - Project:
       - Limitations: limitations.md
+      - Sponsors: sponsors.md
       - Changelog: https://github.com/agentrust-io/cmcp/blob/main/CHANGELOG.md
       - Contributing: https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md
       - Governance: https://github.com/agentrust-io/cmcp/blob/main/GOVERNANCE.md
