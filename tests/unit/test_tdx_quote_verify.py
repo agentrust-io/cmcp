@@ -13,6 +13,7 @@ and let both pass CI while every genuine quote was rejected.
 Set ``CMCP_TDX_FIXTURE_DIR`` to a directory holding a real ``tdx_quote.bin`` to run
 the full-chain hardware tests at the bottom against the pinned Intel SGX Root CA.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -43,7 +44,7 @@ def _name(cn: str) -> x509.Name:
     return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
-def _cert(subject: str, issuer: str, sub_pub, iss_priv) -> x509.Certificate:
+def _cert(subject: str, issuer: str, sub_pub, iss_priv, *, is_ca: bool = False) -> x509.Certificate:
     now = datetime.now(UTC)
     return (
         x509.CertificateBuilder()
@@ -53,6 +54,7 @@ def _cert(subject: str, issuer: str, sub_pub, iss_priv) -> x509.Certificate:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=is_ca, path_length=None), critical=True)
         .sign(iss_priv, hashes.SHA256())
     )
 
@@ -71,8 +73,8 @@ def _pck_chain():
     root_k = ec.generate_private_key(ec.SECP256R1())
     inter_k = ec.generate_private_key(ec.SECP256R1())
     leaf_k = ec.generate_private_key(ec.SECP256R1())
-    root = _cert("Intel Root", "Intel Root", root_k.public_key(), root_k)  # self-signed
-    inter = _cert("Intel PCK Intermediate", "Intel Root", inter_k.public_key(), root_k)
+    root = _cert("Intel Root", "Intel Root", root_k.public_key(), root_k, is_ca=True)  # self-signed
+    inter = _cert("Intel PCK Intermediate", "Intel Root", inter_k.public_key(), root_k, is_ca=True)
     leaf = _cert("Intel PCK Leaf", "Intel PCK Intermediate", leaf_k.public_key(), inter_k)
     chain_pem = leaf.public_bytes(Encoding.PEM) + inter.public_bytes(Encoding.PEM)
     return chain_pem, root.public_bytes(Encoding.PEM), leaf_k, root_k
@@ -86,14 +88,14 @@ def _build_quote(*, report_data: bytes = _RD, qe_auth: bytes = b"") -> tuple[byt
     header = bytearray(_QUOTE_HEADER_LEN)
     header[2:4] = (2).to_bytes(2, "little")  # att_key_type = ECDSA-P256
     body = bytearray(_TD_REPORT_BODY_LEN)
-    body[_TD_BODY_REPORT_DATA_OFF:_TD_BODY_REPORT_DATA_OFF + 64] = report_data
+    body[_TD_BODY_REPORT_DATA_OFF : _TD_BODY_REPORT_DATA_OFF + 64] = report_data
     signed_region = bytes(header) + bytes(body)
     quote_sig = _raw_sig(att_k, signed_region)
 
     chain_pem, root_pem, leaf_k, _root_k = _pck_chain()
     qe_report = bytearray(384)
     bind = hashlib.sha256(att_pub_raw + qe_auth).digest()
-    qe_report[_QE_REPORT_DATA_OFF:_QE_REPORT_DATA_OFF + 32] = bind
+    qe_report[_QE_REPORT_DATA_OFF : _QE_REPORT_DATA_OFF + 32] = bind
     qe_report_sig = _raw_sig(leaf_k, bytes(qe_report))
 
     # Intel DCAP v4 nests the QE material: the bytes after the attestation key are
@@ -104,13 +106,13 @@ def _build_quote(*, report_data: bytes = _RD, qe_auth: bytes = b"") -> tuple[byt
     cert_data += bytes(qe_report)
     cert_data += qe_report_sig
     cert_data += len(qe_auth).to_bytes(2, "little") + qe_auth
-    cert_data += (5).to_bytes(2, "little")        # cert_data_type (PCK chain)
+    cert_data += (5).to_bytes(2, "little")  # cert_data_type (PCK chain)
     cert_data += len(chain_pem).to_bytes(4, "little") + chain_pem
 
     sig = bytearray()
     sig += quote_sig
     sig += att_pub_raw
-    sig += (6).to_bytes(2, "little")              # cert_data_type (QE report)
+    sig += (6).to_bytes(2, "little")  # cert_data_type (QE report)
     sig += len(cert_data).to_bytes(4, "little") + bytes(cert_data)
 
     quote = signed_region + len(sig).to_bytes(4, "little") + bytes(sig)
@@ -160,7 +162,7 @@ def test_parse_rejects_flat_signature_layout() -> None:
     quote, _ = _build_quote()
     off = _QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN + 4 + 128
     flat = bytearray(quote)
-    flat[off:off + 2] = (5).to_bytes(2, "little")  # PCK chain where the QE report belongs
+    flat[off : off + 2] = (5).to_bytes(2, "little")  # PCK chain where the QE report belongs
     with pytest.raises(ValueError, match="certification data type"):
         parse_td_quote(bytes(flat))
 
@@ -169,11 +171,11 @@ def test_parse_rejects_flat_signature_layout() -> None:
 # Every one of these lengths is attacker-controlled: Python slicing clamps an
 # overstated length instead of raising, so the parser must reject the mismatch
 # rather than verify a silently shorter buffer than the producer declared.
-_SIG_LEN_OFF = _QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN      # uint32 signature-data size
+_SIG_LEN_OFF = _QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN  # uint32 signature-data size
 _SIG_OFF = _SIG_LEN_OFF + 4
-_QE_CERT_SIZE_OFF = _SIG_OFF + 130                          # uint32, after type-6 header
+_QE_CERT_SIZE_OFF = _SIG_OFF + 130  # uint32, after type-6 header
 _CERT_DATA_OFF = _SIG_OFF + 134
-_QE_AUTH_LEN_OFF = _CERT_DATA_OFF + 384 + 64                # uint16 QE auth data size
+_QE_AUTH_LEN_OFF = _CERT_DATA_OFF + 384 + 64  # uint16 QE auth data size
 
 
 def test_parse_matches_shared_agent_manifest_parser() -> None:
@@ -185,7 +187,7 @@ def test_parse_matches_shared_agent_manifest_parser() -> None:
     shared = parse_tdx_quote_signature(quote)
 
     assert pq.signed_region == shared.signed_body
-    assert pq.signed_region == quote[:_QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN]
+    assert pq.signed_region == quote[: _QUOTE_HEADER_LEN + _TD_REPORT_BODY_LEN]
     assert pq.quote_sig == shared.quote_signature
     assert pq.att_pubkey_raw == shared.attestation_key
     assert pq.qe_report == shared.qe_report
@@ -201,8 +203,8 @@ def test_parse_rejects_oversized_declared_signature_size() -> None:
     """An overstated signature-data length must fail closed, not be clamped."""
     quote, _root = _build_quote()
     tampered = bytearray(quote)
-    declared = int.from_bytes(tampered[_SIG_LEN_OFF:_SIG_LEN_OFF + 4], "little")
-    tampered[_SIG_LEN_OFF:_SIG_LEN_OFF + 4] = (declared + 64).to_bytes(4, "little")
+    declared = int.from_bytes(tampered[_SIG_LEN_OFF : _SIG_LEN_OFF + 4], "little")
+    tampered[_SIG_LEN_OFF : _SIG_LEN_OFF + 4] = (declared + 64).to_bytes(4, "little")
     with pytest.raises(ValueError, match="signature data"):
         parse_td_quote(bytes(tampered))
 
@@ -211,8 +213,8 @@ def test_parse_rejects_oversized_qe_certification_size() -> None:
     """An overstated type-6 QE certification-data length must fail closed."""
     quote, _root = _build_quote()
     tampered = bytearray(quote)
-    declared = int.from_bytes(tampered[_QE_CERT_SIZE_OFF:_QE_CERT_SIZE_OFF + 4], "little")
-    tampered[_QE_CERT_SIZE_OFF:_QE_CERT_SIZE_OFF + 4] = (declared + 64).to_bytes(4, "little")
+    declared = int.from_bytes(tampered[_QE_CERT_SIZE_OFF : _QE_CERT_SIZE_OFF + 4], "little")
+    tampered[_QE_CERT_SIZE_OFF : _QE_CERT_SIZE_OFF + 4] = (declared + 64).to_bytes(4, "little")
     with pytest.raises(ValueError, match="QE certification data"):
         parse_td_quote(bytes(tampered))
 
@@ -221,7 +223,7 @@ def test_parse_rejects_oversized_qe_auth_size() -> None:
     """A QE auth length running past the certification data must fail closed."""
     quote, _root = _build_quote()
     tampered = bytearray(quote)
-    tampered[_QE_AUTH_LEN_OFF:_QE_AUTH_LEN_OFF + 2] = (0xFFFF).to_bytes(2, "little")
+    tampered[_QE_AUTH_LEN_OFF : _QE_AUTH_LEN_OFF + 2] = (0xFFFF).to_bytes(2, "little")
     with pytest.raises(ValueError, match="QE auth data"):
         parse_td_quote(bytes(tampered))
 

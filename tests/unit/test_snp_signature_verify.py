@@ -8,6 +8,7 @@ well-formed chain+signature and fails closed on tampering or a wrong root.
 A test against a genuine Azure SEV-SNP report and the real AMD KDS VCEK chain is
 marked skipped below and unblocks when that hardware fixture lands.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -38,7 +39,7 @@ def _name(cn: str) -> x509.Name:
     return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
-def _cert(subject, issuer_name, subject_pub, issuer_key):
+def _cert(subject, issuer_name, subject_pub, issuer_key, *, is_ca: bool = False):
     now = datetime.now(UTC)
     return (
         x509.CertificateBuilder()
@@ -48,6 +49,7 @@ def _cert(subject, issuer_name, subject_pub, issuer_key):
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=is_ca, path_length=None), critical=True)
         .sign(issuer_key, hashes.SHA384())
     )
 
@@ -57,8 +59,10 @@ def _synthetic_chain():
     ark_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     ask_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     vcek_key = ec.generate_private_key(ec.SECP384R1())
-    ark = _cert(_name("ARK"), _name("ARK"), ark_key.public_key(), ark_key)  # self-signed
-    ask = _cert(_name("ASK"), _name("ARK"), ask_key.public_key(), ark_key)
+    ark = _cert(
+        _name("ARK"), _name("ARK"), ark_key.public_key(), ark_key, is_ca=True
+    )  # self-signed
+    ask = _cert(_name("ASK"), _name("ARK"), ask_key.public_key(), ark_key, is_ca=True)
     vcek = _cert(_name("VCEK"), _name("ASK"), vcek_key.public_key(), ask_key)
     chain_pem = (
         vcek.public_bytes(Encoding.PEM)
@@ -85,7 +89,9 @@ def _signed_report(vcek_key, *, measurement_bytes: bytes, report_data: bytes) ->
 
 def test_valid_chain_and_signature_verifies() -> None:
     chain_pem, ark_pem, vcek_key = _synthetic_chain()
-    report, measurement = _signed_report(vcek_key, measurement_bytes=b"\x11" * 48, report_data=b"\x00" * 64)
+    report, measurement = _signed_report(
+        vcek_key, measurement_bytes=b"\x11" * 48, report_data=b"\x00" * 64
+    )
     res = verify_sev_snp_measurement(
         measurement=measurement,
         raw_evidence=report,
@@ -99,7 +105,9 @@ def test_valid_chain_and_signature_verifies() -> None:
 
 def test_tampered_report_fails_closed() -> None:
     chain_pem, ark_pem, vcek_key = _synthetic_chain()
-    report, measurement = _signed_report(vcek_key, measurement_bytes=b"\x22" * 48, report_data=b"\x00" * 64)
+    report, measurement = _signed_report(
+        vcek_key, measurement_bytes=b"\x22" * 48, report_data=b"\x00" * 64
+    )
     tampered = bytearray(report)
     tampered[0x10] ^= 0xFF  # flip a byte inside the signed region
     res = verify_sev_snp_measurement(
@@ -116,7 +124,9 @@ def test_tampered_report_fails_closed() -> None:
 def test_wrong_pinned_ark_fails_closed() -> None:
     chain_pem, _good_ark, vcek_key = _synthetic_chain()
     _other_chain, other_ark_pem, _ = _synthetic_chain()  # a different, untrusted ARK
-    report, measurement = _signed_report(vcek_key, measurement_bytes=b"\x33" * 48, report_data=b"\x00" * 64)
+    report, measurement = _signed_report(
+        vcek_key, measurement_bytes=b"\x33" * 48, report_data=b"\x00" * 64
+    )
     res = verify_sev_snp_measurement(
         measurement=measurement,
         raw_evidence=report,
@@ -131,7 +141,9 @@ def test_missing_chain_stays_unverified_not_passed() -> None:
     # Backward compatible: with no chain supplied, the cert chain is reported as
     # unverified rather than silently trusted.
     _chain, _ark, vcek_key = _synthetic_chain()
-    report, measurement = _signed_report(vcek_key, measurement_bytes=b"\x44" * 48, report_data=b"\x00" * 64)
+    report, measurement = _signed_report(
+        vcek_key, measurement_bytes=b"\x44" * 48, report_data=b"\x00" * 64
+    )
     res = verify_sev_snp_measurement(measurement=measurement, raw_evidence=report)
     assert "vcek_cert_chain" in res.unverified_fields
 
