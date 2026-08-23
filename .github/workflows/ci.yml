@@ -83,7 +83,8 @@ jobs:
         run: mypy src/cmcp_runtime/
 
       - name: Test
-        run: pytest tests/unit/ -v --tb=short --cov=src --cov-report=xml
+        # Soak tests are intentionally excluded from per-PR CI.
+        run: pytest tests/unit/ tests/conformance/ tests/integration/ -v --tb=short --cov=src --cov-report=xml
 
       - name: Upload coverage report
         uses: codecov/codecov-action@v7

@@ -27,6 +27,7 @@ def _free_port() -> int:
 @pytest.mark.asyncio
 async def test_official_client_call_reaches_real_gateway_audit_chain():
     proxy, _, chain = _make_proxy()
+    proxy._catalog.entries["test.tool"].approved_definition.input_schema = {"type": "object"}
     app = MCPServer(proxy=proxy, bearer_token="bridge-test-token").app
     port = _free_port()
     server = uvicorn.Server(
@@ -60,7 +61,7 @@ async def test_official_client_call_reaches_real_gateway_audit_chain():
             tools = await session.list_tools()
             assert any(tool.name == "test.tool" for tool in tools.tools)
             result = await session.call_tool("test.tool", {})
-            assert result.isError is not True
+            assert result.model_dump(by_alias=True)["isError"] is not True
     finally:
         server.should_exit = True
         thread.join(timeout=10)
