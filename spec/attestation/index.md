@@ -287,7 +287,7 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || random_salt (32 bytes)
 ```
 
 - `JWK_thumbprint(tee_public_key)`: the RFC 7638 JWK Thumbprint of the Ed25519 public key: SHA-256 over the canonical JSON of the required OKP members in lexicographic order (`crv`, `kty`, `x`). This is re-derivable by any verifier from `cnf.jwk.x`.
-- `random_salt`: 32 random bytes generated once per enclave startup, so two enclave instances produce distinct nonces even with the same key (e.g. blue-green deploy).
+- `random_salt`: 32 random bytes generated once per enclave startup, so two enclave instances produce distinct nonces even with the same key (e.g. blue-green deploy). On SEV-SNP, TDX and Azure CVM this half carries the gateway measurement instead; see §3.3.2.
 - The 64-byte value is passed as the `report_data` / `user_data` / `reportdata` / `qualifying_data` field when requesting the hardware attestation report. The field name varies by provider; the semantic is the same: a caller-supplied value included in the signed measurement.
 
 Verifier check (key binding, CRYPTO-001):
@@ -299,6 +299,44 @@ assert actual_nonce[:32] == expected_fingerprint
 ```
 
 A TRACE Claim whose `cnf.jwk` public key was substituted after attestation fails this check, because the embedded `report_data` (hardware-signed) will not match the re-derived thumbprint. A claim produced by a different enclave instance carries a different key (and salt), so it fails too.
+
+#### 3.3.2 Measurement binding (SEV-SNP, TDX, Azure CVM)
+
+On platforms whose hardware report carries only a **launch** measurement, the 32-byte salt is replaced by the gateway measurement digest:
+
+```
+nonce = JWK_thumbprint(tee_public_key) (32 bytes) || gateway_measurement.digest (32 bytes)
+```
+
+`gateway_measurement.digest` is the SHA-256 over the installed code, the policy bundle and the effective configuration defined for the TPM tier (see `docs/spec/tpm-security-model.md`). It is already a raw 32-byte SHA-256, so it occupies the second half unreshaped and a verifier compares it against a digest it recomputes, not against a hash of one.
+
+**Why the launch measurement is not sufficient.** `SNP_REPORT.measurement` and TDX's `MRTD` are fixed at boot. They do not move when the Cedar bundle reloads mid-session, so without this binding the policy actually in force is committed to nothing. The TPM tier solves the same problem with a `TPM_NT_EXTEND` NV index; these platforms have no such index.
+
+**Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3, because its measurement is committed by the NV index instead, which keeps an append-only history that `report_data` does not.
+
+**Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config.
+
+**Refreshed on every policy-bundle reload.** `report_data` holds one value and no history, so a report produced before a bundle reload still looks well-formed on its own, and nothing in it says whether it is current. The gateway re-attests on **every** reload, including a reload that finds the bundle unchanged: the same digest signed now and that digest signed an hour ago are different assertions, and only the latest report reaches a verifier. The hook is `PolicyEvaluator._maybe_reload` calling `refresh_measurement_binding`, fired whenever `PolicyStore.reload_if_stale` reports that the bundle was re-read.
+
+The cost is bounded by `policy_reload_interval_seconds`, not by request rate, because `reload_if_stale` stamps its clock before the attempt. It is zero in the default configuration, where reloading is off.
+
+A gateway that fails to refresh is caught verifier-side, not runtime-side:
+
+```
+expected = gateway_measurement_digest_supplied_by_the_verifier
+actual_nonce = base64url_decode(trace.runtime.nonce)
+assert actual_nonce[32:64] == expected
+```
+
+The digest is compared directly, not re-hashed: it is already a raw 32-byte SHA-256. This is the one way the check differs from the AUDIT-006 one below it, which commits `SHA-256(chain_root)`.
+
+`cmcp_verify.verify_trace_claim` implements this as step 7c, enabled by passing `expected_gateway_measurement` (raw 32 bytes, hex, or `sha256:`-prefixed hex). It is opt-in because the expected value has to be an out-of-band trust input, like `ApprovedHashes` or `trusted_ark_pem`: a check that read the expected digest out of the claim would be asking the claim to vouch for itself. A mismatch is `MEASUREMENT_NOT_BOUND` and is fatal in software-only mode too, since the digest is computed the same way there and a mismatch is a real disagreement about what is running.
+
+A re-attestation that fails is logged and the previous report is kept rather than the gateway refusing traffic; the stale binding fails the check above, so the weakness is detectable rather than silent.
+
+**Which report carries it.** This binding is on the gateway's **startup** report. A TRACE Claim for a session carries the per-session report instead when one was produced (AUDIT-006), and that report commits the audit-chain root in the same bytes. The startup report reaches a claim only where no per-session report was produced. Committing both gateway identity and session activity in one 64-byte field is not possible as the layout stands, and #552 scopes the audit-chain-root binding out.
+
+**Not the per-session report.** AUDIT-006 (§3.3.1 and below) puts `SHA-256(chain_root)` in `report_data[32:64]` of the *per-session* report. This section governs the *startup* report. The two are different reports and do not contend for the field.
 
 **Session binding** is carried separately, by `gateway.session_id` inside the Ed25519-signed claim body: not by the nonce. The hardware report is generated once per enclave instance at startup, before any session exists, so it cannot bind a specific `session_id`. Because the signature covers `session_id`, a claim cannot be presented under a different session without breaking verification. See §3.3.1.
 
