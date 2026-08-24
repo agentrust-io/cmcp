@@ -476,3 +476,20 @@ def test_an_unknown_profile_is_a_config_error(tmp_path, monkeypatch):
     monkeypatch.setenv("CMCP_DEV_MODE", "1")
     with pytest.raises(SystemExit):
         run_startup(str(config_path))
+
+
+def test_valid_providers_matches_the_map_it_says_it_mirrors():
+    """The comment above ``_VALID_PROVIDERS`` says it mirrors the keys of
+    ``_PROVIDER_MAP``. It did not: ``azure-cvm-sev-snp`` was in the map and not in
+    the set, so ``_validate_attestation_report`` raised
+    ``ATTESTATION_PROVIDER_INVALID`` on every Azure confidential-VM report and the
+    gateway exited. Found by @zohebk8s while wiring #552's report_data binding,
+    which applies to that provider and could not be reached through this path.
+
+    Comparing the two sets rather than asserting one membership, so the next
+    provider added to either side cannot drift the same way.
+    """
+    from cmcp_runtime.audit.trace_claim import _PROVIDER_MAP
+    from cmcp_runtime.startup import _VALID_PROVIDERS
+
+    assert _VALID_PROVIDERS == frozenset(_PROVIDER_MAP)

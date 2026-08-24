@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 # audit/trace_claim.py - kept as a local constant to avoid a circular import.
 _VALID_PROVIDERS: frozenset[str] = frozenset({
     "sev-snp",
+    "azure-cvm-sev-snp",
     "tdx",
     "opaque",
     "tpm",
