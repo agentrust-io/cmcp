@@ -54,6 +54,7 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
     from cmcp_runtime.mcp.server import MCPServer
     from cmcp_runtime.policy.evaluator import PolicyEvaluator
     from cmcp_runtime.session.manager import SessionManager
+    from cmcp_runtime.tee.report_binding import refresh_measurement_binding
 
     # Resolve provider string to canonical platform name for Cedar context.
     # Falls back to the raw provider string if not in the map (e.g. future providers).
@@ -65,7 +66,16 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
     # chain is backed by the durable SQLite store and TEE-anchored at creation.
     session_manager = SessionManager(ctx)
     session, audit_chain = session_manager.create_session()
-    policy_evaluator = PolicyEvaluator(bundle=ctx.policy_bundle, config=ctx.config)
+    # #552: a policy hot-reload changes what the gateway is running, and on SEV-SNP,
+    # TDX and Azure CVM that fact lives only in the current attestation report's
+    # report_data. Wire the reload to a re-attestation so the committed measurement
+    # is the live one; without this the binding is correct at startup and stale from
+    # the first reload onwards. A no-op on every other provider.
+    policy_evaluator = PolicyEvaluator(
+        bundle=ctx.policy_bundle,
+        config=ctx.config,
+        on_reload=lambda: refresh_measurement_binding(ctx),
+    )
     proxy = CMCPProxy(
         catalog=ctx.catalog,
         policy_evaluator=policy_evaluator,

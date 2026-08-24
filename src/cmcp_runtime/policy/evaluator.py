@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -50,8 +51,20 @@ class PolicyEvaluator:
     so the measured hash covers exactly the bytes that will be evaluated.
     """
 
-    def __init__(self, bundle: PolicyBundle | PolicyStore, config: Config) -> None:
+    def __init__(
+        self,
+        bundle: PolicyBundle | PolicyStore,
+        config: Config,
+        # Return value is ignored, so the hook is free to report what it did.
+        on_reload: Callable[[], object] | None = None,
+    ) -> None:
         self._mode = config.attestation.enforcement_mode
+        # #552: called after every policy-bundle reload so the platform can re-commit
+        # what is now in force. On SEV-SNP, TDX and Azure CVM the gateway measurement
+        # lives in the attestation report's report_data, which has no append-only
+        # history, so the report is only ever as current as the last time it was
+        # produced. None where nothing needs telling.
+        self._on_reload = on_reload
         # #479: same effective vocabulary SessionManager derives from this same
         # Config, so a session's max_sensitivity and this sensitivity_level_int
         # can never disagree about what a custom label ranks as.
@@ -87,7 +100,7 @@ class PolicyEvaluator:
 
     def _maybe_reload(self) -> None:
         """Check for a stale bundle and rebuild the CedarBackend if the hash changed."""
-        self._store.reload_if_stale()
+        reloaded = self._store.reload_if_stale()
         bundle = self._store.bundle
         if bundle.bundle_hash != self._current_hash:
             combined_policy = "\n\n".join(
@@ -97,6 +110,47 @@ class PolicyEvaluator:
             self._annotations = parse_policy_annotations(combined_policy)
             self._current_hash = bundle.bundle_hash
             logger.info("PolicyEvaluator backend refreshed: new_hash=%s", self._current_hash)
+        # #552 asks for a refresh on **every** policy-bundle reload, not only on the
+        # ones that moved the hash, so this sits outside the branch above.
+        # ``reload_if_stale`` returns True exactly when the bundle was re-read from
+        # disk, which is what "a reload" means here: False when reloading is off,
+        # when the interval has not elapsed, and when the read failed.
+        if reloaded:
+            self._notify_reload()
+
+    def _notify_reload(self) -> None:
+        """Re-commit what is running after a policy-bundle reload (#552).
+
+        Fires on every reload, including one that found the bundle unchanged. The
+        TPM tier can afford to skip those because its NV index accumulates history;
+        ``report_data`` holds one value and no history, so what a verifier gets is
+        only ever the last report the gateway produced. Re-signing on each reload is
+        what keeps that report an assertion about now rather than about whenever the
+        policy last happened to change.
+
+        This runs on the enforcement path, so the tool call that observes the reload
+        pays for the re-attestation. It is bounded by the reload interval, not by
+        request rate: ``reload_if_stale`` stamps its clock before the attempt, so the
+        cost is one TEE call per ``policy_reload_interval_seconds``, and none at all
+        in the default configuration where reloading is off.
+
+        A failing callback is logged and swallowed on purpose. The callback re-binds
+        the gateway measurement into a hardware report; if the TEE cannot produce one
+        right now, refusing traffic would trade a *detectable* weakness for an outage.
+        Stale report_data no longer matches the measurement a verifier recomputes, so
+        the claim is rejected at verification instead. This is the same trade AUDIT-006
+        makes in SessionManager.create_session for a failed per-session attestation.
+        """
+        if self._on_reload is None:
+            return
+        try:
+            self._on_reload()
+        except Exception:  # noqa: BLE001 - enforcement must not depend on the TEE
+            logger.warning(
+                "#552: post-reload attestation hook failed; report_data still commits "
+                "the previous policy bundle and verification will reject it",
+                exc_info=True,
+            )
 
     def _advice_for_deny(self, policy_ids: tuple[str, ...]) -> dict[str, str]:
         """

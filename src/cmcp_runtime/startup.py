@@ -43,6 +43,10 @@ from cmcp_runtime.tee.measurement import (
     gateway_measurement,
 )
 from cmcp_runtime.tee.nras import AppraisalResult, try_appraise
+from cmcp_runtime.tee.report_binding import (
+    binds_measurement_into_report_data,
+    measurement_bound_nonce_for,
+)
 from cmcp_runtime.tee.spiffe import SpiffeClientResult, fetch_svid
 
 logger = logging.getLogger(__name__)
@@ -140,51 +144,111 @@ def _fatal(code: str, message: str, **fields: Any) -> None:
     logger.critical("%s", entry)
 
 
-def _measure_gateway(
-    config: Config, tee_provider: TEEProvider, nonce: bytes
-) -> tuple[GatewayMeasurement | None, ExtendResult | None, bytes | None]:
-    """Measure the gateway into the TPM NV index and have the TPM certify it (#432).
+def _degrade_measurement(config: Config, exc: MeasurementUnavailable) -> None:
+    """Abort on an unmeasurable gateway, or warn and continue in dev mode.
 
-    Returns ``(measurement, extend, evidence)``. ``evidence`` is the signed
-    ``TPM2_NV_Certify`` pair, or None when the platform provisions no certified
-    attestation key to sign with: the extend still happens and is still a local
-    integrity control, but it is not remote-verifiable, so it is not presented as
-    evidence. All three are None when the platform has no TPM at all, which is not a
-    failure: SEV-SNP and TDX commit their own binding through the report's fields.
-
-    A TPM platform that cannot be measured is fatal in production and a warning in
-    dev mode, matching how ``CMCP_POLICY_HASH`` is handled. The dev-mode escape
-    matters in practice because an editable install has no ``RECORD`` metadata, so
-    the code digest is genuinely uncomputable there rather than merely inconvenient.
+    Fatal in production and a warning in dev mode, matching how ``CMCP_POLICY_HASH``
+    is handled. The dev-mode escape matters in practice because an editable install
+    has no ``RECORD`` metadata, so the code digest is genuinely uncomputable there
+    rather than merely inconvenient.
     """
-    if tee_provider.provider_name() != "tpm":
-        logger.debug(
-            "Gateway measurement skipped: provider %s does not use an NV extend index",
-            tee_provider.provider_name(),
+    if config.dev_mode:
+        logger.warning(
+            "Gateway measurement unavailable (%s): %s. Continuing because "
+            "CMCP_DEV_MODE is set; the platform will not attest what code is running.",
+            exc,
+            exc.detail or "",
         )
-        return None, None, None
+        return
+    _fatal(
+        "MEASUREMENT_UNAVAILABLE",
+        f"the gateway could not be measured: {exc}",
+        detail=exc.detail or "",
+        action="startup_aborted",
+    )
+    sys.exit(1)
 
-    def _degrade(exc: MeasurementUnavailable) -> tuple[None, None, None]:
-        if config.dev_mode:
-            logger.warning(
-                "Gateway measurement unavailable (%s): %s. Continuing because "
-                "CMCP_DEV_MODE is set; the TPM will not attest what code is running.",
-                exc,
-                exc.detail or "",
-            )
-            return None, None, None
-        _fatal(
-            "MEASUREMENT_UNAVAILABLE",
-            f"the gateway could not be measured into the TPM: {exc}",
-            detail=exc.detail or "",
-            action="startup_aborted",
+
+def _measure_gateway(
+    config: Config, tee_provider: TEEProvider
+) -> GatewayMeasurement | None:
+    """Compute the gateway measurement on platforms that commit it (#432, #552).
+
+    Two tiers commit it, by two different mechanisms. The ``tpm`` tier extends it
+    into a ``TPM_NT_EXTEND`` NV index and certifies it (#432). SEV-SNP, TDX and
+    Azure CVM have no such index, so they bind the same digest into the attestation
+    nonce and the hardware signs it as ``report_data`` (#552) -- their own report
+    fields carry only a *launch* measurement, which does not move when the policy
+    bundle reloads mid-session.
+
+    Returns None where neither applies, which is not a failure. An unmeasurable
+    gateway on a platform that does commit it is fatal in production; see
+    :func:`_degrade_measurement`.
+    """
+    provider_name = tee_provider.provider_name()
+    if provider_name != "tpm" and not binds_measurement_into_report_data(provider_name):
+        logger.debug(
+            "Gateway measurement skipped: provider %s commits no gateway measurement",
+            provider_name,
         )
-        sys.exit(1)
+        return None
 
     try:
-        measurement = gateway_measurement(config)
+        return gateway_measurement(config)
     except MeasurementUnavailable as exc:
-        return _degrade(exc)
+        _degrade_measurement(config, exc)
+        return None
+
+
+def _attestation_nonce(
+    key_fingerprint: bytes,
+    signing_key: SigningKey,
+    tee_provider: TEEProvider,
+    measurement: GatewayMeasurement | None,
+) -> bytes:
+    """Choose the 64-byte nonce the hardware will sign into ``report_data``.
+
+    Default (CRYPTO-001 + CRYPTO-002): ``jwk_thumbprint(key) || random_salt``. The
+    first 32 bytes let a verifier re-derive the fingerprint from ``cnf.jwk`` and
+    confirm it matches ``report_data[:32]``, binding the report to this keypair. The
+    salt makes two gateways sharing a keypair produce different nonces.
+
+    On SEV-SNP, TDX and Azure CVM (#552) the salt is replaced by the gateway
+    measurement digest, so the code, policy and config actually running are what the
+    hardware signs. Freshness survives the change: the signing key is generated once
+    per start, so ``report_data[:32]`` still differs between two starts of identical
+    code, policy and config.
+
+    The TPM tier keeps the salt. Its measurement is committed by the NV extend index
+    instead, which keeps the history that ``report_data`` does not.
+    """
+    if measurement is not None and binds_measurement_into_report_data(
+        tee_provider.provider_name()
+    ):
+        return measurement_bound_nonce_for(signing_key.public_key_bytes, measurement)
+    return key_fingerprint + secrets.token_bytes(32)
+
+
+def _extend_measurement(
+    config: Config,
+    tee_provider: TEEProvider,
+    measurement: GatewayMeasurement | None,
+    nonce: bytes,
+) -> tuple[ExtendResult | None, bytes | None]:
+    """Extend the measurement into the TPM NV index and have the TPM certify it (#432).
+
+    Returns ``(extend, evidence)``. ``evidence`` is the signed ``TPM2_NV_Certify``
+    pair, or None when the platform provisions no certified attestation key to sign
+    with: the extend still happens and is still a local integrity control, but it is
+    not remote-verifiable, so it is not presented as evidence. Both are None on a
+    platform with no TPM, where #552's ``report_data`` binding does this job instead.
+    """
+    if tee_provider.provider_name() != "tpm" or measurement is None:
+        return None, None
+
+    def _degrade(exc: MeasurementUnavailable) -> tuple[None, None]:
+        _degrade_measurement(config, exc)
+        return None, None
 
     try:
         from tpm2_pytss.ESAPI import ESAPI
@@ -219,7 +283,7 @@ def _measure_gateway(
         extend_result.index,
         evidence is not None,
     )
-    return measurement, extend_result, evidence
+    return extend_result, evidence
 
 
 def _extend_and_certify(
@@ -311,21 +375,25 @@ def run_startup(config_path: str) -> RuntimeContext:
     # (SHA-256 of the sorted JSON OKP key members) so verifiers can re-derive the fingerprint
     # from cnf.jwk and confirm it matches report_data[:32] -- binding the attestation report
     # to this specific keypair.
-    # The remaining 32 bytes are a random salt so two gateways with different random bytes
-    # produce different nonces even if they share the same keypair (blue-green deploy).
+    # What fills the remaining 32 bytes depends on the platform: a random salt, or the
+    # gateway measurement on the providers that have no NV index to hold it (#552).
+    # See _attestation_nonce.
     _x_b64 = base64.urlsafe_b64encode(signing_key.public_key_bytes).rstrip(b"=").decode()
     key_fingerprint = _jwk_thumbprint_sha256(_x_b64)
-    random_salt = secrets.token_bytes(32)
-    nonce = key_fingerprint + random_salt
 
-    # Step 3b (#432): measure the gateway into the NV extend index BEFORE it serves
-    # traffic, and have the TPM certify the value either side of the extend so the
-    # measurement is signed evidence rather than a self-reported number. PCRs 0-7
-    # cover firmware and the bootloader only, so without this the TPM enforced
-    # nothing about the gateway itself and a swapped policy bundle measured
-    # identically.
-    measurement, extend_result, measurement_evidence = _measure_gateway(
-        config, tee_provider, nonce
+    # Step 3b (#432, #552): measure the gateway BEFORE it serves traffic. The
+    # measurement is computed first because on SEV-SNP, TDX and Azure CVM it goes
+    # into the nonce itself, so it has to exist before the nonce does.
+    measurement = _measure_gateway(config, tee_provider)
+    nonce = _attestation_nonce(key_fingerprint, signing_key, tee_provider, measurement)
+
+    # On the TPM tier the measurement is committed by an NV extend index instead,
+    # certified either side of the extend so it is signed evidence rather than a
+    # self-reported number. PCRs 0-7 cover firmware and the bootloader only, so
+    # without this the TPM enforced nothing about the gateway itself and a swapped
+    # policy bundle measured identically.
+    extend_result, measurement_evidence = _extend_measurement(
+        config, tee_provider, measurement, nonce
     )
 
     try:

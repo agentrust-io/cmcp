@@ -132,6 +132,47 @@ def make_audit_bound_nonce(tee_public_key: bytes, chain_root_hex: str) -> bytes:
     return jwk_thumbprint(tee_public_key) + audit_root_commitment(chain_root_hex)
 
 
+def make_measurement_bound_nonce(
+    tee_public_key: bytes, measurement_digest: bytes
+) -> bytes:
+    """Compute the startup attestation nonce that commits the gateway measurement.
+
+    Layout (64 bytes, #552), the same shape :func:`make_audit_bound_nonce` uses:
+
+        jwk_thumbprint(pubkey) (32) || measurement_digest (32)
+
+    The first 32 bytes keep the existing key binding intact (report_data[:32] is
+    the RFC 7638 thumbprint, re-derivable from cnf.jwk.x). The second 32 bytes are
+    :attr:`~cmcp_runtime.tee.measurement.GatewayMeasurement.digest` verbatim: it is
+    already a raw 32-byte SHA-256 over code, policy and config, so it drops into
+    the second half unreshaped and a verifier compares it against a digest it
+    recomputes rather than against a hash of one.
+
+    **Why this exists.** SEV-SNP and TDX commit a *launch* measurement, which is
+    fixed at boot. It does not move when the Cedar bundle reloads mid-session via
+    ``PolicyEvaluator._maybe_reload()``, so on those platforms the policy actually
+    in force was committed to nothing. The TPM tier already solves this with an
+    ``TPM_NT_EXTEND`` NV index (#432); these platforms have no such index, so the
+    same validated digest goes into ``report_data`` instead.
+
+    **Freshness still holds.** This replaces the random salt of :func:`make_nonce`
+    with a deterministic value, but the first half is the thumbprint of a signing
+    key generated once per gateway start, so two starts of identical code, policy
+    and config still produce different nonces.
+
+    **No append-only history.** Unlike the NV index, ``report_data`` carries only
+    the current value, so a report built before a policy reload stays valid-looking
+    on its face. Re-attesting on every bundle reload is what makes the committed
+    measurement the live one; a verifier that recomputes and compares is what
+    catches a gateway that failed to.
+    """
+    if len(measurement_digest) != 32:
+        raise ValueError(
+            f"measurement_digest must be 32 bytes, got {len(measurement_digest)}"
+        )
+    return jwk_thumbprint(tee_public_key) + measurement_digest
+
+
 class SoftwareOnlyProvider(TEEProvider):
     """
     Software-only attestation stub for CI and local development.

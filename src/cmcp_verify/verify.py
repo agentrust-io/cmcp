@@ -149,6 +149,7 @@ class VerificationError(StrEnum):
     ATTESTATION_STALE = "ATTESTATION_STALE"
     CHAIN_BROKEN = "CHAIN_BROKEN"
     CHAIN_ROOT_NOT_BOUND = "CHAIN_ROOT_NOT_BOUND"
+    MEASUREMENT_NOT_BOUND = "MEASUREMENT_NOT_BOUND"
     CLAIM_MALFORMED = "CLAIM_MALFORMED"
     HARDWARE_ATTESTATION_FAILED = "HARDWARE_ATTESTATION_FAILED"
     AGENT_MANIFEST_MISMATCH = "AGENT_MANIFEST_MISMATCH"
@@ -416,6 +417,105 @@ def _check_audit_chain_binding(
     return True, None
 
 
+def _check_measurement_binding(
+    claim: dict[str, Any],
+    expected_measurement_digest: bytes,
+    *,
+    is_sw_only: bool,
+) -> tuple[bool | None, str | None]:
+    """#552: verify report_data[32:64] commits the gateway measurement.
+
+    On SEV-SNP, TDX and Azure CVM the gateway's startup attestation nonce is
+
+        jwk_thumbprint(key) (32) || gateway_measurement.digest (32)
+
+    so the hardware signs the digest over the installed code, the policy bundle and
+    the effective configuration. The digest is a raw 32-byte SHA-256 and goes in
+    unreshaped, so this compares it directly rather than re-hashing it, which is the
+    one way this check differs from :func:`_check_audit_chain_binding`.
+
+    ``expected_measurement_digest`` must come from the verifier, not from the claim.
+    That is the whole point: the claim is what is being appraised. It is the same
+    out-of-band trust input as ``trusted_ark_pem`` or ``ApprovedHashes``, obtained
+    from the build that was approved to run.
+
+    **This is the freshness check for a field with no history.** Unlike the TPM's
+    ``TPM_NT_EXTEND`` index, ``report_data`` holds one value and no chain, so a
+    report produced before a policy reload is internally well-formed and cannot be
+    told from a current one by inspection. The gateway re-attests on every
+    policy-bundle reload; recompute-and-compare here is what catches a gateway that
+    did not. A mismatch is FATAL: the code, policy or config now running is not the
+    one this hardware report committed.
+
+    Returns:
+        (True,  None)          -- report_data[32:64] commits the expected measurement
+        (False, reason)        -- mismatch or missing commitment; reject (fail closed)
+        (None,  warning_msg)   -- software-only / Level-0 mode; not hardware-backed
+    """
+    if len(expected_measurement_digest) != 32:
+        return False, (
+            f"expected measurement digest is {len(expected_measurement_digest)} bytes, "
+            "not 32; a caller supplied something that is not a raw SHA-256"
+        )
+
+    nonce_b64 = claim.get("trace", {}).get("runtime", {}).get("nonce", "")
+    if not nonce_b64:
+        if is_sw_only:
+            return None, "software-only mode -- measurement binding not applicable"
+        return False, (
+            "trace.runtime.nonce is absent -- attestation report_data does not "
+            "commit the gateway measurement"
+        )
+
+    try:
+        padding = 4 - (len(nonce_b64) % 4)
+        padded = nonce_b64 + ("=" * padding if padding != 4 else "")
+        nonce_bytes = base64.urlsafe_b64decode(padded)
+    except Exception as exc:
+        return False, f"cannot decode trace.runtime.nonce: {exc}"
+
+    if len(nonce_bytes) < 64:
+        if is_sw_only:
+            return None, (
+                "software-only mode -- report_data does not carry a measurement "
+                "commitment in bytes [32:64]"
+            )
+        return False, (
+            f"trace.runtime.nonce is too short ({len(nonce_bytes)} bytes); "
+            "expected 64 bytes (key fingerprint || measurement digest)"
+        )
+
+    if not hmac.compare_digest(nonce_bytes[32:64], expected_measurement_digest):
+        # Fatal in software-only mode too: the digest is computed the same way there,
+        # so a mismatch is a real disagreement about what is running, not an absence
+        # of hardware. What software-only costs is provenance, not correctness.
+        return False, (
+            "gateway measurement does not match report_data[32:64] -- the code, "
+            "policy bundle or configuration now running is not the one committed to "
+            "this attestation report. Either the gateway did not re-attest after a "
+            "policy reload, or it is not running what the verifier approved"
+        )
+
+    if is_sw_only:
+        logger.warning(
+            "#552: software-only (dev) mode -- measurement commitment matches but "
+            "provides no hardware provenance guarantee"
+        )
+        return None, "software-only mode -- measurement binding not hardware-backed"
+
+    return True, None
+
+
+def _coerce_measurement_digest(value: str | bytes) -> bytes | None:
+    """Accept a raw 32-byte digest or its hex form, with or without ``sha256:``."""
+    if isinstance(value, bytes):
+        return value
+    try:
+        return bytes.fromhex(value.removeprefix("sha256:"))
+    except ValueError:
+        return None
+
+
 def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None]:
     """Validate claim structure using the RuntimeClaim Pydantic model."""
     try:
@@ -608,6 +708,7 @@ def verify_trace_claim(
     trusted_ark_pem: bytes | None = None,
     trusted_intel_root_pem: bytes | None = None,
     trusted_tpm_ca_pem: bytes | None = None,
+    expected_gateway_measurement: str | bytes | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -624,6 +725,10 @@ def verify_trace_claim(
     6. Attestation freshness check
     7. Audit chain consistency check
     7b. AUDIT-006: audit-chain root binding -- report_data[32:64] commits SHA-256(chain_root)
+    7c. #552: gateway measurement binding -- report_data[32:64] commits the gateway
+        measurement digest. Only runs when expected_gateway_measurement is supplied,
+        because the expected value has to come from the verifier rather than the
+        claim. See _check_measurement_binding for which report carries it.
     8. Platform-specific attestation verification (dispatched per-platform)
 
     Returns VerificationResult with status and details.
@@ -842,6 +947,32 @@ def verify_trace_claim(
             # software-only / Level-0 mode: not hardware-backed, no penalty/credit.
             if root_binding_msg:
                 details["audit_chain_binding"] = root_binding_msg
+
+    # Step 7c (#552): the gateway measurement binding. Opt-in, because the expected
+    # digest is an out-of-band trust input like ApprovedHashes: a check that read it
+    # out of the claim would be asking the claim to vouch for itself.
+    if expected_gateway_measurement is not None:
+        _expected_digest = _coerce_measurement_digest(expected_gateway_measurement)
+        if _expected_digest is None:
+            unverified.append("measurement_binding")
+            failure = failure or VerificationError.MEASUREMENT_NOT_BOUND
+            details["measurement_binding"] = (
+                "expected_gateway_measurement is not valid hex or raw bytes"
+            )
+        else:
+            m_binding, m_binding_msg = _check_measurement_binding(
+                claim_json, _expected_digest, is_sw_only=_is_sw_only
+            )
+            if m_binding is True:
+                verified.append("measurement_binding")
+            elif m_binding is False:
+                unverified.append("measurement_binding")
+                failure = failure or VerificationError.MEASUREMENT_NOT_BOUND
+                details["measurement_binding"] = (
+                    m_binding_msg or "gateway measurement binding verification failed"
+                )
+            elif m_binding_msg:
+                details["measurement_binding"] = m_binding_msg
 
     # Step 8: Platform-specific attestation
     platform = _runtime.get("platform", "")
