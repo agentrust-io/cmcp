@@ -722,3 +722,194 @@ def test_all_three_providers_put_the_whole_nonce_into_report_data() -> None:
 
     # And every one of them is in the set that gets the measurement-bound nonce.
     assert {p().provider_name() for p in providers} == MEASUREMENT_BOUND_PROVIDERS
+
+
+# ── fail-closed branches of the verifier check ────────────────────────────────
+
+
+def test_verifier_fails_closed_on_an_undecodable_nonce() -> None:
+    from cmcp_verify.verify import _check_measurement_binding
+
+    claim = {"trace": {"runtime": {"nonce": "!!! not base64 !!!"}}}
+    ok, reason = _check_measurement_binding(claim, _DIGEST, is_sw_only=False)
+    assert ok is False
+    assert "cannot decode" in (reason or "")
+
+
+def test_verifier_fails_closed_on_a_short_nonce() -> None:
+    """A 32-byte nonce has no second half, so there is no commitment to compare."""
+    from cmcp_verify.verify import _check_measurement_binding
+
+    claim = _claim_with_nonce(b"\x01" * 32)
+    ok, reason = _check_measurement_binding(claim, _DIGEST, is_sw_only=False)
+    assert ok is False
+    assert "too short" in (reason or "")
+
+
+def test_a_short_nonce_is_only_advisory_in_software_only_mode() -> None:
+    from cmcp_verify.verify import _check_measurement_binding
+
+    claim = _claim_with_nonce(b"\x01" * 32)
+    ok, reason = _check_measurement_binding(claim, _DIGEST, is_sw_only=True)
+    assert ok is None
+    assert "software-only" in (reason or "")
+
+
+def test_a_missing_nonce_is_only_advisory_in_software_only_mode() -> None:
+    from cmcp_verify.verify import _check_measurement_binding
+
+    ok, reason = _check_measurement_binding({}, _DIGEST, is_sw_only=True)
+    assert ok is None
+    assert "software-only" in (reason or "")
+
+
+# ── the malformed-report guard ────────────────────────────────────────────────
+
+
+def test_a_provider_returning_a_non_report_does_not_displace_the_good_one(
+    tmp_path: Path, stub_code: None
+) -> None:
+    """Same guard AUDIT-006 uses: a malformed return must not become the report."""
+    config = _Config(policy_bundle_path=_bundle(tmp_path, "permit(...);"))
+    provider = _CountingProvider()
+    ctx = _Ctx(config=config, tee_provider=provider)
+    refresh_measurement_binding(ctx)
+    good_report = ctx.attestation_report
+
+    provider.get_attestation_report = lambda nonce: {"not": "a report"}  # type: ignore[method-assign]
+
+    assert refresh_measurement_binding(ctx) is False
+    assert ctx.attestation_report is good_report
+
+
+# ── the TPM extend path, which #552 restructured but does not change ──────────
+
+
+def test_extend_degrades_when_tpm2_pytss_is_absent(
+    tmp_path: Path, stub_code: None
+) -> None:
+    """tpm2-pytss is not installed in CI, so this is the branch that actually runs.
+
+    Dev mode turns the missing library into a warning; production would abort, which
+    test_an_unmeasurable_gateway_aborts_startup_on_sev_snp covers for the other tier.
+    """
+    from cmcp_runtime.startup import _extend_measurement, _measure_gateway
+
+    config = _Config(policy_bundle_path=_bundle(tmp_path, "permit(...);"), dev_mode=True)
+    provider = _CountingProvider(provider="tpm")
+    measurement = _measure_gateway(config, provider)
+
+    assert _extend_measurement(config, provider, measurement, b"\x00" * 64) == (None, None)
+
+
+def test_extend_returns_the_result_and_evidence_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_code: None
+) -> None:
+    """The success path of the restructured _extend_measurement.
+
+    The TPM itself is covered by test_gateway_measurement.py against a fake ESAPI
+    that enforces TPM_NT_EXTEND semantics. What is under test here is only the
+    orchestration: open the context, hand off, return what came back.
+    """
+    import sys
+    import types
+
+    from cmcp_runtime.startup import _extend_measurement, _measure_gateway
+    from cmcp_runtime.tee.measurement import ExtendResult
+
+    class _Ctx_:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *exc):
+            return False
+
+    esapi_mod = types.ModuleType("tpm2_pytss.ESAPI")
+    esapi_mod.ESAPI = _Ctx_  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "tpm2_pytss", types.ModuleType("tpm2_pytss"))
+    monkeypatch.setitem(sys.modules, "tpm2_pytss.ESAPI", esapi_mod)
+
+    extend = ExtendResult(index=0x01500432, before=b"\x00" * 32, after=b"\x01" * 32, provisioned=False)
+    monkeypatch.setattr(
+        "cmcp_runtime.startup._extend_and_certify",
+        lambda ectx, measurement, nonce: (extend, b"evidence"),
+    )
+
+    config = _Config(policy_bundle_path=_bundle(tmp_path, "permit(...);"))
+    provider = _CountingProvider(provider="tpm")
+    measurement = _measure_gateway(config, provider)
+
+    assert _extend_measurement(config, provider, measurement, b"\x00" * 64) == (
+        extend,
+        b"evidence",
+    )
+
+
+def _stub_esapi(monkeypatch: pytest.MonkeyPatch, handoff) -> None:
+    """Install a tpm2_pytss whose ESAPI context hands off to ``handoff``."""
+    import sys
+    import types
+
+    class _EsapiCtx:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *exc):
+            return False
+
+    esapi_mod = types.ModuleType("tpm2_pytss.ESAPI")
+    esapi_mod.ESAPI = _EsapiCtx  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "tpm2_pytss", types.ModuleType("tpm2_pytss"))
+    monkeypatch.setitem(sys.modules, "tpm2_pytss.ESAPI", esapi_mod)
+    monkeypatch.setattr("cmcp_runtime.startup._extend_and_certify", handoff)
+
+
+def test_extend_degrades_when_the_tpm_reports_the_measurement_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_code: None
+) -> None:
+    from cmcp_runtime.startup import _extend_measurement, _measure_gateway
+    from cmcp_runtime.tee.measurement import MeasurementUnavailable
+
+    def _raise(ectx, measurement, nonce):
+        raise MeasurementUnavailable("TPM2_NV_Extend failed", detail="index=0x1500432")
+
+    _stub_esapi(monkeypatch, _raise)
+    config = _Config(policy_bundle_path=_bundle(tmp_path, "permit(...);"), dev_mode=True)
+    provider = _CountingProvider(provider="tpm")
+    measurement = _measure_gateway(config, provider)
+
+    assert _extend_measurement(config, provider, measurement, b"\x00" * 64) == (None, None)
+
+
+def test_any_tpm_fault_degrades_rather_than_escaping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_code: None
+) -> None:
+    """A gateway must not proceed believing it was measured, nor crash on a TPM fault."""
+    from cmcp_runtime.startup import _extend_measurement, _measure_gateway
+
+    def _raise(ectx, measurement, nonce):
+        raise RuntimeError("tcti connection refused")
+
+    _stub_esapi(monkeypatch, _raise)
+    config = _Config(policy_bundle_path=_bundle(tmp_path, "permit(...);"), dev_mode=True)
+    provider = _CountingProvider(provider="tpm")
+    measurement = _measure_gateway(config, provider)
+
+    assert _extend_measurement(config, provider, measurement, b"\x00" * 64) == (None, None)
+
+
+def test_a_tpm_fault_is_fatal_in_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_code: None
+) -> None:
+    from cmcp_runtime.startup import _extend_measurement, _measure_gateway
+
+    def _raise(ectx, measurement, nonce):
+        raise RuntimeError("tcti connection refused")
+
+    _stub_esapi(monkeypatch, _raise)
+    config = _Config(policy_bundle_path=_bundle(tmp_path, "permit(...);"), dev_mode=False)
+    provider = _CountingProvider(provider="tpm")
+    measurement = _measure_gateway(config, provider)
+
+    with pytest.raises(SystemExit):
+        _extend_measurement(config, provider, measurement, b"\x00" * 64)

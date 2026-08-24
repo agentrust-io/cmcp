@@ -60,18 +60,36 @@ def _make_nonce_for_key(key: SigningKey, chain_root_hex: str | None = None) -> s
     return (fingerprint + second_half).hex()
 
 
+def _make_measurement_nonce_for_key(key: SigningKey, measurement_digest: bytes) -> str:
+    """report_data committing the gateway measurement (#552) instead of the chain root.
+
+    Same first half as _make_nonce_for_key. The second half is the raw 32-byte
+    measurement digest, unreshaped: unlike AUDIT-006 this commits the digest itself
+    rather than a hash of it.
+    """
+    x_b64 = base64.urlsafe_b64encode(key.public_key_bytes).rstrip(b"=").decode()
+    jwk_json = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": x_b64},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return (hashlib.sha256(jwk_json).digest() + measurement_digest).hex()
+
+
 def _make_signed_claim(
     policy_hash=POLICY_HASH,
     catalog_hash=CATALOG_HASH,
     provider="software-only",
     agent_identity: AgentIdentityInfo | None = None,
+    report_data: str | None = None,
 ):
     key = SigningKey()
     chain = AuditChain("test-session")
     measurement = "DEVELOPMENT_ONLY" if provider == "software-only" else "ab" * 32
     # Bind both the key (report_data[:32]) and the chain root (report_data[32:64],
     # AUDIT-006) for hardware providers; software-only ignores report_data here.
-    report_data = (
+    # A caller may override to bind something else, e.g. the #552 measurement.
+    report_data = report_data or (
         _make_nonce_for_key(key, chain.chain_root)
         if provider != "software-only"
         else "00" * 32
@@ -835,3 +853,75 @@ def test_audit_chain_binding_software_only_not_applicable():
     result = verify_trace_claim(claim_dict, _approved())
     assert "audit_chain_binding" not in result.verified_fields
     assert "audit_chain_binding" not in result.unverified_fields
+
+
+# ── #552: gateway measurement binding, step 7c ────────────────────────────────
+#
+# _check_measurement_binding is unit-tested in test_measurement_report_binding.py.
+# These cover the wiring into verify_trace_claim: that the parameter reaches the
+# check, and that each outcome lands in the right result field.
+
+_MEASUREMENT = bytes(range(32))
+_APPROVED = ApprovedHashes(policy_bundle_hash=POLICY_HASH, tool_catalog_hash=CATALOG_HASH)
+
+
+def _claim_binding_measurement(digest: bytes):
+    key = SigningKey()
+    return _make_signed_claim(
+        provider="sev-snp",
+        report_data=_make_measurement_nonce_for_key(key, digest),
+    )
+
+
+def test_measurement_binding_is_verified_when_it_matches():
+    claim, _ = _claim_binding_measurement(_MEASUREMENT)
+    result = verify_trace_claim(
+        claim, _APPROVED, expected_gateway_measurement=_MEASUREMENT
+    )
+    assert "measurement_binding" in result.verified_fields
+
+
+def test_measurement_binding_mismatch_is_reported():
+    claim, _ = _claim_binding_measurement(_MEASUREMENT)
+    result = verify_trace_claim(
+        claim, _APPROVED, expected_gateway_measurement=b"\xee" * 32
+    )
+    assert "measurement_binding" in result.unverified_fields
+    assert "does not match report_data[32:64]" in result.details["measurement_binding"]
+
+
+def test_measurement_binding_accepts_the_digest_as_hex():
+    claim, _ = _claim_binding_measurement(_MEASUREMENT)
+    result = verify_trace_claim(
+        claim, _APPROVED, expected_gateway_measurement="sha256:" + _MEASUREMENT.hex()
+    )
+    assert "measurement_binding" in result.verified_fields
+
+
+def test_measurement_binding_rejects_an_unparseable_expected_digest():
+    """A caller passing junk must fail closed, not skip the check."""
+    claim, _ = _claim_binding_measurement(_MEASUREMENT)
+    result = verify_trace_claim(
+        claim, _APPROVED, expected_gateway_measurement="not-a-digest"
+    )
+    assert "measurement_binding" in result.unverified_fields
+    assert "not valid hex" in result.details["measurement_binding"]
+
+
+def test_measurement_binding_is_advisory_in_software_only_mode():
+    """A software-only claim carries no nonce at all, so there is nothing to bind."""
+    claim, _ = _make_signed_claim(provider="software-only")
+    result = verify_trace_claim(
+        claim, _APPROVED, expected_gateway_measurement=_MEASUREMENT
+    )
+    assert "measurement_binding" not in result.verified_fields
+    assert "software-only" in result.details["measurement_binding"]
+
+
+def test_measurement_binding_is_skipped_when_no_expectation_is_supplied():
+    """Opt-in: the expected digest is an out-of-band input the verifier must supply."""
+    claim, _ = _claim_binding_measurement(_MEASUREMENT)
+    result = verify_trace_claim(claim, _APPROVED)
+    assert "measurement_binding" not in result.verified_fields
+    assert "measurement_binding" not in result.unverified_fields
+    assert "measurement_binding" not in result.details
