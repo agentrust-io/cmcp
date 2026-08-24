@@ -41,3 +41,10 @@ Transparency:
 - Stable `GatewayClaim` schema with documented versioning guarantees
 - Full RATS/EAT conformance (RFC 9334, draft-ietf-rats-eat)
 - SLSA Level 3 build provenance for cMCP release artifacts
+
+## MCP 2026 Compatibility Track
+
+The upstream MCP roadmap removes protocol-level session assumptions and
+prioritizes Tasks, progressive discovery, HTTP-native transport, and delegated
+enterprise identity. The resulting cMCP and Agent Manifest backlog is tracked
+in [`docs/spec/mcp-2026-roadmap-impact.md`](docs/spec/mcp-2026-roadmap-impact.md).
