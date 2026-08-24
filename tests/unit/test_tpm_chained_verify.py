@@ -205,6 +205,7 @@ def test_real_quote_verifies_against_the_pinned_azure_root() -> None:
     assert verified is True
     assert details["chain"] == "verified to a pinned root"
     assert details["signature_algorithm"] == "rsassa"
+    assert details["signature_digest"] == "0x000b"
 
 
 def test_a_wrong_nonce_fails_the_binding() -> None:

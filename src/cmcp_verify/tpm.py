@@ -291,10 +291,9 @@ def verify_quote_signature(
 # ---------------------------------------------------------------------------
 # Chained verification (issues #431, #447)
 #
-# The signature, chain, and root pinning all live in agent-manifest, which cMCP
-# already depends on and which is hardware-validated. cMCP keeps only the piece
-# agent-manifest does not model: the TPMT_SIGNATURE wire format written by
-# tpm2_quote and by tpm2-pytss `signature.marshal()`.
+# TPMT_SIGNATURE parsing, scheme and digest enforcement, chain verification, and
+# root pinning all live in agent-manifest. cMCP keeps its stable public entry point
+# plus the ``(verified, details)`` result shaping used by existing callers.
 # ---------------------------------------------------------------------------
 
 
@@ -450,8 +449,9 @@ def verify_tpm_quote_chained(
     Fully verify a TPM quote: signature, certificate chain, and pinned root.
 
     Delegates the cryptography to ``agent_manifest.verify_tpm_quote`` rather than
-    reimplementing it. ``signature_blob`` is a marshalled TPMT_SIGNATURE; the raw
-    signature is extracted here because agent-manifest takes the bare signature.
+    reimplementing it. ``signature_blob`` is a marshalled TPMT_SIGNATURE. Its
+    parsed signature, scheme, and digest are forwarded together so the envelope's
+    declared algorithms remain authoritative during verification.
 
     Returns (verified, details) and never raises. A malformed quote, a broken
     chain, or a root outside ``trusted_roots_pem`` all report verified=False with a
@@ -470,7 +470,7 @@ def verify_tpm_quote_chained(
     try:
         ok = verify_tpm_quote(
             attest,
-            parsed.signature,
+            parsed,
             ak_chain_pem,
             trusted_roots_pem=trusted_roots_pem,
             expected_qualifying_data=expected_qualifying_data,
