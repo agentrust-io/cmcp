@@ -492,4 +492,5 @@ def test_valid_providers_matches_the_map_it_says_it_mirrors():
     from cmcp_runtime.audit.trace_claim import _PROVIDER_MAP
     from cmcp_runtime.startup import _VALID_PROVIDERS
 
-    assert _VALID_PROVIDERS == frozenset(_PROVIDER_MAP)
+    mapped = frozenset(_PROVIDER_MAP)
+    assert mapped == _VALID_PROVIDERS
