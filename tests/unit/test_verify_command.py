@@ -153,6 +153,32 @@ def test_verify_rejects_tool_transcript_hash_mismatch(claim_and_bundle, tmp_path
     assert "signature                PASS" in result.output
     assert "audit_bundle             FAIL" in result.output
     assert "tool_transcript.hash does not match gateway.audit_chain.tip" in result.output
+    def test_verify_rejects_removed_tool_transcript(claim_and_bundle, tmp_path):
+    """Check whether a re-signed claim can drop the transcript binding."""
+    _, bundle_file, claim, _, signing_key = claim_and_bundle
+
+    claim["trace"].pop("tool_transcript")
+
+    body = {k: v for k, v in claim.items() if k != "signature"}
+    body_bytes = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode()
+
+    raw_sig = signing_key.sign(body_bytes)
+    claim["signature"] = base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
+
+    stripped_claim = tmp_path / "tool-transcript-removed.json"
+    stripped_claim.write_text(json.dumps(claim))
+
+    result = CliRunner().invoke(
+        main,
+        ["verify", str(stripped_claim), "--audit-bundle", str(bundle_file)],
+    )
+
+    assert "signature                PASS" in result.output
 
 def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):
     """Mutating one audit entry breaks the hash chain and the bundle signature."""
