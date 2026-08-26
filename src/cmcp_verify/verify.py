@@ -863,6 +863,7 @@ def verify_trace_claim(
                     "issuer_key_id": binding.issuer_key_id,
                     "policy_bundle_hash": binding.policy_bundle_hash,
                     "tool_catalog_hash": binding.tool_catalog_hash,
+                    "intent_hash": binding.intent_hash,
                 }
                 mismatched = [
                     key

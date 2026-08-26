@@ -11,7 +11,11 @@ from datetime import UTC, datetime, timedelta
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from cmcp_runtime.agent_manifest import SIGNED_FIELDS, signing_pre_image
+from cmcp_runtime.agent_manifest import (
+    SIGNED_FIELDS,
+    signing_pre_image,
+    verify_agent_manifest_binding,
+)
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.trace_claim import (
@@ -142,7 +146,9 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def _signed_manifest(priv: Ed25519PrivateKey, key_id: str) -> dict:
+def _signed_manifest(
+    priv: Ed25519PrivateKey, key_id: str, *, intent: dict | None = None
+) -> dict:
     manifest = {
         "@context": "https://agentmanifest.agentrust-io.com/v0.1/context.json",
         "@type": "AgentManifest",
@@ -159,6 +165,8 @@ def _signed_manifest(priv: Ed25519PrivateKey, key_id: str) -> dict:
         },
         "delegation_chain": [],
     }
+    if intent is not None:
+        manifest["intent"] = intent
     manifest["signature"] = {
         "algorithm": "Ed25519",
         "key_id": key_id,
@@ -273,6 +281,60 @@ def test_agent_manifest_binding_mismatch_fails():
     identity = _agent_identity(agent_id="spiffe://factory.example/agent/other/dev")
     identity.issuer_key_id = key_id
     claim_dict, _ = _make_signed_claim(agent_identity=identity)
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+    assert "agent_manifest.binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
+
+
+def test_agent_manifest_binding_intent_hash_mismatch_fails():
+    """A.9.4 gap probe: intent_hash should be part of the Step 5 agent-manifest
+    binding cross-check, the same way agent_id is in
+    test_agent_manifest_binding_mismatch_fails above.
+
+    The manifest below declares an intent, so verify_agent_manifest_binding
+    computes a real, non-None intent_hash for it (asserted below as a sanity
+    check on the test's own setup). The claim then asserts a *different*,
+    well-formed intent_hash -- as if the gateway captured a stale value, or a
+    single field was altered post-signing.
+
+    Expected, per the agent_id-mismatch precedent above: caught, landing in
+    unverified_fields with AGENT_MANIFEST_MISMATCH.
+
+    As of this writing, src/cmcp_verify/verify.py's Step 5 `expected_identity`
+    dict lists manifest_id, agent_id, authenticated_subject, subject_source,
+    issuer, issuer_key_id, policy_bundle_hash, and tool_catalog_hash -- but not
+    intent_hash. So this test is expected to currently FAIL (red): that failure
+    *is* the empirical confirmation of the gap, not a mistake in the test.
+    """
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(
+        priv, key_id, intent={"statement": "Move materials in Zone A only."}
+    )
+
+    # Sanity check on the test's own setup: the manifest really does carry a
+    # real, different intent_hash than the one the claim will assert below.
+    real_binding = verify_agent_manifest_binding(
+        manifest,
+        {key_id: pub},
+        authenticated_subject=AGENT_ID,
+        authenticated_subject_source="config",
+        policy_bundle_hash=POLICY_HASH,
+        tool_catalog_hash=CATALOG_HASH,
+    )
+    fake_intent_hash = "sha256:" + "f" * 64
+    assert real_binding.intent_hash is not None
+    assert real_binding.intent_hash != fake_intent_hash
+
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    identity.intent_hash = fake_intent_hash
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+
     result = verify_trace_claim(
         claim_dict,
         _approved(),
