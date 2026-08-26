@@ -13,11 +13,13 @@ Network topology:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -49,14 +51,16 @@ from cmcp_runtime.session.state import SessionState, _max_sensitivity
 
 logger = logging.getLogger(__name__)
 
-_EXTERNAL_EVIDENCE_FIELDS: frozenset[str] = frozenset({
-    "issuer",
-    "issuer_key_id",
-    "signature",
-    "evidence_hash",
-    "evidence_type",
-    "linked_call_id",
-})
+_EXTERNAL_EVIDENCE_FIELDS: frozenset[str] = frozenset(
+    {
+        "issuer",
+        "issuer_key_id",
+        "signature",
+        "evidence_hash",
+        "evidence_type",
+        "linked_call_id",
+    }
+)
 
 
 @dataclass
@@ -74,6 +78,45 @@ class CallResult:
     # Annotations from the forbid policies that matched (deny or advisory).
     # Sourced from the hash-pinned policy bundle, safe to reflect to callers.
     advice: dict[str, str] | None = None
+
+
+class _EffectBoundaryState(StrEnum):
+    """Monotonic evidence states for one upstream tool invocation."""
+
+    PRE_TRANSPORT = "pre_transport"
+    TRANSPORT_MAY_HAVE_STARTED = "transport_may_have_started"
+    TRANSPORT_RESPONSE_RECEIVED = "transport_response_received"
+    TERMINAL_DURABLE = "terminal_durable"
+
+
+@dataclass
+class _CallFinalizationState:
+    """Per-invocation facts needed for honest terminal finalization."""
+
+    failure_stage: str = "call_entry"
+    effect_boundary_state: _EffectBoundaryState = _EffectBoundaryState.PRE_TRANSPORT
+    request_payload_hash: str | None = None
+    response_payload_hash: str | None = None
+    server_identity: str | None = None
+    external_execution_evidence: dict[str, str] | None = None
+    terminal_entry_id: str | None = None
+
+    @property
+    def terminal_disposition(self) -> str:
+        return (
+            "not_attempted"
+            if self.effect_boundary_state is _EffectBoundaryState.PRE_TRANSPORT
+            else "outcome_unknown"
+        )
+
+    @property
+    def effect_boundary_label(self) -> str:
+        return {
+            _EffectBoundaryState.PRE_TRANSPORT: "not_reached",
+            _EffectBoundaryState.TRANSPORT_MAY_HAVE_STARTED: "transport_may_have_started",
+            _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED: "transport_response_received",
+            _EffectBoundaryState.TERMINAL_DURABLE: "terminal_durable",
+        }[self.effect_boundary_state]
 
 
 def _server_execution_key(entry: CatalogEntry) -> tuple[str, ...]:
@@ -146,14 +189,10 @@ def _extract_external_execution_evidence(response_text: str) -> dict[str, str] |
     if receipt is None:
         return None
     if not isinstance(receipt, dict):
-        logger.warning(
-            "EXTERNAL_EVIDENCE_IGNORED: external_execution_evidence is not an object"
-        )
+        logger.warning("EXTERNAL_EVIDENCE_IGNORED: external_execution_evidence is not an object")
         return None
     if set(receipt) != _EXTERNAL_EVIDENCE_FIELDS:
-        logger.warning(
-            "EXTERNAL_EVIDENCE_IGNORED: external_execution_evidence fields mismatch"
-        )
+        logger.warning("EXTERNAL_EVIDENCE_IGNORED: external_execution_evidence fields mismatch")
         return None
     if not all(isinstance(receipt[field], str) for field in _EXTERNAL_EVIDENCE_FIELDS):
         logger.warning(
@@ -196,9 +235,12 @@ class CMCPProxy:
         self._audit = audit_chain
         self._config = config
         self._enforcement = config.attestation.enforcement_mode
-        self._call_log: CallLog = call_log if call_log is not None else CallLog(session_id=session.session_id)
+        self._call_log: CallLog = (
+            call_log if call_log is not None else CallLog(session_id=session.session_id)
+        )
         self._session_call_log: SessionCallLog = (
-            session_call_log if session_call_log is not None
+            session_call_log
+            if session_call_log is not None
             else SessionCallLog(session_id=session.session_id)
         )
         self._attestation_generated_at = attestation_generated_at
@@ -298,8 +340,7 @@ class CMCPProxy:
             key = "unpinned"
         elif not tls_pinning.FINGERPRINT_PATTERN.match(fingerprint):
             raise UpstreamUnavailable(
-                f"Catalog tls_fingerprint for {server_url} is malformed - "
-                "refusing to connect",
+                f"Catalog tls_fingerprint for {server_url} is malformed - refusing to connect",
                 detail=f"tls_fingerprint={fingerprint[:64]!r}",
             )
         else:
@@ -355,9 +396,7 @@ class CMCPProxy:
             return await (await self._stdio_for(entry)).list_tools()
         try:
             client = self._client_for_upstream(entry)
-            payload, headers = build_request(
-                "provenance-tools-list", "tools/list", {}
-            )
+            payload, headers = build_request("provenance-tools-list", "tools/list", {})
             resp = await client.post(
                 entry.server.url,
                 json=payload,
@@ -433,9 +472,7 @@ class CMCPProxy:
                     current_definition=offered,
                 )
                 if result.available and result.threats:
-                    classification = ";".join(
-                        t.get("threat_type", "?") for t in result.threats
-                    )
+                    classification = ";".join(t.get("threat_type", "?") for t in result.threats)
             logger.error(
                 "UPSTREAM_CATALOG_DRIFT tool=%s server=%s kind=%s policy=%s",
                 tool_name,
@@ -462,9 +499,7 @@ class CMCPProxy:
         result = self._provenance.get(key)
         if result is None:
             advertised = (
-                await self._advertised_tools(entry)
-                if entry.server.provenance_record_path
-                else None
+                await self._advertised_tools(entry) if entry.server.provenance_record_path else None
             )
             result = check_server_provenance(
                 entry.server.provenance_record_path,
@@ -474,7 +509,9 @@ class CMCPProxy:
             self._provenance[key] = result
             logger.info(
                 "provenance: server=%s outcome=%s kind=%s",
-                key, result.outcome.value, result.kind or "-",
+                key,
+                result.outcome.value,
+                result.kind or "-",
             )
         return result
 
@@ -484,6 +521,8 @@ class CMCPProxy:
         entry: CatalogEntry,
         tool_name: str,
         arguments: dict[str, Any],
+        *,
+        finalization: _CallFinalizationState | None = None,
     ) -> str:
         """
         Forward the tool call to the attested upstream MCP server (JSON-RPC 2.0
@@ -507,6 +546,9 @@ class CMCPProxy:
 
         if entry.server.is_stdio:
             server = await self._stdio_for(entry)
+            if finalization is not None:
+                finalization.failure_stage = "stdio_server_call"
+                finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_MAY_HAVE_STARTED
             return await server.call(call_id, tool_name, arguments)
 
         client = self._client_for_upstream(entry)
@@ -516,14 +558,22 @@ class CMCPProxy:
             {"name": tool_name, "arguments": arguments},
             name=tool_name,
         )
+        headers.update(parameter_headers(entry.approved_definition.input_schema, arguments))
+        if finalization is not None:
+            finalization.failure_stage = "http_transport"
+            finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_MAY_HAVE_STARTED
         try:
-            headers.update(
-                parameter_headers(entry.approved_definition.input_schema, arguments)
-            )
             resp = await client.post(entry.server.url, json=payload, headers=headers)
+            if finalization is not None:
+                finalization.effect_boundary_state = (
+                    _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
+                )
             resp.raise_for_status()
             body = parse_response(resp, call_id)
         except tls_pinning.TLSPinMismatchError as exc:
+            if finalization is not None:
+                finalization.failure_stage = "tls_pin_verification_pre_send"
+                finalization.effect_boundary_state = _EffectBoundaryState.PRE_TRANSPORT
             raise UpstreamUnavailable(
                 f"Upstream TLS certificate fingerprint does not match the attested "
                 f"catalog pin: {entry.server.url} - connection rejected before the "
@@ -553,9 +603,7 @@ class CMCPProxy:
         result = body.get("result", {})
         content = result.get("content", []) if isinstance(result, dict) else []
         texts = [
-            c.get("text", "")
-            for c in content
-            if isinstance(c, dict) and c.get("type") == "text"
+            c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
         ]
         if texts:
             return "\n".join(texts)
@@ -698,6 +746,68 @@ class CMCPProxy:
             )
             self._session.suspicious_sequences += 1
 
+    def _append_call_terminal(
+        self,
+        finalization: _CallFinalizationState,
+        entry_type: str,
+        **fields: Any,
+    ) -> None:
+        """Persist one terminal for this invocation, independent of call_id reuse."""
+        if finalization.terminal_entry_id is not None:
+            raise RuntimeError("terminal audit entry already persisted for this invocation")
+        entry = self._audit.append(entry_type, **fields)  # type: ignore[arg-type]
+        finalization.terminal_entry_id = entry.entry_id
+        finalization.effect_boundary_state = _EffectBoundaryState.TERMINAL_DURABLE
+
+    def _finalize_unexpected_call_failure(
+        self,
+        finalization: _CallFinalizationState,
+        exc: BaseException,
+        *,
+        call_id: str,
+        tool_name: str,
+        workflow_id: str | None,
+    ) -> None:
+        """Best-effort durable fault without laundering an uncertain outcome."""
+        if finalization.terminal_entry_id is not None:
+            return
+        pointer_state = (
+            "bound"
+            if finalization.external_execution_evidence is not None
+            else "unavailable_or_unbound"
+        )
+        try:
+            self._append_call_terminal(
+                finalization,
+                "fault",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=finalization.server_identity,
+                policy_decision="fault",
+                policy_rule_matched=f"unexpected:{type(exc).__name__}",
+                request_payload_hash=finalization.request_payload_hash,
+                response_payload_hash=finalization.response_payload_hash,
+                session_sensitivity_before=self._session.max_sensitivity,
+                session_sensitivity_after=self._session.max_sensitivity,
+                detail={
+                    "exception_type": type(exc).__name__,
+                    "failure_stage": finalization.failure_stage,
+                    "effect_boundary": finalization.effect_boundary_label,
+                    "effect_boundary_state": finalization.effect_boundary_state.value,
+                    "terminal_disposition": finalization.terminal_disposition,
+                    "external_execution_evidence_state": pointer_state,
+                },
+                workflow_id=workflow_id,
+                external_execution_evidence=(finalization.external_execution_evidence),
+            )
+        except (Exception, asyncio.CancelledError) as persistence_exc:
+            exc.add_note(
+                "terminal audit persistence failed with "
+                f"{type(persistence_exc).__name__} during "
+                f"{finalization.failure_stage}"
+            )
+            raise exc from persistence_exc
+
     async def call_tool(
         self,
         call_id: str,
@@ -705,6 +815,39 @@ class CMCPProxy:
         arguments: dict[str, Any],
         workflow_id: str | None = None,
         declared_data_class: str | None = None,
+    ) -> CallResult:
+        """Run one call and guarantee one terminal on failure or cancellation."""
+        finalization = _CallFinalizationState()
+        try:
+            return await self._call_tool_impl(
+                call_id,
+                tool_name,
+                arguments,
+                workflow_id,
+                declared_data_class,
+                _finalization=finalization,
+            )
+        except BaseException as exc:
+            if not isinstance(exc, (Exception, asyncio.CancelledError)):
+                raise
+            self._finalize_unexpected_call_failure(
+                finalization,
+                exc,
+                call_id=call_id,
+                tool_name=tool_name,
+                workflow_id=workflow_id,
+            )
+            raise
+
+    async def _call_tool_impl(
+        self,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        workflow_id: str | None = None,
+        declared_data_class: str | None = None,
+        *,
+        _finalization: _CallFinalizationState,
     ) -> CallResult:
         """
         Execute one MCP tool call through the full enforcement pipeline.
@@ -736,6 +879,7 @@ class CMCPProxy:
         would_have_denied = False
 
         # Step 0: health check (attestation staleness, catalog drift)
+        _finalization.failure_stage = "health_check"
         unhealthy_reason = self._check_health()
         if unhealthy_reason is not None:
             return CallResult(
@@ -749,14 +893,18 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
+        _finalization.failure_stage = "request_serialization"
         _payload_bytes = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
         request_payload_hash = f"sha256:{hashlib.sha256(_payload_bytes).hexdigest()}"
+        _finalization.request_payload_hash = request_payload_hash
 
         # Step 1: catalog lookup
+        _finalization.failure_stage = "catalog_lookup"
         entry = self._catalog.lookup(tool_name)
         if entry is None:
             deny_reason = f"Tool '{tool_name}' not in attested catalog"
-            self._audit.append(
+            self._append_call_terminal(
+                _finalization,
                 "tool_call",
                 call_id=call_id,
                 tool_name=tool_name,
@@ -791,11 +939,14 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
+        _finalization.server_identity = entry.server.url
+
         # Step 1a (#521): does this server still offer what we approved? First
         # contact with each server only, so the cost is one tools/list per server
         # per session. Placed after the catalog lookup because it needs the entry
         # to know which server to ask, and before the policy decision because a
         # server that has been swapped underneath us should not reach Cedar at all.
+        _finalization.failure_stage = "upstream_drift_check"
         if await self._check_upstream_drift(entry):
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self._record_call(
@@ -852,6 +1003,7 @@ class CMCPProxy:
             )
 
         # Step 2: Cedar policy evaluation
+        _finalization.failure_stage = "policy_evaluation"
         cedar_context = self._build_cedar_context(
             tool_name, arguments, workflow_id, effective_data_class
         )
@@ -870,7 +1022,8 @@ class CMCPProxy:
             # from "needs an approver", which the caller also learns from
             # `advice` below.
             denied_as = audit_value(exc.aarm_decision)
-            self._audit.append(
+            self._append_call_terminal(
+                _finalization,
                 "tool_call",
                 call_id=call_id,
                 tool_name=tool_name,
@@ -910,32 +1063,27 @@ class CMCPProxy:
             # policy). Write a fault audit entry so the incident is traceable, then
             # re-raise so server.py can return a generic 500.
             logger.error("CEDAR_FAULT: tool=%s error=%s", tool_name, exc, exc_info=True)
-            self._audit.append(
-                "fault",
+            self._finalize_unexpected_call_failure(
+                _finalization,
+                exc,
                 call_id=call_id,
                 tool_name=tool_name,
-                server_identity=entry.server.url,
-                policy_decision="fault",
-                policy_rule_matched=f"cedar_exception:{type(exc).__name__}",
-                request_payload_hash=request_payload_hash,
-                session_sensitivity_before=sensitivity_before,
-                session_sensitivity_after=self._session.max_sensitivity,
-                detail={"exception_type": type(exc).__name__},
+                workflow_id=workflow_id,
             )
             raise
 
         # Step 3a: AGT MCPGateway pre-call interception - per-agent rate
         # limiting, parameter sanitization, allow/deny. Fail-closed inside AGT.
+        _finalization.failure_stage = "ingress_gateway"
         agt_allowed, agt_reason = self._mcp_gateway.intercept_tool_call(
             agent_id=self._session.session_id,
             tool_name=tool_name,
             params=arguments,
         )
         if not agt_allowed:
-            logger.warning(
-                "AGT MCPGateway rejected call: tool=%s reason=%s", tool_name, agt_reason
-            )
-            self._audit.append(
+            logger.warning("AGT MCPGateway rejected call: tool=%s reason=%s", tool_name, agt_reason)
+            self._append_call_terminal(
+                _finalization,
                 "tool_call",
                 call_id=call_id,
                 tool_name=tool_name,
@@ -971,13 +1119,20 @@ class CMCPProxy:
             )
 
         # Step 3b: forward to the attested upstream MCP server.
+        _finalization.failure_stage = "upstream_invocation"
         try:
             response_text = await self._forward_to_upstream(
-                call_id, entry, tool_name, arguments
+                call_id,
+                entry,
+                tool_name,
+                arguments,
+                finalization=_finalization,
             )
+            _finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
         except (UpstreamUnavailable, UpstreamToolError) as exc:
             logger.warning("Upstream call failed: tool=%s error=%s", tool_name, exc)
-            self._audit.append(
+            self._append_call_terminal(
+                _finalization,
                 "fault",
                 call_id=call_id,
                 tool_name=tool_name,
@@ -987,7 +1142,14 @@ class CMCPProxy:
                 request_payload_hash=request_payload_hash,
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
-                detail={"error_code": exc.code},
+                detail={
+                    "error_code": exc.code,
+                    "failure_stage": _finalization.failure_stage,
+                    "effect_boundary": _finalization.effect_boundary_label,
+                    "effect_boundary_state": _finalization.effect_boundary_state.value,
+                    "terminal_disposition": _finalization.terminal_disposition,
+                    "external_execution_evidence_state": "unavailable_or_unbound",
+                },
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self._record_call(
@@ -1013,8 +1175,10 @@ class CMCPProxy:
             )
 
         # Step 3c: response size guard (DOS-002) before scanning.
+        _finalization.failure_stage = "response_size_check"
         if len(response_text.encode()) > self._config.max_response_size_bytes:
-            self._audit.append(
+            self._append_call_terminal(
+                _finalization,
                 "tool_call",
                 call_id=call_id,
                 tool_name=tool_name,
@@ -1051,6 +1215,7 @@ class CMCPProxy:
             )
 
         # Step 3d: AGT response interception - injection / credential / PII scan.
+        _finalization.failure_stage = "response_scan"
         scan = self._mcp_gateway.intercept_tool_response(
             agent_id=self._session.session_id,
             tool_name=tool_name,
@@ -1072,7 +1237,8 @@ class CMCPProxy:
             threat_categories = ",".join(
                 sorted({str(t.get("category", "unknown")) for t in scan.threats})
             )
-            self._audit.append(
+            self._append_call_terminal(
+                _finalization,
                 "tool_call",
                 call_id=call_id,
                 tool_name=tool_name,
@@ -1111,6 +1277,15 @@ class CMCPProxy:
         # Scanner may have sanitized the content (ResponsePolicy.SANITIZE).
         agt_result: str = scan.content if scan.content is not None else response_text
 
+        # Bind post-scan facts before any cancellable or fallible session/egress
+        # processing. The hash is bound first so an evidence-parser failure still
+        # preserves the exact response bytes that were available.
+        _finalization.failure_stage = "response_binding"
+        response_bytes: bytes = agt_result.encode()
+        _finalization.response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
+        _finalization.failure_stage = "external_evidence_extraction"
+        _finalization.external_execution_evidence = _extract_external_execution_evidence(agt_result)
+
         # Step 4: session update from response sensitivity
         # AUTH-002: lock protects against race with concurrent session reset requests.
         # Sensitivity comes from the attested catalog entry's declared level, raised
@@ -1127,6 +1302,7 @@ class CMCPProxy:
             else None
         )
         injection_threshold = None
+        _finalization.failure_stage = "session_update"
         async with self._session.mutation_lock:
             self._session.update_from_inspection(
                 call_id=call_id,
@@ -1136,8 +1312,7 @@ class CMCPProxy:
             )
 
         # Step 5: egress Cedar policy check
-        response_bytes: bytes = agt_result.encode()
-
+        _finalization.failure_stage = "egress_policy"
         try:
             egress_decision = self._policy.authorize_egress(
                 tool_name, response_bytes, self._session, workflow_id=workflow_id
@@ -1146,7 +1321,8 @@ class CMCPProxy:
             egress_advice = egress_decision.advice
         except PolicyDeny as exc:
             egress_deny_reason = str(exc)
-            self._audit.append(
+            self._append_call_terminal(
+                _finalization,
                 "egress_denied",
                 call_id=call_id,
                 tool_name=tool_name,
@@ -1174,12 +1350,13 @@ class CMCPProxy:
         advisory_advice = {**ingress_advice, **egress_advice}
 
         # Step 6: audit chain write
+        _finalization.failure_stage = "terminal_persistence"
         policy_decision: Any = "advisory_deny" if would_have_denied else "allow"
         latency_us = int((time.perf_counter() - t0) * 1_000_000)
         # #293: bind the outcome into the audit entry. Hash exactly the bytes the
         # egress check saw (post-scan, possibly sanitized) so a verifier can match
         # the audited response against what the caller actually received.
-        response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
+        response_payload_hash = _finalization.response_payload_hash
         # Evidence class: what a verifier can conclude about where this response
         # came from. tls-pinned when a network upstream has a real cert pin;
         # spawn-measured when the gateway digested a stdio server's entrypoint
@@ -1187,6 +1364,7 @@ class CMCPProxy:
         # are deliberately not collapsed: one identifies an endpoint, the other
         # identifies code.
         from cmcp_runtime.mcp import tls_pinning as _tls_mod
+
         if entry is not None and entry.server.is_stdio:
             spawned = self._stdio_servers.get(_server_execution_key(entry))
             # A stdio response with no spawned server on record is not something
@@ -1206,19 +1384,24 @@ class CMCPProxy:
                 and _fp != _tls_mod.PLACEHOLDER_FINGERPRINT
                 else "hash-only"
             )
-        external_execution_evidence = _extract_external_execution_evidence(agt_result)
         # INJECT-003: include injection scanner and pattern in audit detail when detected
         injection_detail: dict[str, str | int | float] | None = (
             {
                 "injection_scanner": str(injection_scanner or "unknown")[:128],
                 "matched_pattern": str(injection_pattern or "unknown")[:256],
                 # INJECT-007: include threshold so the decision is replayable under config changes
-                **({"injection_threshold": float(injection_threshold)} if isinstance(injection_threshold, int | float) else {}),
+                **(
+                    {"injection_threshold": float(injection_threshold)}
+                    if isinstance(injection_threshold, int | float)
+                    else {}
+                ),
             }
             if injection_detected
             else None
         )
-        self._audit.append(
+        _finalization.failure_stage = "terminal_persistence"
+        self._append_call_terminal(
+            _finalization,
             "tool_call",
             call_id=call_id,
             tool_name=tool_name,
@@ -1233,11 +1416,12 @@ class CMCPProxy:
             session_sensitivity_after=self._session.max_sensitivity,
             workflow_id=workflow_id,
             detail=injection_detail,
-            external_execution_evidence=external_execution_evidence,
+            external_execution_evidence=_finalization.external_execution_evidence,
             effective_data_class=effective_data_class,
         )
 
         # Step 6: call log record + suspicious-sequence check
+        _finalization.failure_stage = "post_terminal_bookkeeping"
         elapsed_ms = (time.perf_counter() - t0) * 1000
         self._record_call(
             tool_name=tool_name,

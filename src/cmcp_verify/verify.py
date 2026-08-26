@@ -658,6 +658,27 @@ def verify_audit_bundle(
 
     if claim_json is not None:
         chain = claim_json.get("gateway", {}).get("audit_chain", {})
+        transcript = claim_json.get("trace", {}).get("tool_transcript", {})
+        transcript_hash = transcript.get("hash")
+        chain_tip = chain.get("tip")
+
+        bundle_has_tool_calls = any(
+            entry.get("entry_type") == "tool_call" for entry in entries
+        )
+        if bundle_has_tool_calls and not isinstance(transcript_hash, str):
+            failures.append(
+                "claim trace.tool_transcript.hash is missing for a bundle with tool calls"
+            )
+        elif isinstance(transcript_hash, str) and isinstance(chain_tip, str):
+            normalized_tip = (
+                chain_tip
+                if chain_tip.startswith(("sha256:", "sha384:"))
+                else f"sha256:{chain_tip}"
+            )
+            if transcript_hash != normalized_tip:
+                failures.append(
+                    "claim trace.tool_transcript.hash does not match gateway.audit_chain.tip"
+                )
         if chain.get("root") != entries[0].get("entry_hash"):
             failures.append("bundle root does not match claim gateway.audit_chain.root")
         if chain.get("tip") != entries[-1].get("entry_hash"):
