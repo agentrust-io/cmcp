@@ -20,7 +20,8 @@ Status: Draft v0.1 | Covers: Phase 1 cMCP Runtime
 
 - Has root access to the host VM
 - Can read/write host memory, modify files, access environment variables
-- Cannot read TEE-encrypted memory (SEV-SNP, TDX) or TPM-sealed secrets
+- On a memory-encrypting TEE (SEV-SNP, TDX): cannot read or modify guest memory while the gateway runs, so policy evaluation and audit construction are outside this adversary's reach.
+- On the `tpm` tier: cannot unseal TPM-sealed secrets outside a matching measured boot, and cannot alter the measured components without the attestation reporting it. This is a boot-time and at-rest guarantee only. **A TPM does not encrypt the memory of a running process**, so on bare-metal TPM an operator with root can read or modify the gateway's memory while it runs, including flipping a Cedar decision, without the TPM detecting it. The `tpm` tier defends against a tampered boot, not against a live privileged insider.
 - Goal: bypass policy, forge audit entries, or exfiltrate data
 
 **A2: Supply chain attacker**
