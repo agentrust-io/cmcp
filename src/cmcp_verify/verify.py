@@ -662,7 +662,14 @@ def verify_audit_bundle(
         transcript_hash = transcript.get("hash")
         chain_tip = chain.get("tip")
 
-        if isinstance(transcript_hash, str) and isinstance(chain_tip, str):
+        bundle_has_tool_calls = any(
+            entry.get("entry_type") == "tool_call" for entry in entries
+        )
+        if bundle_has_tool_calls and not isinstance(transcript_hash, str):
+            failures.append(
+                "claim trace.tool_transcript.hash is missing for a bundle with tool calls"
+            )
+        elif isinstance(transcript_hash, str) and isinstance(chain_tip, str):
             normalized_tip = (
                 chain_tip
                 if chain_tip.startswith(("sha256:", "sha384:"))

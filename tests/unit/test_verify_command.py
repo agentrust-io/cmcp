@@ -58,6 +58,14 @@ def claim_and_bundle(tmp_path):
     server = build_server(ctx)
     client = TestClient(server.app)
     session_id = server._session.session_id
+    # Produce real tool-call evidence so removing tool_transcript cannot be
+    # confused with a legitimately transcript-less claim.
+    server._audit_chain.append(
+        "tool_call",
+        call_id="fixture-call",
+        tool_name="fixture-tool",
+        policy_decision="allow",
+    )
     claim = client.post(f"/sessions/{session_id}/close").json()
     bundle = client.get(f"/audit/export?session_id={session_id}").json()
 
@@ -153,7 +161,7 @@ def test_verify_rejects_tool_transcript_hash_mismatch(claim_and_bundle, tmp_path
     assert "signature                PASS" in result.output
     assert "audit_bundle             FAIL" in result.output
     assert "tool_transcript.hash does not match gateway.audit_chain.tip" in result.output
-    def test_verify_rejects_removed_tool_transcript(claim_and_bundle, tmp_path):
+def test_verify_rejects_removed_tool_transcript(claim_and_bundle, tmp_path):
     """Check whether a re-signed claim can drop the transcript binding."""
     _, bundle_file, claim, _, signing_key = claim_and_bundle
 
@@ -178,7 +186,11 @@ def test_verify_rejects_tool_transcript_hash_mismatch(claim_and_bundle, tmp_path
         ["verify", str(stripped_claim), "--audit-bundle", str(bundle_file)],
     )
 
+    assert result.exit_code == 1, result.output
     assert "signature                PASS" in result.output
+    assert "audit_bundle             FAIL" in result.output
+    assert "tool_transcript.hash is missing for a bundle with tool calls" in result.output
+
 
 def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):
     """Mutating one audit entry breaks the hash chain and the bundle signature."""
