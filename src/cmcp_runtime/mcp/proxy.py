@@ -1277,6 +1277,15 @@ class CMCPProxy:
         # Scanner may have sanitized the content (ResponsePolicy.SANITIZE).
         agt_result: str = scan.content if scan.content is not None else response_text
 
+        # Bind post-scan facts before any cancellable or fallible session/egress
+        # processing. The hash is bound first so an evidence-parser failure still
+        # preserves the exact response bytes that were available.
+        _finalization.failure_stage = "response_binding"
+        response_bytes: bytes = agt_result.encode()
+        _finalization.response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
+        _finalization.failure_stage = "external_evidence_extraction"
+        _finalization.external_execution_evidence = _extract_external_execution_evidence(agt_result)
+
         # Step 4: session update from response sensitivity
         # AUTH-002: lock protects against race with concurrent session reset requests.
         # Sensitivity comes from the attested catalog entry's declared level, raised
@@ -1303,9 +1312,6 @@ class CMCPProxy:
             )
 
         # Step 5: egress Cedar policy check
-        response_bytes: bytes = agt_result.encode()
-        _finalization.response_payload_hash = f"sha256:{hashlib.sha256(response_bytes).hexdigest()}"
-
         _finalization.failure_stage = "egress_policy"
         try:
             egress_decision = self._policy.authorize_egress(
@@ -1378,9 +1384,6 @@ class CMCPProxy:
                 and _fp != _tls_mod.PLACEHOLDER_FINGERPRINT
                 else "hash-only"
             )
-        _finalization.failure_stage = "external_evidence_extraction"
-        external_execution_evidence = _extract_external_execution_evidence(agt_result)
-        _finalization.external_execution_evidence = external_execution_evidence
         # INJECT-003: include injection scanner and pattern in audit detail when detected
         injection_detail: dict[str, str | int | float] | None = (
             {
@@ -1413,7 +1416,7 @@ class CMCPProxy:
             session_sensitivity_after=self._session.max_sensitivity,
             workflow_id=workflow_id,
             detail=injection_detail,
-            external_execution_evidence=external_execution_evidence,
+            external_execution_evidence=_finalization.external_execution_evidence,
             effective_data_class=effective_data_class,
         )
 

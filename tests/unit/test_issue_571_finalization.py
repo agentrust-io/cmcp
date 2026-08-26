@@ -126,6 +126,43 @@ def _provenance(*, meets_requirement: bool) -> MagicMock:
     return result
 
 
+def _external_receipt(call_id: str) -> dict[str, str]:
+    return {
+        "issuer": "spiffe://factory.example/controller/cell-7",
+        "issuer_key_id": "a" * 64,
+        "signature": "sig",
+        "evidence_hash": "sha256:" + "b" * 64,
+        "evidence_type": "controller-execution-receipt/v1",
+        "linked_call_id": call_id,
+    }
+
+
+def _response_with_receipt(call_id: str) -> tuple[str, dict[str, str]]:
+    receipt = _external_receipt(call_id)
+    return json.dumps({"external_execution_evidence": receipt}), receipt
+
+
+class _BlockingMutationLock:
+    """Deterministically expose cancellation while entering a mutation lock."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __aenter__(self) -> _BlockingMutationLock:
+        self.entered.set()
+        await self.release.wait()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        return None
+
+
 @pytest.mark.parametrize("backend", ["memory", "sqlite"])
 @pytest.mark.parametrize(
     ("side", "expected", "stage"),
@@ -620,3 +657,153 @@ async def test_commit_then_raise_is_bounded_not_exactly_once(
     assert sqlite_terminals[0]["sequence_number"] == sqlite_terminals[1]["sequence_number"]
     assert sqlite_terminals[0]["entry_id"] != sqlite_terminals[1]["entry_id"]
     store.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+@pytest.mark.asyncio
+async def test_post_scan_bindings_survive_cancellation_waiting_for_mutation_lock(
+    backend: str, tmp_path: Path
+) -> None:
+    database = tmp_path / f"post-scan-lock-{backend}.sqlite3"
+    store = SqliteAuditStore(database) if backend == "sqlite" else None
+    chain = AuditChain("issue-571", store=store)
+    proxy = _make_proxy(chain)
+    response, receipt = _response_with_receipt("post-scan-lock")
+    proxy._forward_to_upstream = AsyncMock(return_value=response)
+    blocking_lock = _BlockingMutationLock()
+    proxy._session.mutation_lock = blocking_lock  # type: ignore[assignment]
+
+    task = asyncio.create_task(proxy.call_tool("post-scan-lock", "test.echo", {}))
+    await asyncio.wait_for(blocking_lock.entered.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    terminals = _terminals(chain)
+    assert len(terminals) == 1
+    terminal = terminals[0]
+    assert terminal.entry_type == "fault"
+    assert terminal.detail["failure_stage"] == "session_update"
+    assert terminal.detail["terminal_disposition"] == "outcome_unknown"
+    assert terminal.response_payload_hash == (
+        "sha256:" + hashlib.sha256(response.encode()).hexdigest()
+    )
+    assert terminal.external_execution_evidence == receipt
+    assert terminal.detail["external_execution_evidence_state"] == "bound"
+    if store is not None:
+        assert _sqlite_payloads(database) == [asdict(entry) for entry in chain.entries]
+        store.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+@pytest.mark.asyncio
+async def test_post_scan_bindings_survive_session_update_exception(
+    backend: str, tmp_path: Path
+) -> None:
+    database = tmp_path / f"post-scan-update-{backend}.sqlite3"
+    store = SqliteAuditStore(database) if backend == "sqlite" else None
+    chain = AuditChain("issue-571", store=store)
+    proxy = _make_proxy(chain)
+    response, receipt = _response_with_receipt("post-scan-update")
+    proxy._forward_to_upstream = AsyncMock(return_value=response)
+    proxy._session.update_from_inspection = MagicMock(
+        side_effect=RuntimeError("session-update-fault")
+    )
+
+    with pytest.raises(RuntimeError, match="session-update-fault"):
+        await proxy.call_tool("post-scan-update", "test.echo", {})
+
+    terminals = _terminals(chain)
+    assert len(terminals) == 1
+    terminal = terminals[0]
+    assert terminal.detail["failure_stage"] == "session_update"
+    assert terminal.response_payload_hash == (
+        "sha256:" + hashlib.sha256(response.encode()).hexdigest()
+    )
+    assert terminal.external_execution_evidence == receipt
+    assert terminal.detail["external_execution_evidence_state"] == "bound"
+    if store is not None:
+        assert _sqlite_payloads(database) == [asdict(entry) for entry in chain.entries]
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_post_scan_bindings_survive_unexpected_egress_exception() -> None:
+    chain = AuditChain("issue-571")
+    evaluator = _evaluator()
+    evaluator.authorize_egress.side_effect = RuntimeError("egress-fault")
+    proxy = _make_proxy(chain, evaluator)
+    response, receipt = _response_with_receipt("post-scan-egress")
+    proxy._forward_to_upstream = AsyncMock(return_value=response)
+
+    with pytest.raises(RuntimeError, match="egress-fault"):
+        await proxy.call_tool("post-scan-egress", "test.echo", {})
+
+    terminal = _terminals(chain)[0]
+    assert terminal.detail["failure_stage"] == "egress_policy"
+    assert terminal.response_payload_hash == (
+        "sha256:" + hashlib.sha256(response.encode()).hexdigest()
+    )
+    assert terminal.external_execution_evidence == receipt
+    assert terminal.detail["external_execution_evidence_state"] == "bound"
+
+
+@pytest.mark.asyncio
+async def test_absent_evidence_remains_unavailable_after_session_failure() -> None:
+    response = '{"result":"no-receipt"}'
+    chain = AuditChain("issue-571")
+    proxy = _make_proxy(chain)
+    proxy._forward_to_upstream = AsyncMock(return_value=response)
+    proxy._session.update_from_inspection = MagicMock(side_effect=RuntimeError("session"))
+
+    with pytest.raises(RuntimeError, match="session"):
+        await proxy.call_tool("absent-receipt", "test.echo", {})
+
+    terminal = _terminals(chain)[0]
+    assert terminal.response_payload_hash == (
+        "sha256:" + hashlib.sha256(response.encode()).hexdigest()
+    )
+    assert terminal.external_execution_evidence is None
+    assert terminal.detail["external_execution_evidence_state"] == "unavailable_or_unbound"
+
+
+@pytest.mark.asyncio
+async def test_sanitized_post_scan_content_owns_hash_and_evidence() -> None:
+    raw_response = '{"raw":"must-not-be-bound"}'
+    sanitized_response, receipt = _response_with_receipt("sanitized-response")
+    chain = AuditChain("issue-571")
+    proxy = _make_proxy(chain)
+    proxy._forward_to_upstream = AsyncMock(return_value=raw_response)
+    proxy._mcp_gateway.intercept_tool_response.return_value.content = sanitized_response
+    proxy._session.update_from_inspection = MagicMock(side_effect=RuntimeError("session"))
+
+    with pytest.raises(RuntimeError, match="session"):
+        await proxy.call_tool("sanitized-response", "test.echo", {})
+
+    terminal = _terminals(chain)[0]
+    assert terminal.response_payload_hash == (
+        "sha256:" + hashlib.sha256(sanitized_response.encode()).hexdigest()
+    )
+    assert terminal.response_payload_hash != (
+        "sha256:" + hashlib.sha256(raw_response.encode()).hexdigest()
+    )
+    assert terminal.external_execution_evidence == receipt
+
+
+@pytest.mark.asyncio
+async def test_post_scan_binding_success_control_is_unchanged() -> None:
+    response, receipt = _response_with_receipt("binding-success")
+    chain = AuditChain("issue-571")
+    proxy = _make_proxy(chain)
+    proxy._forward_to_upstream = AsyncMock(return_value=response)
+
+    result = await proxy.call_tool("binding-success", "test.echo", {})
+
+    assert result.allowed is True
+    assert result.response == response
+    terminal = _terminals(chain)[0]
+    assert terminal.entry_type == "tool_call"
+    assert terminal.response_payload_hash == (
+        "sha256:" + hashlib.sha256(response.encode()).hexdigest()
+    )
+    assert terminal.external_execution_evidence == receipt
