@@ -14,6 +14,7 @@ from typing import Any, Literal, cast
 import agent_manifest as agent_manifest_sdk
 
 from cmcp_runtime.errors import ConfigError
+from cmcp_runtime.config import EnforcementMode
 
 SIGNED_FIELDS: tuple[str, ...] = tuple(agent_manifest_sdk.SIGNED_FIELDS)
 
@@ -23,6 +24,21 @@ _SUBJECT_SOURCES: frozenset[str] = frozenset({"config", "svid", "manifest-dev"})
 
 SubjectSource = Literal["config", "svid", "manifest-dev"]
 
+# Spec 6.2: cMCP's own enforcement modes ("enforcing"/"advisory"/"silent",
+# cmcp_runtime.config.EnforcementMode) and the Agent Manifest spec's
+# ("enforce"/"advisory"/"audit-only") name the same three states differently.
+# This is the single place that mapping is defined -- see
+# agentrust-io/cmcp#576 and agentrust-io/agent-manifest#178.
+_ENFORCEMENT_MODE_TO_MANIFEST: dict[EnforcementMode, str] = {
+    EnforcementMode.ENFORCING: "enforce",
+    EnforcementMode.ADVISORY: "advisory",
+    EnforcementMode.SILENT: "audit-only",
+}
+
+
+def enforcement_mode_for_manifest(mode: EnforcementMode) -> str:
+    """Map cMCP's enforcement mode to the Agent Manifest spec's vocabulary."""
+    return _ENFORCEMENT_MODE_TO_MANIFEST[mode]
 
 @dataclass(frozen=True)
 class AgentManifestBinding:
@@ -46,6 +62,14 @@ class AgentManifestBinding:
     #: and an intent statement is business context. A verifier that wants the
     #: text fetches the manifest it already has to fetch to check the signature.
     intent_hash: str | None = None
+    #: Spec 6.2. The runtime's own enforcement mode (cmcp_runtime.config.
+    #: EnforcementMode), present only when verify_agent_manifest_binding was
+    #: given one -- which, by the time this object exists, means it has
+    #: already been cross-checked against the manifest's declared
+    #: artifacts.policy_bundle.enforcement_mode. A mismatch raises before this
+    #: object is constructed, so a populated value here is an attested match,
+    #: not merely "what the caller asked for".
+    enforcement_mode: EnforcementMode | None = None
 
 
 def _b64url_decode(value: str) -> bytes:
@@ -203,6 +227,14 @@ def _raise_for_sdk_result(result: Any, *, require_runtime_artifacts: bool) -> No
         return
 
     mismatch_fields = {str(detail.field) for detail in result.mismatch_details}
+    # Checked before the plain "policy_bundle" case: the hash can match while
+    # only the enforcement mode disagrees (spec 6.2), and that deserves its
+    # own message rather than being reported as a hash mismatch.
+    if "policy_bundle.enforcement_mode" in mismatch_fields:
+        raise ConfigError(
+            "Agent Manifest policy bundle enforcement_mode does not match the "
+            "runtime's attested enforcement mode"
+        )
     if "policy_bundle" in mismatch_fields:
         raise ConfigError("Agent Manifest policy bundle hash does not match runtime policy")
     if "tool_manifest" in mismatch_fields:
@@ -236,6 +268,7 @@ def _verify_with_sdk(
     *,
     policy_bundle_hash: str | None = None,
     tool_catalog_hash: str | None = None,
+    enforcement_mode: EnforcementMode | None = None,
     require_runtime_artifacts: bool = False,
     envelope: bytes | None = None,
 ) -> None:
@@ -247,6 +280,11 @@ def _verify_with_sdk(
         agent_manifest_sdk.VerificationContext(
             policy_bundle_hash=policy_bundle_hash,
             tool_catalog_hash=tool_catalog_hash,
+            enforcement_mode=(
+                enforcement_mode_for_manifest(enforcement_mode)
+                if enforcement_mode is not None
+                else None
+            ),
             trusted_keys=_trusted_keys_for_sdk(trusted_keys),
         ),
         agent_manifest_sdk.RevocationStore(),
@@ -314,6 +352,7 @@ def verify_agent_manifest_binding(
     authenticated_subject: str | None,
     policy_bundle_hash: str,
     tool_catalog_hash: str,
+    enforcement_mode: EnforcementMode | None = None,
     authenticated_subject_source: str | None = None,
     allow_dev_subject_from_manifest: bool = False,
     now: datetime | None = None,
@@ -341,6 +380,7 @@ def verify_agent_manifest_binding(
         trusted_keys,
         policy_bundle_hash=policy_bundle_hash,
         tool_catalog_hash=tool_catalog_hash,
+        enforcement_mode=enforcement_mode,
         require_runtime_artifacts=True,
         envelope=envelope,
     )
@@ -377,4 +417,5 @@ def verify_agent_manifest_binding(
         # intent taken from an unverified manifest is an intent anyone could
         # have written, which is the failure the field exists to prevent.
         intent_hash=agent_manifest_sdk.intent_hash(manifest),
+        enforcement_mode=enforcement_mode,
     )

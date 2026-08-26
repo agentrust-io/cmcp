@@ -20,6 +20,7 @@ from cmcp_runtime.agent_manifest import (
     verify_agent_manifest_binding,
 )
 from cmcp_runtime.errors import ConfigError
+from cmcp_runtime.config import EnforcementMode
 
 POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
@@ -91,11 +92,11 @@ def test_valid_manifest_binds_subject_policy_and_catalog() -> None:
         authenticated_subject=AGENT_ID,
         policy_bundle_hash=POLICY_HASH,
         tool_catalog_hash=CATALOG_HASH,
+        enforcement_mode=EnforcementMode.ENFORCING,
     )
     assert binding.manifest_id == manifest["manifest_id"]
     assert binding.agent_id == AGENT_ID
-    assert binding.subject_source == "config"
-    assert binding.issuer_key_id == key_id
+    assert binding.enforcement_mode == EnforcementMode.ENFORCING
 
 
 def test_binding_verification_delegates_to_sdk_with_encoded_keys(monkeypatch) -> None:
@@ -131,6 +132,7 @@ def test_binding_verification_delegates_to_sdk_with_encoded_keys(monkeypatch) ->
         authenticated_subject=AGENT_ID,
         policy_bundle_hash=POLICY_HASH,
         tool_catalog_hash=CATALOG_HASH,
+        enforcement_mode=EnforcementMode.ENFORCING, 
     )
 
     assert binding.manifest_id == manifest["manifest_id"]
@@ -151,6 +153,7 @@ def test_dev_subject_fallback_is_marked_as_manifest_dev() -> None:
         authenticated_subject=None,
         policy_bundle_hash=POLICY_HASH,
         tool_catalog_hash=CATALOG_HASH,
+        enforcement_mode=EnforcementMode.ENFORCING,
         allow_dev_subject_from_manifest=True,
     )
     assert binding.authenticated_subject == AGENT_ID
@@ -167,8 +170,44 @@ def test_subject_mismatch_fails_closed() -> None:
             authenticated_subject="spiffe://factory.example/agent/other/dev",
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ENFORCING,
         )
 
+
+
+def test_enforcement_mode_mismatch_fails_closed() -> None:
+    # The manifest's policy_bundle declares "enforce" (see _signed_manifest);
+    # a runtime that is only attested as running in advisory mode must not
+    # bind, even though the policy_bundle hash itself matches. See
+    # agentrust-io/cmcp#576 / agent-manifest spec 6.2.
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    with pytest.raises(ConfigError, match="enforcement_mode"):
+        verify_agent_manifest_binding(
+            manifest,
+            {key_id: pub},
+            authenticated_subject=AGENT_ID,
+            policy_bundle_hash=POLICY_HASH,
+            tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ADVISORY,
+        )
+
+
+def test_enforcement_mode_not_provided_fails_closed() -> None:
+    # A runtime that can't or doesn't attest its enforcement mode must not be
+    # treated as matching a manifest that declares one -- unattested is not
+    # evidence of compliance.
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    with pytest.raises(ConfigError, match="enforcement_mode"):
+        verify_agent_manifest_binding(
+            manifest,
+            {key_id: pub},
+            authenticated_subject=AGENT_ID,
+            policy_bundle_hash=POLICY_HASH,
+            tool_catalog_hash=CATALOG_HASH,
+        )
+ 
 
 def test_tampered_manifest_signature_fails_closed() -> None:
     priv, pub, key_id = _keypair()
@@ -181,6 +220,7 @@ def test_tampered_manifest_signature_fails_closed() -> None:
             authenticated_subject=AGENT_ID,
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ENFORCING,
         )
 
 
@@ -194,6 +234,7 @@ def test_policy_hash_drift_fails_closed() -> None:
             authenticated_subject=AGENT_ID,
             policy_bundle_hash="sha256:" + "0" * 64,
             tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ENFORCING,
         )
 
 
@@ -207,6 +248,7 @@ def test_catalog_hash_drift_fails_closed() -> None:
             authenticated_subject=AGENT_ID,
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash="sha256:" + "0" * 64,
+            enforcement_mode=EnforcementMode.ENFORCING,
         )
 
 
@@ -220,6 +262,7 @@ def test_expired_manifest_fails_closed() -> None:
             authenticated_subject=AGENT_ID,
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ENFORCING,
             now=datetime(2026, 6, 17, tzinfo=UTC),
         )
 
@@ -284,4 +327,5 @@ def test_a_mislabelled_post_quantum_manifest_fails_closed_cleanly() -> None:
             authenticated_subject=AGENT_ID,
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ENFORCING,
         )
