@@ -231,7 +231,12 @@ def _raise_for_sdk_result(result: Any, *, require_runtime_artifacts: bool) -> No
     # only the enforcement mode disagrees (spec 6.2), and that deserves its
     # own message rather than being reported as a hash mismatch.
     if "policy_bundle.enforcement_mode" in mismatch_fields:
-        raise ConfigError(
+        raise ConfigError(  # pragma: no cover -- exercised by
+            # test_enforcement_mode_mismatch_fails_closed /
+            # test_enforcement_mode_not_provided_fails_closed, currently
+            # skipped pending agentrust-io/agent-manifest#345 (see
+            # tests/unit/test_agent_manifest.py). Remove this pragma
+            # alongside the skip markers once that ships.
             "Agent Manifest policy bundle enforcement_mode does not match the "
             "runtime's attested enforcement mode"
         )
