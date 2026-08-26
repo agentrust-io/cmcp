@@ -1,6 +1,7 @@
 """End-to-end tests for `cmcp verify`: real claim, real tampering."""
 
 from __future__ import annotations
+
 import base64
 import json
 from datetime import UTC, datetime
@@ -152,7 +153,7 @@ def test_verify_rejects_tool_transcript_hash_mismatch(claim_and_bundle, tmp_path
     assert "signature                PASS" in result.output
     assert "audit_bundle             FAIL" in result.output
     assert "tool_transcript.hash does not match gateway.audit_chain.tip" in result.output
-    
+
 def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):
     """Mutating one audit entry breaks the hash chain and the bundle signature."""
     claim_file, _, _, bundle, _ = claim_and_bundle
