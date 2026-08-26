@@ -13,8 +13,8 @@ from typing import Any, Literal, cast
 
 import agent_manifest as agent_manifest_sdk
 
-from cmcp_runtime.errors import ConfigError
 from cmcp_runtime.config import EnforcementMode
+from cmcp_runtime.errors import ConfigError
 
 SIGNED_FIELDS: tuple[str, ...] = tuple(agent_manifest_sdk.SIGNED_FIELDS)
 

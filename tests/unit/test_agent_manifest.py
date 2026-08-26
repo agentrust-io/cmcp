@@ -19,8 +19,8 @@ from cmcp_runtime.agent_manifest import (
     signing_pre_image,
     verify_agent_manifest_binding,
 )
-from cmcp_runtime.errors import ConfigError
 from cmcp_runtime.config import EnforcementMode
+from cmcp_runtime.errors import ConfigError
 
 POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
@@ -132,7 +132,7 @@ def test_binding_verification_delegates_to_sdk_with_encoded_keys(monkeypatch) ->
         authenticated_subject=AGENT_ID,
         policy_bundle_hash=POLICY_HASH,
         tool_catalog_hash=CATALOG_HASH,
-        enforcement_mode=EnforcementMode.ENFORCING, 
+        enforcement_mode=EnforcementMode.ENFORCING,
     )
 
     assert binding.manifest_id == manifest["manifest_id"]
@@ -207,7 +207,7 @@ def test_enforcement_mode_not_provided_fails_closed() -> None:
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash=CATALOG_HASH,
         )
- 
+
 
 def test_tampered_manifest_signature_fails_closed() -> None:
     priv, pub, key_id = _keypair()
