@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from cmcp_runtime.audit.chain import AuditChain
@@ -229,6 +230,93 @@ async def test_cancellation_after_terminal_persistence_does_not_duplicate() -> N
 
     assert caught.value.__cause__ is None
     assert not getattr(caught.value, "__notes__", [])
+    terminals = _terminals(chain)
+    assert len(terminals) == 1
+    assert terminals[0].entry_type == "tool_call"
+
+
+@pytest.mark.asyncio
+async def test_http_status_failure_records_transport_response_received() -> None:
+    chain = AuditChain("issue-571")
+    proxy = _make_proxy(chain)
+    proxy._check_provenance = AsyncMock(return_value=_provenance(meets_requirement=True))
+    request = httpx.Request("POST", "https://local.invalid/mcp")
+    response = httpx.Response(503, request=request, content=b'{"error":"unavailable"}')
+    client = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    proxy._client_for_upstream = MagicMock(return_value=client)
+
+    result = await proxy.call_tool("status-fault", "test.echo", {})
+
+    assert result.allowed is False
+    terminal = _terminals(chain)[0]
+    assert terminal.response_payload_hash is None
+    assert terminal.detail["effect_boundary"] == "transport_response_received"
+    assert terminal.detail["effect_boundary_state"] == "transport_response_received"
+    assert terminal.detail["terminal_disposition"] == "outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_parse_failure_records_transport_response_received() -> None:
+    chain = AuditChain("issue-571")
+    proxy = _make_proxy(chain)
+    proxy._check_provenance = AsyncMock(return_value=_provenance(meets_requirement=True))
+    request = httpx.Request("POST", "https://local.invalid/mcp")
+    response = httpx.Response(200, request=request, content=b'{"jsonrpc":"2.0"}')
+    client = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    proxy._client_for_upstream = MagicMock(return_value=client)
+
+    with (
+        patch("cmcp_runtime.mcp.proxy.parse_response", side_effect=RecursionError("parse")),
+        pytest.raises(RecursionError, match="parse"),
+    ):
+        await proxy.call_tool("parse-fault", "test.echo", {})
+
+    terminal = _terminals(chain)[0]
+    assert terminal.response_payload_hash is None
+    assert terminal.detail["effect_boundary"] == "transport_response_received"
+    assert terminal.detail["effect_boundary_state"] == "transport_response_received"
+    assert terminal.detail["terminal_disposition"] == "outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_error_from_fault_persistence_preserves_original() -> None:
+    chain = AuditChain("issue-571")
+    proxy = _make_proxy(chain)
+    proxy._forward_to_upstream = AsyncMock(return_value="{}")
+    original_append = chain.append
+
+    def cancel_fault(entry_type: str, **fields: Any):
+        if entry_type == "fault":
+            raise asyncio.CancelledError("audit-cancelled")
+        return original_append(entry_type, **fields)
+
+    chain.append = cancel_fault  # type: ignore[method-assign]
+    with (
+        patch(
+            "cmcp_runtime.mcp.proxy._extract_external_execution_evidence",
+            side_effect=RecursionError("late-parser-fault"),
+        ),
+        pytest.raises(RecursionError, match="late-parser-fault") as caught,
+    ):
+        await proxy.call_tool("cancelled-persistence", "test.echo", {})
+
+    assert isinstance(caught.value.__cause__, asyncio.CancelledError)
+    assert any("terminal audit persistence failed" in note for note in caught.value.__notes__)
+    assert _terminals(chain) == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_error_after_terminal_persistence_does_not_duplicate() -> None:
+    chain = AuditChain("issue-571")
+    proxy = _make_proxy(chain)
+    proxy._forward_to_upstream = AsyncMock(return_value="{}")
+    proxy._record_call = MagicMock(side_effect=RuntimeError("post-terminal"))
+
+    with pytest.raises(RuntimeError, match="post-terminal"):
+        await proxy.call_tool("runtime-after-terminal", "test.echo", {})
+
     terminals = _terminals(chain)
     assert len(terminals) == 1
     assert terminals[0].entry_type == "tool_call"

@@ -85,7 +85,7 @@ class _EffectBoundaryState(StrEnum):
 
     PRE_TRANSPORT = "pre_transport"
     TRANSPORT_MAY_HAVE_STARTED = "transport_may_have_started"
-    EXACT_RESPONSE_AVAILABLE = "exact_response_available"
+    TRANSPORT_RESPONSE_RECEIVED = "transport_response_received"
     TERMINAL_DURABLE = "terminal_durable"
 
 
@@ -114,7 +114,7 @@ class _CallFinalizationState:
         return {
             _EffectBoundaryState.PRE_TRANSPORT: "not_reached",
             _EffectBoundaryState.TRANSPORT_MAY_HAVE_STARTED: "transport_may_have_started",
-            _EffectBoundaryState.EXACT_RESPONSE_AVAILABLE: "exact_response_available",
+            _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED: "transport_response_received",
             _EffectBoundaryState.TERMINAL_DURABLE: "terminal_durable",
         }[self.effect_boundary_state]
 
@@ -565,7 +565,9 @@ class CMCPProxy:
         try:
             resp = await client.post(entry.server.url, json=payload, headers=headers)
             if finalization is not None:
-                finalization.effect_boundary_state = _EffectBoundaryState.EXACT_RESPONSE_AVAILABLE
+                finalization.effect_boundary_state = (
+                    _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
+                )
             resp.raise_for_status()
             body = parse_response(resp, call_id)
         except tls_pinning.TLSPinMismatchError as exc:
@@ -798,7 +800,7 @@ class CMCPProxy:
                 workflow_id=workflow_id,
                 external_execution_evidence=(finalization.external_execution_evidence),
             )
-        except Exception as persistence_exc:
+        except (Exception, asyncio.CancelledError) as persistence_exc:
             exc.add_note(
                 "terminal audit persistence failed with "
                 f"{type(persistence_exc).__name__} during "
@@ -1126,7 +1128,7 @@ class CMCPProxy:
                 arguments,
                 finalization=_finalization,
             )
-            _finalization.effect_boundary_state = _EffectBoundaryState.EXACT_RESPONSE_AVAILABLE
+            _finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
         except (UpstreamUnavailable, UpstreamToolError) as exc:
             logger.warning("Upstream call failed: tool=%s error=%s", tool_name, exc)
             self._append_call_terminal(
