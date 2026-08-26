@@ -1,7 +1,7 @@
 """End-to-end tests for `cmcp verify`: real claim, real tampering."""
 
 from __future__ import annotations
-
+import base64
 import json
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -45,12 +45,12 @@ def claim_and_bundle(tmp_path):
     catalog.entries = {}
     catalog.catalog_hash = "sha256:" + "1" * 64
     catalog.exceptions = []
-
+    signing_key = SigningKey()
     ctx = RuntimeContext(
         config=config,
         tee_provider=MagicMock(),
         attestation_report=attestation_report,
-        signing_key=SigningKey(),
+        signing_key=signing_key,
         policy_bundle=policy_store,
         catalog=catalog,
     )
@@ -64,14 +64,14 @@ def claim_and_bundle(tmp_path):
     bundle_file = tmp_path / "bundle.json"
     claim_file.write_text(json.dumps(claim))
     bundle_file.write_text(json.dumps(bundle))
-    return claim_file, bundle_file, claim, bundle
+    return claim_file, bundle_file, claim, bundle, signing_key
 
 
 def test_verify_software_only_is_partially_verified(claim_and_bundle):
     # The fixture is a software-only (dev mode) claim: every cryptographic check
     # passes, but with no hardware-backed attestation the verifier fails closed
     # to partially_verified, so the CLI reports FAIL and exits non-zero.
-    claim_file, _, _, _ = claim_and_bundle
+    claim_file, _, _, _, _ = claim_and_bundle
     result = CliRunner().invoke(main, ["verify", str(claim_file)])
     assert result.exit_code == 1, result.output
     assert "RESULT: FAIL (partially_verified)" in result.output
@@ -83,7 +83,7 @@ def test_verify_software_only_is_partially_verified(claim_and_bundle):
 def test_verify_pinned_hashes_still_partial_without_hardware(claim_and_bundle):
     # Pinning the hashes does not grant a software-only claim a full pass; it is
     # still partially_verified because hardware attestation is absent.
-    claim_file, _, claim, _ = claim_and_bundle
+    claim_file, _, claim, _, _ = claim_and_bundle
     result = CliRunner().invoke(main, [
         "verify", str(claim_file),
         "--policy-hash", claim["trace"]["policy"]["bundle_hash"],
@@ -94,7 +94,7 @@ def test_verify_pinned_hashes_still_partial_without_hardware(claim_and_bundle):
 
 
 def test_verify_fails_with_wrong_pinned_hash(claim_and_bundle):
-    claim_file, _, _, _ = claim_and_bundle
+    claim_file, _, _, _, _ = claim_and_bundle
     result = CliRunner().invoke(main, [
         "verify", str(claim_file), "--policy-hash", "sha256:" + "f" * 64,
     ])
@@ -104,7 +104,7 @@ def test_verify_fails_with_wrong_pinned_hash(claim_and_bundle):
 
 def test_verify_fails_on_tampered_claim(claim_and_bundle, tmp_path):
     """The tamper demo: change one field, signature verification fails."""
-    _, _, claim, _ = claim_and_bundle
+    _, _, claim, _, _ = claim_and_bundle
     claim["gateway"]["call_summary"]["tool_calls_total"] += 7
     tampered = tmp_path / "tampered.json"
     tampered.write_text(json.dumps(claim))
@@ -117,7 +117,7 @@ def test_verify_fails_on_tampered_claim(claim_and_bundle, tmp_path):
 def test_verify_audit_bundle_passes(claim_and_bundle):
     # The audit bundle itself verifies (PASS), but the software-only claim is
     # only partially_verified, so the overall CLI result is still FAIL.
-    claim_file, bundle_file, _, _ = claim_and_bundle
+    claim_file, bundle_file, _, _, _ = claim_and_bundle
     result = CliRunner().invoke(main, [
         "verify", str(claim_file), "--audit-bundle", str(bundle_file),
     ])
@@ -125,10 +125,37 @@ def test_verify_audit_bundle_passes(claim_and_bundle):
     assert "audit_bundle             PASS" in result.output
     assert "RESULT: FAIL (partially_verified)" in result.output
 
+def test_verify_rejects_tool_transcript_hash_mismatch(claim_and_bundle, tmp_path):
+    """A re-signed claim must still bind tool_transcript.hash to audit_chain.tip."""
+    _, bundle_file, claim, _, signing_key = claim_and_bundle
 
+    claim["trace"]["tool_transcript"]["hash"] = "sha256:" + "0" * 64
+
+    body = {k: v for k, v in claim.items() if k != "signature"}
+    body_bytes = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode()
+    raw_sig = signing_key.sign(body_bytes)
+    claim["signature"] = base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
+
+    tampered_claim = tmp_path / "tool-transcript-mismatch.json"
+    tampered_claim.write_text(json.dumps(claim))
+
+    result = CliRunner().invoke(main, [
+        "verify", str(tampered_claim), "--audit-bundle", str(bundle_file),
+    ])
+
+    assert result.exit_code == 1, result.output
+    assert "signature                PASS" in result.output
+    assert "audit_bundle             FAIL" in result.output
+    assert "tool_transcript.hash does not match gateway.audit_chain.tip" in result.output
+    
 def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):
     """Mutating one audit entry breaks the hash chain and the bundle signature."""
-    claim_file, _, _, bundle = claim_and_bundle
+    claim_file, _, _, bundle, _ = claim_and_bundle
     bundle["entries"][0]["entry_type"] = "tool_call"
     tampered = tmp_path / "tampered-bundle.json"
     tampered.write_text(json.dumps(bundle))
@@ -140,7 +167,7 @@ def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):
 
 
 def test_verify_threads_only_the_tpm_ca_bundle(claim_and_bundle, tmp_path, monkeypatch):
-    claim_file, _, _, _ = claim_and_bundle
+    claim_file, _, _, _, _ = claim_and_bundle
     ca_path = tmp_path / "tpm-ca.pem"
     ca_path.write_bytes(AZURE_VTPM_ROOT_2023_PEM)
 
@@ -166,7 +193,7 @@ def test_verify_threads_only_the_tpm_ca_bundle(claim_and_bundle, tmp_path, monke
 
 
 def test_verify_rejects_invalid_tpm_ca_bundle(claim_and_bundle, tmp_path, monkeypatch):
-    claim_file, _, _, _ = claim_and_bundle
+    claim_file, _, _, _, _ = claim_and_bundle
     ca_path = tmp_path / "not-a-certificate.pem"
     ca_path.write_text("this is not a PEM certificate")
 
