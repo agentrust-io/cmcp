@@ -701,12 +701,25 @@ def verify_audit_bundle(
                 }
             ),
         }
-        if transcript.get("call_count") != len(tool_calls):
+        actual_call_count = transcript.get("call_count")
+        if (
+            not isinstance(actual_call_count, int)
+            or isinstance(actual_call_count, bool)
+            or actual_call_count != len(tool_calls)
+        ):
             failures.append(
                 "claim trace.tool_transcript.call_count does not match audit bundle tool calls"
             )
         for field_name, expected_value in expected_call_summary.items():
-            if call_summary.get(field_name) != expected_value:
+            actual_value = call_summary.get(field_name)
+            invalid_integer = (
+                isinstance(expected_value, int)
+                and (
+                    not isinstance(actual_value, int)
+                    or isinstance(actual_value, bool)
+                )
+            )
+            if invalid_integer or actual_value != expected_value:
                 failures.append(
                     f"claim gateway.call_summary.{field_name} does not match audit bundle tool calls"
                 )

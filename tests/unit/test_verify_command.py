@@ -126,7 +126,25 @@ def test_verify_fails_on_tampered_claim(claim_and_bundle, tmp_path):
 def test_verify_audit_bundle_passes(claim_and_bundle):
     # The audit bundle itself verifies (PASS), but the software-only claim is
     # only partially_verified, so the overall CLI result is still FAIL.
-    claim_file, bundle_file, _, _, _ = claim_and_bundle
+    claim_file, bundle_file, claim, _, _ = claim_and_bundle
+    assert claim["trace"]["tool_transcript"]["call_count"] == 1
+    call_summary = claim["gateway"]["call_summary"]
+    assert {
+        field: call_summary[field]
+        for field in (
+            "tool_calls_total",
+            "tool_calls_allowed",
+            "tool_calls_denied",
+            "tool_cals_faulted",
+            "tools_invoked",
+        )
+    } == {
+        "tool_calls_total": 1,
+        "tool_calls_allowed": 1,
+        "tool_calls_denied": 0,
+        "tool_calls_faulted": 0,
+        "tools_invoked": ["fixture-tool"],
+    }
     result = CliRunner().invoke(main, [
         "verify", str(claim_file), "--audit-bundle", str(bundle_file),
     ])
@@ -230,6 +248,18 @@ def test_verify_rejects_removed_tool_transcript(claim_and_bundle, tmp_path):
             "tools_invoked",
             ["substituted.tool"],
             "gateway.call_summary.tools_invoked does not match audit bundle tool calls",
+        ),
+        (
+            "call_summary",
+            "tool_calls_total",
+            True,
+            "gateway.call_summary.tool_calls_total does not match audit bundle tool calls",
+        ),
+        (
+            "call_summary",
+            "tool_calls_denied",
+            False,
+            "gateway.call_summary.tool_cals_denied does not match audit bundle tool calls",
         ),
     ],
 )
