@@ -27,8 +27,7 @@ SubjectSource = Literal["config", "svid", "manifest-dev"]
 # Spec 6.2: cMCP's own enforcement modes ("enforcing"/"advisory"/"silent",
 # cmcp_runtime.config.EnforcementMode) and the Agent Manifest spec's
 # ("enforce"/"advisory"/"audit-only") name the same three states differently.
-# This is the single place that mapping is defined -- see
-# agentrust-io/cmcp#576 and agentrust-io/agent-manifest#178.
+# This is the single place that mapping is defined
 _ENFORCEMENT_MODE_TO_MANIFEST: dict[EnforcementMode, str] = {
     EnforcementMode.ENFORCING: "enforce",
     EnforcementMode.ADVISORY: "advisory",
@@ -231,12 +230,7 @@ def _raise_for_sdk_result(result: Any, *, require_runtime_artifacts: bool) -> No
     # only the enforcement mode disagrees (spec 6.2), and that deserves its
     # own message rather than being reported as a hash mismatch.
     if "policy_bundle.enforcement_mode" in mismatch_fields:
-        raise ConfigError(  # pragma: no cover -- exercised by
-            # test_enforcement_mode_mismatch_fails_closed /
-            # test_enforcement_mode_not_provided_fails_closed, currently
-            # skipped pending agentrust-io/agent-manifest#345 (see
-            # tests/unit/test_agent_manifest.py). Remove this pragma
-            # alongside the skip markers once that ships.
+        raise ConfigError(
             "Agent Manifest policy bundle enforcement_mode does not match the "
             "runtime's attested enforcement mode"
         )

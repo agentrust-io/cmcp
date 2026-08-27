@@ -27,29 +27,6 @@ CATALOG_HASH = "sha256:" + "b" * 64
 AGENT_ID = "spiffe://factory.example/agent/material-movement/dev"
 
 
-def _agent_manifest_sdk_supports_enforcement_mode() -> bool:
-    """Feature-detect enforcement_mode support in the installed agent-manifest SDK.
-
-    cmcp#584 depends on agent-manifest#345 (open, unreleased). Until that ships
-    and cmcp's pyproject.toml pin is bumped, the installed VerificationContext
-    silently drops an unknown enforcement_mode kwarg (Pydantic ignores unknown
-    fields by default), so the mismatch never surfaces as a ConfigError.
-    """
-    from agent_manifest import VerificationContext
-
-    return "enforcement_mode" in VerificationContext.model_fields
-
-
-requires_enforcement_mode_support = pytest.mark.skipif(
-    not _agent_manifest_sdk_supports_enforcement_mode(),
-    reason=(
-        "installed agent-manifest does not support enforcement_mode yet "
-        "(tracked in agentrust-io/agent-manifest#345); remove this skip once "
-        "it ships and cmcp's pyproject.toml pin is bumped"
-    ),
-)
-
-
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -197,7 +174,7 @@ def test_subject_mismatch_fails_closed() -> None:
         )
 
 
-@requires_enforcement_mode_support
+
 def test_enforcement_mode_mismatch_fails_closed() -> None:
     # The manifest's policy_bundle declares "enforce" (see _signed_manifest);
     # a runtime that is only attested as running in advisory mode must not
@@ -216,7 +193,6 @@ def test_enforcement_mode_mismatch_fails_closed() -> None:
         )
 
 
-@requires_enforcement_mode_support
 def test_enforcement_mode_not_provided_fails_closed() -> None:
     # A runtime that can't or doesn't attest its enforcement mode must not be
     # treated as matching a manifest that declares one -- unattested is not
@@ -352,17 +328,4 @@ def test_a_mislabelled_post_quantum_manifest_fails_closed_cleanly() -> None:
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash=CATALOG_HASH,
             enforcement_mode=EnforcementMode.ENFORCING,
-        )
-
-
-def test_enforcement_mode_skip_markers_are_still_needed() -> None:
-    # Canary: once agent-manifest#345 ships and cmcp's pyproject.toml pin is
-    # bumped past it, this starts failing on purpose -- that is the signal to
-    # delete requires_enforcement_mode_support and its two @-markers above.
-    if _agent_manifest_sdk_supports_enforcement_mode():
-        pytest.fail(
-            "installed agent-manifest now supports enforcement_mode -- remove "
-            "requires_enforcement_mode_support and the @requires_enforcement_mode_support "
-            "markers on test_enforcement_mode_mismatch_fails_closed and "
-            "test_enforcement_mode_not_provided_fails_closed, then delete this test"
         )
