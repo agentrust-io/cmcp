@@ -62,7 +62,7 @@ def generate_evidence() -> dict:
             "identity": {
                 "enabled": True,
                 "type": "spiffe",
-                "backend": "agent_os",
+                "backend": "cmcp-runtime",
             },
             "packages": [
                 {

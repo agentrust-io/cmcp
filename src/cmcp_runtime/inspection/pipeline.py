@@ -1,18 +1,12 @@
 """
 Response inspection pipeline: implements issues #61, #65, #81.
 
-Stage 4 (injection detection) and Stage 3 (sensitivity classification) now
-delegate to AGT components where available:
-  - agent_os.prompt_injection.PromptInjectionDetector  (Stage 4)
-  - agent_os.credential_redactor.CredentialRedactor    (Stage 3 PII redaction)
-  - agent_os.mcp_response_scanner.MCPResponseScanner   (Stage 4 MCP-specific threats)
-
-Falls back to the original regex-based detection if AGT is unavailable.
+Stage 4 injection detection and Stage 3 sensitivity classification are owned by
+cMCP and use versioned local patterns so runtime behavior does not depend on AGT.
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import hashlib
 import json
 import logging
@@ -27,19 +21,10 @@ from cmcp_runtime.catalog.loader import CatalogEntry
 
 _log = logging.getLogger(__name__)
 
-# ── AGT components (optional: fall back gracefully) ─────────────────────────
-try:
-    from agent_os.credential_redactor import CredentialRedactor
-    from agent_os.mcp_response_scanner import MCPResponseScanner as AGTResponseScanner
-    from agent_os.prompt_injection import DetectionConfig, PromptInjectionDetector
-    _AGT_AVAILABLE = True
-except ImportError:
-    _AGT_AVAILABLE = False
-
-# Mirrors agent_os._SENSITIVITY_THRESHOLDS: update if the package changes.
+# Stable cMCP-owned sensitivity thresholds.
 _INJECTION_THRESHOLDS: dict[str, float] = {"strict": 0.3, "balanced": 0.5, "permissive": 0.7}
 
-# ── Fallback injection patterns (used when AGT not available) ─────────────────
+# ── Versioned injection patterns ──────────────────────────────────────────────
 # INJECT-006: loaded from patterns_v1.json so every change is auditable and
 # tied to a semantic version. The version string is included in every
 # InspectionResult so audit consumers know which pattern set made the decision.
@@ -197,43 +182,13 @@ def _stage2_schema_validation(
 def _stage4_injection_detection(
     response_text: str,
     custom_patterns: list[tuple[re.Pattern[str], str]] | None = None,
-    _agt_detector: Any | None = None,
 ) -> StageResult:
     """
     Stage 4: detect indirect prompt injection patterns in the response text.
 
-    Uses AGT PromptInjectionDetector (12-vector) when available, falls back to
-    the regex starter set from docs/spec/response-inspection.md §Stage 4.
+    Uses the versioned cMCP pattern set from
+    docs/spec/response-inspection.md §Stage 4.
     """
-    # Try AGT first
-    if _AGT_AVAILABLE and _agt_detector is not None:
-        try:
-            result = _agt_detector.detect(response_text)
-            if result.is_injection:
-                pattern_name = result.injection_type.value if hasattr(result.injection_type, "value") else str(result.injection_type)
-                score = float(result.confidence) if hasattr(result, "confidence") else None
-                # Log pattern name and bounded window, not full content
-                return StageResult(
-                    stage="injection",
-                    decision="deny",
-                    reason=f"AGT injection detected: {pattern_name} (confidence={result.confidence:.2f})",
-                    injection_pattern=f"agt:{pattern_name}",
-                    injection_scanner="agt_detector",
-                    injection_score=score,
-                )
-            return StageResult(stage="injection", decision="allow")
-        except Exception:
-            # Falling through to the local patterns is the right behaviour, but
-            # doing it silently means a broken AGT detector looks identical to a
-            # working one while the weaker starter set is what actually ran.
-            _log.warning(
-                "AGT PromptInjectionDetector.detect() failed; "
-                "falling back to local patterns v%s",
-                _PATTERNS_VERSION,
-                exc_info=True,
-            )
-
-    # Fallback: regex patterns
     patterns = custom_patterns or _COMPILED_PATTERNS
     for pattern, name in patterns:
         match = pattern.search(response_text)
@@ -251,7 +206,7 @@ def _stage4_injection_detection(
     return StageResult(stage="injection", decision="allow")
 
 
-# Fallback PII patterns for when AGT CredentialRedactor is not available
+# cMCP-owned PII and credential patterns.
 _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "pii"),           # SSN
     (re.compile(r"\b4\d{3}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "pii"),  # Visa
@@ -289,14 +244,13 @@ def _extract_schema_sensitivity_tags(
 def _classify_sensitivity(
     catalog_entry: CatalogEntry,
     response_text: str | None = None,
-    _agt_redactor: Any | None = None,
 ) -> list[str]:
     """
     Stage 3: derive sensitivity tags from three sources (applied in order):
 
     1. catalog_entry.sensitivity_level: always applied
     2. field-level x-sensitivity annotations in output_schema properties
-    3. pattern matching on response content (AGT CredentialRedactor and local patterns)
+    3. cMCP pattern matching on response content
     """
     tags: list[str] = []
 
@@ -322,40 +276,7 @@ def _classify_sensitivity(
 
     # Source 3: content pattern matching.
     #
-    # AGT and the local patterns both run, rather than AGT displacing them. Two
-    # reasons. First, AGT's CredentialRedactor does not redact a secret at all
-    # when a suffix is glued to it (microsoft/agent-governance-toolkit#3494:
-    # `AKIA..._old` passes through whole), so treating it as sufficient leaves a
-    # live key untagged. Second, an either/or meant any breakage on the AGT path
-    # silently disabled content classification entirely instead of degrading to
-    # the local patterns.
     if response_text:
-        _SENSITIVE = ("pii", "confidential", "hipaa_phi", "mnpi")
-
-        if _AGT_AVAILABLE and _agt_redactor is not None:
-            # find_matches covers secrets, find_pii_matches covers PII spans.
-            # Both are classmethods on CredentialRedactor. A previous version
-            # called `find_credentials`, which has never existed on that class
-            # in any agt-core release, so this whole branch raised AttributeError
-            # into the handler below and contributed nothing.
-            for method in ("find_matches", "find_pii_matches"):
-                finder = getattr(_agt_redactor, method, None)
-                if finder is None:
-                    # Narrow and loud: an AGT API that moved should surface as a
-                    # degraded stage, not as silent unconditional passing.
-                    _log.warning(
-                        "AGT CredentialRedactor has no %s(); "
-                        "falling back to local patterns for content classification",
-                        method,
-                    )
-                    continue
-                try:
-                    if finder(response_text) and not any(t in tags for t in _SENSITIVE):
-                        tags.append("pii")
-                except Exception:  # nosec B110 - never let detection break the pipeline
-                    _log.warning("AGT CredentialRedactor.%s() failed", method, exc_info=True)
-
-        # Local patterns always run, as a second pass rather than a fallback.
         for pattern, tag in _PII_PATTERNS:
             if len(tags) >= 4:  # cap scan at 4 distinct tags
                 break
@@ -372,14 +293,13 @@ class SensitivityClassificationStage:
     Applies three classification sources in order:
     1. catalog_entry.sensitivity_level annotation
     2. x-sensitivity field-level tags in output_schema properties
-    3. Content pattern matching (AGT CredentialRedactor and local patterns)
+    3. Content pattern matching using cMCP-owned patterns
     """
 
     def run(
         self,
         response_json: dict[str, Any],
         catalog_entry: CatalogEntry,
-        _agt_redactor: Any | None = None,
     ) -> StageResult:
         """
         Classify a tool response and return a StageResult with sensitivity_tags set.
@@ -389,7 +309,6 @@ class SensitivityClassificationStage:
         tags = _classify_sensitivity(
             catalog_entry,
             response_text=response_text,
-            _agt_redactor=_agt_redactor,
         )
         return StageResult(
             stage="classification",
@@ -408,10 +327,7 @@ class InspectionPipeline:
     After completing all stages, calls session.update_from_inspection() to
     propagate sensitivity state (the only place session state is updated).
 
-    When agent-os-kernel is installed, stages 3 and 4 use AGT components:
-      Stage 3: AGT CredentialRedactor + catalog annotations
-      Stage 4: AGT PromptInjectionDetector (12-vector) + AGT MCPResponseScanner
-    Falls back to regex patterns and catalog-only classification if AGT is unavailable.
+    Stages 3 and 4 use cMCP-owned, versioned classifiers and scanners.
     """
 
     def __init__(
@@ -423,43 +339,10 @@ class InspectionPipeline:
     ) -> None:
         self._max_bytes = max_response_size_bytes
         self._injection_patterns = custom_injection_patterns
+        # Retained as a public constructor argument for configuration compatibility.
         self._scanner_timeout = scanner_timeout_seconds
         self._injection_threshold: float | None = _INJECTION_THRESHOLDS.get(injection_sensitivity)
 
-        # Instantiate AGT components once per pipeline instance
-        self._agt_injection_detector: Any = None
-        self._agt_redactor: Any = None
-        self._agt_response_scanner: Any = None
-        if _AGT_AVAILABLE:
-            # Constructed independently. Sharing one try block meant a failure in
-            # the first component skipped the other two, so a single upstream API
-            # change disabled three security components at once, silently.
-            try:
-                _cfg = DetectionConfig(sensitivity=injection_sensitivity)
-                self._agt_injection_detector = PromptInjectionDetector(config=_cfg)
-            except Exception:
-                _log.warning(
-                    "AGT PromptInjectionDetector unavailable; "
-                    "stage 4 falls back to local patterns v%s",
-                    _PATTERNS_VERSION,
-                    exc_info=True,
-                )
-            try:
-                self._agt_redactor = CredentialRedactor()
-            except Exception:
-                _log.warning(
-                    "AGT CredentialRedactor unavailable; "
-                    "stage 3 falls back to local patterns",
-                    exc_info=True,
-                )
-            try:
-                self._agt_response_scanner = AGTResponseScanner()
-            except Exception:
-                _log.warning(
-                    "AGT MCPResponseScanner unavailable; "
-                    "stage 4 loses MCP-specific threat detection",
-                    exc_info=True,
-                )
 
     def run(
         self,
@@ -498,7 +381,7 @@ class InspectionPipeline:
             # Redact mode modified the bytes: expose to caller
             modified_response = response_bytes
 
-        # Stage 3: sensitivity classification (AGT CredentialRedactor + catalog)
+        # Stage 3: sensitivity classification (cMCP patterns + catalog)
         try:
             response_text_for_s3 = response_bytes.decode("utf-8", errors="replace")
         except Exception:
@@ -506,12 +389,11 @@ class InspectionPipeline:
         s3_tags = _classify_sensitivity(
             catalog_entry,
             response_text=response_text_for_s3,
-            _agt_redactor=self._agt_redactor,
         )
         sensitivity_tags.extend(s3_tags)
         stage_results["classification"] = "allow"
 
-        # Stage 4: injection detection (AGT PromptInjectionDetector + MCPResponseScanner)
+        # Stage 4: injection detection
         # INJECT-005: scan bytes decoded strictly: non-UTF-8 is treated as a deny to
         # prevent bypass via invalid byte sequences that errors="replace" would corrupt.
         try:
@@ -543,72 +425,11 @@ class InspectionPipeline:
                 patterns_version=_PATTERNS_VERSION,
             )
 
-        agt_mcp_denied = False
         injection_scanner: str | None = None
         injection_score: float | None = None
 
-        # AGT MCPResponseScanner catches MCP-specific threats (tool poisoning in responses)
-        # INJECT-002: bounded timeout so a slow/unresponsive AGT service cannot block
-        # worker slots indefinitely. Treat timeout as deny (fail-safe).
-        if self._agt_response_scanner is not None:
-            scanner = self._agt_response_scanner
-            tool = catalog_entry.tool_name
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(scanner.scan_response, response_text, tool)
-                    agt_scan = fut.result(timeout=self._scanner_timeout)
-                if not agt_scan.is_safe:
-                    threat_name = str(agt_scan.threats[0]) if agt_scan.threats else "mcp_threat"
-                    deny_reasons.append(f"AGT MCPResponseScanner: {threat_name}")
-                    injection_pattern = f"agt_mcp:{threat_name}"
-                    injection_scanner = "agt_mcp"
-                    # POLICY-006: record deny from AGT scanner before running regex stage;
-                    # regex stage below must not overwrite a deny with allow.
-                    stage_results["injection"] = "deny"
-                    agt_mcp_denied = True
-            except concurrent.futures.TimeoutError:
-                # INJECT-002: scanner timed out: deny to prevent bypass via slow AGT
-                deny_reasons.append(f"AGT MCPResponseScanner timed out after {self._scanner_timeout}s")
-                injection_pattern = "scanner_timeout"
-                injection_scanner = "timeout"
-                stage_results["injection"] = "deny"
-                agt_mcp_denied = True
-            except Exception:
-                # Unlike the timeout above this does not deny, because a scanner
-                # that errored has produced no verdict either way and stage 4's
-                # own detection still runs below. It must not be silent though:
-                # MCP-specific threat coverage is gone for this response.
-                _log.warning(
-                    "AGT MCPResponseScanner.scan_response() failed for %s; "
-                    "no MCP-specific threat coverage on this response",
-                    catalog_entry.tool_name,
-                    exc_info=True,
-                )
-
-        # INJECT-002: wrap AGT PromptInjectionDetector with the same timeout bound.
-        def _run_s4() -> StageResult:
-            return _stage4_injection_detection(
-                response_text,
-                self._injection_patterns,
-                _agt_detector=self._agt_injection_detector,
-            )
-
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                s4 = ex.submit(_run_s4).result(timeout=self._scanner_timeout)
-        except concurrent.futures.TimeoutError:
-            s4 = StageResult(
-                stage="injection",
-                decision="deny",
-                reason=f"AGT PromptInjectionDetector timed out after {self._scanner_timeout}s",
-                injection_pattern="detector_timeout",
-                injection_scanner="timeout",
-            )
-
-        # POLICY-006: only overwrite injection decision if regex/AGT detector found a new deny,
-        # or if the stage had not yet been set to deny by the MCPResponseScanner above.
-        if s4.decision == "deny" or not agt_mcp_denied:
-            stage_results["injection"] = s4.decision
+        s4 = _stage4_injection_detection(response_text, self._injection_patterns)
+        stage_results["injection"] = s4.decision
         if s4.decision == "deny":
             deny_reasons.append(s4.reason or "injection detected")
             injection_pattern = s4.injection_pattern
@@ -623,8 +444,7 @@ class InspectionPipeline:
 
         # Handoff to session state: happens even for denied responses
         # (a denied high-sensitivity response still raises session sensitivity)
-        # INJECT-004: injection_detected must reflect both scanners, not only s4.
-        injection_detected = s4.decision == "deny" or agt_mcp_denied
+        injection_detected = s4.decision == "deny"
         if session is not None:
             session.update_from_inspection(
                 call_id=call_id,

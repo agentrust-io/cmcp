@@ -1,13 +1,11 @@
-"""
-MCP gateway proxy using AGT's MCPGateway + StatelessKernel - implements #48, #53, #54.
+"""MCP gateway proxy with cMCP-owned runtime enforcement.
 
-AGT's MCPGateway handles MCP protocol enforcement (tool allow/deny, parameter
-sanitization, rate limiting, response scanning). cMCP wraps it so that every
-enforcement decision flows through the audit chain and TRACE Claim machinery.
+Every enforcement decision flows through the audit chain and TRACE Claim
+machinery. AGT is used only as isolated CI/release governance tooling.
 
 Network topology:
   Agent Host (MCP client) → CMCPProxy (this module, inside TEE)
-                              → AGT MCPGateway (policy + scanning)
+                              → cMCP runtime gateway (policy + scanning)
                                 → upstream MCP servers (HTTP/SSE)
 """
 
@@ -23,8 +21,6 @@ from enum import StrEnum
 from typing import Any
 
 import httpx
-from agent_os.mcp_gateway import GovernancePolicy, MCPGateway  # type: ignore[attr-defined]
-from agent_os.mcp_response_scanner import MCPResponseScanner
 
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.catalog.loader import (
@@ -46,6 +42,7 @@ from cmcp_runtime.mcp.streamable_http import (
 from cmcp_runtime.policy.decisions import audit_value
 from cmcp_runtime.policy.evaluator import PolicyEvaluator
 from cmcp_runtime.provenance import ProvenanceResult, check_server_provenance
+from cmcp_runtime.runtime_gateway import GovernancePolicy, MCPGateway, MCPResponseScanner
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_runtime.session.state import SessionState, _max_sensitivity
 
@@ -204,10 +201,10 @@ def _extract_external_execution_evidence(response_text: str) -> dict[str, str] |
 
 class CMCPProxy:
     """
-    Wraps AGT's MCPGateway so every tool call is:
+    Enforces every tool call through the cMCP runtime gateway:
       1. Checked against the attested catalog
       2. Evaluated by the Cedar PolicyEvaluator
-      3. Forwarded through AGT's MCPGateway (rate limiting, sanitization, scanning)
+      3. Checked for rate limits, dangerous parameters, and unsafe responses
       4. Logged to the TEE-sealed AuditChain
       5. Session state updated via inspection handoff
 
@@ -248,13 +245,13 @@ class CMCPProxy:
         self._catalog_hash = catalog_hash or catalog.catalog_hash
         self._attestation_platform = attestation_platform
 
-        # Build AGT GovernancePolicy from cMCP catalog
+        # Build the runtime policy from the attested cMCP catalog.
         allowed_tools = list(catalog.entries.keys())
         gov_policy = GovernancePolicy(
             allowed_tools=allowed_tools,
         )
 
-        # AGT MCPGateway - handles protocol, sanitization, rate limiting
+        # cMCP-owned protocol, sanitization, and rate-limit enforcement.
         self._mcp_gateway = MCPGateway(
             policy=gov_policy,
             response_scanner=MCPResponseScanner(),
@@ -418,9 +415,8 @@ class CMCPProxy:
 
         The authoritative comparison is a digest of the semantic triple
         (description, input schema, output schema), computed with the standard
-        library on both sides. That matters: the AGT scanner is an optional
-        dependency, and a control that stops working when a dependency is missing
-        is not a control. The scanner only classifies what kind of change it was.
+        library on both sides. The native scanner classifies the kind of change;
+        the independent digest comparison remains the enforcing control.
 
         A server that will not answer ``tools/list`` is recorded as unchecked and
         is NOT denied. Denying would take out every deployment whose servers do
@@ -468,7 +464,7 @@ class CMCPProxy:
             if self._catalog_scanner is not None and (offered := by_name.get(tool_name)):
                 result = self._catalog_scanner.check_drift(
                     tool_name=tool_name,
-                    server_name=entry.server.display_name or entry.server.url,
+                    server_name=catalog_entry.server.display_name or catalog_entry.server.url,
                     current_definition=offered,
                 )
                 if result.available and result.threats:
@@ -855,8 +851,8 @@ class CMCPProxy:
         Pipeline:
           1. Catalog lookup (fast-path deny if not in catalog)
           2. Cedar policy evaluation
-          3. AGT MCPGateway enforcement (sanitization, rate limit, scan)
-          4. Forward to upstream (via AGT)
+          3. cMCP runtime enforcement (sanitization, rate limit, scan)
+          4. Forward to upstream
           5. Audit chain write
           6. Session state update
           7. Call log record + suspicious-sequence check
@@ -1072,8 +1068,8 @@ class CMCPProxy:
             )
             raise
 
-        # Step 3a: AGT MCPGateway pre-call interception - per-agent rate
-        # limiting, parameter sanitization, allow/deny. Fail-closed inside AGT.
+        # Step 3a: native pre-call interception: per-agent rate limiting,
+        # parameter sanitization, and allow/deny. Fail closed on internal errors.
         _finalization.failure_stage = "ingress_gateway"
         agt_allowed, agt_reason = self._mcp_gateway.intercept_tool_call(
             agent_id=self._session.session_id,
@@ -1081,7 +1077,7 @@ class CMCPProxy:
             params=arguments,
         )
         if not agt_allowed:
-            logger.warning("AGT MCPGateway rejected call: tool=%s reason=%s", tool_name, agt_reason)
+            logger.warning("Runtime gateway rejected call: tool=%s reason=%s", tool_name, agt_reason)
             self._append_call_terminal(
                 _finalization,
                 "tool_call",
@@ -1214,7 +1210,7 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
-        # Step 3d: AGT response interception - injection / credential / PII scan.
+        # Step 3d: native response interception: injection / credential / PII scan.
         _finalization.failure_stage = "response_scan"
         scan = self._mcp_gateway.intercept_tool_response(
             agent_id=self._session.session_id,
