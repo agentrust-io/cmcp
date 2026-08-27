@@ -662,9 +662,8 @@ def verify_audit_bundle(
         transcript_hash = transcript.get("hash")
         chain_tip = chain.get("tip")
 
-        bundle_has_tool_calls = any(
-            entry.get("entry_type") == "tool_call" for entry in entries
-        )
+        tool_calls = [entry for entry in entries if entry.get("entry_type") == "tool_call"]
+        bundle_has_tool_calls = bool(tool_calls)
         if bundle_has_tool_calls and not isinstance(transcript_hash, str):
             failures.append(
                 "claim trace.tool_transcript.hash is missing for a bundle with tool calls"
@@ -679,6 +678,39 @@ def verify_audit_bundle(
                 failures.append(
                     "claim trace.tool_transcript.hash does not match gateway.audit_chain.tip"
                 )
+
+        call_summary = claim_json.get("gateway", {}).get("call_summary", {})
+        expected_call_summary = {
+            "tool_calls_total": len(tool_calls),
+            "tool_calls_allowed": sum(
+                1 for entry in tool_calls if entry.get("policy_decision") == "allow"
+            ),
+            "tool_calls_denied": sum(
+                1
+                for entry in tool_calls
+                if entry.get("policy_decision") in ("deny", "advisory_deny")
+            ),
+            "tool_calls_faulted": sum(
+                1 for entry in tool_calls if entry.get("policy_decision") == "fault"
+            ),
+            "tools_invoked": sorted(
+                {
+                    entry["tool_name"]
+                    for entry in tool_calls
+                    if entry.get("tool_name") is not None
+                }
+            ),
+        }
+        if transcript.get("call_count") != len(tool_calls):
+            failures.append(
+                "claim trace.tool_transcript.call_count does not match audit bundle tool calls"
+            )
+        for field_name, expected_value in expected_call_summary.items():
+            if call_summary.get(field_name) != expected_value:
+                failures.append(
+                    f"claim gateway.call_summary.{field_name} does not match audit bundle tool calls"
+                )
+
         if chain.get("root") != entries[0].get("entry_hash"):
             failures.append("bundle root does not match claim gateway.audit_chain.root")
         if chain.get("tip") != entries[-1].get("entry_hash"):

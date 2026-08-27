@@ -192,6 +192,86 @@ def test_verify_rejects_removed_tool_transcript(claim_and_bundle, tmp_path):
     assert "tool_transcript.hash is missing for a bundle with tool calls" in result.output
 
 
+@pytest.mark.parametrize(
+    ("section", "field_name", "tampered_value", "expected_error"),
+    [
+        (
+            "tool_transcript",
+            "call_count",
+            7,
+            "trace.tool_transcript.call_count does not match audit bundle tool calls",
+        ),
+        (
+            "call_summary",
+            "tool_calls_total",
+            7,
+            "gateway.call_summary.tool_calls_total does not match audit bundle tool calls",
+        ),
+        (
+            "call_summary",
+            "tool_calls_allowed",
+            0,
+            "gateway.call_summary.tool_calls_allowed does not match audit bundle tool calls",
+        ),
+        (
+            "call_summary",
+            "tool_calls_denied",
+            1,
+            "gateway.call_summary.tool_calls_denied does not match audit bundle tool calls",
+        ),
+        (
+            "call_summary",
+            "tool_calls_faulted",
+            1,
+            "gateway.call_summary.tool_calls_faulted does not match audit bundle tool calls",
+        ),
+        (
+            "call_summary",
+            "tools_invoked",
+            ["substituted.tool"],
+            "gateway.call_summary.tools_invoked does not match audit bundle tool calls",
+        ),
+    ],
+)
+def test_verify_rejects_call_summary_mismatch(
+    claim_and_bundle,
+    tmp_path,
+    section,
+    field_name,
+    tampered_value,
+    expected_error,
+):
+    """A re-signed claim must bind audit-derived call metadata to the bundle."""
+    _, bundle_file, claim, _, signing_key = claim_and_bundle
+
+    if section == "tool_transcript":
+        claim["trace"][section][field_name] = tampered_value
+    else:
+        claim["gateway"][section][field_name] = tampered_value
+
+    body = {k: v for k, v in claim.items() if k != "signature"}
+    body_bytes = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode()
+    raw_sig = signing_key.sign(body_bytes)
+    claim["signature"] = base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
+
+    tampered_claim = tmp_path / f"{field_name}-mismatch.json"
+    tampered_claim.write_text(json.dumps(claim))
+
+    result = CliRunner().invoke(main, [
+        "verify", str(tampered_claim), "--audit-bundle", str(bundle_file),
+    ])
+
+    assert result.exit_code == 1, result.output
+    assert "signature                PASS" in result.output
+    assert "audit_bundle             FAIL" in result.output
+    assert expected_error in result.output
+
+
 def test_verify_fails_on_tampered_audit_bundle(claim_and_bundle, tmp_path):
     """Mutating one audit entry breaks the hash chain and the bundle signature."""
     claim_file, _, _, bundle, _ = claim_and_bundle
