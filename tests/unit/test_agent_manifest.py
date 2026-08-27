@@ -178,8 +178,7 @@ def test_subject_mismatch_fails_closed() -> None:
 def test_enforcement_mode_mismatch_fails_closed() -> None:
     # The manifest's policy_bundle declares "enforce" (see _signed_manifest);
     # a runtime that is only attested as running in advisory mode must not
-    # bind, even though the policy_bundle hash itself matches. See
-    # agentrust-io/cmcp#576 / agent-manifest spec 6.2.
+    # bind, even though the policy_bundle hash itself matches.
     priv, pub, key_id = _keypair()
     manifest = _signed_manifest(priv, key_id)
     with pytest.raises(ConfigError, match="enforcement_mode"):
