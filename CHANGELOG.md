@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed AGT/`agent_os` from the production dependency graph. cMCP now owns the
+  runtime call and response enforcement path; AGT remains isolated to CI and
+  release governance verification. Legacy `agent_os_version` bundle metadata is
+  still readable but is no longer enforced.
+
 ### Fixed
 
 - **On SEV-SNP, TDX and Azure CVM the policy actually in force was committed to nothing (#552, follow-up to #432).** `gateway_measurement()` folds the installed code, the policy bundle and the effective configuration into one digest, and #432 extended it into a `TPM_NT_EXTEND` NV index and had the TPM certify it. That path is validated on real Azure Trusted Launch vTPM hardware, and it ran for the `tpm` provider only: `_measure_gateway` returned early for every other provider.

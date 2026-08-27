@@ -300,7 +300,7 @@ def test_readyz_returns_200_when_healthy():
     assert body["status"] == "ready"
     assert body["checks"]["policy"] == "ok"
     assert body["checks"]["attestation"] == "ok"
-    assert body["checks"]["agt"] == "ok"
+    assert body["checks"]["runtime_controls"] == "ok"
 
 
 def test_readyz_returns_503_when_policy_missing():
@@ -337,31 +337,13 @@ def test_readyz_returns_503_when_attestation_stale():
     assert body["checks"]["attestation"] == "failed: attestation_stale"
 
 
-def test_readyz_returns_503_when_agt_unavailable():
-    """CONF-007: unavailable agent_os returns 503 and not_ready."""
-    import sys
-    proxy = MagicMock()
-    proxy._catalog = MagicMock()
-    proxy._catalog.entries = {"test.tool": MagicMock()}
-    proxy._policy = MagicMock()
-    proxy._check_health.return_value = None
-    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
-        server = MCPServer(proxy)
+def test_readyz_does_not_depend_on_agent_os():
+    """CONF-007: runtime readiness is independent of optional AGT tooling."""
+    server = _make_ready_server()
     client = TestClient(server.app, raise_server_exceptions=False)
-    # Setting sys.modules["agent_os"] = None causes ImportError on "import agent_os"
-    saved = sys.modules.get("agent_os", object())
-    sys.modules["agent_os"] = None  # type: ignore[assignment]
-    try:
-        resp = client.get("/readyz")
-    finally:
-        if saved is object():
-            sys.modules.pop("agent_os", None)
-        else:
-            sys.modules["agent_os"] = saved
-    assert resp.status_code == 503
-    body = resp.json()
-    assert body["status"] == "not_ready"
-    assert body["checks"]["agt"].startswith("failed:")
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+    assert resp.json()["checks"]["runtime_controls"] == "ok"
 
 
 def test_readyz_accessible_without_bearer_token():

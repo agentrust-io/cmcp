@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "description": "Fallback regex injection-detection patterns used when AGT PromptInjectionDetector is unavailable. Managed per INJECT-006.",
+  "description": "cMCP-owned regex injection-detection patterns. Managed per INJECT-006.",
   "patterns": [
     {
       "regex": "<system>[\\s\\S]*?</system>",

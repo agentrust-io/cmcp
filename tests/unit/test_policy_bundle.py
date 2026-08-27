@@ -19,7 +19,7 @@ MANIFEST = {
     "commit_sha": "abc123",
 }
 
-CEDAR_POLICY = 'permit(principal, action, resource) when { true };'
+CEDAR_POLICY = "permit(principal, action, resource) when { true };"
 SCHEMA = '{"cMCP": {"entityTypes": {}, "actions": {}}}'
 
 
@@ -118,6 +118,7 @@ def test_load_bundle_manifest_approval_chain(bundle_dir):
 
 
 # ── PolicyStore tests (POLICY-001 hot-reload) ─────────────────────────────────
+
 
 def _make_bundle(hash_suffix: str = "0" * 64) -> PolicyBundle:
     return PolicyBundle(
@@ -307,6 +308,7 @@ def test_a_failing_reload_costs_one_attempt_per_interval_not_one_per_call(bundle
 
 # ── POLICY-007: agent_os_version pinning ─────────────────────────────────────
 
+
 def test_load_bundle_accepts_manifest_without_agent_os_version(bundle_dir):
     """POLICY-007: agent_os_version is optional: bundles without it still load."""
     bundle = load_policy_bundle(str(bundle_dir))
@@ -322,9 +324,10 @@ def test_load_bundle_records_pinned_agent_os_version(bundle_dir):
     assert bundle.manifest.agent_os_version == "3.7.0"
 
 
-def test_load_bundle_warns_on_agent_os_version_mismatch(bundle_dir, caplog):
-    """POLICY-007: version mismatch emits a WARNING but does not raise."""
+def test_load_bundle_warns_that_agent_os_version_is_legacy(bundle_dir, caplog):
+    """POLICY-007: legacy metadata is retained but no longer enforced."""
     import logging
+
     manifest_with_old = dict(MANIFEST)
     manifest_with_old["agent_os_version"] = "0.0.0-definitely-not-installed"
     (bundle_dir / "manifest.json").write_text(json.dumps(manifest_with_old))
@@ -332,16 +335,3 @@ def test_load_bundle_warns_on_agent_os_version_mismatch(bundle_dir, caplog):
         bundle = load_policy_bundle(str(bundle_dir))
     assert bundle is not None
     assert any("POLICY-007" in r.message for r in caplog.records)
-
-
-def test_load_bundle_no_warning_when_versions_match(bundle_dir, caplog):
-    """POLICY-007: no warning when pinned version matches installed version."""
-    import logging
-
-    from cmcp_runtime.policy.bundle import _AGENT_OS_VERSION
-    manifest_with_match = dict(MANIFEST)
-    manifest_with_match["agent_os_version"] = _AGENT_OS_VERSION
-    (bundle_dir / "manifest.json").write_text(json.dumps(manifest_with_match))
-    with caplog.at_level(logging.WARNING):
-        load_policy_bundle(str(bundle_dir))
-    assert not any("POLICY-007" in r.message for r in caplog.records)

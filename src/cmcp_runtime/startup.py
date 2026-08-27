@@ -579,20 +579,11 @@ def run_startup(config_path: str) -> RuntimeContext:
 
     # Step 5a (#521): scan the catalog and register every tool's fingerprint, which
     # is what makes CatalogScanner.check_drift able to classify a later mutation.
-    # Advisory by design: the scanner is backed by an optional dependency, so it
-    # cannot be the control. The enforcing check is the digest comparison in the
-    # proxy, which needs nothing beyond the standard library. Log the difference
-    # between "scanned and clean" and "never scanned" rather than letting an absent
-    # dependency read as a pass.
+    # The scanner is cMCP-owned and records approved fingerprints for later drift
+    # classification. The proxy independently enforces its canonical digest check.
     catalog_scanner = CatalogScanner()
     scan = catalog_scanner.scan_catalog(catalog)
-    if not scan.available:
-        logger.warning(
-            "Catalog security scan UNAVAILABLE: agent-os-kernel not installed. "
-            "Load-time typosquat and hidden-instruction checks did not run, and "
-            "upstream drift will be detected by digest comparison but not classified."
-        )
-    elif scan.safe:
+    if scan.safe:
         logger.info("Catalog security scan clean: %d tools scanned", scan.tools_scanned)
     else:
         for threat in scan.threats:
