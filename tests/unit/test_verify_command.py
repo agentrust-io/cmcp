@@ -135,7 +135,7 @@ def test_verify_audit_bundle_passes(claim_and_bundle):
             "tool_calls_total",
             "tool_calls_allowed",
             "tool_calls_denied",
-            "tool_cals_faulted",
+            "tool_calls_faulted",
             "tools_invoked",
         )
     } == {
@@ -259,7 +259,7 @@ def test_verify_rejects_removed_tool_transcript(claim_and_bundle, tmp_path):
             "call_summary",
             "tool_calls_denied",
             False,
-            "gateway.call_summary.tool_cals_denied does not match audit bundle tool calls",
+            "gateway.call_summary.tool_calls_denied does not match audit bundle tool calls",
         ),
     ],
 )
