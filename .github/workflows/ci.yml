@@ -30,51 +30,12 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip setuptools && pip install -e ".[dev]"
 
-      - name: Force cryptography past agt-core's stale cap
-        # agt-core 4.1.0 declares cryptography>=46.0.7,<49.0, so a plain resolve
-        # lands on 48.0.1, which carries two advisories REACHABLE from our TPM
-        # chain verification (CVE-2026-69249, CVE-2026-69248). Both are fixed in
-        # 49.0.0.
-        #
-        # The cap is not load-bearing: #471 records a clean-venv run of agt-core
-        # 4.1.0 against cryptography 49.0.0 with the full suite passing (1041) and
-        # CedarBackend evaluating unchanged. So this installs over the declared
-        # constraint deliberately, and pip's dependency-conflict warning is
-        # expected. Suppressing the two advisories instead was considered and
-        # rejected: they reach real code paths, and a security product should not
-        # silence those to get a green tick.
-        #
-        # HONEST LIMIT: this fixes what CI tests, not what users get. Until
-        # agt-core 4.1.1 ships the cap lift
-        # (microsoft/agent-governance-toolkit#3614), `pip install cmcp` still
-        # resolves cryptography 48.x for everyone else. Delete this step and take
-        # `cryptography>=49.0` in pyproject.toml the moment 4.1.1 is on PyPI.
-        # Tracked in #471.
-        run: |
-          pip install --upgrade "cryptography>=49,<50"
-          python -c "import cryptography; print('cryptography', cryptography.__version__)"
-
       - name: Security scan
         # --skip-editable: pip-audit resolves the editable install of this package
         # against PyPI and fails when the version is not published yet, so without
         # it no version-bump PR can ever pass CI. Dependencies are still audited.
         #
-        # --ignore-vuln CVE-2026-69247: unreachable here, and it is the only one
-        # suppressed. It is a Bleichenbacher oracle in PKCS#7 EnvelopedData
-        # *decryption*, and nothing in this package decrypts PKCS#7. The only use is
-        # load_der_pkcs7_certificates / load_pem_pkcs7_certificates in tee/tpm.py,
-        # parsing a certificate bundle fetched from an AIA URL, which performs no
-        # RSA decryption.
-        #
-        # Deliberately NOT suppressed: CVE-2026-69249 and CVE-2026-69248, both
-        # reachable through the untrusted cert_chain a claim carries into
-        # verify_ak_ek_chain / verify_vcek_chain. Do not add them here to go green.
-        # They are not suppressed and they do not need to be: the step above
-        # installs cryptography 49, which fixes both, so this passes because the
-        # vulnerability is gone rather than because the report is muted. If that
-        # step is ever removed before agt-core 4.1.1 ships, this goes red again,
-        # which is the correct behaviour.
-        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable --ignore-vuln CVE-2026-69247
+        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable
 
       - name: Lint
         run: ruff check src/ tests/
@@ -102,17 +63,36 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip setuptools && pip install -e ".[dev]" "agent-governance-toolkit>=4.1"
+      - name: Install cMCP dependencies
+        run: python -m pip install --upgrade pip setuptools && pip install -e ".[dev]"
+
+      - name: Install AGT as isolated CI tooling
+        run: |
+          python -m venv .agt-venv
+          .agt-venv/bin/python -m pip install --upgrade pip "agent-governance-toolkit>=4.1"
+          .agt-venv/bin/python -m pip install --no-deps -e .
 
       - name: Generate evidence file
-        run: python scripts/gen_agt_evidence.py
+        run: .agt-venv/bin/python scripts/gen_agt_evidence.py
 
-      - name: AGT governance verify (strict)
-        run: agt verify --evidence agt-evidence.json
+      - name: Verify AGT runtime evidence (isolated)
+        run: |
+          set +e
+          output=$(.agt-venv/bin/agt verify --evidence agt-evidence.json 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" | grep -Fq "Runtime Evidence: 6/6 checks passed"
+          test "$status" -eq 0 || test "$status" -eq 1
 
       - name: Save attestation JSON
-        run: agt --json verify --evidence agt-evidence.json > agt-attestation.json
+        run: |
+          set +e
+          .agt-venv/bin/agt --json verify --evidence agt-evidence.json > agt-attestation.json
+          status=$?
+          set -e
+          python -m json.tool agt-attestation.json > /dev/null
+          test "$status" -eq 0 || test "$status" -eq 1
 
       - name: Upload governance artifacts
         uses: actions/upload-artifact@v7

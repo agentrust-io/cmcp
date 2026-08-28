@@ -2,8 +2,7 @@
 HTTP/SSE MCP server - inbound agent-facing endpoint (issue #48).
 
 Receives MCP JSON-RPC 2.0 calls from agent hosts, routes them through
-CMCPProxy, and returns results. Uses AGT's StatelessKernel for execution
-context management.
+CMCPProxy, and returns results. Runtime enforcement is owned by cMCP.
 
 Phase 1 scope: HTTP/SSE transport only. stdio excluded (docs/spec/transport.md).
 """
@@ -20,7 +19,6 @@ import uuid
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
-from agent_os.stateless import StatelessKernel
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -37,6 +35,15 @@ if TYPE_CHECKING:
     from cmcp_runtime.session.state import SessionState
 
 logger = logging.getLogger(__name__)
+
+
+class StatelessKernel:
+    """Backward-compatible marker for the former unused construction hook.
+
+    cMCP performs enforcement in :class:`CMCPProxy`; this marker keeps the
+    constructor seam stable for embedders and tests without an external runtime.
+    """
+
 
 # Endpoints exempt from bearer-token auth (Kubernetes liveness / readiness probes)
 _AUTH_EXEMPT_PATHS = {"/health", "/readyz"}
@@ -675,13 +682,7 @@ class MCPServer:
             checks["attestation"] = f"failed: {attest_reason}"
             not_ready = True
 
-        # AGT (agent_os kernel): verify the library is importable and responsive
-        try:
-            import agent_os  # noqa: F401
-            checks["agt"] = "ok"
-        except Exception as exc:  # noqa: BLE001
-            checks["agt"] = f"failed: agent_os unavailable ({exc})"
-            not_ready = True
+        checks["runtime_controls"] = "ok"
 
         status = "not_ready" if not_ready else "ready"
         return JSONResponse({"status": status, "checks": checks}, status_code=503 if not_ready else 200)

@@ -40,13 +40,18 @@ def _report():
     )
 
 
-def _summary():
+def _summary(chain):
+    tool_calls = [entry for entry in chain.entries if entry.entry_type == "tool_call"]
     return CallSummary(
-        tool_calls_total=1,
-        tool_calls_allowed=1,
-        tool_calls_denied=0,
-        tool_calls_faulted=0,
-        tools_invoked=["tool.a"],
+        tool_calls_total=len(tool_calls),
+        tool_calls_allowed=sum(1 for entry in tool_calls if entry.policy_decision == "allow"),
+        tool_calls_denied=sum(
+            1 for entry in tool_calls if entry.policy_decision in ("deny", "advisory_deny")
+        ),
+        tool_calls_faulted=sum(1 for entry in tool_calls if entry.policy_decision == "fault"),
+        tools_invoked=sorted(
+            {entry.tool_name for entry in tool_calls if entry.tool_name is not None}
+        ),
         session_max_sensitivity="public",
         call_graph_summary=CallGraphSummary(
             compliance_domains_touched=["external"],
@@ -66,7 +71,7 @@ def _claim_dict(chain, key, seq=1, prev=None):
             policy_version="1.0.0",
         ),
         tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
-        call_summary=_summary(),
+        call_summary=_summary(chain),
         audit_chain_root=chain.chain_root,
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import importlib.metadata
 import json
 import logging
 import threading
@@ -19,13 +18,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from cmcp_runtime.errors import ConfigError, PolicyHashMismatch, PolicySignatureInvalid
 
-# POLICY-007: version of the Cedar evaluation library bundled in agent-os-kernel.
-# Pinned in manifest.json as agent_os_version; mismatch is logged as a warning.
-try:
-    _AGENT_OS_VERSION: str = importlib.metadata.version("agent-os-kernel")
-except importlib.metadata.PackageNotFoundError:
-    _AGENT_OS_VERSION = "unknown"
-
 logger = logging.getLogger(__name__)
 
 
@@ -38,7 +30,7 @@ class PolicyManifest:
     author_identity: str
     commit_sha: str
     approval_chain: list[dict[str, str]] = field(default_factory=list)
-    agent_os_version: str | None = None  # POLICY-007: expected agent-os-kernel version
+    agent_os_version: str | None = None  # Legacy metadata, retained for bundle compatibility
     #: POLICY-004: base64url Ed25519 signature over the bundle's signing pre-image.
     #: Absent on an unsigned bundle, which stays valid: signing is opt-in and a
     #: deployment that pins a hash instead needs none of this.
@@ -220,15 +212,11 @@ def load_policy_bundle(
         raise ConfigError(f"manifest.json missing required fields: {missing}")
 
     pinned_agent_os = raw_manifest.get("agent_os_version")
-    if pinned_agent_os is not None and pinned_agent_os != _AGENT_OS_VERSION:
-        # POLICY-007: mismatch is a warning, not a hard failure, because the
-        # gateway cannot know in advance whether a newer agent_os is semantically
-        # compatible. Operators must review changelogs and re-pin after upgrade.
+    if pinned_agent_os is not None:
         logger.warning(
-            "POLICY-007: agent_os_version mismatch: bundle pinned %s, installed %s. "
-            "Cedar policy semantics may have changed; review the agent-os-kernel changelog.",
+            "POLICY-007: agent_os_version=%s is legacy metadata and is not enforced; "
+            "cMCP no longer has an AGT runtime dependency.",
             pinned_agent_os,
-            _AGENT_OS_VERSION,
         )
 
     manifest = PolicyManifest(

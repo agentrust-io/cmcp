@@ -2,7 +2,7 @@
 
 ---
 Status: Draft v0.1
-Last updated: 2026-06-04
+Last updated: 2026-08-27
 Stability: Unstable , expect breaking changes before v1.0
 ---
 
@@ -35,7 +35,7 @@ All items must be satisfied before Phase 2 ships. Items are non-negotiable; a pa
 These constants are hard-coded in the proxy implementation. They are not configurable at runtime or via operator-supplied configuration. Making them configurable would allow an operator to raise limits and defeat the protection.
 
 ```python
-MAX_REQUEST_BYTES = 10 * 1024 * 1024  # 10MB
+MAX_REQUEST_BYTES = 1_000_000  # 1MB, decimal
 MAX_JSON_NESTING_DEPTH = 64
 MAX_PARSE_TIME_MS = 100
 MAX_STRING_LENGTH = MAX_REQUEST_BYTES // 2   # per string field, see invariant below
@@ -49,13 +49,15 @@ The invariant matters because violating it produces a check that reads like a co
 
 An implementation MUST derive the per-string cap from whatever whole-body cap it enforces. It MUST NOT restate the value as a literal, since a later change to the body cap then silently recreates the unreachable condition at a new ratio.
 
-### Open: MAX_REQUEST_BYTES disagrees with the implementation
+### MAX_REQUEST_BYTES is 1MB by design
 
-This document states 10MB. Both implementations enforce 1MB: `scripts/mock_upstream.py` and `MCPServer.__init__` in `src/cmcp_runtime/mcp/server.py`.
+Both implementations enforce `1_000_000`, decimal: `scripts/mock_upstream.py` and `MCPServer.__init__` in `src/cmcp_runtime/mcp/server.py`. This is the DOS-001 control created by [issue #147](https://github.com/agentrust-io/cmcp/issues/147), which established the request body limit before the gateway reads the body.
 
-At the implemented 1MB, the per-string cap this document originally stated as a literal 1MB was exactly the whole-body cap, which is how the unreachable case above was found. Deriving the cap removes the dead-code hazard at either value, but the disagreement itself is still open: nothing records whether 1MB was a deliberate tightening or drift from this spec.
+The per-string cap is therefore derived as `MAX_REQUEST_BYTES // 2`, which is 500,000 bytes at the current limit. Deriving it keeps the ratio explicit and prevents the per-string control from drifting when the body limit changes.
 
-Tracked on #573. Implementers should follow the enforced body cap and the ratio above until that is settled, rather than raising a body cap to match this document.
+`MAX_JSON_NESTING_DEPTH` and `MAX_PARSE_TIME_MS` must be implemented and evaluated against the 1MB request cap. Raising the cap to 10MB would be a separate resource and denial of service design decision, not a documentation correction.
+
+The decision and its provenance are recorded in [issue #573](https://github.com/agentrust-io/cmcp/issues/573) and [DOS-001 issue #147](https://github.com/agentrust-io/cmcp/issues/147).
 
 ## Malformed Input Handling
 

@@ -26,6 +26,7 @@ from cmcp_runtime.agent_manifest import (
     load_agent_manifest_document,
     verify_agent_manifest_binding,
 )
+from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
 
 POLICY_HASH = "sha256:" + "a" * 64
@@ -90,6 +91,7 @@ def _bind(loaded, trusted_keys):
         authenticated_subject=AGENT_ID,
         policy_bundle_hash=POLICY_HASH,
         tool_catalog_hash=CATALOG_HASH,
+        enforcement_mode=EnforcementMode.ENFORCING,
         envelope=loaded.envelope,
     )
 
