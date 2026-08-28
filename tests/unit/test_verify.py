@@ -28,6 +28,7 @@ from cmcp_runtime.audit.trace_claim import (
     _to_dict,
     generate_trace_claim,
 )
+from cmcp_runtime.config import EnforcementMode
 from cmcp_verify.verify import (
     ApprovedHashes,
     VerificationError,
@@ -147,7 +148,7 @@ def _b64url(data: bytes) -> str:
 
 
 def _signed_manifest(
-    priv: Ed25519PrivateKey, key_id: str, *, intent: dict | None = None
+    priv: Ed25519PrivateKey, key_id: str, *, intent: dict | None = None, enforcement_mode: str | None = None
 ) -> dict:
     manifest = {
         "@context": "https://agentmanifest.agentrust-io.com/v0.1/context.json",
@@ -160,7 +161,11 @@ def _signed_manifest(
         "issuer": "spiffe://factory.example/signing-authority/development",
         "crypto_profile": "standard",
         "artifacts": {
-            "policy_bundle": {"hash": POLICY_HASH, "policy_language": "cedar"},
+            "policy_bundle": (
+                {"hash": POLICY_HASH, "policy_language": "cedar", "enforcement_mode": enforcement_mode}
+                if enforcement_mode is not None
+                else {"hash": POLICY_HASH, "policy_language": "cedar"}
+            ),
             "tool_manifest": {"catalog_hash": CATALOG_HASH, "tools": []},
         },
         "delegation_chain": [],
@@ -344,6 +349,106 @@ def test_agent_manifest_binding_intent_hash_mismatch_fails():
     assert "agent_manifest.binding" in result.unverified_fields
     assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
 
+
+# -- enforcement_mode cross-check (cmcp#576 follow-up) --------------------------
+
+
+def test_agent_manifest_binding_enforcement_mode_reaches_the_claim():
+    """A manifest that declares enforcement_mode binds cleanly when the claim's
+    agent_identity carries the same value the runtime attested at claim time.
+    """
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id, enforcement_mode="enforce")
+
+    real_binding = verify_agent_manifest_binding(
+        manifest,
+        {key_id: pub},
+        authenticated_subject=AGENT_ID,
+        authenticated_subject_source="config",
+        policy_bundle_hash=POLICY_HASH,
+        tool_catalog_hash=CATALOG_HASH,
+        enforcement_mode=EnforcementMode.ENFORCING,
+    )
+    assert real_binding.enforcement_mode == EnforcementMode.ENFORCING
+
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    identity.enforcement_mode = "enforcing"
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+    assert "agent_manifest.binding" in result.verified_fields
+
+
+def test_agent_manifest_binding_enforcement_mode_mismatch_fails():
+    """The claim asserts a different enforcement mode than the one a fresh
+    re-verification of the manifest actually attests -- as if the gateway's
+    mode changed (or was misrecorded) between claim creation and now.
+    """
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id, enforcement_mode="enforce")
+
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    identity.enforcement_mode = "advisory"  # claim says advisory
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+    assert "agent_manifest.binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
+
+
+def test_agent_manifest_binding_without_enforcement_mode_still_works():
+    """A manifest that doesn't declare enforcement_mode at all -- the common
+    case before this field existed -- must bind and verify exactly as before.
+    Absence is not failure (same principle as intent_hash's module docstring).
+    """
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id)  # no enforcement_mode
+
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+    assert "agent_manifest.binding" in result.verified_fields
+
+
+def test_agent_manifest_binding_garbled_enforcement_mode_fails_closed():
+    """A claim whose gateway.agent_identity.enforcement_mode is not one of the
+    three valid values must fail closed, not raise an unhandled ValueError.
+    """
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id, enforcement_mode="enforce")
+
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    identity.enforcement_mode = "not-a-real-mode"
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+    assert "agent_manifest.binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
 
 # -- agent_key_thumbprint subject binding (#425) -------------------------------
 
