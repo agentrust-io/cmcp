@@ -317,24 +317,38 @@ class CMCPProxy:
           cannot be compared must never silently degrade to unpinned.
         - http: pinning is impossible without TLS; warn once per server
           (dev/demo only) and proceed.
+
+        Every branch keys the cached client on ``_server_execution_key(entry)``
+        (the same "security-relevant identity used to pool one upstream" that
+        ``_stdio_for`` keys its spawned children on), not only the pinned
+        branch. A cache keyed on the literal string ``"unpinned"`` would give
+        every plain-http and placeholder-pinned server in this session's
+        catalog the *same* ``httpx.AsyncClient`` - and therefore the same
+        cookie jar and connection-pool limits - regardless of how unrelated
+        those upstreams are. Two catalog entries that happen to share one real
+        pinned fingerprint correctly share a client: a matching pin *is* the
+        same verified peer. Two that merely share the fact that neither is
+        pinned are not the same peer, and must not share state meant to be
+        scoped to one.
         """
         server_url = entry.server.url
         fingerprint = entry.server.tls_fingerprint
         scheme = httpx.URL(server_url).scheme.lower()
+        identity = _server_execution_key(entry)
         if scheme != "https":
             self._warn_pin_unenforced(
                 server_url,
                 "upstream is not https, TLS fingerprint pinning is impossible - "
                 "plain-http upstreams are for local dev/demo only",
             )
-            key = "unpinned"
+            key = f"unpinned:{identity}"
         elif fingerprint == tls_pinning.PLACEHOLDER_FINGERPRINT:
             self._warn_pin_unenforced(
                 server_url,
                 "catalog tls_fingerprint is the unpinned-dev placeholder - peer "
                 "identity is verified by CA trust only, not pinned to the catalog",
             )
-            key = "unpinned"
+            key = f"unpinned:{identity}"
         elif not tls_pinning.FINGERPRINT_PATTERN.match(fingerprint):
             raise UpstreamUnavailable(
                 f"Catalog tls_fingerprint for {server_url} is malformed - refusing to connect",
@@ -346,7 +360,7 @@ class CMCPProxy:
         client = self._http_clients.get(key)
         if client is None:
             timeout = httpx.Timeout(30.0)
-            if key == "unpinned":
+            if key.startswith("unpinned:"):
                 client = httpx.AsyncClient(
                     timeout=timeout, verify=tls_pinning.default_ssl_context()
                 )
