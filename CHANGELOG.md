@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Both fields are exactly as caller-controlled as `_cmcp` a few lines below, already guarded with "A malformed `_cmcp` (string, list, number) must not 500 the call path" `name` and `arguments` were the two places that same reasoning wasn't applied. Both now return the same `-32602 Invalid params` JSON-RPC error the adjacent depth/key/string-length and non-dict-`params` checks already return, before `call_tool` is ever reached.
 
-
 - **On SEV-SNP, TDX and Azure CVM the policy actually in force was committed to nothing (#552, follow-up to #432).** `gateway_measurement()` folds the installed code, the policy bundle and the effective configuration into one digest, and #432 extended it into a `TPM_NT_EXTEND` NV index and had the TPM certify it. That path is validated on real Azure Trusted Launch vTPM hardware, and it ran for the `tpm` provider only: `_measure_gateway` returned early for every other provider.
 
   The stated reason was that "SEV-SNP and TDX commit their own binding through the report's fields". That is true and it is not equivalent. Those fields carry the **launch** measurement, which is fixed at boot and does not move when the Cedar bundle reloads mid-session through `PolicyEvaluator._maybe_reload()`. So on exactly the platforms whose whole premise is hardware-rooted policy enforcement, nothing signed said which policy was running.
