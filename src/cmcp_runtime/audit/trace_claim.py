@@ -111,6 +111,7 @@ class AgentIdentityInfo:
     # subject_source is a non-live-authenticated source (config, manifest-dev) - see
     # AgentIdentityOut for the full contract.
     agent_key_thumbprint: str | None = None
+    enforcement_mode: str | None = None
 
 
 # ── Pydantic output models ─────────────────────────────────────────────────────
@@ -177,6 +178,7 @@ class AgentIdentityOut(BaseModel):
     tool_catalog_hash: str
     intent_hash: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
     agent_key_thumbprint: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
+    enforcement_mode: str | None = None
 
 
 class ToolTranscriptEntry(BaseModel):
@@ -508,6 +510,7 @@ def generate_trace_claim(
                 tool_catalog_hash=agent_identity.tool_catalog_hash,
                 intent_hash=agent_identity.intent_hash,
                 agent_key_thumbprint=agent_identity.agent_key_thumbprint,
+                enforcement_mode=agent_identity.enforcement_mode,
             )
             if agent_identity is not None
             else None

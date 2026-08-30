@@ -435,6 +435,49 @@ def test_tool_name_is_lowercased_at_ingress():
     assert received_names == ["upper_tool"]
 
 
+# tools/call: non-string `name` / non-object `arguments` must not 500
+#
+# `params.get("name", "").lower()` assumed `name`, when present, is a string:
+# the "" default only covers an *absent* name. `params.get("arguments", {})`
+# had the identical gap for `arguments`. Both are exactly as caller-controlled
+# as `_cmcp` (guarded a few lines below with "A malformed _cmcp (string, list,
+# number) must not 500 the call path") -- neither was guarded the same way,
+# so a non-string name 500'd the request instead of returning the JSON-RPC
+# Invalid Request the malformed input actually is, and a non-object
+# `arguments` (an int, for instance) silently passed `_arg_shape_violation`
+# (which only recognizes dict/list/str) and reached call_tool unvalidated.
+
+
+@pytest.mark.parametrize("bad_name", [12345, ["a", "list"], {"nested": "object"}, True, None])
+def test_non_string_name_returns_invalid_params_not_500(bad_name):
+    server = _make_server()
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": bad_name, "arguments": {}}, "id": 1},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["code"] == -32602
+    assert "name" in body["error"]["message"]
+
+
+@pytest.mark.parametrize("bad_arguments", [42, 3.14, "a string", ["a", "list"], True])
+def test_non_object_arguments_returns_invalid_params_not_silently_accepted(bad_arguments):
+    server = _make_server()
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "safe_tool", "arguments": bad_arguments}, "id": 1},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["code"] == -32602
+    assert "arguments" in body["error"]["message"]
+    proxy = server._proxy
+    proxy.call_tool.assert_not_called()
+
+
 def test_deny_response_does_not_include_internal_reason():
     """INJECT-003 - internal deny_reason must not appear in 403 response body."""
     proxy = MagicMock()

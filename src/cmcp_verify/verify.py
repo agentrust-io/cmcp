@@ -25,6 +25,7 @@ from pydantic import ValidationError
 
 from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
 from cmcp_runtime.audit.trace_claim import RuntimeClaim
+from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
 
 logger = logging.getLogger(__name__)
@@ -909,6 +910,12 @@ def verify_trace_claim(
             details["agent_manifest"] = "no trusted Agent Manifest issuer keys provided"
         else:
             try:
+                enforcement_mode_raw = agent_identity.get("enforcement_mode")
+                claimed_enforcement_mode = (
+                    EnforcementMode(enforcement_mode_raw)
+                    if enforcement_mode_raw is not None
+                    else None
+                )
                 binding = verify_agent_manifest_binding(
                     agent_manifest,
                     trusted_agent_manifest_keys,
@@ -916,6 +923,7 @@ def verify_trace_claim(
                     authenticated_subject_source=agent_identity.get("subject_source"),
                     policy_bundle_hash=claimed_policy,
                     tool_catalog_hash=claimed_catalog,
+                    enforcement_mode=claimed_enforcement_mode,
                     allow_dev_subject_from_manifest=(
                         agent_identity.get("subject_source") == "manifest-dev"
                     ),
@@ -930,6 +938,7 @@ def verify_trace_claim(
                     "policy_bundle_hash": binding.policy_bundle_hash,
                     "tool_catalog_hash": binding.tool_catalog_hash,
                     "intent_hash": binding.intent_hash,
+                    "enforcement_mode": binding.enforcement_mode,
                 }
                 mismatched = [
                     key
@@ -944,7 +953,7 @@ def verify_trace_claim(
                     )
                 else:
                     verified.append("agent_manifest.binding")
-            except ConfigError as exc:
+            except (ConfigError, ValueError) as exc:
                 unverified.append("agent_manifest.binding")
                 failure = failure or VerificationError.AGENT_MANIFEST_MISMATCH
                 details["agent_manifest"] = str(exc)

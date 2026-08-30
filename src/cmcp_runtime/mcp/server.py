@@ -555,10 +555,39 @@ class MCPServer:
 
     async def _handle_tool_call(self, rpc_id: Any, params: dict[str, Any]) -> Response:
         """Route a tools/call request through the proxy."""
+        # `params` is a dict (the caller already rejected non-dict params before
+        # dispatching here), but its members are not: `name` and `arguments`
+        # are exactly as caller-controlled as `_cmcp` below, which is already
+        # guarded ("A malformed _cmcp (string, list, number) must not 500 the
+        # call path"). `.lower()` on a non-string `name`, or handing a non-dict
+        # `arguments` to call_tool, is the same failure that guard exists to
+        # prevent, just unguarded here.
+        raw_name = params.get("name", "")
+        if not isinstance(raw_name, str):
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32602, "message": "Invalid params: name must be a string"},
+                    "id": rpc_id,
+                },
+                status_code=400,
+            )
         # POLICY-002: canonicalize tool names at ingress so Cedar policy, catalog, and
         # request all use the same case - prevents case-variant bypass of deny rules.
-        tool_name: str = params.get("name", "").lower()
+        tool_name: str = raw_name.lower()
         arguments: dict[str, Any] = params.get("arguments", {})
+        if not isinstance(arguments, dict):
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32602,
+                        "message": "Invalid params: arguments must be an object",
+                    },
+                    "id": rpc_id,
+                },
+                status_code=400,
+            )
 
         # #518/#562: depth, key-count and string-length caps, matching
         # scripts/mock_upstream.py.
