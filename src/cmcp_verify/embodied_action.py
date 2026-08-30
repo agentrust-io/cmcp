@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from cmcp_runtime.catalog.approval import canonical_json as _rfc8785_canonical_json
 from cmcp_runtime.catalog.approval import CatalogApprovalError
+from cmcp_runtime.catalog.approval import canonical_json as _rfc8785_canonical_json
 
 EMBODIED_ACTION_PROFILE = "cmcp.embodied_action_evidence.v0"
 
