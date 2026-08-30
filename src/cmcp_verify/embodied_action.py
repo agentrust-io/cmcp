@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+from cmcp_runtime.catalog.approval import canonical_json as _rfc8785_canonical_json
 
 EMBODIED_ACTION_PROFILE = "cmcp.embodied_action_evidence.v0"
 
@@ -61,14 +62,17 @@ class EmbodiedActionEvidenceResult:
 
 
 def canonical_json_bytes(value: dict[str, Any]) -> bytes:
-    """Return the canonical JSON byte form used by cMCP evidence hashes."""
+    """Return the canonical JSON byte form used by cMCP evidence hashes.
 
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode()
+    docs/spec/embodied-action-evidence.md requires RFC 8785/JCS canonicalization
+    (UTF-8 output, member order by UTF-16 code unit) so an external verifier
+    reproduces the same bytes -- and the same hash -- from the same payload.
+    This delegates to the JCS implementation already used for catalog-approval
+    records (cmcp_runtime.catalog.approval.canonical_json) rather than keeping a
+    second, non-JCS serializer whose output silently diverges outside ASCII.
+    """
+
+    return _rfc8785_canonical_json(value)
 
 
 def hash_embodied_action_payload(payload: dict[str, Any], *, algorithm: str = "sha256") -> str:
