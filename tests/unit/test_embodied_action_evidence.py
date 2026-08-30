@@ -486,3 +486,26 @@ def test_gateway_self_report_is_verified_but_warned():
 
     assert result.verified, result.failures
     assert any("self-report" in warning for warning in result.warnings)
+
+
+def test_verify_fails_closed_on_a_float_it_cannot_canonicalize():
+    # A payload the JCS canonicalizer refuses (a float anywhere in the open-
+    # ended detached payload, e.g. an approval_context risk score) must end
+    # verification as a recorded failure, like any other hash mismatch --
+    # not as an unhandled CatalogApprovalError propagating out of a function
+    # whose whole job is to turn untrusted external input into a structured
+    # result. Caught in review before merge (agentrust-io/cmcp PR review).
+    fixture = copy.deepcopy(_fixture())
+    payload = fixture["detached_payload"]
+    payload["approval_context"] = {"risk_score": 0.25}
+
+    result = verify_embodied_action_evidence(
+        fixture["audit_entry"],
+        payload,
+        fixture["trace_claim"],
+    )
+
+    assert not result.verified
+    assert any(
+        "could not be canonicalized" in failure for failure in result.failures
+    )

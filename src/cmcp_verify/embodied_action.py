@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import Any
 
 from cmcp_runtime.catalog.approval import canonical_json as _rfc8785_canonical_json
+from cmcp_runtime.catalog.approval import CatalogApprovalError
 
 EMBODIED_ACTION_PROFILE = "cmcp.embodied_action_evidence.v0"
 
@@ -188,10 +189,20 @@ def verify_embodied_action_evidence(
         verified_fields.append("external_execution_evidence.linked_call_id")
 
     evidence_hash = evidence.get("evidence_hash")
-    if not isinstance(evidence_hash, str) or not _verify_hash_value(evidence_hash, detached_payload):
-        failures.append("external_execution_evidence evidence_hash does not match detached payload")
+    try:
+        hash_matches = isinstance(evidence_hash, str) and _verify_hash_value(evidence_hash, detached_payload)
+    except CatalogApprovalError as exc:
+        # The detached payload is attacker-influenced (it comes from an
+        # external controller/issuer), so a value the JCS canonicalizer
+        # refuses a float, an out-of-range integer, an unpaired surrogate
+        # must end verification the same way a hash mismatch does: a
+        # recorded failure, not an unhandled exception.
+        failures.append(f"detached payload could not be canonicalized for hash verification: {exc}")
     else:
-        verified_fields.append("external_execution_evidence.evidence_hash")
+        if hash_matches:
+            verified_fields.append("external_execution_evidence.evidence_hash")
+        else:
+            failures.append("external_execution_evidence evidence_hash does not match detached payload")
 
     if all(isinstance(detached_payload.get(field), str) for field in _ACTION_REF_FIELDS):
         expected_action_ref = compute_action_ref(detached_payload)
