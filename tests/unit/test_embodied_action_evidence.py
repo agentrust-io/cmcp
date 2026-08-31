@@ -509,3 +509,25 @@ def test_verify_fails_closed_on_a_float_it_cannot_canonicalize():
     assert any(
         "could not be canonicalized" in failure for failure in result.failures
     )
+
+def test_verify_fails_closed_on_a_lone_surrogate_in_the_action_ref_preimage():
+    # isinstance(str) does not rule out a lone surrogate (e.g. "\ud800") --
+    # it is a valid Python str but not valid UTF-8, so it passes the
+    # _ACTION_REF_FIELDS type guard and then makes canonical_json refuse it
+    # inside compute_action_ref. Same treatment as the evidence_hash path
+    # above: a recorded failure, not an unhandled exception. Flagged in
+    # review as the one call site the first round of fixes missed.
+    fixture = copy.deepcopy(_fixture())
+    payload = fixture["detached_payload"]
+    payload["agent_id"] = "\ud800"
+
+    result = verify_embodied_action_evidence(
+        fixture["audit_entry"],
+        payload,
+        fixture["trace_claim"],
+    )
+
+    assert not result.verified
+    assert any(
+        "could not be canonicalized" in failure for failure in result.failures
+    )

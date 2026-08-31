@@ -205,11 +205,20 @@ def verify_embodied_action_evidence(
             failures.append("external_execution_evidence evidence_hash does not match detached payload")
 
     if all(isinstance(detached_payload.get(field), str) for field in _ACTION_REF_FIELDS):
-        expected_action_ref = compute_action_ref(detached_payload)
-        if detached_payload.get("action_ref") != expected_action_ref:
-            failures.append("action_ref does not match canonical action preimage")
+        # isinstance(str) doesn't rule out a lone surrogate (e.g. "\ud800"),
+        # which is a valid Python str but not valid UTF-8 -- canonical_json
+        # refuses it the same way it refuses a float. Same treatment as the
+        # evidence_hash check above: a recorded failure, not an unhandled
+        # exception, for input the caller doesn't control.
+        try:
+            expected_action_ref = compute_action_ref(detached_payload)
+        except CatalogApprovalError as exc:
+            failures.append(f"action_ref preimage could not be canonicalized: {exc}")
         else:
-            verified_fields.append("action_ref")
+            if detached_payload.get("action_ref") != expected_action_ref:
+                failures.append("action_ref does not match canonical action preimage")
+            else:
+                verified_fields.append("action_ref")
     else:
         failures.append("action_ref preimage fields must be strings")
 
