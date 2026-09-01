@@ -50,11 +50,12 @@ def verify_opaque_measurement(
     header. The header value is never logged -- _redact_auth_headers() strips it
     before any debug output (HW-008).
     """
-    result = OpaqueVerificationResult(verified=True)
+    # Fail closed by default. Positive verification credit is granted only after
+    # the managed verifier explicitly confirms both required success predicates.
+    result = OpaqueVerificationResult(verified=False)
 
     endpoint = opaque_endpoint or os.environ.get(_OPAQUE_ENDPOINT_ENV)
     if not endpoint:
-        result.verified = False
         result.failure_reason = "opaque_endpoint_not_configured"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["hint"] = (
@@ -64,7 +65,6 @@ def verify_opaque_measurement(
 
     if raw_evidence is None:
         # Fail closed: an attestation claim with no evidence cannot verify.
-        result.verified = False
         result.failure_reason = "no_raw_evidence"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["opaque_endpoint"] = endpoint
@@ -101,12 +101,21 @@ def verify_opaque_measurement(
         with urllib.request.urlopen(req, timeout=_OPAQUE_TIMEOUT_SECONDS) as resp:  # nosec B310 - req is a Request object with explicit HTTPS endpoint
             body = json.loads(resp.read().decode())
 
-        if body.get("verified") is True:
+        if not isinstance(body, dict):
+            result.failure_reason = "opaque_invalid_response"
+            result.unverified_fields.append("opaque_managed_attestation")
+            result.details["opaque_response_type"] = type(body).__name__
+        elif body.get("verified") is True and body.get("measurement_matched") is True:
+            result.verified = True
             result.verified_fields.append("opaque_managed_attestation")
             result.details["opaque_endpoint"] = endpoint
         else:
-            result.verified = False
-            result.failure_reason = body.get("failure_reason", "opaque_verification_failed")
+            failure_reason = body.get("failure_reason")
+            result.failure_reason = (
+                failure_reason
+                if isinstance(failure_reason, str) and failure_reason
+                else "opaque_verification_failed"
+            )
             result.unverified_fields.append("opaque_managed_attestation")
             result.details["opaque_response"] = str(body.get("details", ""))
 
@@ -119,6 +128,7 @@ def verify_opaque_measurement(
             type(exc).__name__,
             _redact_auth_headers(request_headers),
         )
+        result.failure_reason = "opaque_verification_error"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["opaque_endpoint"] = endpoint
         result.details["opaque_error"] = type(exc).__name__
