@@ -242,7 +242,7 @@ def test_opaque_endpoint_returns_verified(monkeypatch):
         mock_resp = MagicMock()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_resp.read.return_value = b'{"verified": true}'
+        mock_resp.read.return_value = b'{"verified": true, "measurement_matched": true}'
         mock_open.return_value = mock_resp
 
         result = verify_opaque_measurement(
@@ -284,6 +284,7 @@ def test_opaque_network_error(monkeypatch):
             opaque_endpoint="https://attest.example.com/v1/verify",
         )
 
-    assert result.verified
+    assert result.verified is False
+    assert result.failure_reason == "opaque_verification_error"
     assert "opaque_managed_attestation" in result.unverified_fields
     assert result.details.get("opaque_error") == "OSError"
