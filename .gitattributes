@@ -3,3 +3,6 @@ tests/fixtures/reference/swtpm-nv-certify-0.7.3/** -text
 tests/fixtures/reference/swtpm-nv-certify-0.7.3/*.bin binary
 # tpm2_nvreadpublic emits this terminal blank line; retain the checksummed output.
 tests/fixtures/reference/swtpm-nv-certify-0.7.3/nv-public.yaml whitespace=-blank-at-eof
+
+# This corpus is also byte-for-byte evidence; do not rewrite PEM/YAML line endings.
+tests/fixtures/reference/swtpm-nv-policy-0.7.3/** -text
