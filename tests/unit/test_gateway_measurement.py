@@ -28,6 +28,13 @@ from cmcp_runtime.tee.measurement import (
     gateway_measurement,
     policy_digest,
 )
+from cmcp_verify.nv_policy import (
+    MEASUREMENT_NV_BASE_ATTRIBUTES,
+    MEASUREMENT_NV_NAME_ALG,
+    MEASUREMENT_NV_SIZE,
+    MEASUREMENT_NV_WRITTEN_ATTRIBUTES,
+    measurement_nv_name,
+)
 
 # ── config stand-ins ──────────────────────────────────────────────────────────
 
@@ -218,9 +225,10 @@ def test_gateway_measurement_changes_with_any_component(
     baseline = gateway_measurement(_Config(policy_bundle_path=path)).digest
 
     # config differs
-    assert gateway_measurement(
-        _Config(policy_bundle_path=path, listen_addr="127.0.0.1:1")
-    ).digest != baseline
+    assert (
+        gateway_measurement(_Config(policy_bundle_path=path, listen_addr="127.0.0.1:1")).digest
+        != baseline
+    )
 
     # policy differs
     (Path(path) / "a.cedar").write_text("forbid(...);")
@@ -247,14 +255,30 @@ def test_gateway_measurement_is_domain_separated(
 # ── NV extend index ───────────────────────────────────────────────────────────
 
 
+class _NvUninitialized(RuntimeError):
+    rc = 0x14A
+
+
 class _FakeNvTpm:
     """An ESAPI stand-in enforcing real TPM_NT_EXTEND semantics."""
 
-    def __init__(self, *, defined: bool = False, replace_on_write: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        defined: bool = False,
+        replace_on_write: bool = False,
+        public_overrides: dict[str, Any] | None = None,
+        returned_name: bytes | None = None,
+    ) -> None:
         self.value = bytes(32) if defined else None
         self.defined = defined
+        self.written = defined
         self.defines: list[int] = []
         self.extends: list[bytes] = []
+        self.events: list[tuple[str, bool | None]] = []
+        self.public_overrides = public_overrides or {}
+        self.returned_name = returned_name
+        self.defined_public: dict[str, Any] | None = None
         # Set to model a broken TPM (or a plain ordinary index) that replaces
         # instead of extending, which the collector must catch.
         self.replace_on_write = replace_on_write
@@ -265,26 +289,56 @@ class _FakeNvTpm:
         return f"handle-{index:#x}"
 
     def nv_define_space(self, _auth: Any, nv_public: Any, **_kw: Any) -> None:
-        self.defines.append(int(nv_public.nvPublic.nvIndex))
+        public = nv_public.nvPublic
+        self.defines.append(int(public.nvIndex))
+        self.defined_public = {
+            "nvIndex": int(public.nvIndex),
+            "nameAlg": int(public.nameAlg),
+            "attributes": int(public.attributes),
+            "authPolicy": bytes(public.authPolicy),
+            "dataSize": int(public.dataSize),
+        }
+        self.events.append(("define", None))
         self.defined = True
-        self.value = bytes(32)
+        self.written = False
+        self.value = None
 
-    def nv_read_public(self, _handle: str) -> tuple[Any, None]:
+    def nv_read_public(self, _handle: str) -> tuple[Any, bytes]:
         from types import SimpleNamespace
 
-        return SimpleNamespace(nvPublic=SimpleNamespace(dataSize=32)), None
+        self.events.append(("read_public", self.written))
+        fields: dict[str, Any] = {
+            "nvIndex": DEFAULT_MEASUREMENT_NV_INDEX,
+            "nameAlg": MEASUREMENT_NV_NAME_ALG,
+            "attributes": (
+                MEASUREMENT_NV_WRITTEN_ATTRIBUTES
+                if self.written
+                else MEASUREMENT_NV_BASE_ATTRIBUTES
+            ),
+            "authPolicy": b"",
+            "dataSize": MEASUREMENT_NV_SIZE,
+        }
+        fields.update(self.public_overrides)
+        name = (
+            self.returned_name
+            if self.returned_name is not None
+            else measurement_nv_name(DEFAULT_MEASUREMENT_NV_INDEX, written=self.written)
+        )
+        return SimpleNamespace(nvPublic=SimpleNamespace(**fields)), name
 
     def nv_read(self, _handle: str, size: int, offset: int) -> bytes:
         if self.value is None:
-            raise RuntimeError("TPM_RC_NV_UNINITIALIZED")
+            raise _NvUninitialized("TPM_RC_NV_UNINITIALIZED")
         return self.value[offset : offset + size]
 
     def nv_extend(self, _handle: str, data: bytes, **_kw: Any) -> None:
+        self.events.append(("extend", self.written))
         self.extends.append(bytes(data))
         if self.replace_on_write:
             self.value = bytes(data)
         else:
             self.value = hashlib.sha256((self.value or bytes(32)) + bytes(data)).digest()
+        self.written = True
 
 
 @pytest.fixture
@@ -302,10 +356,12 @@ def _pytss(monkeypatch: pytest.MonkeyPatch) -> None:
     constants.ESYS_TR = SimpleNamespace(OWNER="owner")
     constants.TPM2_ALG = SimpleNamespace(SHA256=0x000B, NULL=0x0010)
     constants.TPM2_NT = SimpleNamespace(EXTEND=0x4)
-    constants.TPMA_NV = SimpleNamespace(parse=lambda _spec: 0x2000000)
+    constants.TPMA_NV = SimpleNamespace(parse=lambda _spec: 0x02060002)
+    constants.TPM2_RC = SimpleNamespace(NV_UNINITIALIZED=0x14A)
     types_mod = types.ModuleType("tpm2_pytss.types")
     types_mod.TPMS_NV_PUBLIC = lambda **kw: SimpleNamespace(**kw)
     types_mod.TPM2B_NV_PUBLIC = lambda **kw: SimpleNamespace(**kw)
+    types_mod.TPM2B_DIGEST = lambda buffer=b"": bytes(buffer)
     types_mod.TPM2B_DATA = lambda data=b"": data
     types_mod.TPMT_SIG_SCHEME = lambda **kw: SimpleNamespace(**kw)
 
@@ -324,6 +380,26 @@ def test_extend_provisions_the_index_when_absent() -> None:
     result = extend_gateway_measurement(tpm, _measurement())
     assert result.provisioned is True
     assert tpm.defines == [DEFAULT_MEASUREMENT_NV_INDEX]
+    assert tpm.defined_public == {
+        "nvIndex": DEFAULT_MEASUREMENT_NV_INDEX,
+        "nameAlg": MEASUREMENT_NV_NAME_ALG,
+        "attributes": MEASUREMENT_NV_BASE_ATTRIBUTES,
+        "authPolicy": b"",
+        "dataSize": MEASUREMENT_NV_SIZE,
+    }
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_fresh_index_is_validated_unwritten_then_written() -> None:
+    """The TPM readback, not the collector's define request, is authoritative."""
+    tpm = _FakeNvTpm(defined=False)
+    extend_gateway_measurement(tpm, _measurement())
+    assert tpm.events == [
+        ("define", None),
+        ("read_public", False),
+        ("extend", False),
+        ("read_public", True),
+    ]
 
 
 @pytest.mark.usefixtures("_pytss")
@@ -333,6 +409,66 @@ def test_extend_reuses_an_existing_index() -> None:
     result = extend_gateway_measurement(tpm, _measurement())
     assert result.provisioned is False
     assert tpm.defines == []
+    assert tpm.events[0] == ("read_public", True)
+
+
+@pytest.mark.usefixtures("_pytss")
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"nvIndex": DEFAULT_MEASUREMENT_NV_INDEX + 1}, "nvIndex"),
+        ({"nameAlg": 0x000C}, "nameAlg"),
+        (
+            {"attributes": MEASUREMENT_NV_WRITTEN_ATTRIBUTES & ~0x00000040},
+            "attributes",
+        ),
+        (
+            {"attributes": MEASUREMENT_NV_WRITTEN_ATTRIBUTES | 0x00000004},
+            "attributes",
+        ),
+        ({"authPolicy": b"not-empty"}, "authPolicy"),
+        ({"dataSize": MEASUREMENT_NV_SIZE + 1}, "dataSize"),
+    ],
+    ids=[
+        "wrong-handle",
+        "wrong-name-algorithm",
+        "ordinary-not-extend",
+        "unexpected-extra-attribute",
+        "nonempty-auth-policy",
+        "wrong-size",
+    ],
+)
+def test_existing_index_public_mismatch_fails_before_use(
+    overrides: dict[str, Any], match: str
+) -> None:
+    """An attacker-controlled object at the configured handle is never reused."""
+    tpm = _FakeNvTpm(defined=True, public_overrides=overrides)
+    with pytest.raises(MeasurementUnavailable) as exc_info:
+        extend_gateway_measurement(tpm, _measurement())
+    assert match in (exc_info.value.detail or "")
+    assert tpm.defines == []  # never erase/redefine an unexpected existing object
+    assert tpm.extends == []
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_existing_index_returned_name_mismatch_fails_before_use() -> None:
+    tpm = _FakeNvTpm(defined=True, returned_name=b"\x00" * 34)
+    with pytest.raises(MeasurementUnavailable) as exc_info:
+        extend_gateway_measurement(tpm, _measurement())
+    assert "Name" in (exc_info.value.detail or "")
+    assert tpm.defines == []
+    assert tpm.extends == []
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_fresh_index_readback_mismatch_fails_before_first_extend() -> None:
+    """Definition success is not trusted until the TPM returns the exact profile."""
+    tpm = _FakeNvTpm(defined=False, public_overrides={"dataSize": 64})
+    with pytest.raises(MeasurementUnavailable) as exc_info:
+        extend_gateway_measurement(tpm, _measurement())
+    assert "dataSize" in (exc_info.value.detail or "")
+    assert tpm.defines == [DEFAULT_MEASUREMENT_NV_INDEX]
+    assert tpm.extends == []
 
 
 @pytest.mark.usefixtures("_pytss")
@@ -381,6 +517,20 @@ def test_extend_fails_loudly_when_the_tpm_rejects_the_write() -> None:
 
     with pytest.raises(MeasurementUnavailable, match="TPM2_NV_Extend failed"):
         extend_gateway_measurement(_Refusing(defined=True), _measurement())
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_extend_fails_loudly_on_a_non_uninitialized_read_error() -> None:
+    """Only TPM_RC_NV_UNINITIALIZED maps to zero; other read errors deny."""
+
+    class _Unreadable(_FakeNvTpm):
+        def nv_read(self, _handle: str, size: int, offset: int) -> bytes:
+            raise RuntimeError("TPM_RC_NV_AUTHORIZATION")
+
+    tpm = _Unreadable(defined=True)
+    with pytest.raises(MeasurementUnavailable, match="could not be read"):
+        extend_gateway_measurement(tpm, _measurement())
+    assert tpm.extends == []
 
 
 @pytest.mark.usefixtures("_pytss")
@@ -442,6 +592,7 @@ class _CertifyingTpm(_FakeNvTpm):
         from types import SimpleNamespace
 
         blob = b"attest:" + bytes(self.value or b"")
+        self.events.append(("certify", self.written))
         self.certifies.append(blob)
         return (
             SimpleNamespace(attestationData=blob),
@@ -484,6 +635,34 @@ def test_a_freshly_provisioned_index_is_seeded_before_certifying() -> None:
     # The seed plus the measurement: two extends, and both certifies succeeded.
     assert len(tpm.extends) == 2
     assert len(tpm.certifies) == 2
+    assert tpm.events[:4] == [
+        ("define", None),
+        ("read_public", False),
+        ("extend", False),
+        ("read_public", True),
+    ]
+    assert tpm.events.index(("read_public", False)) < tpm.events.index(("extend", False))
+    assert tpm.events.index(("read_public", True)) < tpm.events.index(("certify", True))
+
+
+@pytest.mark.usefixtures("_pytss")
+def test_certify_rejects_mismatched_existing_index_before_certification() -> None:
+    """The signed path is also fail-closed before it asks the AK to sign."""
+    from cmcp_runtime.tee.measurement import certify_and_extend_gateway_measurement
+
+    tpm = _CertifyingTpm(
+        defined=True,
+        public_overrides={"attributes": MEASUREMENT_NV_WRITTEN_ATTRIBUTES & ~0x40},
+    )
+    tpm.written = True
+    with pytest.raises(MeasurementUnavailable) as exc_info:
+        certify_and_extend_gateway_measurement(
+            tpm, _measurement(), sign_handle="ak", nonce=b"\xa5" * 32
+        )
+    assert "attributes" in (exc_info.value.detail or "")
+    assert tpm.defines == []
+    assert tpm.extends == []
+    assert tpm.certifies == []
 
 
 @pytest.mark.usefixtures("_pytss")
@@ -493,7 +672,5 @@ def test_certified_extend_still_chains_after_seeding() -> None:
 
     tpm = _CertifyingTpm(defined=False)
     m = _measurement()
-    result = certify_and_extend_gateway_measurement(
-        tpm, m, sign_handle="ak", nonce=b"\xa5" * 32
-    )
+    result = certify_and_extend_gateway_measurement(tpm, m, sign_handle="ak", nonce=b"\xa5" * 32)
     assert result.extend.chains_from(m.digest)

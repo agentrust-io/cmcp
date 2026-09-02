@@ -92,7 +92,7 @@ hardware-backed (issue #370). What that check covers differs by platform:
   operator pins via `trusted_tpm_ca_pem`. Absent signature or chain material
   degrades to `unverified`; supplied material that fails is fatal.
 
-Two gaps are worth stating plainly for the TPM path:
+Three gaps are worth stating plainly for the TPM path:
 
 - **The attestation key is not bound to a specific TPM.** A verified AK chain
   proves the key was certified under a CA you pinned. It does not prove the key
@@ -109,6 +109,15 @@ Two gaps are worth stating plainly for the TPM path:
   keep working, but that path cannot pass schema validation. **The SEV-SNP
   `cert_chain` path has not been migrated and remains subject to this**, so its
   VCEK chain verification does not engage for a schema-valid claim.
+- **The gateway NV-certify pair is not an ordinary TRACE-claim property.** TPM
+  startup collects a bracketing pair, and the standalone appraisal accepts it
+  only with a verifier-owned root, nonce, exact NV Name and range, and expected
+  gateway digest. The current claim schema does not carry the pair and
+  `verify_trace_claim` does not invoke that appraisal. Policy reload also does not
+  replace the startup pair. Even under direct appraisal, the deterministic TPM
+  Name identifies the public template rather than a unique index incarnation, so
+  it does not prove that owner authorization never redefined the index or that the
+  signed pre-value has an approved history.
 
 ## Platform state is not appraised
 

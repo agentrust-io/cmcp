@@ -1,0 +1,9 @@
+0x1500432:
+  name: 000bd884eed008e17b8e06485bcf29a5f0e88ca44a4355d711fa2cafb368c3ff3763
+  hash algorithm:
+    friendly: sha256
+    value: 0xB
+  attributes:
+    friendly: ownerwrite|nt=0x1|ownerread|authread|no_da|written
+    value: 0x22060042
+  size: 32

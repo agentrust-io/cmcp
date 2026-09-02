@@ -314,7 +314,9 @@ a TPM. All of them work:
 
 Not covered by this run: the index value still travels as an ordinary NV read,
 which no signature covers, so it is a local integrity control and not yet
-remote-verifiable evidence. `TPM2_NV_Certify` is the remaining half of #432.
+remote-verifiable evidence. A later run exercised `TPM2_NV_Certify` directly, but
+the current TRACE schema and verifier still do not carry or appraise that startup
+pair as part of an ordinary claim.
 
 ## TPM2_NV_Certify for the gateway measurement, Azure Trusted Launch vTPM, 2026-08-01
 
@@ -351,9 +353,12 @@ With both fixed, the following hold on hardware:
 - The extend relation holds on hardware across two consecutive starts: run 1
   provisioned the index and run 2 reused it, with run 2's `pre` equal to run 1's
   `post`, which is the accumulation the two-certify design exists to handle.
-- `verify_gateway_measurement` passes all seven appraisal steps, and rejects both a
-  wrong expected digest (`gateway_digest_mismatch`) and a replayed nonce
-  (`pre_binding_mismatch`) on genuine evidence.
+- The standalone `verify_gateway_measurement` path accepts the genuine pair only
+  with a verifier-supplied AK root, transcript nonce, exact authorized NV Name and
+  certified range, and expected gateway digest. It rejects a wrong expected digest,
+  replayed nonce, unapproved signed Name, or altered range. This is direct
+  primitive/fixture appraisal, not evidence that `verify_trace_claim` currently
+  transports or invokes the NV path.
 
 One limit on this run: the VM drew the `Global Virtual TPM CA - 03` hierarchy, whose
 AK certificate has no AIA, so the chain is the leaf alone. The verification above

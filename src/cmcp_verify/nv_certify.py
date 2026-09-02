@@ -14,14 +14,19 @@ value a verifier could expect. ``TPM2_NV_Certify`` signs only the *current* valu
 and cannot attest to a previous one, so a single certify is uncheckable.
 
 The collector therefore certifies, extends, and certifies again. Both values are
-TPM-signed, and the verifier checks::
+TPM-signed, and the verifier applies a locally configured NV policy before it
+checks::
 
     post_contents == H(pre_contents || expected_gateway_digest)
 
-Nothing is collector-asserted and the verifier holds no state. This proves that
-this gateway extended exactly this digest. It deliberately does not prove the
-history behind ``pre_contents``, which would require the verifier to remember
-prior attestations.
+The policy supplies the expected signed Name, offset, extent size, and gateway
+digest; none of those authorization inputs comes from the evidence envelope.
+The Name commits the configured handle and complete ``TPMS_NV_PUBLIC`` template.
+This proves that the accepted AK signed two states of the configured index whose
+values have the expected extend relation. The signed phase bindings identify the
+states' roles; they do not prove wall-clock adjacency, exclude intervening TPM
+operations, or establish the history behind ``pre_contents``. Those properties
+would require a stronger protocol or verifier-side state.
 
 The two blobs are domain-separated in their qualifying data (``pre`` / ``post``)
 rather than distinguished by position, so each blob's role is signed. Swapping them
@@ -36,8 +41,9 @@ signed common header and the ``TPMS_NV_CERTIFY_INFO`` union, accepts bare
 the union payload to consume the complete inner structure. Its returned
 ``attest.raw`` is the exact inner byte range signed by the attestation key.
 
-cMCP keeps the gateway-specific policy: the two-certify phase bindings, same-index
-check, expected gateway digest, and extend relation. It also preserves the public
+cMCP keeps the gateway-specific policy: the two-certify phase bindings, exact
+signed index Name and byte range, expected gateway digest, and extend relation. It
+also preserves the public
 ``parse_nv_certify`` compatibility adapter and performs signature verification
 against the certified AK. Certificate-chain and TPM signature-envelope parsing are
 delegated to Agent Manifest as well.
@@ -60,6 +66,8 @@ from agent_manifest import (
     parse_tpm_nv_certify,
     parse_tpmt_signature,
 )
+
+from cmcp_verify.nv_policy import GatewayNvAppraisalPolicy
 
 # Preserve the module-level constant imported by existing cMCP callers/tests while
 # taking its value from the canonical wire-format library.
@@ -214,14 +222,24 @@ def verify_gateway_measurement(
     ak_chain_pem: bytes,
     trusted_roots_pem: bytes,
     expected_nonce: bytes,
+    policy: GatewayNvAppraisalPolicy | None = None,
     expected_gateway_digest: bytes | None = None,
 ) -> NvCertifyResult:
     """Appraise a gateway-measurement certify pair. Never raises.
 
-    Fail-closed order: parse, structure and type, AK chain to a pinned root, both
-    signatures, the phase bindings, the index identity, and finally the extend
-    relation. Every step must pass; ``verified=True`` means the TPM signed both
-    values and the second is the first extended by the expected gateway digest.
+    ``policy`` is mandatory trusted verifier configuration.  In particular, a
+    digest carried by the evidence cannot stand in for a full policy because two
+    valid signatures over the same attacker-selected NV Name only prove internal
+    consistency.  ``expected_gateway_digest`` remains as a compatibility
+    consistency check for callers migrating to ``policy``; it can never authorize
+    evidence without the full policy.
+
+    Fail-closed order: validate policy, parse the envelope and signed structures,
+    verify the AK chain and both signatures, check phase bindings, bind both signed
+    Names and byte ranges to policy, and finally check the extend relation. Every
+    step must pass; ``verified=True`` means the accepted AK signed both 32-byte
+    values for the configured written NV public area at offset zero and the second
+    is the first extended by the configured gateway digest.
     """
     verified: list[str] = []
     details: dict[str, str] = {}
@@ -231,6 +249,32 @@ def verify_gateway_measurement(
         return NvCertifyResult(
             verified=False, failure_reason=reason, verified_fields=verified, details=details
         )
+
+    # 0. Authorization inputs.  These are verifier-owned and must be complete
+    # before evidence is inspected.  Revalidate even a frozen instance at the
+    # trust boundary so abnormal construction cannot bypass the invariants.
+    if policy is None:
+        return fail("missing_nv_policy")
+    if type(policy) is not GatewayNvAppraisalPolicy:
+        return fail("invalid_nv_policy", error="policy has an unsupported type")
+    try:
+        policy.validate()
+    except (TypeError, ValueError) as exc:
+        return fail("invalid_nv_policy", error=str(exc))
+    if type(expected_nonce) is not bytes or len(expected_nonce) not in {32, 64}:
+        return fail(
+            "invalid_expected_nonce",
+            error="expected_nonce must be a 32- or 64-byte verifier challenge",
+        )
+    if expected_gateway_digest is not None:
+        if type(expected_gateway_digest) is not bytes or len(expected_gateway_digest) != 32:
+            return fail(
+                "invalid_legacy_gateway_digest",
+                error="expected_gateway_digest must be 32 bytes",
+            )
+        if not hmac.compare_digest(expected_gateway_digest, policy.expected_gateway_digest):
+            return fail("gateway_digest_parameter_mismatch")
+    verified.append("policy")
 
     # 1. Envelope.
     try:
@@ -297,30 +341,50 @@ def verify_gateway_measurement(
         post.qualifying_data, certify_qualifying_data(expected_nonce, PHASE_POST)
     ):
         return fail("post_binding_mismatch")
-    verified.append("freshness")
+    # This proves binding to the caller-supplied transcript nonce. Freshness also
+    # requires the surrounding protocol to issue that nonce freshly and reject its
+    # reuse, which this stateless primitive cannot establish on its own.
+    verified.append("transcript_binding")
 
-    # 6. Same index in both, otherwise the pair proves nothing about one index.
-    if not hmac.compare_digest(pre.index_name, post.index_name):
-        return fail(
-            "index_mismatch",
-            pre_index=pre.index_name.hex()[:32],
-            post_index=post.index_name.hex()[:32],
-        )
-    verified.append("index_identity")
+    # 6. Bind both signed Names and exact certified ranges to verifier policy.
+    # Comparing the Names only with each other would authorize any index chosen
+    # by a caller able to use the accepted AK.
+    for label, certification in (("pre", pre), ("post", post)):
+        if not hmac.compare_digest(certification.index_name, policy.expected_index_name):
+            return fail(
+                "nv_index_name_mismatch",
+                which=label,
+                actual_index=certification.index_name.hex()[:32],
+                expected_index=policy.expected_index_name.hex()[:32],
+            )
+        if certification.offset != policy.expected_offset:
+            return fail(
+                "nv_offset_mismatch",
+                which=label,
+                actual=str(certification.offset),
+                expected=str(policy.expected_offset),
+            )
+        if len(certification.nv_contents) != policy.expected_size:
+            return fail(
+                "nv_extent_size_mismatch",
+                which=label,
+                actual=str(len(certification.nv_contents)),
+                expected=str(policy.expected_size),
+            )
+    verified.append("nv_policy")
 
-    # 7. The extend relation. This is the step that makes the pair meaningful.
-    digest = expected_gateway_digest if expected_gateway_digest is not None else claimed_digest
-    if expected_gateway_digest is not None and not hmac.compare_digest(
-        claimed_digest, expected_gateway_digest
-    ):
+    # 7. The claimed digest must match policy.  The envelope copy is transport
+    # metadata only and cannot select what code measurement is authorized.
+    if not hmac.compare_digest(claimed_digest, policy.expected_gateway_digest):
         return fail(
             "gateway_digest_mismatch",
             claimed=claimed_digest.hex(),
-            expected=expected_gateway_digest.hex(),
+            expected=policy.expected_gateway_digest.hex(),
         )
-    if not hmac.compare_digest(
-        post.nv_contents, hashlib.sha256(pre.nv_contents + digest).digest()
-    ):
+
+    # 8. The extend relation. This is the step that makes the pair meaningful.
+    digest = policy.expected_gateway_digest
+    if not hmac.compare_digest(post.nv_contents, hashlib.sha256(pre.nv_contents + digest).digest()):
         return fail(
             "extend_relation_broken",
             pre=pre.nv_contents.hex(),
@@ -328,12 +392,6 @@ def verify_gateway_measurement(
             digest=digest.hex(),
         )
     verified.append("extend_relation")
-
-    if expected_gateway_digest is None:
-        details["gateway_digest_note"] = (
-            "no expected digest supplied; the pair is internally consistent but the "
-            "measurement was not compared against a known-good value"
-        )
 
     details["index_name"] = post.index_name.hex()
     details["nv_contents"] = post.nv_contents.hex()
