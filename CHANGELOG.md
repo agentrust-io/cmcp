@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- TPM NV-certify wire parsing now delegates to Agent Manifest 0.11.2 instead of
+  maintaining a second `TPMS_ATTEST`/`TPMS_NV_CERTIFY_INFO` parser in cMCP.
+  The public `parse_nv_certify` return shape and `ValueError` contract remain
+  intact. The shared parser also makes cMCP accept valid size-prefixed
+  `TPM2B_ATTEST` transport framing, reject undeclared bytes after `nvContents`,
+  and verify AK signatures over the canonical inner `TPMS_ATTEST` rather than
+  over the transport length prefix. A genuine swtpm-produced two-certify
+  reference pair exercises the complete chain,
+  signature, phase, index, and extend-relation path. The synthetic fixture CA is
+  test trust only and makes no hardware-provenance or vendor-enrollment claim.
+
 - Removed AGT/`agent_os` from the production dependency graph. cMCP now owns the
   runtime call and response enforcement path; AGT remains isolated to CI and
   release governance verification. Legacy `agent_os_version` bundle metadata is

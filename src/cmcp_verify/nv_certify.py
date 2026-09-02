@@ -28,16 +28,19 @@ rather than distinguished by position, so each blob's role is signed. Swapping t
 would already fail the chain check, but making the role explicit means a verifier
 never has to infer it from ordering.
 
-## Why this is not delegated to agent-manifest
+## Boundary with agent-manifest
 
-``agent_manifest.verify_tpm_quote`` rejects any attest type that is not
-``TPM_ST_ATTEST_QUOTE``, and ``parse_tpm_quote`` assumes the attested union is a
-``TPML_PCR_SELECTION`` followed by a PCR digest. An NV certify carries a
-``TPMS_NV_CERTIFY_INFO`` instead, so neither can read it. The certificate chain
-*is* delegated (``agent_manifest.verify_cert_chain``), matching how
-:mod:`cmcp_verify.sev_snp` and :mod:`cmcp_verify.tdx` already work. Teaching
-agent-manifest ``TPM_ST_ATTEST_NV`` is tracked in agentrust-io/agent-manifest#255,
-alongside the same gap for ``TPMT_SIGNATURE``.
+Agent Manifest owns the TPM wire formats: ``parse_tpm_nv_certify`` parses the
+signed common header and the ``TPMS_NV_CERTIFY_INFO`` union, accepts bare
+``TPMS_ATTEST`` and size-prefixed ``TPM2B_ATTEST`` transport framing, and requires
+the union payload to consume the complete inner structure. Its returned
+``attest.raw`` is the exact inner byte range signed by the attestation key.
+
+cMCP keeps the gateway-specific policy: the two-certify phase bindings, same-index
+check, expected gateway digest, and extend relation. It also preserves the public
+``parse_nv_certify`` compatibility adapter and performs signature verification
+against the certified AK. Certificate-chain and TPM signature-envelope parsing are
+delegated to Agent Manifest as well.
 """
 
 from __future__ import annotations
@@ -50,13 +53,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_manifest import parse_tpmt_signature
+from agent_manifest import TPM_ST_ATTEST_NV as _TPM_ST_ATTEST_NV
+from agent_manifest import (
+    TpmNvCertify,
+    TpmVerificationError,
+    parse_tpm_nv_certify,
+    parse_tpmt_signature,
+)
 
-# TPMS_ATTEST header constants.
-_TPM_GENERATED_VALUE = 0xFF544347
-TPM_ST_ATTEST_NV = 0x8014
-_CLOCK_INFO_LEN = 17
-_FIRMWARE_VERSION_LEN = 8
+# Preserve the module-level constant imported by existing cMCP callers/tests while
+# taking its value from the canonical wire-format library.
+TPM_ST_ATTEST_NV = _TPM_ST_ATTEST_NV
 
 # TPM2_ALG_ID digests a signature may use.
 _ALG_SHA1 = 0x0004
@@ -110,50 +117,32 @@ def certify_qualifying_data(nonce: bytes, phase: bytes) -> bytes:
     return hashlib.sha256(b"".join(parts)).digest()
 
 
-def _read_u16(buf: bytes, pos: int) -> tuple[int, int]:
-    if pos + 2 > len(buf):
-        raise ValueError("TPMS_ATTEST truncated reading a 16-bit field")
-    return int.from_bytes(buf[pos : pos + 2], "big"), pos + 2
+def _parse_nv_certify(attest: bytes) -> TpmNvCertify:
+    """Use Agent Manifest's parser while preserving cMCP's ``ValueError`` API."""
+    try:
+        return parse_tpm_nv_certify(attest)
+    except TpmVerificationError as exc:
+        raise ValueError(str(exc)) from exc
 
 
-def _read_2b(buf: bytes, pos: int) -> tuple[bytes, int]:
-    size, pos = _read_u16(buf, pos)
-    if pos + size > len(buf):
-        raise ValueError("TPMS_ATTEST truncated reading a sized buffer")
-    return buf[pos : pos + size], pos + size
+def _as_nv_certify_info(parsed: TpmNvCertify) -> NvCertifyInfo:
+    return NvCertifyInfo(
+        qualifying_data=parsed.attest.qualifying_data,
+        index_name=parsed.info.index_name,
+        offset=parsed.info.offset,
+        nv_contents=parsed.info.nv_contents,
+    )
 
 
 def parse_nv_certify(attest: bytes) -> NvCertifyInfo:
-    """Parse a ``TPMS_ATTEST`` whose attested union is ``TPMS_NV_CERTIFY_INFO``.
+    """Parse a bare or size-prefixed TPM NV certification.
 
-    Layout after the common header is ``indexName`` (TPM2B_NAME), ``offset``
-    (UINT16), then ``nvContents`` (TPM2B_MAX_NV_BUFFER). Raises ``ValueError`` on
-    anything malformed, including a structure that is not an NV certify, so a quote
-    cannot be passed here by mistake and silently appraised.
+    Wire parsing is delegated to :func:`agent_manifest.parse_tpm_nv_certify`.
+    ``ValueError`` and the cMCP ``NvCertifyInfo`` return shape are retained for
+    compatibility. A quote, truncated structure, or structure with undeclared
+    trailing data is rejected rather than partially appraised.
     """
-    if len(attest) < 6:
-        raise ValueError("TPMS_ATTEST too short")
-    magic = int.from_bytes(attest[0:4], "big")
-    if magic != _TPM_GENERATED_VALUE:
-        raise ValueError(f"TPMS_ATTEST magic is not TPM_GENERATED (magic={magic:#x})")
-    attest_type, pos = _read_u16(attest, 4)
-    if attest_type != TPM_ST_ATTEST_NV:
-        raise ValueError(
-            f"attestation is not an NV certify (type={attest_type:#x}, "
-            f"expected {TPM_ST_ATTEST_NV:#x})"
-        )
-    _qualified_signer, pos = _read_2b(attest, pos)  # TPM2B_NAME
-    qualifying_data, pos = _read_2b(attest, pos)  # extraData
-    pos += _CLOCK_INFO_LEN + _FIRMWARE_VERSION_LEN
-    index_name, pos = _read_2b(attest, pos)  # TPM2B_NAME of the NV index
-    offset, pos = _read_u16(attest, pos)
-    nv_contents, pos = _read_2b(attest, pos)  # TPM2B_MAX_NV_BUFFER
-    return NvCertifyInfo(
-        qualifying_data=qualifying_data,
-        index_name=index_name,
-        offset=offset,
-        nv_contents=nv_contents,
-    )
+    return _as_nv_certify_info(_parse_nv_certify(attest))
 
 
 def build_envelope(
@@ -259,10 +248,12 @@ def verify_gateway_measurement(
 
     # 2. Structure and attest type.
     try:
-        pre = parse_nv_certify(pre_attest)
-        post = parse_nv_certify(post_attest)
+        pre_parsed = _parse_nv_certify(pre_attest)
+        post_parsed = _parse_nv_certify(post_attest)
     except ValueError as exc:
         return fail("malformed_nv_certify", error=str(exc))
+    pre = _as_nv_certify_info(pre_parsed)
+    post = _as_nv_certify_info(post_parsed)
     verified.append("structure")
 
     # 3. AK certificate chain to a pinned root, delegated to agent-manifest.
@@ -284,13 +275,13 @@ def verify_gateway_measurement(
 
     # 4. Both signatures, against the certified AK.
     try:
-        for label, blob, sig in (
-            ("pre", pre_attest, pre_sig),
-            ("post", post_attest, post_sig),
+        for label, attestation, sig in (
+            ("pre", pre_parsed, pre_sig),
+            ("post", post_parsed, post_sig),
         ):
-            parsed = parse_tpmt_signature(sig)
+            parsed_signature = parse_tpmt_signature(sig)
             try:
-                _verify_signature(ak_public, parsed, blob)
+                _verify_signature(ak_public, parsed_signature, attestation.attest.raw)
             except Exception as exc:  # noqa: BLE001
                 return fail("signature_invalid", which=label, error=str(exc))
     except Exception as exc:  # noqa: BLE001

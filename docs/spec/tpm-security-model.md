@@ -98,7 +98,14 @@ Because extends accumulate, one certified value cannot be checked against anythi
 
 **P2 is now implemented.** Collection is `cmcp_runtime.tee.measurement.certify_and_extend_gateway_measurement`, appraisal is `cmcp_verify.nv_certify.verify_gateway_measurement`, and startup wires both at step 3b. Only the platform attestation key is used to certify: a transient key would give a verifiable signature with no provenance, which is worse than an honest absence because it looks like evidence, so a platform without a certified key falls back to the unsigned extend and ships no evidence at all.
 
-`agent_manifest.verify_tpm_quote` cannot appraise this, because it rejects any attest type that is not `TPM_ST_ATTEST_QUOTE` and its parser assumes a `TPML_PCR_SELECTION` union. The certificate chain is still delegated to `agent_manifest.verify_cert_chain`; only the `TPM_ST_ATTEST_NV` and `TPMT_SIGNATURE` wire formats are local, tracked upstream as agentrust-io/agent-manifest#255.
+Agent Manifest 0.11.2 is the wire-format authority for this path:
+`parse_tpm_nv_certify` parses and type-checks the signed common header plus
+`TPMS_NV_CERTIFY_INFO`, `parse_tpmt_signature` parses the signature envelope, and
+`verify_cert_chain` validates the supplied AK chain against verifier-pinned roots.
+cMCP verifies the typed signature with that AK and owns the gateway-specific
+two-certify phase binding, same-index requirement, expected digest, and extend
+relation. `agent_manifest.verify_tpm_quote` remains quote-specific and is not used
+to appraise an NV certification.
 
 **What P2 still does not give you.** The appraisal proves the gateway extended a specific digest into a specific index. It does not prove that digest corresponds to *known-good* code unless the relying party supplies an expected value; without one, `verify_gateway_measurement` reports the pair as internally consistent and says so in its details rather than implying more. Deciding what the expected digest should be for a given release is a release-engineering question, not a TPM one.
 

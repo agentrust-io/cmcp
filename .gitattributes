@@ -1,0 +1,5 @@
+# Reference-vector checksums cover exact producer bytes on every CI platform.
+tests/fixtures/reference/swtpm-nv-certify-0.7.3/** -text
+tests/fixtures/reference/swtpm-nv-certify-0.7.3/*.bin binary
+# tpm2_nvreadpublic emits this terminal blank line; retain the checksummed output.
+tests/fixtures/reference/swtpm-nv-certify-0.7.3/nv-public.yaml whitespace=-blank-at-eof

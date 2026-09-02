@@ -340,10 +340,14 @@ With both fixed, the following hold on hardware:
   `TPMT_SIGNATURE`. A NULL scheme resolves to the key's own, RSASSA/SHA-256 here.
 - **The platform AK at `0x81000003` can sign an NV certify.** This was an open
   question, since it is a restricted signing key; the answer is yes.
-- **`parse_nv_certify`'s field offsets are correct against a real blob.** This was
-  the highest-risk item, as the offsets came from the TCG structures spec and had
-  never met real bytes. `indexName`, `offset` and `nvContents` all parse, and
-  `nvContents` equals the value returned by `TPM2_NV_Read`.
+- **The signed NV field layout was checked against a real blob.** This was the
+  highest-risk item, as the offsets came from the TCG structures spec and had
+  never met real bytes. `indexName`, `offset` and `nvContents` all parsed, and
+  `nvContents` equalled the value returned by `TPM2_NV_Read`. That run exercised
+  cMCP's then-local parser. cMCP's public `parse_nv_certify` adapter now delegates
+  wire parsing to `agent_manifest.parse_tpm_nv_certify`; the committed swtpm
+  reference pair independently exercises that current boundary without adding a
+  hardware-provenance claim.
 - The extend relation holds on hardware across two consecutive starts: run 1
   provisioned the index and run 2 reused it, with run 2's `pre` equal to run 1's
   `post`, which is the accumulation the two-certify design exists to handle.

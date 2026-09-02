@@ -69,6 +69,11 @@ def build_nv_attest(
     return bytes(out)
 
 
+def _tpm2b_attest(attest: bytes) -> bytes:
+    """Wrap a signed TPMS_ATTEST in its TPM2B_ATTEST transport framing."""
+    return len(attest).to_bytes(2, "big") + attest
+
+
 def _tpmt_rsassa(sig: bytes) -> bytes:
     return struct.pack(">HH", _ALG_RSASSA, _ALG_SHA256) + struct.pack(">H", len(sig)) + sig
 
@@ -135,6 +140,7 @@ def make_envelope(
     post_phase: bytes = PHASE_POST,
     pre_index: bytes = INDEX_NAME,
     post_index: bytes = INDEX_NAME,
+    size_prefixed: bool = False,
 ) -> bytes:
     if post_contents is None:
         post_contents = hashlib.sha256(pre_contents + gateway_digest).digest()
@@ -149,9 +155,11 @@ def make_envelope(
         index_name=post_index,
     )
     return build_envelope(
-        pre_attest=pre,
+        # The TPM signs TPMS_ATTEST. TPM2B_ATTEST is transport framing and is
+        # deliberately added only after the signature has been produced.
+        pre_attest=_tpm2b_attest(pre) if size_prefixed else pre,
         pre_signature=fx.sign(pre),
-        post_attest=post,
+        post_attest=_tpm2b_attest(post) if size_prefixed else post,
         post_signature=fx.sign(post),
         gateway_digest=gateway_digest,
         components={"code": "x", "policy": "y", "config": "z"},
@@ -176,6 +184,23 @@ def test_parse_reads_the_certify_fields() -> None:
     assert info.nv_contents == POST_CONTENTS
     assert info.index_name == INDEX_NAME
     assert info.offset == 0
+
+
+def test_parse_accepts_size_prefixed_tpm2b_attest() -> None:
+    """TPM libraries may return either the inner struct or TPM2B framing."""
+    qd = certify_qualifying_data(NONCE, PHASE_PRE)
+    attest = build_nv_attest(qualifying_data=qd, nv_contents=POST_CONTENTS)
+    info = parse_nv_certify(_tpm2b_attest(attest))
+    assert info.qualifying_data == qd
+    assert info.nv_contents == POST_CONTENTS
+    assert info.index_name == INDEX_NAME
+    assert info.offset == 0
+
+
+def test_parse_rejects_trailing_bytes_after_nv_contents() -> None:
+    attest = build_nv_attest(qualifying_data=b"x", nv_contents=POST_CONTENTS)
+    with pytest.raises(ValueError, match="trailing bytes"):
+        parse_nv_certify(attest + b"\x00")
 
 
 def test_parse_rejects_a_quote() -> None:
@@ -235,6 +260,28 @@ def test_valid_pair_verifies_ecdsa() -> None:
     fx = Fixture(use_rsa=False)
     result = verify(fx, make_envelope(fx))
     assert result.verified, result.failure_reason
+
+
+def test_valid_size_prefixed_pair_verifies_inner_signed_attestations() -> None:
+    """The outer TPM2B length is framing; the AK signs the inner TPMS_ATTEST."""
+    fx = Fixture()
+    result = verify(fx, make_envelope(fx, size_prefixed=True))
+    assert result.verified, result.failure_reason
+    assert "signatures" in result.verified_fields
+
+
+def test_size_prefixed_pair_rejects_signatures_over_transport_framing() -> None:
+    """A TPM signs the inner structure, never the outer two-byte length."""
+    fx = Fixture()
+    payload = json.loads(make_envelope(fx, size_prefixed=True))
+    pre_transport = base64.b64decode(payload["pre_attest"])
+    post_transport = base64.b64decode(payload["post_attest"])
+    payload["pre_signature"] = base64.b64encode(fx.sign(pre_transport)).decode()
+    payload["post_signature"] = base64.b64encode(fx.sign(post_transport)).decode()
+
+    result = verify(fx, json.dumps(payload).encode())
+    assert not result.verified
+    assert result.failure_reason == "signature_invalid"
 
 
 def test_without_an_expected_digest_it_notes_the_weaker_claim() -> None:

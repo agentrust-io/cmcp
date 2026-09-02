@@ -44,8 +44,11 @@ which is the check the tamper-evidence argument actually rests on.
 The certify path was validated in the same session, after that run found two
 defects in it: the ``nv_certify`` call omitted the required ``in_scheme`` and
 ``size`` arguments, and a freshly provisioned index cannot be certified at all. Both
-are fixed; the platform AK does sign an NV certify, and the parser's field offsets
-are correct against a real blob. See docs/testing/hardware-validation.md.
+are fixed; the platform AK does sign an NV certify, and its signed field layout
+matched the value read from the hardware index. That run exercised cMCP's
+then-local parser. The current adapter delegates to Agent Manifest, with the
+committed swtpm reference pair independently exercising that parser boundary but
+making no new hardware-provenance claim. See docs/testing/hardware-validation.md.
 
 ## Predictability is deliberately left to the verifier
 
