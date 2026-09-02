@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-02
+
+**Anyone running 0.4.0 should upgrade.** On 0.4.0 `verify_gateway_measurement()` could return
+`verified=True` for a correctly signed TPM2_NV_Certify pair that does not refer to cMCP's configured
+`TPM_NT_EXTEND` object or its complete 32-byte range (GHSA-943q-hvhp-mrx2). The verifier compared the
+two signed TPM Names only with each other and never against trusted verifier policy, so an accepted AK
+could certify attacker-arranged values from an ordinary NV object and receive an authorization-grade
+verdict. No signature forgery was required. Reported and fixed by
+[Noah Ingwers](https://github.com/noah-ing).
+
+The appraisal API is intentionally breaking: callers that omit the full `GatewayNvAppraisalPolicy` now
+fail closed.
+
 ### Changed
 
 - TPM NV-certify wire parsing now delegates to Agent Manifest 0.11.2 instead of
@@ -365,7 +378,9 @@ Five changes below the headline TPM fix, each one a case where cMCP reported mor
 - `cmcp-verify` standalone verifier for validating TRACE Claims offline
 - Audit chain with Ed25519 signing for tamper-evident log integrity
 
-[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/agentrust-io/cmcp/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/agentrust-io/cmcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentrust-io/cmcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentrust-io/cmcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/agentrust-io/cmcp/releases/tag/v0.1.0
