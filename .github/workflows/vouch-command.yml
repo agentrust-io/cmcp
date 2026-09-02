@@ -1,0 +1,89 @@
+name: Vouch command
+
+# Lets a maintainer add someone to the vouched list by commenting
+#   /vouch @username
+# on any issue or pull request. Only accounts that can already push may do it.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  vouch:
+    if: github.repository_owner == 'agentrust-io' && startsWith(github.event.comment.body, '/vouch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the named account to the vouched list
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const commenter = context.payload.comment.user.login;
+            const body = context.payload.comment.body.trim();
+            const issueNumber = context.payload.issue.number;
+
+            const reply = (text) => github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: text,
+            });
+
+            // Only people who can already push may vouch.
+            let permission = 'none';
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: commenter,
+              });
+              permission = data.permission;
+            } catch (e) {
+              core.setFailed(`Could not read permission for ${commenter}: ${e.message}`);
+              return;
+            }
+            if (!['admin', 'maintain', 'write'].includes(permission)) {
+              core.info(`${commenter} has ${permission} access. Ignoring.`);
+              return;
+            }
+
+            const match = body.match(/^\/vouch\s+@?([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})\s*$/);
+            if (!match) {
+              await reply('Usage: `/vouch @username`, one account per comment.');
+              return;
+            }
+            const target = match[1];
+
+            const { data: file } = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: '.github/VOUCHED',
+              ref: 'vouched',
+            });
+            const current = Buffer.from(file.content, 'base64').toString('utf-8');
+            const names = current
+              .split('\n')
+              .map(l => l.trim())
+              .filter(l => l && !l.startsWith('#'));
+
+            if (names.some(n => n.toLowerCase() === target.toLowerCase())) {
+              await reply(`@${target} is already vouched.`);
+              return;
+            }
+
+            const updated = current.replace(/\n*$/, '\n') + `${target}\n`;
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: '.github/VOUCHED',
+              branch: 'vouched',
+              message: `chore: vouch ${target}\n\nVouched by ${commenter} in #${issueNumber}.`,
+              content: Buffer.from(updated, 'utf-8').toString('base64'),
+              sha: file.sha,
+            });
+
+            await reply(`@${target} is vouched by @${commenter}. Pull requests from that account will not be closed by the vouch check.`);
