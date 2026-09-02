@@ -121,12 +121,13 @@ class PolicyEvaluator:
     def _notify_reload(self) -> None:
         """Re-commit what is running after a policy-bundle reload (#552).
 
-        Fires on every reload, including one that found the bundle unchanged. The
-        TPM tier can afford to skip those because its NV index accumulates history;
+        Fires on every reload, including one that found the bundle unchanged.
         ``report_data`` holds one value and no history, so what a verifier gets is
         only ever the last report the gateway produced. Re-signing on each reload is
         what keeps that report an assertion about now rather than about whenever the
-        policy last happened to change.
+        policy last happened to change. TPM is not handled by this callback: its NV
+        pair is startup-scoped today, is not refreshed here, and must not be
+        represented as current after a policy reload.
 
         This runs on the enforcement path, so the tool call that observes the reload
         pays for the re-attestation. It is bounded by the reload interval, not by

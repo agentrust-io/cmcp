@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from cmcp_verify.nv_certify import NvCertifyResult, build_envelope, verify_gateway_measurement
+from cmcp_verify.nv_policy import GatewayNvAppraisalPolicy
 
 _FIXTURE = Path(__file__).parents[1] / "fixtures" / "reference" / "swtpm-nv-certify-0.7.3"
 _NONCE = b"\xa5" * 32
@@ -57,12 +58,22 @@ def _envelope(*, size_prefixed: bool = False, post_signature: bytes | None = Non
 
 def _verify(envelope: bytes, *, expected_nonce: bytes = _NONCE) -> NvCertifyResult:
     root = _read("synthetic-root.pem")
+    public_entry = next(iter(yaml.safe_load(_read("nv-public.yaml")).values()))
+    # This older corpus intentionally uses a non-production handle/attribute set.
+    # An explicit test-only policy retains its independent-parser coverage without
+    # ever treating evidence-selected metadata as production authorization.
+    policy = GatewayNvAppraisalPolicy(
+        expected_index_name=bytes.fromhex(public_entry["name"]),
+        expected_offset=0,
+        expected_size=32,
+        expected_gateway_digest=_read("gateway-digest.bin"),
+    )
     return verify_gateway_measurement(
         envelope,
         ak_chain_pem=_read("ak-cert.pem") + root,
         trusted_roots_pem=root,
         expected_nonce=expected_nonce,
-        expected_gateway_digest=_read("gateway-digest.bin"),
+        policy=policy,
     )
 
 
@@ -116,12 +127,13 @@ def test_swtpm_reference_pair_verifies(size_prefixed: bool) -> None:
     result = _verify(_envelope(size_prefixed=size_prefixed))
     assert result.verified, result.failure_reason
     assert result.verified_fields == [
+        "policy",
         "envelope",
         "structure",
         "ak_chain",
         "signatures",
-        "freshness",
-        "index_identity",
+        "transcript_binding",
+        "nv_policy",
         "extend_relation",
     ]
 

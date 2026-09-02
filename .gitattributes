@@ -3,3 +3,8 @@ tests/fixtures/reference/swtpm-nv-certify-0.7.3/** -text
 tests/fixtures/reference/swtpm-nv-certify-0.7.3/*.bin binary
 # tpm2_nvreadpublic emits this terminal blank line; retain the checksummed output.
 tests/fixtures/reference/swtpm-nv-certify-0.7.3/nv-public.yaml whitespace=-blank-at-eof
+# Same exact-byte guarantee for the NV appraisal-policy corpus, whose vectors
+# live in per-case subdirectories.
+tests/fixtures/reference/swtpm-nv-policy-0.7.3/** -text
+tests/fixtures/reference/swtpm-nv-policy-0.7.3/**/*.bin binary
+tests/fixtures/reference/swtpm-nv-policy-0.7.3/**/nv-public.yaml whitespace=-blank-at-eof

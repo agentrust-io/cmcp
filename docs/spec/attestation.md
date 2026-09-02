@@ -304,9 +304,9 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || gateway_measurement.digest 
 
 `gateway_measurement.digest` is the SHA-256 over the installed code, the policy bundle and the effective configuration defined for the TPM tier (see `docs/spec/tpm-security-model.md`). It is already a raw 32-byte SHA-256, so it occupies the second half unreshaped and a verifier compares it against a digest it recomputes, not against a hash of one.
 
-**Why the launch measurement is not sufficient.** `SNP_REPORT.measurement` and TDX's `MRTD` are fixed at boot. They do not move when the Cedar bundle reloads mid-session, so without this binding the policy actually in force is committed to nothing. The TPM tier solves the same problem with a `TPM_NT_EXTEND` NV index; these platforms have no such index.
+**Why the launch measurement is not sufficient.** `SNP_REPORT.measurement` and TDX's `MRTD` are fixed at boot. They do not move when the Cedar bundle reloads mid-session, so without this binding the policy actually in force is committed to nothing. TPM startup uses a separate `TPM_NT_EXTEND` NV path; these platforms have no such index. That comparison is architectural, not a claim of current parity: the TPM pair is startup-scoped today and is neither refreshed on reload nor carried in ordinary TRACE claims.
 
-**Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3, because its measurement is committed by the NV index instead, which keeps an append-only history that `report_data` does not.
+**Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3 and collects its NV pair separately. The pair's pre-value may reflect an append-only history within one index incarnation, but a stateless verifier does not approve that history or rule out owner-authorized redefinition.
 
 **Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config.
 

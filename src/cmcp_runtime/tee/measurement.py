@@ -22,15 +22,18 @@ can call ``TPM2_NV_Extend`` can therefore append values but **cannot set the ind
 to a chosen value** without finding a preimage. That is what makes the measurement
 meaningful without depending on a write policy.
 
-The residual risk is destruction, not forgery. ``TPM2_NV_UndefineSpace`` followed
-by a fresh define resets the index, and owner authorization permits it. Guest root
-holds owner auth on an Azure VM, so a sufficiently privileged adversary can erase
-the measurement. What they cannot do is erase it *silently*: a redefined index
-reads back with ``TPMA_NV_WRITTEN`` clear until it is written again, and its
-recorded provisioning is gone. So the property claimed here is **tamper-evident,
-not tamper-proof**. Making it tamper-proof needs the platform hierarchy, which a
-guest VM cannot reach, and that is the same client-firmware dependency that gates
-the AI PC tier.
+Owner authorization remains a hard limit. ``TPM2_NV_UndefineSpace`` followed by a
+fresh define resets the index, and guest root holds owner auth on an Azure VM. The
+collector now rejects any existing object whose complete public area and returned
+Name do not match the configured extend profile, but that deterministic Name binds
+an object *template*, not a unique object incarnation. ``TPMA_NV_WRITTEN`` is clear
+only until the recreated object is first written; after that, the recreated object
+has the same Name as the prior one. A stateless remote verifier therefore cannot
+detect every undefine/recreate/reset sequence. Anti-rollback or continuity across
+such a reset needs verifier-maintained state or a definition controlled by an
+authorization hierarchy the guest cannot reset. This path proves a correctly
+signed transition for the configured public template, not persistent object
+identity or tamper-proof history.
 
 ## Validated on hardware
 
@@ -39,7 +42,7 @@ Exercised on a real Azure Trusted Launch vTPM (``Standard_D2s_v7``, eastus2,
 ``TPM_NT = 4`` back out of the public area), extends accumulated as
 ``H(old || data)`` across successive calls, an existing index was reused rather
 than redefined, and **a plain ``TPM2_NV_Write`` to it was refused by the TPM**,
-which is the check the tamper-evidence argument actually rests on.
+which validates the append-only behavior of that particular index incarnation.
 
 The certify path was validated in the same session, after that run found two
 defects in it: the ``nv_certify`` call omitted the required ``in_scheme`` and
@@ -90,11 +93,19 @@ from pathlib import Path
 from typing import Any
 
 from cmcp_runtime.errors import CMCPError
+from cmcp_verify.nv_policy import (
+    DEFAULT_MEASUREMENT_NV_INDEX,
+    MEASUREMENT_NV_BASE_ATTRIBUTES,
+    MEASUREMENT_NV_NAME_ALG,
+    MEASUREMENT_NV_SIZE,
+    MEASUREMENT_NV_WRITTEN_ATTRIBUTES,
+    measurement_nv_name,
+)
 
 logger = logging.getLogger(__name__)
 
 # An extend index holds exactly one digest of its nameAlg, which is SHA-256 here.
-_EXTEND_INDEX_SIZE = 32
+_EXTEND_INDEX_SIZE = MEASUREMENT_NV_SIZE
 
 # A freshly defined extend index is *uninitialised*, and TPM2_NV_Certify on an
 # uninitialised index fails with TPM_RC_NV_UNINITIALIZED. So on the very first start
@@ -104,10 +115,6 @@ _EXTEND_INDEX_SIZE = 32
 # irrelevant to security: the pre-certify signs whatever the index holds, and the
 # verifier only checks the relation between the two certified values.
 _INDEX_SEED = hashlib.sha256(b"cmcp-nv-index-initialised-v1").digest()
-
-# Owner-defined NV index holding the gateway measurement. Outside the TCG-reserved
-# 0x01C00000-0x01C3FFFF range so it cannot collide with platform certificates.
-DEFAULT_MEASUREMENT_NV_INDEX = 0x01500432
 
 # Domain separator, versioned because the digest is compared across builds.
 _DIGEST_PREFIX = b"cmcp-gateway-measurement-v1"
@@ -249,8 +256,10 @@ def policy_digest(policy_bundle_path: str) -> str:
 
     parts = [
         json.dumps(
-            {"path": p.relative_to(root).as_posix() if root.is_dir() else p.name,
-             "sha256": _sha256_hex(p.read_bytes())},
+            {
+                "path": p.relative_to(root).as_posix() if root.is_dir() else p.name,
+                "sha256": _sha256_hex(p.read_bytes()),
+            },
             separators=(",", ":"),
             sort_keys=True,
         )
@@ -266,7 +275,9 @@ def config_digest(config: Any) -> str:
     what is running, and extending a secret's digest into an index that is read
     back in evidence would leak an oracle for it.
     """
-    return _sha256_hex(json.dumps(_config_payload(config), separators=(",", ":"), sort_keys=True).encode())
+    return _sha256_hex(
+        json.dumps(_config_payload(config), separators=(",", ":"), sort_keys=True).encode()
+    )
 
 
 def _config_payload(value: Any, *, _depth: int = 0) -> Any:
@@ -351,9 +362,17 @@ def extend_gateway_measurement(
                 "the measurement NV index could not be read back after defining it",
                 detail=f"index={index:#x}",
             )
+        _validate_measurement_nv_public(ectx, handle, index, written=False)
+    else:
+        # A handle at the configured location is not sufficient.  Its Name commits
+        # the handle, algorithm, complete attribute set, authorization policy and
+        # size; accepting a different public area here would let an ordinary or
+        # otherwise attacker-controlled NV index stand in for TPM_NT_EXTEND.
+        _validate_measurement_nv_public(ectx, handle, index, written=True)
 
     before = _read_extend_index(ectx, handle)
     _extend(ectx, handle, measurement.digest, index)
+    _validate_measurement_nv_public(ectx, handle, index, written=True)
     after = _read_extend_index(ectx, handle)
     result = ExtendResult(index=index, before=before, after=after, provisioned=provisioned)
 
@@ -428,16 +447,21 @@ def certify_and_extend_gateway_measurement(
                 "the measurement NV index could not be read back after defining it",
                 detail=f"index={index:#x}",
             )
+        _validate_measurement_nv_public(ectx, handle, index, written=False)
+    else:
+        _validate_measurement_nv_public(ectx, handle, index, written=True)
 
     if provisioned:
         # See _INDEX_SEED: an uninitialised index cannot be certified.
         _extend(ectx, handle, _INDEX_SEED, index)
+        _validate_measurement_nv_public(ectx, handle, index, written=True)
 
     pre_attest, pre_sig = _certify_nv(
         ectx, handle, sign_handle, certify_qualifying_data(nonce, PHASE_PRE), phase="pre"
     )
     before = _read_extend_index(ectx, handle)
     _extend(ectx, handle, measurement.digest, index)
+    _validate_measurement_nv_public(ectx, handle, index, written=True)
     after = _read_extend_index(ectx, handle)
     post_attest, post_sig = _certify_nv(
         ectx, handle, sign_handle, certify_qualifying_data(nonce, PHASE_POST), phase="post"
@@ -522,6 +546,58 @@ def _nv_handle(ectx: Any, index: int) -> Any | None:
         return None
 
 
+def _validate_measurement_nv_public(ectx: Any, handle: Any, index: int, *, written: bool) -> None:
+    """Fail unless ``handle`` names the exact cMCP measurement-index profile.
+
+    ``tr_from_tpmpublic(index)`` proves only that *some* object occupies the handle.
+    The security property depends on the complete public area: SHA-256, the
+    ``TPM_NT_EXTEND`` type, the exact owner/read/no-DA policy, no ``authPolicy``, and
+    a single digest-sized value.  The TPM-managed ``WRITTEN`` bit is clear directly
+    after definition and set after the first extend, so callers state which phase
+    they are validating.  The returned Name is checked as well as the fields; that
+    is the value subsequently signed by ``TPM2_NV_Certify``.
+    """
+    expected_attributes = (
+        MEASUREMENT_NV_WRITTEN_ATTRIBUTES if written else MEASUREMENT_NV_BASE_ATTRIBUTES
+    )
+    expected_name = measurement_nv_name(index, written=written)
+
+    try:
+        public_2b, returned_name_2b = ectx.nv_read_public(handle)
+        public = public_2b.nvPublic
+        observed_index = int(public.nvIndex)
+        observed_name_alg = int(public.nameAlg)
+        observed_attributes = int(public.attributes)
+        observed_auth_policy = bytes(public.authPolicy)
+        observed_size = int(public.dataSize)
+        observed_name = bytes(returned_name_2b)
+    except Exception as exc:  # noqa: BLE001
+        raise MeasurementUnavailable(
+            "the measurement NV index public area could not be validated",
+            detail=f"index={index:#x}: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    mismatches: list[str] = []
+    if observed_index != index:
+        mismatches.append(f"nvIndex={observed_index:#x} expected={index:#x}")
+    if observed_name_alg != MEASUREMENT_NV_NAME_ALG:
+        mismatches.append(f"nameAlg={observed_name_alg:#x} expected={MEASUREMENT_NV_NAME_ALG:#x}")
+    if observed_attributes != expected_attributes:
+        mismatches.append(f"attributes={observed_attributes:#x} expected={expected_attributes:#x}")
+    if observed_auth_policy != b"":
+        mismatches.append("authPolicy is not empty")
+    if observed_size != MEASUREMENT_NV_SIZE:
+        mismatches.append(f"dataSize={observed_size} expected={MEASUREMENT_NV_SIZE}")
+    if observed_name != expected_name:
+        mismatches.append(f"Name={observed_name.hex()} expected={expected_name.hex()}")
+
+    if mismatches:
+        raise MeasurementUnavailable(
+            "the existing NV index does not match the authorized measurement profile",
+            detail=f"index={index:#x}: {'; '.join(mismatches)}",
+        )
+
+
 def _read_extend_index(ectx: Any, handle: Any) -> bytes:
     """Read an extend index's current digest, treating never-written as all zeroes.
 
@@ -530,19 +606,34 @@ def _read_extend_index(ectx: Any, handle: Any) -> bytes:
     reported as zeroes rather than as an error.
     """
     try:
-        public, _ = ectx.nv_read_public(handle)
-        size = int(public.nvPublic.dataSize)
+        value = bytes(ectx.nv_read(handle, MEASUREMENT_NV_SIZE, 0))
     except Exception as exc:  # noqa: BLE001
+        if _is_nv_uninitialized(exc):
+            logger.debug("NV index reads as uninitialized: %s", exc)
+            return bytes(MEASUREMENT_NV_SIZE)
         raise MeasurementUnavailable(
-            "the measurement NV index public area could not be read",
+            "the measurement NV index value could not be read",
             detail=f"{type(exc).__name__}: {exc}",
         ) from exc
+    if len(value) != MEASUREMENT_NV_SIZE:
+        raise MeasurementUnavailable(
+            "the measurement NV index returned a truncated value",
+            detail=f"size={len(value)} expected={MEASUREMENT_NV_SIZE}",
+        )
+    return value
 
+
+def _is_nv_uninitialized(exc: Exception) -> bool:
+    """Recognize only TPM_RC_NV_UNINITIALIZED, not arbitrary read failures."""
+    rc = getattr(exc, "rc", None)
+    if rc is None:
+        return False
     try:
-        return bytes(ectx.nv_read(handle, size, 0))
-    except Exception as exc:  # noqa: BLE001 - uninitialized reads as zeroes
-        logger.debug("NV index reads as uninitialized: %s", exc)
-        return bytes(size)
+        from tpm2_pytss.constants import TPM2_RC
+
+        return int(rc) & 0xFFFF == int(TPM2_RC.NV_UNINITIALIZED)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return False
 
 
 def _define_extend_index(ectx: Any, index: int) -> None:
@@ -553,19 +644,18 @@ def _define_extend_index(ectx: Any, index: int) -> None:
     not resettable from locality 0 the way PCR 16 and PCR 23 are.
     """
     from tpm2_pytss.constants import ESYS_TR, TPM2_ALG, TPM2_NT, TPMA_NV
-    from tpm2_pytss.types import TPM2B_NV_PUBLIC, TPMS_NV_PUBLIC
+    from tpm2_pytss.types import TPM2B_DIGEST, TPM2B_NV_PUBLIC, TPMS_NV_PUBLIC
 
     # TPM_NT is a 4-bit field inside TPMA_NV, so it is OR'd in rather than named in
     # the attribute string. Keeping it explicit is the point: TPM_NT_EXTEND is the
     # single attribute this whole design rests on.
-    attributes = TPMA_NV.parse("ownerwrite|ownerread|authread|no_da") | (
-        int(TPM2_NT.EXTEND) << 4
-    )
+    attributes = TPMA_NV.parse("ownerwrite|ownerread|authread|no_da") | (int(TPM2_NT.EXTEND) << 4)
     nv_public = TPM2B_NV_PUBLIC(
         nvPublic=TPMS_NV_PUBLIC(
             nvIndex=index,
             nameAlg=TPM2_ALG.SHA256,
             attributes=attributes,
+            authPolicy=TPM2B_DIGEST(),
             dataSize=_EXTEND_INDEX_SIZE,
         )
     )

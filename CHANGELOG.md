@@ -16,9 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TPM2B_ATTEST` transport framing, reject undeclared bytes after `nvContents`,
   and verify AK signatures over the canonical inner `TPMS_ATTEST` rather than
   over the transport length prefix. A genuine swtpm-produced two-certify
-  reference pair exercises the complete chain,
-  signature, phase, index, and extend-relation path. The synthetic fixture CA is
-  test trust only and makes no hardware-provenance or vendor-enrollment claim.
+  reference pair exercises Agent Manifest's configured-root chain helper plus
+  the signature, transcript, explicitly authorized test Name/range, and
+  extend-relation path. The synthetic fixture CA is test trust only and makes no
+  full-PKIX, hardware-provenance, or vendor-enrollment claim.
 
 - Removed AGT/`agent_os` from the production dependency graph. cMCP now owns the
   runtime call and response enforcement path; AGT remains isolated to CI and
@@ -26,6 +27,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still readable but is no longer enforced.
 
 ### Fixed
+
+- **Gateway NV appraisal accepted an evidence-selected NV object and certified
+  range as the configured gateway measurement.** `verify_gateway_measurement`
+  authenticated the AK chain, both signatures, phase bindings, and
+  `post = SHA256(pre || digest)`, but only required the two signed Names to equal
+  each other. It did not compare either Name or signed offset/extent with trusted
+  verifier policy, and a collector-claimed digest could produce `verified=True`
+  when no expected digest was supplied. An accepted AK could therefore certify
+  attacker-arranged values from an ordinary or otherwise unapproved NV object and
+  receive an authorization-grade verdict without proving use of cMCP's configured
+  `TPM_NT_EXTEND` public template.
+
+  Appraisal now requires a complete `GatewayNvAppraisalPolicy` supplied by the
+  verifier: the exact signed TPM Name, offset zero, 32-byte extent, and expected
+  gateway digest. Both attestations and the envelope copy must match that policy;
+  digest-only legacy calls fail closed. The producer also validates the complete
+  public area and TPM-returned Name before any read, extend, or certify; a newly
+  defined object is checked in its unwritten state and again after `WRITTEN` is
+  set. Unexpected existing objects are never silently redefined, and only an
+  actual `TPM_RC_NV_UNINITIALIZED` read maps to the initial zero value.
+
+  The API change is intentionally breaking for callers that omitted the full
+  policy. A genuine swtpm corpus covers the canonical production object, a
+  correctly signed same-handle ordinary object with an arranged byte relation,
+  and a correctly signed partial range. This fixes the standalone primitive; the
+  startup pair is still not carried by the TRACE schema or appraised by
+  `verify_trace_claim`, so it is not an end-to-end runtime-claim guarantee.
 
 **`CMCPProxy._client_for_upstream` pooled every unpinned upstream server in a session behind one shared `httpx.AsyncClient` (#281).** The pinned branch already keys its cached client on the fingerprint (a matching pin *is* the same verified peer, so sharing there is correct), but both unpinned branches plain `http://` and the `PLACEHOLDER_FINGERPRINT` dev-mode pin collapsed to the single literal key `"unpinned"`, regardless of which server the entry actually pointed at. A gateway session whose catalog lists two or more unrelated unpinned upstreams (the supported, if discouraged, dev/demo path this same method's docstring describes) got one `httpx.AsyncClient` for all of them: one cookie jar, and one shared pool of `max_connections`/`max_keepalive_connections`, across servers whose only thing in common was that neither presented a real pin.
 
@@ -37,7 +65,7 @@ Both fields are exactly as caller-controlled as `_cmcp` a few lines below, alrea
 
   The stated reason was that "SEV-SNP and TDX commit their own binding through the report's fields". That is true and it is not equivalent. Those fields carry the **launch** measurement, which is fixed at boot and does not move when the Cedar bundle reloads mid-session through `PolicyEvaluator._maybe_reload()`. So on exactly the platforms whose whole premise is hardware-rooted policy enforcement, nothing signed said which policy was running.
 
-  No new commitment scheme was invented. `make_measurement_bound_nonce(tee_public_key, measurement_digest)` puts the already-validated digest into the second half of the attestation nonce, in the same 64-byte layout `make_audit_bound_nonce` already uses: `jwk_thumbprint(pubkey) (32) || measurement_digest (32)`. `gateway_measurement().digest` is a raw 32-byte SHA-256, so it drops in unreshaped and a verifier compares it against a digest it recomputes rather than against a hash of one. The `tpm` provider is deliberately not in the set: its NV index keeps an append-only history that `report_data` cannot.
+  No new commitment scheme was invented. `make_measurement_bound_nonce(tee_public_key, measurement_digest)` puts the already-validated digest into the second half of the attestation nonce, in the same 64-byte layout `make_audit_bound_nonce` already uses: `jwk_thumbprint(pubkey) (32) || measurement_digest (32)`. `gateway_measurement().digest` is a raw 32-byte SHA-256, so it drops in unreshaped and a verifier compares it against a digest it recomputes rather than against a hash of one. The `tpm` provider is deliberately not in that report-data set: it has a separate NV-extend/certify path whose evidence remains startup-scoped, is not refreshed on policy reload, and is not carried by ordinary TRACE claims.
 
   This replaces the 32 random salt bytes on those providers, and freshness survives the change for a reason worth stating rather than assuming: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config.
 
@@ -261,7 +289,7 @@ Five changes below the headline TPM fix, each one a case where cMCP reported mor
 
 - **Hardware validation for the gateway measurement NV extend index (#432, #451).** The TPM calls in `cmcp_runtime.tee.measurement` were written against the documented tpm2-pytss API without ever executing against a TPM. All of them work on a real Azure Trusted Launch vTPM: `nv_define_space` with `TPMA_NV.parse(...) | (TPM2_NT.EXTEND << 4)` created a genuine extend index (`TPM_NT = 4` read back from the public area), `nv_extend` accumulated as `H(old || data)` across calls, an existing index was reused rather than redefined, and **a plain `nv_write` to the index was refused by the TPM**, which is the check the tamper-evidence argument actually rests on. Recorded in `docs/testing/hardware-validation.md`.
 
-- **The gateway is now measured into a TPM NV extend index at startup (#432).** PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and the bootloader, and there was no `PCR_Extend` anywhere in the codebase, so replacing the policy bundle or the gateway itself produced an identical measurement and the TPM enforced nothing about the thing the TPM path exists to protect. `cmcp_runtime.tee.measurement` digests the installed distributions' recorded per-file hashes (pip's `RECORD`), the policy bundle bytes, and the resolved configuration with secrets excluded, then extends that digest into NV `0x01500432` before the gateway serves traffic. `RuntimeContext` carries the result.
+- **The gateway is now measured into a TPM NV extend index at startup (#432).** PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and the bootloader, and there was no `PCR_Extend` anywhere in the codebase, so replacing the policy bundle or the gateway itself produced an identical measurement and the TPM authenticated no commitment to the thing the TPM path exists to measure. `cmcp_runtime.tee.measurement` digests the installed distributions' recorded per-file hashes (pip's `RECORD`), the policy bundle bytes, and the resolved configuration with secrets excluded, then extends that digest into NV `0x01500432` before the gateway serves traffic. `RuntimeContext` carries the result.
 
   An NV index with `TPM_NT_EXTEND` rather than an application PCR, per the decision on #432: PCR 23 and PCR 16 are both resettable from locality 0, so an adversary with local code execution could reset and re-extend a chosen value, which is exactly the adversary this tier addresses. Extend writes are one-way (`new = H(old || data)`), so forgery needs a preimage, which is what carries the security argument rather than the write policy the original proposal called for.
 

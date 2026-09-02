@@ -32,6 +32,7 @@ from cmcp_verify.nv_certify import (
     parse_nv_certify,
     verify_gateway_measurement,
 )
+from cmcp_verify.nv_policy import GatewayNvAppraisalPolicy, measurement_nv_name
 
 _ALG_RSASSA = 0x0014
 _ALG_ECDSA = 0x0018
@@ -39,9 +40,22 @@ _ALG_SHA256 = 0x000B
 
 NONCE = b"\xa5" * 32
 GATEWAY_DIGEST = hashlib.sha256(b"gateway").digest()
-INDEX_NAME = b"\x00\x0b" + b"\x77" * 32
+INDEX_NAME = measurement_nv_name()
 PRE_CONTENTS = bytes(32)
 POST_CONTENTS = hashlib.sha256(PRE_CONTENTS + GATEWAY_DIGEST).digest()
+
+
+def policy(
+    *,
+    index_name: bytes = INDEX_NAME,
+    gateway_digest: bytes = GATEWAY_DIGEST,
+) -> GatewayNvAppraisalPolicy:
+    return GatewayNvAppraisalPolicy(
+        expected_index_name=index_name,
+        expected_offset=0,
+        expected_size=32,
+        expected_gateway_digest=gateway_digest,
+    )
 
 
 # ── builders ──────────────────────────────────────────────────────────────────
@@ -90,7 +104,15 @@ def _tpmt_ecdsa(der: bytes) -> bytes:
     )
 
 
-def _cert(subject: str, issuer: str, subject_pub, issuer_key, issuer_hash=None):
+def _cert(
+    subject: str,
+    issuer: str,
+    subject_pub,
+    issuer_key,
+    *,
+    ca: bool,
+    issuer_hash=None,
+):
     issuer_hash = issuer_hash or SHA384()
     now = datetime.now(UTC)
     return (
@@ -101,7 +123,21 @@ def _cert(subject: str, issuer: str, subject_pub, issuer_key, issuer_hash=None):
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=3650))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=not ca,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=ca,
+                crl_sign=ca,
+                encipher_only=None,
+                decipher_only=None,
+            ),
+            critical=True,
+        )
         .sign(issuer_key, issuer_hash)
     )
 
@@ -111,14 +147,14 @@ class Fixture:
 
     def __init__(self, *, use_rsa: bool = True) -> None:
         root_key = ec.generate_private_key(ec.SECP256R1())
-        root = _cert("root", "root", root_key.public_key(), root_key)
+        root = _cert("root", "root", root_key.public_key(), root_key, ca=True)
         if use_rsa:
             self.ak_key: object = rsa.generate_private_key(public_exponent=65537, key_size=2048)
             ak_pub = self.ak_key.public_key()  # type: ignore[attr-defined]
         else:
             self.ak_key = ec.generate_private_key(ec.SECP256R1())
             ak_pub = self.ak_key.public_key()  # type: ignore[attr-defined]
-        ak = _cert("ak", "root", ak_pub, root_key)
+        ak = _cert("ak", "root", ak_pub, root_key, ca=False)
         self.chain_pem = ak.public_bytes(Encoding.PEM) + root.public_bytes(Encoding.PEM)
         self.root_pem = root.public_bytes(Encoding.PEM)
         self.use_rsa = use_rsa
@@ -140,6 +176,8 @@ def make_envelope(
     post_phase: bytes = PHASE_POST,
     pre_index: bytes = INDEX_NAME,
     post_index: bytes = INDEX_NAME,
+    pre_offset: int = 0,
+    post_offset: int = 0,
     size_prefixed: bool = False,
 ) -> bytes:
     if post_contents is None:
@@ -148,11 +186,13 @@ def make_envelope(
         qualifying_data=certify_qualifying_data(nonce, pre_phase),
         nv_contents=pre_contents,
         index_name=pre_index,
+        offset=pre_offset,
     )
     post = build_nv_attest(
         qualifying_data=certify_qualifying_data(nonce, post_phase),
         nv_contents=post_contents,
         index_name=post_index,
+        offset=post_offset,
     )
     return build_envelope(
         # The TPM signs TPMS_ATTEST. TPM2B_ATTEST is transport framing and is
@@ -168,7 +208,7 @@ def make_envelope(
 
 def verify(fx: Fixture, envelope: bytes, **kw):
     kw.setdefault("expected_nonce", NONCE)
-    kw.setdefault("expected_gateway_digest", GATEWAY_DIGEST)
+    kw.setdefault("policy", policy())
     return verify_gateway_measurement(
         envelope, ak_chain_pem=fx.chain_pem, trusted_roots_pem=fx.root_pem, **kw
     )
@@ -247,6 +287,22 @@ def test_qualifying_data_is_unambiguous() -> None:
 # ── the happy paths ───────────────────────────────────────────────────────────
 
 
+def test_synthetic_chain_models_a_signing_ak_leaf_not_a_ca() -> None:
+    """Keep unit evidence realistic even though chain policy is upstream-owned."""
+    fx = Fixture()
+    leaf, root = x509.load_pem_x509_certificates(fx.chain_pem)
+    leaf_constraints = leaf.extensions.get_extension_for_class(x509.BasicConstraints).value
+    leaf_usage = leaf.extensions.get_extension_for_class(x509.KeyUsage).value
+    root_constraints = root.extensions.get_extension_for_class(x509.BasicConstraints).value
+    root_usage = root.extensions.get_extension_for_class(x509.KeyUsage).value
+
+    assert leaf_constraints.ca is False
+    assert leaf_usage.digital_signature is True
+    assert leaf_usage.key_cert_sign is False
+    assert root_constraints.ca is True
+    assert root_usage.key_cert_sign is True
+
+
 def test_valid_pair_verifies_rsa() -> None:
     fx = Fixture(use_rsa=True)
     result = verify(fx, make_envelope(fx))
@@ -259,6 +315,16 @@ def test_valid_pair_verifies_rsa() -> None:
 def test_valid_pair_verifies_ecdsa() -> None:
     fx = Fixture(use_rsa=False)
     result = verify(fx, make_envelope(fx))
+    assert result.verified, result.failure_reason
+
+
+def test_matching_legacy_digest_is_only_a_policy_consistency_check() -> None:
+    fx = Fixture()
+    result = verify(
+        fx,
+        make_envelope(fx),
+        expected_gateway_digest=GATEWAY_DIGEST,
+    )
     assert result.verified, result.failure_reason
 
 
@@ -284,12 +350,19 @@ def test_size_prefixed_pair_rejects_signatures_over_transport_framing() -> None:
     assert result.failure_reason == "signature_invalid"
 
 
-def test_without_an_expected_digest_it_notes_the_weaker_claim() -> None:
-    """Internal consistency is not the same as matching a known-good value."""
+def test_digest_only_legacy_call_fails_closed_without_full_policy() -> None:
+    """An evidence-carried digest cannot authorize an attacker-selected index."""
     fx = Fixture()
-    result = verify(fx, make_envelope(fx), expected_gateway_digest=None)
-    assert result.verified
-    assert "gateway_digest_note" in result.details
+    result = verify_gateway_measurement(
+        make_envelope(fx),
+        ak_chain_pem=fx.chain_pem,
+        trusted_roots_pem=fx.root_pem,
+        expected_nonce=NONCE,
+        expected_gateway_digest=GATEWAY_DIGEST,
+    )
+    assert not result.verified
+    assert result.failure_reason == "missing_nv_policy"
+    assert result.verified_fields == []
 
 
 # ── forgeries and degradations, all must fail ─────────────────────────────────
@@ -309,7 +382,15 @@ def test_a_different_gateway_digest_is_rejected() -> None:
     fx = Fixture()
     other = hashlib.sha256(b"tampered gateway").digest()
     env = make_envelope(fx, gateway_digest=other)
-    result = verify(fx, env, expected_gateway_digest=GATEWAY_DIGEST)
+    result = verify(fx, env)
+    assert not result.verified
+    assert result.failure_reason == "gateway_digest_mismatch"
+
+
+def test_non_sha256_length_claimed_gateway_digest_is_rejected() -> None:
+    fx = Fixture()
+    short_digest = bytes(31)
+    result = verify(fx, make_envelope(fx, gateway_digest=short_digest))
     assert not result.verified
     assert result.failure_reason == "gateway_digest_mismatch"
 
@@ -340,7 +421,96 @@ def test_two_certifies_of_different_indices_are_rejected() -> None:
     env = make_envelope(fx, post_index=b"\x00\x0b" + b"\x11" * 32)
     result = verify(fx, env)
     assert not result.verified
-    assert result.failure_reason == "index_mismatch"
+    assert result.failure_reason == "nv_index_name_mismatch"
+
+
+def test_two_correctly_signed_certifies_of_same_unapproved_index_are_rejected() -> None:
+    """Same-Name comparison alone must not authorize a caller-selected index."""
+    fx = Fixture()
+    unapproved = b"\x00\x0b" + b"\x11" * 32
+    env = make_envelope(fx, pre_index=unapproved, post_index=unapproved)
+    result = verify(fx, env)
+    assert not result.verified
+    assert result.failure_reason == "nv_index_name_mismatch"
+    assert result.details["which"] == "pre"
+
+
+@pytest.mark.parametrize(
+    ("pre_offset", "post_offset", "which"),
+    [(1, 0, "pre"), (0, 1, "post"), (1, 1, "pre")],
+)
+def test_nonzero_certified_offset_is_rejected(
+    pre_offset: int, post_offset: int, which: str
+) -> None:
+    fx = Fixture()
+    result = verify(
+        fx,
+        make_envelope(fx, pre_offset=pre_offset, post_offset=post_offset),
+    )
+    assert not result.verified
+    assert result.failure_reason == "nv_offset_mismatch"
+    assert result.details["which"] == which
+
+
+@pytest.mark.parametrize(
+    ("pre_contents", "post_contents", "which"),
+    [
+        (bytes(31), hashlib.sha256(bytes(31) + GATEWAY_DIGEST).digest(), "pre"),
+        (bytes(32), bytes(31), "post"),
+        (bytes(33), hashlib.sha256(bytes(33) + GATEWAY_DIGEST).digest(), "pre"),
+    ],
+)
+def test_non_32_byte_certified_extent_is_rejected(
+    pre_contents: bytes, post_contents: bytes, which: str
+) -> None:
+    fx = Fixture()
+    result = verify(
+        fx,
+        make_envelope(
+            fx,
+            pre_contents=pre_contents,
+            post_contents=post_contents,
+        ),
+    )
+    assert not result.verified
+    assert result.failure_reason == "nv_extent_size_mismatch"
+    assert result.details["which"] == which
+
+
+def test_corrupted_policy_object_is_rejected_at_verifier_boundary() -> None:
+    fx = Fixture()
+    malformed = policy()
+    object.__setattr__(malformed, "expected_size", 31)
+    result = verify(fx, make_envelope(fx), policy=malformed)
+    assert not result.verified
+    assert result.failure_reason == "invalid_nv_policy"
+
+
+def test_unsupported_policy_type_is_rejected() -> None:
+    fx = Fixture()
+    result = verify(fx, make_envelope(fx), policy=object())
+    assert not result.verified
+    assert result.failure_reason == "invalid_nv_policy"
+
+
+@pytest.mark.parametrize("nonce", [b"", bytes(31), bytes(33), "not-bytes"])
+def test_invalid_expected_nonce_fails_closed_without_raising(nonce: object) -> None:
+    fx = Fixture()
+    result = verify(fx, make_envelope(fx), expected_nonce=nonce)
+    assert not result.verified
+    assert result.failure_reason == "invalid_expected_nonce"
+    assert result.verified_fields == []
+
+
+def test_legacy_digest_parameter_cannot_disagree_with_policy() -> None:
+    fx = Fixture()
+    result = verify(
+        fx,
+        make_envelope(fx),
+        expected_gateway_digest=hashlib.sha256(b"different policy").digest(),
+    )
+    assert not result.verified
+    assert result.failure_reason == "gateway_digest_parameter_mismatch"
 
 
 def test_tampered_attest_breaks_the_signature() -> None:
@@ -374,7 +544,7 @@ def test_untrusted_root_is_rejected() -> None:
         ak_chain_pem=fx.chain_pem,
         trusted_roots_pem=stranger.root_pem,
         expected_nonce=NONCE,
-        expected_gateway_digest=GATEWAY_DIGEST,
+        policy=policy(),
     )
     assert not result.verified
     assert result.failure_reason == "ak_chain_invalid"
@@ -388,7 +558,7 @@ def test_no_trusted_roots_is_refused() -> None:
         ak_chain_pem=fx.chain_pem,
         trusted_roots_pem=b"",
         expected_nonce=NONCE,
-        expected_gateway_digest=GATEWAY_DIGEST,
+        policy=policy(),
     )
     assert not result.verified
     assert result.failure_reason in {"no_trusted_roots", "ak_chain_invalid"}

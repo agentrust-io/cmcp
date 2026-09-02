@@ -240,9 +240,11 @@ def _extend_measurement(
 
     Returns ``(extend, evidence)``. ``evidence`` is the signed ``TPM2_NV_Certify``
     pair, or None when the platform provisions no certified attestation key to sign
-    with: the extend still happens and is still a local integrity control, but it is
-    not remote-verifiable, so it is not presented as evidence. Both are None on a
-    platform with no TPM, where #552's ``report_data`` binding does this job instead.
+    with. The pair is retained in ``RuntimeContext`` for direct appraisal, but the
+    current TRACE schema does not transport it and ``verify_trace_claim`` does not
+    invoke its verifier; do not describe ordinary claims as carrying this property.
+    Both are None on a platform with no TPM, where #552's ``report_data`` binding
+    does this job instead.
     """
     if tee_provider.provider_name() != "tpm" or measurement is None:
         return None, None
@@ -391,8 +393,8 @@ def run_startup(config_path: str) -> RuntimeContext:
     # On the TPM tier the measurement is committed by an NV extend index instead,
     # certified either side of the extend so it is signed evidence rather than a
     # self-reported number. PCRs 0-7 cover firmware and the bootloader only, so
-    # without this the TPM enforced nothing about the gateway itself and a swapped
-    # policy bundle measured identically.
+    # without this the TPM authenticated no commitment to the gateway itself and a
+    # swapped policy bundle measured identically.
     extend_result, measurement_evidence = _extend_measurement(
         config, tee_provider, measurement, nonce
     )
