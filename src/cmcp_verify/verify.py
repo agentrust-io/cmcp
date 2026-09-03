@@ -1180,7 +1180,7 @@ def verify_trace_claim(
         # the ARK is pinned out of band. Hardware-validated on live Azure SEV-SNP.
         from cmcp_verify.azure_cvm import verify_azure_cvm_measurement
 
-        raw_bytes = base64.b64decode(_runtime["raw_evidence"])
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         azure_result = verify_azure_cvm_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
@@ -1207,14 +1207,12 @@ def verify_trace_claim(
     elif platform == "amd-sev-snp":
         from cmcp_verify.sev_snp import verify_sev_snp_measurement
 
-        raw_ev = _runtime.get("raw_evidence")
-        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         report_data_hex = _runtime.get("report_data")
         # VCEK/ASK/ARK chain travels with the claim (passport model); the ARK is
         # pinned by the operator out of band. Both are needed for issue #370
         # report-signature + chain verification; absent either, it stays unverified.
-        _chain_b64 = _runtime.get("cert_chain")
-        cert_chain_pem = base64.b64decode(_chain_b64) if _chain_b64 else None
+        cert_chain_pem = _evidence_field(claim_json, _runtime, "cert_chain")
         snp_result = verify_sev_snp_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
@@ -1246,8 +1244,7 @@ def verify_trace_claim(
     elif platform == "intel-tdx":
         from cmcp_verify.tdx import verify_tdx_measurement
 
-        raw_ev = _runtime.get("raw_evidence")
-        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         report_data_hex = _runtime.get("report_data")
         # The DCAP quote (with its embedded PCK cert chain) travels with the claim
         # (passport model); the Intel SGX/TDX root CA is pinned by the operator out
@@ -1288,8 +1285,7 @@ def verify_trace_claim(
     elif platform in ("opaque", "opaque-managed"):
         from cmcp_verify.opaque import verify_opaque_measurement
 
-        raw_ev = _runtime.get("raw_evidence")
-        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         opaque_result = verify_opaque_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
