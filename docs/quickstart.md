@@ -15,15 +15,17 @@ You'll run a cMCP Runtime that intercepts tool calls from a demo agent and enfor
 1. **Block** a call to a sensitive tool (`salesforce.contacts`). The gateway returns HTTP 403 and the call never reaches any upstream.
 2. **Allow** a call to a non-sensitive tool (`echo`) and forward it to a small mock upstream.
 
-At the end you close the session and get a signed TRACE Claim that records both calls, which policy decided each one, and the policy bundle hash measured at startup. You verify the claim without trusting the operator.
+At the end you close the session and get a signed TRACE Claim that records both calls, which policy decided each one, and the policy bundle hash measured at startup. You inspect its signature and consistency. This software demo does not establish hardware provenance.
 
 ---
 
 ## Prerequisites
 
-- Ubuntu 24.04 (or any Linux distro with Python 3.11+); macOS also works
-- Python 3.11 or newer
-- pip
+- Python 3.11+, pip, and curl
+- Bash on Linux, macOS, or Windows with WSL
+- Three terminal windows: gateway, client requests, and mock tool server
+
+Expected finish: one `403 POLICY_DENY`, one `200 OK`, and `cmcp verify` reporting `partially_verified` with exit code 1. No Salesforce account or real personal data is used.
 
 Verify:
 
@@ -37,7 +39,9 @@ pip --version
 ## Install
 
 ```bash
-pip install cmcp-runtime
+python3 -m venv cmcp-env
+source cmcp-env/bin/activate
+python3 -m pip install cmcp-runtime==0.4.1
 ```
 
 This installs:
@@ -211,13 +215,31 @@ print('sha256:' + hashlib.sha256(s.encode()).hexdigest())
 
 ## Confirm your setup
 
-Before starting the gateway, check that the config, policy bundle, and catalog all parse:
+First check the YAML configuration:
 
 ```bash
 cmcp validate-config --config cmcp-config.yaml
 ```
 
-If this reports an error, fix it now. It is easier to read here than mixed into the startup logs.
+This command checks the YAML; it does not load the policy bundle and tool catalog. Check those inputs and record their expected hashes **before** starting the gateway:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+from cmcp_runtime.policy.bundle import load_policy_bundle
+from cmcp_runtime.catalog.loader import load_catalog
+
+approved = {
+    "policy_bundle_hash": load_policy_bundle("policies").bundle_hash,
+    "tool_catalog_hash": load_catalog("catalog.json").catalog_hash,
+}
+Path("approved-hashes.json").write_text(json.dumps(approved, indent=2))
+print(json.dumps(approved, indent=2))
+PY
+```
+
+This validates the input files and creates `approved-hashes.json` from your local artifacts. Keep it unchanged while running the demo. In production, generate these values from reviewed build artifacts and deliver them through a verifier-controlled channel.
 
 ---
 
@@ -276,10 +298,10 @@ This is the point of the gateway: the sensitive call was stopped at the policy b
 
 Now the `echo` tool, which the policy permits. For an allowed call the gateway forwards to the upstream, so start a small mock upstream first.
 
-If you cloned the repo, run the bundled one:
+If you cloned the repo, run the bundled one in Terminal 3, replacing `/path/to/cmcp` with your checkout path:
 
 ```bash
-python3 scripts/mock_upstream.py --port 9001
+python3 /path/to/cmcp/scripts/mock_upstream.py --port 9001
 ```
 
 If you only installed the package, write a compact mock into a file and run it:
@@ -303,7 +325,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 print("mock upstream listening on :9001", flush=True)
-HTTPServer(("0.0.0.0", 9001), H).serve_forever()
+HTTPServer(("127.0.0.1", 9001), H).serve_forever()
 PY
 python3 mock_upstream.py
 ```
@@ -379,13 +401,15 @@ Expected output in dev mode:
 [cmcp verify] RESULT: FAIL (partially_verified)
 ```
 
-`partially_verified` is expected in dev mode: every cryptographic field verifies, but there is no hardware attestation to bind them to. To pin the policy and catalog hashes, read them from the claim and pass them explicitly:
+`partially_verified` with exit code 1 is expected when the software checks pass and only hardware attestation is missing. Pin the expected policy and catalog hashes from the file you created before startup:
 
 ```bash
 cmcp verify claim.json \
-  --policy-hash "$(python3 -c "import json; print(json.load(open('claim.json'))['trace']['policy']['bundle_hash'])")" \
-  --catalog-hash "$(python3 -c "import json; print(json.load(open('claim.json'))['gateway']['catalog']['hash'])")"
+  --policy-hash "$(python3 -c "import json; print(json.load(open('approved-hashes.json'))['policy_bundle_hash'])")" \
+  --catalog-hash "$(python3 -c "import json; print(json.load(open('approved-hashes.json'))['tool_catalog_hash'])")"
 ```
+
+Taking expected hashes from the claim itself would not establish approval. These pins verify a match with your selected artifacts; they do not give the software claim hardware provenance.
 
 On a real TPM 2.0 host, pass a verifier-owned CA certificate bundle to authenticate the
 attestation-key chain:
@@ -404,7 +428,7 @@ The `cmcp_verify` Python library is also available for programmatic checks (`fro
 
 ## What's in the TRACE Claim
 
-| Field | What it proves |
+| Field | What it records |
 |---|---|
 | `trace.runtime.platform` | Which TEE hardware produced the attestation report (`tpm2`, `amd-sev-snp`, etc.) |
 | `trace.runtime.measurement` | PCR/measurement recorded by hardware at enclave boot - all zeros in dev mode |
@@ -414,16 +438,20 @@ The `cmcp_verify` Python library is also available for programmatic checks (`fro
 | `trace.tool_transcript.hash` | SHA-256 of the audit chain tip - binds the call log to this Trust Record |
 | `trace.tool_transcript.call_count` | Number of tool calls in the session |
 | `trace.cnf.jwk` | Ed25519 public key used to sign this claim - bound to the TEE signing key |
-| `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip - verifiable without replaying individual entries |
+| `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip; verifying individual entries requires the exported audit bundle |
 | `gateway.call_summary` | Per-session statistics: total, allowed, denied, faulted calls and tools invoked |
 | `gateway.catalog.drift_detected` | `true` if any tool definition changed after catalog load - signals a rug-pull attempt |
 | `signature` | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`) |
 
 ---
 
+## Stop the demo
+
+Use Ctrl+C in the gateway and mock-server terminals. Keep `claim.json` and `approved-hashes.json` if you want to inspect the result later.
+
 ## Next steps
 
 - **Full financial-services scenario**: see `examples/bfsi-demo/` for a multi-tool scenario with MNPI and PHI policies, cross-boundary events, and a KYC workflow.
 - **Spec reference**: see `docs/SPEC.md` for the full product specification and `docs/spec/` for individual component specs.
 - **Advisory mode**: set `enforcement_mode: advisory` in `cmcp-config.yaml`. Policy denies are logged and flagged in the claim (`would_have_denied`) but the call is still forwarded - useful while tuning a new policy.
-- **Hardware TEE**: remove `CMCP_DEV_MODE=1` on an Azure DCasv5 (SEV-SNP) or DCedsv5 (TDX) VM. The `trace.runtime.measurement` will reflect real hardware values and verification status becomes `verified`.
+- **Hardware deployment**: follow the [TEE attestation guide](tutorials/tee-attestation.md) and [hardware validation record](testing/hardware-validation.md). Hardware placement alone does not guarantee `verified`; evidence, trust anchors, measurements, and freshness must pass the verifier's checks.
