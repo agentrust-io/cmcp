@@ -40,6 +40,15 @@
           "pattern": "^SHA256:[A-Za-z0-9+/=]{43,44}$",
           "description": "Colon-separated SHA-256 TLS certificate fingerprint in OpenSSL format."
         },
+        "rotation_mode": {
+          "type": "string",
+          "enum": [
+            "key-pinned",
+            "cert-pinned"
+          ],
+          "default": "key-pinned",
+          "description": "How tls_fingerprint survives certificate renewal. key-pinned matches the public key, so a renewal with the same key still verifies. cert-pinned matches the certificate, so any renewal is an identity mismatch until the catalog is updated. See docs/spec/tool-identity.md."
+        },
         "spiffe_id": {
           "type": [
             "string",
