@@ -81,6 +81,12 @@ class AuditEntry:
     # _max_sensitivity can only return the higher of the two. None when no
     # declaration was made, the transcript falls back to the catalog value.
     effective_data_class: str | None = None
+    # #565: validated session-independent correlation key for one executable unit.
+    # A typed field, always serialized (null when the caller supplied none), never
+    # a `detail` key. A present value came through the validated admission path in
+    # ExecutionRegistry; null means the caller made no assertion and none was
+    # synthesized. The TRACE Claim does not enumerate these values.
+    execution_id: str | None = None
     entry_hash: str = field(default="")  # computed after construction
 
     def _canonical_body(self) -> bytes:
@@ -219,6 +225,7 @@ class AuditChain:
         workflow_id: str | None = None,
         external_execution_evidence: dict[str, str] | None = None,
         effective_data_class: str | None = None,
+        execution_id: str | None = None,
     ) -> AuditEntry:
         prev_hash = self._entries[-1].entry_hash if self._entries else "genesis"
         now = datetime.now(tz=UTC)
@@ -248,6 +255,7 @@ class AuditChain:
             workflow_id=workflow_id,
             external_execution_evidence=external_execution_evidence,
             effective_data_class=effective_data_class,
+            execution_id=execution_id,
             prev_entry_hash=prev_hash,
         )
         entry.entry_hash = entry.compute_hash()

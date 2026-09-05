@@ -49,7 +49,10 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
     that is validated but not passed through is silently inert in production
     (the AUTH-001 bearer token and AUDIT-001 store were both lost this way).
     """
+    from pathlib import Path
+
     from cmcp_runtime.audit.trace_claim import _PROVIDER_MAP
+    from cmcp_runtime.execution import ExecutionRegistry, provisional_action_binding
     from cmcp_runtime.mcp.proxy import CMCPProxy
     from cmcp_runtime.mcp.server import MCPServer
     from cmcp_runtime.policy.evaluator import PolicyEvaluator
@@ -76,6 +79,22 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
         config=ctx.config,
         on_reload=lambda: refresh_measurement_binding(ctx),
     )
+    # #565: durable execution correlation. One registry per process, shared
+    # across every session so a later request through a fresh session still
+    # collides with an earlier execution_id. recover() seals any execution left
+    # in-flight by a prior crash as outcome_unknown before the gateway serves
+    # traffic. The database is a sibling of the audit DB, not the audit DB: it
+    # holds lifecycle state, not audit truth.
+    execution_registry = ExecutionRegistry(
+        Path(ctx.config.audit_db_path).with_name("executions.db")
+    )
+    execution_registry.recover()
+    # The authenticated agent identity that scopes execution_id collision. A
+    # bound Agent Manifest supplies a verified SPIFFE URI; without one the
+    # process serves a single unauthenticated principal.
+    agent_identity = (
+        ctx.agent_manifest.agent_id if ctx.agent_manifest is not None else "unauthenticated"
+    )
     proxy = CMCPProxy(
         catalog=ctx.catalog,
         policy_evaluator=policy_evaluator,
@@ -86,6 +105,11 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
         attestation_validity_seconds=ctx.attestation_report.attestation_validity_seconds,
         attestation_platform=attestation_platform,
         catalog_scanner=ctx.catalog_scanner,
+        execution_registry=execution_registry,
+        agent_identity=agent_identity,
+        # Provisional action-binding construction; issue #588 owns the final
+        # form, and swapping it here is the only change that needs.
+        action_binding_fn=provisional_action_binding,
     )
     # AUTH-001: the token validated in run_startup must reach the server, otherwise
     # every protected endpoint is reachable unauthenticated.

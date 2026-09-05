@@ -177,3 +177,54 @@ coverage. This design does not invent version negotiation behavior.
 
 **TRACE records remain joinable offline.** The audit entry carries the join key.
 The Claim binds the chain and does not duplicate its identifiers.
+
+## Implementation (first slice)
+
+`cmcp_runtime.execution.ExecutionRegistry` is the authoritative execution-state
+owner. It is a SQLite-backed module, one instance per gateway process, keyed by
+`(agent_identity, execution_id)` with a `PRIMARY KEY` on that pair.
+
+- `agent_identity` is the bound Agent Manifest's verified SPIFFE URI, or
+  `"unauthenticated"` when no manifest is bound. One gateway process serves one
+  authenticated identity today; the key still carries it so collision stays
+  scoped and cross-identity separation is enforced and tested.
+- `admit()` runs under `BEGIN IMMEDIATE` and either inserts a fresh `in_flight`
+  row or, for an existing key, classifies the request as a replay
+  (`in_flight` / terminal / `outcome_unknown`) or a collision (changed action
+  binding). It never rewrites an existing row and never returns "proceed" for
+  one. The proxy calls it once, immediately before upstream invocation
+  (`proxy.py`, step 3a.5).
+- The action binding reaches `admit()` as an opaque digest string; the registry
+  only stores and byte-compares it. Its canonical construction is defined by
+  issue #588. The proxy obtains the digest from an injected `action_binding_fn`
+  (a provisional placeholder until #588 lands), and a call whose arguments that
+  function cannot canonicalize is denied (`execution_invalid_binding`) with no
+  reservation.
+- `execution_id` is bound-checked at ingress before it reaches `admit()`: a
+  value outside 1 to 200 printable non-space ASCII characters is denied
+  (`execution_invalid_execution_id`) with no reservation, so a malformed
+  identifier never reaches the durable key.
+- `finalize()` moves the row from `in_flight` to `completed` (transport
+  delivered a response) or `outcome_unknown` (anything earlier). Both are
+  terminal and non-replayable. It is called from the proxy's single terminal
+  audit write, so replay and collision policy never spreads across handlers.
+- `recover()` runs once at startup and seals every still-`in_flight` row as
+  `outcome_unknown`. A crash between `admit()` and `finalize()`, or a failure
+  inside `finalize()`, therefore leaves an identity that can never admit another
+  invocation. This is the fail-closed result.
+
+### Known limitations
+
+- The terminal audit chain entry and the execution row are in separate SQLite
+  databases and do not share one transaction. The proxy writes the audit entry
+  first, then finalizes. The only surviving ambiguity after a crash is an audit
+  entry recording a definite outcome while the registry says `outcome_unknown`,
+  which is strictly the more conservative reading. A single cross-store
+  transaction needs a shared single-writer datastore and is out of this slice.
+- No cross-process reservation fencing beyond SQLite's `BEGIN IMMEDIATE` plus
+  `busy_timeout`. Multiple gateway processes on one registry file serialize
+  admissions; a competing writer either observes the committed reservation or
+  fails closed if the lock timeout is exceeded.
+- This slice does not itself verify that two requests express the same logical
+  operation beyond an identical action binding. It reports a shared asserted
+  `execution_id`; it does not claim exactly-once external execution.

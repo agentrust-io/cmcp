@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -32,6 +33,12 @@ from cmcp_runtime.catalog.loader import (
 from cmcp_runtime.catalog.scanner import CatalogScanner
 from cmcp_runtime.config import Config, DriftPolicy
 from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
+from cmcp_runtime.execution import (
+    ActionBindingError,
+    Disposition,
+    ExecutionRegistry,
+    valid_execution_id,
+)
 from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.mcp.stdio import StdioServer
 from cmcp_runtime.mcp.streamable_http import (
@@ -97,6 +104,11 @@ class _CallFinalizationState:
     server_identity: str | None = None
     external_execution_evidence: dict[str, str] | None = None
     terminal_entry_id: str | None = None
+    # #565: set once _admit_execution reserves this execution_id. When set, the
+    # single terminal audit write in _append_call_terminal also finalizes the
+    # execution, so replay/collision policy lives in exactly one place.
+    execution_id: str | None = None
+    execution_admitted: bool = False
 
     @property
     def terminal_disposition(self) -> str:
@@ -225,8 +237,20 @@ class CMCPProxy:
         catalog_hash: str | None = None,
         attestation_platform: str = "unknown",
         catalog_scanner: CatalogScanner | None = None,
+        execution_registry: ExecutionRegistry | None = None,
+        agent_identity: str = "unauthenticated",
+        action_binding_fn: Callable[[str, dict[str, Any]], str] | None = None,
     ) -> None:
         self._catalog = catalog
+        # #565: process-wide execution correlation. Both the registry and the
+        # action-binding function must be present for a caller's execution_id to
+        # be honoured; a value that arrives without them is refused, never run
+        # unvalidated (see _admit_execution). agent_identity scopes collision.
+        # The binding function is injected so this module never encodes the
+        # binding preimage (issue #588 owns that).
+        self._executions = execution_registry
+        self._agent_identity = agent_identity
+        self._action_binding = action_binding_fn
         self._policy = policy_evaluator
         self._session = session
         self._audit = audit_chain
@@ -765,9 +789,148 @@ class CMCPProxy:
         """Persist one terminal for this invocation, independent of call_id reuse."""
         if finalization.terminal_entry_id is not None:
             raise RuntimeError("terminal audit entry already persisted for this invocation")
+        boundary_before_terminal = finalization.effect_boundary_state
+        # #565: every terminal for a correlated call carries its execution_id.
+        # Set from one place so no per-branch call site has to remember it.
+        fields.setdefault("execution_id", finalization.execution_id)
         entry = self._audit.append(entry_type, **fields)  # type: ignore[arg-type]
         finalization.terminal_entry_id = entry.entry_id
         finalization.effect_boundary_state = _EffectBoundaryState.TERMINAL_DURABLE
+        # #565: an admitted execution reaches its one terminal here, pinned to
+        # the audit entry that records the same fact. completed only when the
+        # transport delivered a response; anything earlier is outcome_unknown,
+        # which is terminal and never replayable. A failure in finalize() leaves
+        # the row in_flight for recover() to seal - fail closed, not silent.
+        if finalization.execution_admitted and finalization.execution_id is not None:
+            delivered = (
+                boundary_before_terminal
+                is _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
+            )
+            self._executions.finalize(  # type: ignore[union-attr]
+                agent_identity=self._agent_identity,
+                execution_id=finalization.execution_id,
+                disposition=Disposition.COMPLETED if delivered else Disposition.OUTCOME_UNKNOWN,
+                terminal_audit_entry_hash=entry.entry_hash,
+            )
+
+    def _admit_execution(
+        self,
+        finalization: _CallFinalizationState,
+        *,
+        execution_id: str | None,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        entry: CatalogEntry,
+        request_payload_hash: str,
+        sensitivity_before: str,
+        workflow_id: str | None,
+        t0: float,
+        called_at: datetime,
+    ) -> CallResult | None:
+        """
+        Reserve this execution identity before upstream, or return the refusal.
+
+        None means proceed. A CallResult means the request is a replay or a
+        collision and upstream must not be invoked; the refusal is already
+        audited under the asserted execution_id. A present execution_id with no
+        registry configured is refused too, so a value that proceeds always came
+        through validation.
+        """
+        if execution_id is None:
+            return None
+        if not valid_execution_id(execution_id):
+            return self._refuse_execution(
+                finalization, entry, call_id, tool_name, request_payload_hash,
+                sensitivity_before, workflow_id, t0, called_at,
+                rule="execution:invalid_execution_id",
+                deny_reason="execution_invalid_execution_id",
+            )
+        finalization.execution_id = execution_id
+        if self._executions is None or self._action_binding is None:
+            return self._refuse_execution(
+                finalization, entry, call_id, tool_name, request_payload_hash,
+                sensitivity_before, workflow_id, t0, called_at,
+                rule="execution:unavailable",
+                deny_reason="execution_correlation_unavailable",
+            )
+        try:
+            binding = self._action_binding(tool_name, arguments)
+        except ActionBindingError:
+            return self._refuse_execution(
+                finalization, entry, call_id, tool_name, request_payload_hash,
+                sensitivity_before, workflow_id, t0, called_at,
+                rule="execution:invalid_binding",
+                deny_reason="execution_invalid_binding",
+            )
+        admission = self._executions.admit(
+            agent_identity=self._agent_identity,
+            execution_id=execution_id,
+            action_binding=binding,
+            call_id=call_id,
+        )
+        if admission.admitted:
+            finalization.execution_admitted = True
+            return None
+        return self._refuse_execution(
+            finalization, entry, call_id, tool_name, request_payload_hash,
+            sensitivity_before, workflow_id, t0, called_at,
+            rule=admission.audit_rule, deny_reason=admission.audit_rule,
+        )
+
+    def _refuse_execution(
+        self,
+        finalization: _CallFinalizationState,
+        entry: CatalogEntry,
+        call_id: str,
+        tool_name: str,
+        request_payload_hash: str,
+        sensitivity_before: str,
+        workflow_id: str | None,
+        t0: float,
+        called_at: datetime,
+        *,
+        rule: str,
+        deny_reason: str,
+    ) -> CallResult:
+        """Audit and return the deny for an execution that must not reach upstream."""
+        import time
+
+        self._append_call_terminal(
+            finalization,
+            "tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            server_identity=entry.server.url,
+            policy_decision="deny",
+            policy_rule_matched=rule,
+            request_payload_hash=request_payload_hash,
+            session_sensitivity_before=sensitivity_before,
+            session_sensitivity_after=self._session.max_sensitivity,
+            workflow_id=workflow_id,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        self._record_call(
+            tool_name=tool_name,
+            called_at=called_at,
+            duration_ms=elapsed_ms,
+            allowed=False,
+            sensitivity_before=sensitivity_before,
+            stage_results={"execution": "deny"},
+            call_id=call_id,
+            catalog_entry=entry,
+            policy_decision="deny",
+        )
+        return CallResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            allowed=False,
+            would_have_denied=False,
+            response=None,
+            deny_reason=deny_reason,
+            latency_us=int(elapsed_ms * 1000),
+            audit_entry_hash=self._audit.chain_tip,
+        )
 
     def _finalize_unexpected_call_failure(
         self,
@@ -825,6 +988,7 @@ class CMCPProxy:
         arguments: dict[str, Any],
         workflow_id: str | None = None,
         declared_data_class: str | None = None,
+        execution_id: str | None = None,
     ) -> CallResult:
         """Run one call and guarantee one terminal on failure or cancellation."""
         finalization = _CallFinalizationState()
@@ -835,6 +999,7 @@ class CMCPProxy:
                 arguments,
                 workflow_id,
                 declared_data_class,
+                execution_id=execution_id,
                 _finalization=finalization,
             )
         except BaseException as exc:
@@ -857,6 +1022,7 @@ class CMCPProxy:
         workflow_id: str | None = None,
         declared_data_class: str | None = None,
         *,
+        execution_id: str | None = None,
         _finalization: _CallFinalizationState,
     ) -> CallResult:
         """
@@ -1127,6 +1293,26 @@ class CMCPProxy:
                 latency_us=int(elapsed_ms * 1000),
                 audit_entry_hash=self._audit.chain_tip,
             )
+
+        # Step 3a.5 (#565): atomically reserve this execution identity and its
+        # immutable action binding before any upstream effect. A replay or a
+        # collision is refused here and never reaches the upstream.
+        _finalization.failure_stage = "execution_admission"
+        execution_refusal = self._admit_execution(
+            _finalization,
+            execution_id=execution_id,
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            entry=entry,
+            request_payload_hash=request_payload_hash,
+            sensitivity_before=sensitivity_before,
+            workflow_id=workflow_id,
+            t0=t0,
+            called_at=called_at,
+        )
+        if execution_refusal is not None:
+            return execution_refusal
 
         # Step 3b: forward to the attested upstream MCP server.
         _finalization.failure_stage = "upstream_invocation"
