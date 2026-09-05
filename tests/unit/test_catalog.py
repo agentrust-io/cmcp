@@ -242,3 +242,35 @@ def test_extra_sensitivity_levels_does_not_loosen_built_in_check(catalog_file):
     entry = dict(ENTRY_1, sensitivity_level="secret")
     with pytest.raises(ConfigError, match="is not one of"):
         load_catalog(catalog_file([entry]), extra_sensitivity_levels=frozenset({"top_secret"}))
+
+
+def test_cert_pinned_rotation_mode_is_expressible_in_a_catalog(catalog_file):
+    """docs/spec/tool-identity.md offers cert-pinned; the schema has to accept it.
+
+    The loader has always read server.rotation_mode and the proxy uses it to
+    decide whether a certificate renewal counts as an identity change. But the
+    server block is additionalProperties: false, so a catalog that asked for
+    cert-pinned was rejected before the loader saw it, and every deployment ran
+    on the weaker key-pinned default with no way to opt out.
+    """
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["server"]["rotation_mode"] = "cert-pinned"
+
+    catalog = load_catalog(catalog_file([entry]))
+
+    assert catalog.require("crm.query").server.rotation_mode == "cert-pinned"
+
+
+def test_rotation_mode_defaults_to_key_pinned_when_absent(catalog_file):
+    catalog = load_catalog(catalog_file([ENTRY_1]))
+
+    assert catalog.require("crm.query").server.rotation_mode == "key-pinned"
+
+
+def test_unknown_rotation_mode_is_rejected(catalog_file):
+    """The enum is the point: a typo must fail loudly, not silently downgrade."""
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["server"]["rotation_mode"] = "cert_pinned"
+
+    with pytest.raises(ConfigError):
+        load_catalog(catalog_file([entry]))
