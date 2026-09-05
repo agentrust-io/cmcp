@@ -290,6 +290,8 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || random_salt (32 bytes)
 - `random_salt`: 32 random bytes generated once per enclave startup, so two enclave instances produce distinct nonces even with the same key (e.g. blue-green deploy). On SEV-SNP, TDX and Azure CVM this half carries the gateway measurement instead; see §3.3.2.
 - The 64-byte value is passed as the `report_data` / `user_data` / `reportdata` / `qualifying_data` field when requesting the hardware attestation report. The field name varies by provider; the semantic is the same: a caller-supplied value included in the signed measurement.
 
+In a canonical TRACE Claim this value is serialized as `trace.runtime.nonce` (unpadded base64url), not as a separate `trace.runtime.report_data` field. SNP, Azure CVM and TDX verification decode that exact 64-byte nonce and compare it with the platform evidence. An absent or malformed nonce fails hardware appraisal rather than skipping the binding check. On Azure the comparison is against the AK-signed quote's `extraData`, which commits `SHA-256(nonce)`; the paravisor controls the SNP report's own `REPORT_DATA`.
+
 Verifier check (key binding, CRYPTO-001):
 
 ```

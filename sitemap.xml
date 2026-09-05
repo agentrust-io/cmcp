@@ -2,190 +2,190 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://cmcp.agentrust-io.com/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/SPEC/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/concepts/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/configuration/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/limitations/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/quickstart/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec-index/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/sponsors/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/adr/0001-isolate-agt-from-runtime/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/attestation/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/call-graph/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/catalog-approval-provenance/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/catalog-lifecycle/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/cedar-policy/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/component-model/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/embodied-action-evidence/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/error-codes/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/execution-correlation/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/failure-modes/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/mcp-2026-roadmap-impact/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/phase2-server/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/policy-hot-reload/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/proxy-security/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/response-inspection/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/session-policy/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/stdio-transport/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/threat-model/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/tool-identity/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/tpm-security-model/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/transport/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/spec/verification-library/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/testing/benchmarks/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/testing/hardware-validation/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/testing/soak-test/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/advisory-mode-debugging/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/cedar-policy-walkthrough/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/connecting-agent-frameworks/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/deploy-azure/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/deploy-gcp/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/existing-mcp-clients/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/kill-switch/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/response-inspection/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/tee-attestation/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/tls-pinning/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/tool-catalog-authoring/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
     <url>
          <loc>https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/</loc>
-         <lastmod>2026-09-03</lastmod>
+         <lastmod>2026-09-05</lastmod>
     </url>
 </urlset>
