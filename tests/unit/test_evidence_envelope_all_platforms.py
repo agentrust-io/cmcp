@@ -53,9 +53,11 @@ EVIDENCE = b"\xde\xad\xbe\xef" * 8
 CERT_CHAIN = b"-----BEGIN CERTIFICATE-----\nsynthetic\n-----END CERTIFICATE-----\n"
 
 
-def _claim(provider: str, *, platform_override: str | None = None) -> dict:
+def _claim(
+    provider: str, *, platform_override: str | None = None, key: SigningKey | None = None
+) -> dict:
     """A schema-valid claim carrying evidence through the real producer path."""
-    key = SigningKey()
+    key = key or SigningKey()
     chain = AuditChain(f"{provider}-session")
     root_hex = chain.chain_root.removeprefix("sha256:").removeprefix("sha384:")
     report_data = (

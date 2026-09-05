@@ -192,6 +192,20 @@ def _jwk_x_to_hex(x_b64: str) -> str | None:
         return None
 
 
+def _platform_report_data(nonce: Any) -> str | None:
+    """Recover the producer's 64-byte report_data from canonical TRACE nonce.
+
+    A missing/invalid expectation must never become None at a platform verifier:
+    those lower-level APIs interpret None as skipping the binding check.
+    """
+    if not isinstance(nonce, str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", nonce):
+        return None
+    raw = base64.b64decode(nonce + "==", altchars=b"-_", validate=True)
+    if len(raw) != 64 or base64.urlsafe_b64encode(raw).rstrip(b"=").decode() != nonce:
+        return None
+    return raw.hex()
+
+
 def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
     """Verify the Ed25519 signature using the JWK public key in trace.cnf.jwk.x."""
     try:
@@ -1052,10 +1066,21 @@ def verify_trace_claim(
 
     # Step 8: Platform-specific attestation
     platform = _runtime.get("platform", "")
+    # _build_runtime serializes AttestationReportInfo.report_data as nonce.
+    # Compare that same value with the signed evidence, rather than reading a
+    # report_data field that canonical RuntimeInfo forbids (#595).
+    report_data_hex = _platform_report_data(_runtime.get("nonce"))
 
     if _is_sw_only:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = "software-only mode - not hardware-backed"
+    elif platform in ("azure-cvm-sev-snp", "amd-sev-snp", "intel-tdx") and report_data_hex is None:
+        unverified.append("hardware_attestation")
+        failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
+        details["hardware_attestation"] = (
+            "trace.runtime.nonce must encode exactly 64 bytes as canonical unpadded "
+            "base64url; platform report binding cannot be checked"
+        )
     elif platform == "tpm2":
         from cmcp_verify.tpm import (
             verify_ak_ek_chain,
@@ -1184,7 +1209,7 @@ def verify_trace_claim(
         azure_result = verify_azure_cvm_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
-            report_data_hex=_runtime.get("report_data"),
+            report_data_hex=report_data_hex,
             trusted_ark_pem=trusted_ark_pem,
         )
         chain_ok = "vcek_cert_chain" not in azure_result.unverified_fields
@@ -1208,7 +1233,6 @@ def verify_trace_claim(
         from cmcp_verify.sev_snp import verify_sev_snp_measurement
 
         raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
-        report_data_hex = _runtime.get("report_data")
         # VCEK/ASK/ARK chain travels with the claim (passport model); the ARK is
         # pinned by the operator out of band. Both are needed for issue #370
         # report-signature + chain verification; absent either, it stays unverified.
@@ -1245,7 +1269,6 @@ def verify_trace_claim(
         from cmcp_verify.tdx import verify_tdx_measurement
 
         raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
-        report_data_hex = _runtime.get("report_data")
         # The DCAP quote (with its embedded PCK cert chain) travels with the claim
         # (passport model); the Intel SGX/TDX root CA is pinned by the operator out
         # of band. Both are needed for issue #370 quote-signature verification;
