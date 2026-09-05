@@ -335,3 +335,84 @@ def test_load_bundle_warns_that_agent_os_version_is_legacy(bundle_dir, caplog):
         bundle = load_policy_bundle(str(bundle_dir))
     assert bundle is not None
     assert any("POLICY-007" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# GHSA-wh6r-6j4v-p4p6: docs/spec/cedar-policy.md section 1 defines the bundle
+# hash over RFC 8785 canonical JSON. The implementation used
+# json.dumps(sort_keys=True, ensure_ascii=True), which agrees with JCS only for
+# ASCII-only, integer-only input. Two implementations following the written
+# spec computed different hashes for the same bundle.
+# ---------------------------------------------------------------------------
+
+def _bundle_hash(manifest):
+    return bundle_module._canonical_bundle_hash(
+        manifest, {"policy.cedar": CEDAR_POLICY}, SCHEMA
+    )
+
+
+def test_bundle_hash_matches_rfc8785_for_non_ascii_author_identity():
+    """author_identity is a git identity by spec, and git identities carry names."""
+    import hashlib
+
+    import rfc8785
+
+    manifest = dict(MANIFEST, author_identity="Sørina Müller")
+    expected = hashlib.sha256(
+        rfc8785.dumps(
+            {
+                "manifest": {
+                    k: v
+                    for k, v in manifest.items()
+                    if k not in bundle_module._UNHASHED_MANIFEST_KEYS
+                },
+                "policy_files": {
+                    "policy.cedar": hashlib.sha256(CEDAR_POLICY.encode()).hexdigest()
+                },
+                "schema_hash": hashlib.sha256(SCHEMA.encode()).hexdigest(),
+            }
+        )
+    ).hexdigest()
+
+    assert _bundle_hash(manifest) == expected
+
+
+def test_bundle_hash_diverges_from_the_ascii_escaping_form():
+    """The old form emitted an ASCII escape where JCS emits raw UTF-8 bytes."""
+    manifest = dict(MANIFEST, author_identity="Sørina Müller")
+    legacy = json.dumps(
+        {
+            "manifest": {
+                k: v
+                for k, v in manifest.items()
+                if k not in bundle_module._UNHASHED_MANIFEST_KEYS
+            },
+            "policy_files": {"policy.cedar": bundle_module._sha256_hex(CEDAR_POLICY.encode())},
+            "schema_hash": bundle_module._sha256_hex(SCHEMA.encode()),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+
+    assert _bundle_hash(manifest) != bundle_module._sha256_hex(legacy.encode())
+
+
+def test_ascii_only_bundles_keep_the_hash_they_already_had():
+    """The common case is byte-identical, so existing pinned hashes still match."""
+    legacy = json.dumps(
+        {
+            "manifest": {
+                k: v
+                for k, v in MANIFEST.items()
+                if k not in bundle_module._UNHASHED_MANIFEST_KEYS
+            },
+            "policy_files": {"policy.cedar": bundle_module._sha256_hex(CEDAR_POLICY.encode())},
+            "schema_hash": bundle_module._sha256_hex(SCHEMA.encode()),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+
+    assert _bundle_hash(MANIFEST) == bundle_module._sha256_hex(legacy.encode())
