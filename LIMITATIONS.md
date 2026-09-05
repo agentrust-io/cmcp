@@ -106,9 +106,14 @@ Three gaps are worth stating plainly for the TPM path:
   rejected as `CLAIM_MALFORMED` before platform verification runs. Signed
   evidence therefore travels as `gateway.attestation_evidence`, a cmcp-owned
   field. The verifier still reads `trace.runtime` as a fallback so older claims
-  keep working, but that path cannot pass schema validation. **The SEV-SNP
-  `cert_chain` path has not been migrated and remains subject to this**, so its
-  VCEK chain verification does not engage for a schema-valid claim.
+  keep working, but that path cannot pass schema validation. All current
+  platform branches read the envelope, including the SNP VCEK chain. SNP,
+  Azure CVM and TDX compare their evidence binding against the 64-byte value
+  already carried as `trace.runtime.nonce`; missing or malformed nonces cannot
+  disable that check. **TDX DCAP quote collection and transport remain absent**:
+  the current provider collects a TDREPORT, and the claim models do not carry
+  `raw_quote`. TDX claims therefore remain partially verified without a verified
+  quote signature. The standalone quote-verification API is a separate path.
 - **The gateway NV-certify pair is not an ordinary TRACE-claim property.** TPM
   startup collects a bracketing pair, and the standalone appraisal accepts it
   only with a verifier-owned root, nonce, exact NV Name and range, and expected

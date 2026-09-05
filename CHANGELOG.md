@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bind SNP, Azure CVM and TDX evidence to the claim's existing
+  `trace.runtime.nonce` (#595). These branches previously read a `report_data`
+  field forbidden by the runtime schema, passing `None` to an optional binding
+  check. A valid report for a different key or audit root could therefore receive
+  hardware-verification credit on the SNP and Azure paths. The verifier now
+  requires the canonical 64-byte nonce and checks it against the report (or the
+  AK-signed quote on Azure). TDX TDREPORT-only claims remain partially verified;
+  this does not add DCAP quote collection or transport.
+
 ## [0.4.1] - 2026-09-02
 
 **Anyone running 0.4.0 should upgrade.** On 0.4.0 `verify_gateway_measurement()` could return
