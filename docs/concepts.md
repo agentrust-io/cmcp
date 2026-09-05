@@ -19,6 +19,7 @@ flowchart TB
         decision{Decision}
         audit[Audit entries]
         claim[Signed session claim]
+        response[Response inspection and egress policy]
         policy --> decision
         decision -->|record decision| audit
         audit -->|session closes| claim
@@ -26,7 +27,8 @@ flowchart TB
     agent -->|tool request| policy
     decision -->|allow| tool[Upstream MCP tool server]
     decision -->|deny: return error| agent
-    tool -->|response inspection and egress policy| runtime
+    tool -->|tool response| response
+    response -->|response or egress denial| agent
     claim -->|evidence| verifier[Independent verifier]
 ```
 
