@@ -517,13 +517,29 @@ def _coerce_measurement_digest(value: str | bytes) -> bytes | None:
         return None
 
 
-def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None]:
+def _validation_error_path(exc: ValidationError) -> str:
+    """Return the most specific non-missing schema location for diagnostics."""
+    errors = exc.errors()
+    for error in errors:
+        if error["type"] == "missing":
+            continue
+        loc = error["loc"]
+        if loc:
+            return ".".join(str(part) for part in loc)
+    for error in errors:
+        loc = error["loc"]
+        if loc:
+            return ".".join(str(part) for part in loc)
+    return "claim"
+
+
+def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None, str | None]:
     """Validate claim structure using the RuntimeClaim Pydantic model."""
     try:
         RuntimeClaim.model_validate(claim)
-        return True, None
+        return True, None, None
     except ValidationError as exc:
-        return False, str(exc)
+        return False, str(exc), _validation_error_path(exc)
 
 
 @dataclass
@@ -820,14 +836,24 @@ def verify_trace_claim(
     failure: VerificationError | None = None
     details: dict[str, str] = {}
 
-    # Step 1: Schema validation
-    schema_ok, schema_err = _validate_schema(claim_json)
-    if schema_ok:
-        verified.append("schema")
-    else:
-        unverified.append("schema")
-        failure = VerificationError.CLAIM_MALFORMED
-        details["schema_error"] = schema_err or "schema validation failed"
+    # Step 1: Schema establishment. Structural malformation wins and stops
+    # interpretation: without a valid shape the verifier has not established the
+    # bytes or fields to which a signature/key-binding verdict would refer.
+    schema_ok, schema_err, malformed_field = _validate_schema(claim_json)
+    if not schema_ok:
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIED,
+            verified_fields=[],
+            unverified_fields=["schema"],
+            failure_reason=VerificationError.CLAIM_MALFORMED,
+            attestation_age_seconds=-1,
+            is_attestation_fresh=False,
+            details={
+                "schema_error": schema_err or "schema validation failed",
+                "malformed_field": malformed_field or "claim",
+            },
+        )
+    verified.append("schema")
 
     # Step 2: Signature
     sig_ok, sig_err = _verify_signature(claim_json)
