@@ -38,6 +38,10 @@ dependencies = [
     "uvicorn>=0.29",
     "click>=8.1",
     "cedarpy>=4.0",
+    # The policy bundle hash is specified as RFC 8785 (docs/spec/cedar-policy.md
+    # section 1). Declared directly rather than relied on transitively: the
+    # bundle hash is a startup gate, not an incidental dependency.
+    "rfc8785>=0.1.4",
 ]
 
 [project.optional-dependencies]
