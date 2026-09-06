@@ -16,6 +16,7 @@ from cmcp_runtime.audit.trace_claim import (
     PolicyBundleInfo,
     ToolCatalogInfo,
     _to_dict,
+    canonical_json,
     generate_trace_claim,
 )
 from cmcp_verify.tpm import verify_tpm_measurement
@@ -208,9 +209,8 @@ def _make_tpm2_claim(
 ) -> dict:
     """Build a signed claim with tpm2 platform.
 
-    firmware_version and raw_evidence are injected directly into the serialized dict
-    after signing, since AttestationReportInfo does not carry those fields and
-    verify_trace_claim reads them from the raw dict.
+    Build through the producer path. Evidence belongs in the cmcp-owned gateway
+    envelope, not in the schema-closed TRACE runtime object.
     """
     key = key or SigningKey()
     chain = AuditChain("tpm-session")
@@ -227,6 +227,7 @@ def _make_tpm2_claim(
             report_data="00" * 32,
             attestation_generated_at=datetime.now(tz=UTC).isoformat(),
             attestation_validity_seconds=86400,
+            raw_evidence=raw_evidence_b64,
         ),
         policy_bundle=PolicyBundleInfo(
             hash=POLICY_HASH,
@@ -249,7 +250,7 @@ def _make_tpm2_claim(
         audit_chain_root=chain.chain_root,
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,
-        do_sign=True,
+        do_sign=False,
     )
 
     claim_dict = _to_dict(claim)
@@ -258,9 +259,12 @@ def _make_tpm2_claim(
     claim_dict["trace"]["runtime"]["firmware_version"] = firmware_version
     if measurement != gen_measurement:
         claim_dict["trace"]["runtime"]["measurement"] = measurement
-    if raw_evidence_b64 is not None:
-        claim_dict["trace"]["runtime"]["raw_evidence"] = raw_evidence_b64
 
+    # Sign last: every assertion and evidence field must be covered by the
+    # envelope signature, including the deliberately invalid test measurement.
+    claim_dict["signature"] = (
+        base64.urlsafe_b64encode(key.sign(canonical_json(claim_dict))).rstrip(b"=").decode()
+    )
     return claim_dict
 
 
@@ -279,8 +283,12 @@ def test_tpm2_valid_measurement_triggers_tpm_path() -> None:
 def test_tpm2_invalid_measurement_format_fails() -> None:
     claim_dict = _make_tpm2_claim(measurement="bad-measurement")
     result = verify_trace_claim(claim_dict, _approved())
-    assert "tpm_failure" in result.details
-    assert result.details["tpm_failure"] == "invalid_measurement_format"
+    # The declared measurement is invalid at the schema boundary; the TPM
+    # parser must not interpret a record whose structure was not established.
+    assert result.failure_reason == "CLAIM_MALFORMED"
+    assert result.verified_fields == []
+    assert result.unverified_fields == ["schema"]
+    assert result.details["malformed_field"] == "trace.runtime.measurement"
 
 
 def test_software_only_stays_in_sw_path() -> None:

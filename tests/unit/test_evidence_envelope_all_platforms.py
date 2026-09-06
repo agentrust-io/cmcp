@@ -43,7 +43,12 @@ from cmcp_runtime.audit.trace_claim import (
     generate_trace_claim,
 )
 from cmcp_runtime.tee.base import jwk_thumbprint
-from cmcp_verify.verify import ApprovedHashes, verify_trace_claim
+from cmcp_verify.verify import (
+    ApprovedHashes,
+    VerificationError,
+    VerificationStatus,
+    verify_trace_claim,
+)
 
 POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
@@ -141,7 +146,6 @@ class _Spy:
         ("azure-cvm-sev-snp", None, "cmcp_verify.azure_cvm", "verify_azure_cvm_measurement"),
         ("sev-snp", None, "cmcp_verify.sev_snp", "verify_sev_snp_measurement"),
         ("tdx", None, "cmcp_verify.tdx", "verify_tdx_measurement"),
-        ("tdx", "opaque", "cmcp_verify.opaque", "verify_opaque_measurement"),
     ],
 )
 def test_platform_branch_reads_evidence_from_the_envelope(
@@ -164,6 +168,32 @@ def test_platform_branch_reads_evidence_from_the_envelope(
 
     assert spy.kwargs is not None, f"{func} was never reached"
     assert spy.kwargs["raw_evidence"] == EVIDENCE
+
+
+@pytest.mark.parametrize("platform", ["sev-snp", "tdx", "opaque", "opaque-managed"])
+def test_unsupported_platform_cannot_bypass_schema(
+    monkeypatch: pytest.MonkeyPatch, platform: str,
+) -> None:
+    """Legacy aliases cannot make unsupported platform claims reach crypto.
+
+    TRACE 0.10.0 permits amd-sev-snp and intel-tdx, but not these aliases.
+    The old best-effort schema path could dispatch them despite the rejection.
+    No alias-to-platform promotion is authorized by this fixture repair.
+    """
+    claim = _claim("tdx", platform_override=platform)
+
+    def unexpected_crypto(**kwargs: object) -> None:
+        pytest.fail("schema-rejected platform reached cryptographic interpretation")
+
+    monkeypatch.setattr("cmcp_verify.verify._verify_signature", unexpected_crypto)
+    monkeypatch.setattr("cmcp_verify.verify._verify_key_binding", unexpected_crypto)
+    result = verify_trace_claim(claim, _approved())
+
+    assert result.status is VerificationStatus.UNVERIFIED
+    assert result.failure_reason is VerificationError.CLAIM_MALFORMED
+    assert result.verified_fields == []
+    assert result.unverified_fields == ["schema"]
+    assert result.details["malformed_field"] == "trace.runtime.platform"
 
 
 def test_sev_snp_reads_the_cert_chain_from_the_envelope(
