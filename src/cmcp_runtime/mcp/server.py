@@ -610,10 +610,14 @@ class MCPServer:
         raw_workflow = cmcp_params.get("workflow_id")
         workflow_id: str | None = raw_workflow if isinstance(raw_workflow, str) else None
         # #565: validated session-independent execution identity, supplied beside
-        # workflow_id and independent of it. A non-string is treated as absent,
-        # the same rule workflow_id uses; the proxy validates and scopes it.
+        # workflow_id and independent of it. Only an omitted ID is absent.
+        # Map present non-strings to an invalid empty ID so the proxy uses its
+        # audited refusal path instead of silently bypassing correlation.
         raw_execution = cmcp_params.get("execution_id")
-        execution_id: str | None = raw_execution if isinstance(raw_execution, str) else None
+        execution_id: str | None = (
+            raw_execution if isinstance(raw_execution, str)
+            else "" if "execution_id" in cmcp_params else None
+        )
         # #479 piece 2: the caller may declare a class for this specific call.
         raw_data_class = cmcp_params.get("data_class")
         declared_data_class: str | None = (

@@ -102,6 +102,39 @@ def _tool_entries(chain: AuditChain):
     return [e for e in chain.entries if e.entry_type in ("tool_call", "fault", "egress_denied")]
 
 
+@pytest.mark.parametrize("metadata,allowed,rows", [
+    ({"execution_id": 17}, False, 0),
+    ({"execution_id": True}, False, 0),
+    ({"execution_id": []}, False, 0),
+    ({"execution_id": {}}, False, 0),
+    ({"execution_id": None}, False, 0),
+    ({"execution_id": ""}, False, 0),
+    ({"execution_id": "valid-id"}, True, 1),
+    ({}, True, 0),
+])
+def test_http_execution_identity_validation(tmp_path, metadata, allowed, rows):
+    from starlette.testclient import TestClient
+
+    from cmcp_runtime.mcp.server import MCPServer
+
+    registry = ExecutionRegistry(tmp_path / "http.db")
+    chain = AuditChain(session_id="s-565")
+    proxy = _make_proxy(chain, registry)
+    try:
+        with TestClient(MCPServer(proxy).app) as client:
+            response = client.post("/mcp", json={
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "billing.charge", "arguments": {"amount": 100},
+                           "_cmcp": metadata},
+            })
+        assert response.status_code == (200 if allowed else 403)
+        assert proxy._forward_to_upstream.await_count == int(allowed)
+        assert registry._conn.execute("SELECT COUNT(*) FROM executions").fetchone()[0] == rows
+        assert len(_tool_entries(chain)) == 1
+    finally:
+        registry._conn.close()
+
+
 @pytest.mark.asyncio
 async def test_first_call_reserves_invokes_and_finalizes(tmp_path):
     registry = ExecutionRegistry(tmp_path / "e.db")
