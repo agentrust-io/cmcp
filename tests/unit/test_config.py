@@ -410,3 +410,43 @@ def test_non_dev_mode_preserves_wildcard_default(config_file, monkeypatch):
     cfg = load_config(config_file(""))
 
     assert cfg.listen_addr == "0.0.0.0:8443"
+
+
+# ── configurable compliance-domain vocabulary ─────────────────────────────────
+
+
+def test_compliance_domains_load(config_file):
+    path = config_file(
+        "sensitivity:\n  compliance_domains:\n    clinical: true\n    marketing: false\n"
+    )
+    cfg = load_config(path)
+    assert cfg.sensitivity.compliance_domains == {"clinical": True, "marketing": False}
+
+
+def test_compliance_domains_default_to_empty(config_file):
+    path = config_file("attestation:\n  provider: tpm\n")
+    cfg = load_config(path)
+    assert cfg.sensitivity.compliance_domains == {}
+
+
+def test_compliance_domain_colliding_with_a_builtin_raises(config_file):
+    """Additive only: a deployment may add a domain, never redefine one.
+
+    Letting a config say hipaa_phi is unregulated would turn off the
+    cross-boundary control for the domain that most needs it.
+    """
+    path = config_file("sensitivity:\n  compliance_domains:\n    hipaa_phi: false\n")
+    with pytest.raises(ConfigError, match="collides with a built in"):
+        load_config(path)
+
+
+def test_compliance_domain_non_boolean_raises(config_file):
+    path = config_file("sensitivity:\n  compliance_domains:\n    clinical: maybe\n")
+    with pytest.raises(ConfigError, match="true or false"):
+        load_config(path)
+
+
+def test_compliance_domains_non_mapping_raises(config_file):
+    path = config_file("sensitivity:\n  compliance_domains: not_a_mapping\n")
+    with pytest.raises(ConfigError, match="mapping"):
+        load_config(path)

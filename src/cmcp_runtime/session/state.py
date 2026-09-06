@@ -19,6 +19,35 @@ SENSITIVITY_ORDER: dict[str, int] = {
 }
 
 
+# Compliance domains a catalog entry may declare. Kept here, beside
+# SENSITIVITY_ORDER, because the two vocabularies overlap by name and drifting
+# them apart is exactly how the cross-boundary control below stopped firing.
+#
+# regulated=True means a call leaving this domain is a compliance boundary
+# crossing worth recording. The three regulated names are the reason the field
+# exists; internal/external/public are ordinary traffic.
+COMPLIANCE_DOMAINS: dict[str, bool] = {
+    "hipaa_phi": True,
+    "pci_data": True,
+    "mnpi": True,
+    "pii": True,
+    "internal": False,
+    "external": False,
+    "public": False,
+}
+
+
+def effective_compliance_domains(extra: dict[str, bool] | None = None) -> dict[str, bool]:
+    """Built in domains plus any deployment configured additions.
+
+    Same additive contract as effective_sensitivity_order: extra can add a
+    domain, for example a regulator's own classification, but a built in name
+    always keeps its built in regulated flag. A deployment that adds a domain
+    says whether it is regulated, because nothing else can know.
+    """
+    return {**(extra or {}), **COMPLIANCE_DOMAINS}
+
+
 def effective_sensitivity_order(extra: dict[str, int] | None = None) -> dict[str, int]:
     """Built in vocabulary plus any deployment configured additions (#479).
 

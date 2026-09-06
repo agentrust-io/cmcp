@@ -552,6 +552,7 @@ def run_startup(config_path: str) -> RuntimeContext:
             config.catalog_path,
             expected_hash=catalog_expected_hash,
             extra_sensitivity_levels=frozenset(config.sensitivity.vocabulary),
+            extra_compliance_domains=frozenset(config.sensitivity.compliance_domains),
         )
     except CatalogHashMismatch as exc:
         _fatal(
