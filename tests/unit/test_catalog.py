@@ -274,3 +274,40 @@ def test_unknown_rotation_mode_is_rejected(catalog_file):
 
     with pytest.raises(ConfigError):
         load_catalog(catalog_file([entry]))
+
+
+# ---------------------------------------------------------------------------
+# compliance_domain was a closed seven-value enum in the schema, so a
+# deployment with its own classification could not express it at all: the
+# catalog simply would not load. Validation moves to load time, mirroring what
+# sensitivity_level already does (#479), so the legal set can be deployment
+# dependent while still failing closed on a value nobody declared.
+# ---------------------------------------------------------------------------
+
+def test_builtin_compliance_domains_load(catalog_file):
+    for domain in ["hipaa_phi", "pci_data", "mnpi", "pii", "internal", "external", "public"]:
+        entry = json.loads(json.dumps(ENTRY_1))
+        entry["compliance_domain"] = domain
+
+        catalog = load_catalog(catalog_file([entry]))
+
+        assert catalog.require("crm.query").compliance_domain == domain
+
+
+def test_an_undeclared_compliance_domain_fails_closed(catalog_file):
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["compliance_domain"] = "clinical"
+
+    with pytest.raises(ConfigError, match="compliance_domain"):
+        load_catalog(catalog_file([entry]))
+
+
+def test_a_deployment_declared_compliance_domain_loads(catalog_file):
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["compliance_domain"] = "clinical"
+
+    catalog = load_catalog(
+        catalog_file([entry]), extra_compliance_domains=frozenset({"clinical"})
+    )
+
+    assert catalog.require("crm.query").compliance_domain == "clinical"

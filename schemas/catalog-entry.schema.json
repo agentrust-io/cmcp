@@ -197,16 +197,7 @@
     },
     "compliance_domain": {
       "type": "string",
-      "enum": [
-        "hipaa_phi",
-        "pci_data",
-        "mnpi",
-        "pii",
-        "internal",
-        "external",
-        "public"
-      ],
-      "description": "Compliance classification domain for this tool."
+      "description": "Compliance classification domain for this tool. Validated at catalog load time against the built in vocabulary plus any deployment configured additions, not enumerated here, since the legal set is deployment dependent. Mirrors sensitivity_level."
     },
     "requires_baa": {
       "type": "boolean",

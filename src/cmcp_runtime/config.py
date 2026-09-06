@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 from cmcp_runtime.errors import ConfigError
-from cmcp_runtime.session.state import SENSITIVITY_ORDER
+from cmcp_runtime.session.state import COMPLIANCE_DOMAINS, SENSITIVITY_ORDER
 
 # TEE-002: read exactly once at import time so the value is immutable for the
 # lifetime of the process. No code may call os.environ.get("CMCP_DEV_MODE")
@@ -80,6 +80,14 @@ class SensitivityConfig:
     """
 
     vocabulary: dict[str, int] = field(default_factory=dict)
+
+    #: Deployment supplied additions to the built in compliance-domain
+    #: vocabulary, name -> regulated. Same additive contract as vocabulary: a
+    #: key must not collide with a built in COMPLIANCE_DOMAINS name. regulated
+    #: True means a call leaving the domain is recorded as a compliance
+    #: boundary crossing, so the deployment has to say, because nothing else
+    #: can know what its own classification means.
+    compliance_domains: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -168,7 +176,7 @@ _KNOWN_KILL_SWITCH_KEYS = {
     "deny_rate_threshold",
     "min_calls",
 }
-_KNOWN_SENSITIVITY_KEYS = {"vocabulary"}
+_KNOWN_SENSITIVITY_KEYS = {"vocabulary", "compliance_domains"}
 _KNOWN_ATTEST_KEYS = {
     "provider",
     "enforcement_mode",
@@ -352,6 +360,30 @@ def load_config(path: str) -> Config:
             )
         sensitivity_vocabulary[label] = rank
 
+    domains_raw = sens_raw.get("compliance_domains", {})
+    if domains_raw is None:
+        domains_raw = {}
+    if not isinstance(domains_raw, dict):
+        raise ConfigError("sensitivity.compliance_domains must be a mapping")
+    compliance_domains: dict[str, bool] = {}
+    for label, regulated in domains_raw.items():
+        if not isinstance(label, str) or not label:
+            raise ConfigError(
+                "sensitivity.compliance_domains keys must be non empty strings"
+            )
+        if label in COMPLIANCE_DOMAINS:
+            raise ConfigError(
+                f"sensitivity.compliance_domains key '{label}' collides with a built "
+                "in compliance domain. Custom domains may only add to the built in "
+                "set, never rename or replace one."
+            )
+        if not isinstance(regulated, bool):
+            raise ConfigError(
+                f"sensitivity.compliance_domains['{label}'] must be true or false, "
+                "saying whether leaving this domain is a compliance boundary crossing"
+            )
+        compliance_domains[label] = regulated
+
     try:
         provider = TEEProvider(attest_raw.get("provider", "auto"))
     except ValueError as err:
@@ -487,7 +519,10 @@ def load_config(path: str) -> Config:
             deny_rate_threshold=float(ks_threshold),
             min_calls=ks_min_calls,
         ),
-        sensitivity=SensitivityConfig(vocabulary=sensitivity_vocabulary),
+        sensitivity=SensitivityConfig(
+            vocabulary=sensitivity_vocabulary,
+            compliance_domains=compliance_domains,
+        ),
         catalog=CatalogConfig(drift_policy=drift_policy),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,

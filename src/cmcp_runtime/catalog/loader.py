@@ -18,7 +18,7 @@ from cmcp_runtime.errors import (
     ToolNotInCatalog,
 )
 from cmcp_runtime.mcp.stdio import StdioSpawn
-from cmcp_runtime.session.state import SENSITIVITY_ORDER
+from cmcp_runtime.session.state import COMPLIANCE_DOMAINS, SENSITIVITY_ORDER
 
 _PACKAGED_ENTRY_SCHEMA_PATH = (
     Path(__file__).parent.parent / "schemas" / "catalog-entry.schema.json"
@@ -219,6 +219,7 @@ def load_catalog(
     catalog_path: str,
     expected_hash: str | None = None,
     extra_sensitivity_levels: frozenset[str] = frozenset(),
+    extra_compliance_domains: frozenset[str] = frozenset(),
 ) -> ToolCatalog:
     """
     Load and validate the tool catalog from a JSON file.
@@ -231,6 +232,12 @@ def load_catalog(
     built in sensitivity vocabulary, from Config.sensitivity.vocabulary. A
     catalog entry's sensitivity_level must be a built in label or one of these,
     or loading fails closed, same as the fixed six value set used to.
+
+    extra_compliance_domains: the same contract for compliance_domain. The
+    schema used to pin a closed seven value enum, which meant a deployment with
+    its own classification could not express it at all and the catalog simply
+    would not load. Validation moves here so the legal set can be deployment
+    dependent while still failing closed on a value nobody declared.
     """
     path = Path(catalog_path)
     try:
@@ -258,6 +265,14 @@ def load_catalog(
             raise ConfigError(
                 f"Catalog entry '{raw.get('tool_name', '?')}' sensitivity_level "
                 f"'{sensitivity_level}' is not one of {sorted(allowed_sensitivity_levels)}"
+            )
+
+        compliance_domain = raw.get("compliance_domain", "external")
+        allowed_compliance_domains = frozenset(COMPLIANCE_DOMAINS) | extra_compliance_domains
+        if compliance_domain not in allowed_compliance_domains:
+            raise ConfigError(
+                f"Catalog entry '{raw.get('tool_name', '?')}' compliance_domain "
+                f"'{compliance_domain}' is not one of {sorted(allowed_compliance_domains)}"
             )
 
         tool_name: str = raw["tool_name"]
