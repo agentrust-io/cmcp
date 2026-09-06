@@ -320,8 +320,8 @@ pair as part of an ordinary claim.
 
 ## TPM2_NV_Certify for the gateway measurement, Azure Trusted Launch vTPM, 2026-08-01
 
-`Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by
-#461). This run **found two defects in code that had already merged**, which is the
+`Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by #461).
+This run **found two defects in code that had already merged**, which is the
 argument for running it.
 
 **Defect 1: the call was wrong and could never have worked.** `ESAPI.nv_certify`
