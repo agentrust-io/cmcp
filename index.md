@@ -1,64 +1,32 @@
-# cMCP
+# Govern tool calls. Verify the evidence.
 
-cMCP (Confidential MCP) is a hardware-attested runtime for the Model Context Protocol. Every MCP tool call an agent makes passes through a TEE-isolated gateway that evaluates it against a Cedar policy bundle and produces a TRACE claim: a signed, hardware-attested artifact a verifier can check without trusting the operator.
+cMCP (Confidential MCP) is an open-source gateway between your AI agent's MCP client and its tool servers. It checks routed calls against Cedar policy, blocks denied calls in enforcing mode, and produces a signed TRACE session record.
 
-**Prove that the policy you describe in documents is the policy that actually ran on your traffic.**
+[Block a call in 10 minutes](https://agentrust-io.com/quickstart/) [See the architecture](https://cmcp.agentrust-io.com/concepts/index.md)
 
-TL;DR
+The first demo runs on your laptop with a mock tool and software attestation. You will see `403 POLICY_DENY`, then the expected `partially_verified` result because no hardware attestation is present. It needs Python 3.11+ and no cloud account.
 
-- MCP authenticates the caller. It does not constrain what a tool call may do, and it leaves no evidence of what it did.
-- cMCP runs the tool call inside a TEE, decides it against Cedar, and emits a signed receipt for every call.
-- Install with `pip install cmcp-runtime`, or follow the [guided quickstart](https://agentrust-io.com/quickstart/) and watch a policy block a real data leak in about ten minutes.
-- Two bounds worth stating up front: the plaintext guarantee holds where the egress policy denies telemetry and APM endpoints, and the receipt is hardware-attested when the gateway runs in a TEE and signed-only in software mode.
+## Choose your next step
 
-```
-pip install cmcp-runtime
-```
+| You want to…                   | Start here                                                                                      | Result                                                           |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Understand a policy denial     | [Guided first demo](https://agentrust-io.com/quickstart/)                                       | A blocked request and a signed session record                    |
+| Exercise a real local upstream | [Allow/deny quickstart](https://cmcp.agentrust-io.com/quickstart/index.md)                      | One denied tool call and one forwarded call                      |
+| Connect an existing agent      | [MCP client integration](https://cmcp.agentrust-io.com/tutorials/existing-mcp-clients/index.md) | Your client sends requests through the gateway                   |
+| Evaluate the trust boundary    | [How it works](https://cmcp.agentrust-io.com/concepts/index.md)                                 | Distinguish policy enforcement, signing, and hardware provenance |
+| Deploy with hardware evidence  | [TEE attestation](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md)             | Provider prerequisites and verification requirements             |
+| Implement against the protocol | [Specification index](https://cmcp.agentrust-io.com/spec-index/index.md)                        | The relevant component, transport, and policy contracts          |
 
-## The gap it closes
+## What changes at the tool boundary
 
-An agent calling a tool over MCP presents a token. The token says who is calling. It does not say what the call is allowed to touch, and once the call returns there is no artifact proving what actually happened.
+Authentication identifies a caller; your Cedar policy decides what a routed call may do. The gateway records the decision and binds the session's evidence into a signed claim when the session closes.
 
-Software-only enforcement does not close this. A privileged operator can change a policy between the approval that was reviewed and the traffic that ran, and then write the log that describes it. The log is authored by the system being audited.
+A hardware deployment can protect the runtime from its host, subject to the provider's threat model and verification support. The agent, model, and upstream tool server remain separate components. Calls that bypass the gateway are outside its enforcement. Host confidentiality also depends on the configured egress policy.
 
-cMCP moves the decision and the evidence inside a TEE. The policy bundle is measured, the decision happens where the operator cannot reach it, and the receipt is signed by a key that never leaves the enclave. Phase 1 attests the agent-to-tool boundary on the consumer side, in the runtime. Phase 2 attests it on the provider side, in the server.
+Read the [architecture](https://cmcp.agentrust-io.com/concepts/index.md), [enforcement modes](https://cmcp.agentrust-io.com/configuration/index.md), and [limitations](https://cmcp.agentrust-io.com/limitations/index.md) before treating a successful software demo as evidence of hardware isolation.
 
-## Where to start
+## How it fits AgenTrust
 
-- **Run it**
+[Agent Manifest](https://manifest.agentrust-io.com) declares identity and intended authority. cMCP governs the MCP tool-call path. [TRACE](https://trace.agentrust-io.com) defines signed runtime evidence, and [cA2A](https://ca2a.agentrust-io.com) addresses delegation between agents. Use the components required by your application's trust boundaries.
 
-  ______________________________________________________________________
-
-  Write one policy, watch it block a tool call, and verify the receipt it produced.
-
-  [Quick Start](https://cmcp.agentrust-io.com/quickstart/index.md)
-
-- **Understand it**
-
-  ______________________________________________________________________
-
-  The component model, trust boundaries, and how a tool call becomes a signed claim.
-
-  [How It Works](https://cmcp.agentrust-io.com/concepts/index.md)
-
-- **Read the spec**
-
-  ______________________________________________________________________
-
-  Problem taxonomy, the thirteen threat shapes, and the Phase 1 and Phase 2 coverage matrix.
-
-  [SPEC.md](https://cmcp.agentrust-io.com/SPEC/index.md)
-
-- **Check the bounds**
-
-  ______________________________________________________________________
-
-  What is attested against real silicon, what is parsed, and what is not appraised at all.
-
-  [Limitations](https://cmcp.agentrust-io.com/limitations/index.md)
-
-## How it fits the rest of the stack
-
-cMCP is the enforcement layer of the AgenTrust chain. [Agent Manifest](https://manifest.agentrust-io.com) declares what an agent is and what it may do before it runs. cMCP enforces that at the tool-call boundary. [TRACE](https://trace.agentrust-io.com) is the evidence format the receipts are written in, and [cA2A](https://ca2a.agentrust-io.com) carries the same guarantees across agent-to-agent hops.
-
-Issues in this repository track specification decisions rather than implementation bugs. To propose a change, open an issue describing the problem with the current spec, then submit a pull request. See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
+For implementation bugs or specification feedback, include the failing command, runtime version, and expected behavior in an [issue](https://github.com/agentrust-io/cmcp/issues). See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
