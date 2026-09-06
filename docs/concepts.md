@@ -11,6 +11,10 @@ cMCP sits between an MCP client and its tool servers. It evaluates routed calls 
 
 ## Where enforcement runs
 
+Scroll the diagram horizontally on smaller screens. The text below explains the same boundaries.
+
+<div class="at-diagram" role="region" aria-label="cMCP enforcement diagram; scroll horizontally" tabindex="0" markdown>
+
 ```mermaid
 flowchart TB
     agent[Agent and MCP client]
@@ -31,6 +35,8 @@ flowchart TB
     response -->|response or egress denial| agent
     claim -->|evidence| verifier[Independent verifier]
 ```
+
+</div>
 
 The runtime box is a **process boundary in software mode**. With a supported confidential-computing deployment, it can also be a hardware isolation boundary. The agent, model inference, and upstream tool server do not automatically move inside that boundary. A TPM can provide measured-state evidence; it does not by itself isolate the runtime's memory from the host.
 
