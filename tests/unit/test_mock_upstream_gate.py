@@ -226,8 +226,32 @@ def test_far_oversized_request_beyond_the_drain_ceiling_still_gets_a_clean_respo
         # a defect.
         with contextlib.suppress(BrokenPipeError, ConnectionResetError):
             sock.sendall(body)
-        raw_response = sock.recv(65536)
-    assert b"413" in raw_response.split(b"\r\n", 1)[0]
+        # The same applies to the read. Once the server has stopped draining
+        # and closed, the reset can arrive before the buffered 413 is read,
+        # and on Windows that surfaces as ConnectionAbortedError (WinError
+        # 10053) rather than an empty read. The comment above always said a
+        # connection-level failure was acceptable here; only sendall was
+        # actually allowed one, which made this test fail about one run in
+        # four on an unmodified tree.
+        raw_response = b""
+        with contextlib.suppress(
+            ConnectionResetError, ConnectionAbortedError, TimeoutError, OSError
+        ):
+            raw_response = sock.recv(65536)
+
+    # If a response did come back it must be the rejection, never an
+    # acceptance. If the connection was torn down first, that is the
+    # give-up-and-close path this test exists to cover.
+    if raw_response:
+        assert b"413" in raw_response.split(b"\r\n", 1)[0]
+
+    # The contract that holds either way: a 15 MB body must not wedge the
+    # server. Whichever path the request above took, the next one is served
+    # normally. This is what makes the test meaningful when the connection is
+    # reset before any bytes are read.
+    status, resp = _post(upstream, VALID_REQUEST)
+    assert status == 200
+    assert resp["id"] == "req-1"
 
 
 def test_request_at_the_limit_is_accepted(upstream):
