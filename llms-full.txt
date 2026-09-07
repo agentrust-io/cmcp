@@ -499,6 +499,8 @@ cMCP sits between an MCP client and its tool servers. It evaluates routed calls 
 
 ## Where enforcement runs
 
+Scroll the diagram horizontally on smaller screens. The text below explains the same boundaries.
+
 ```
 flowchart TB
     agent[Agent and MCP client]
