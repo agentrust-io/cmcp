@@ -1,0 +1,6 @@
+# The governance scanner, installed into its own venv on purpose: AGT 4.1
+# constrains cryptography below 49 while the runtime requires 50+, so the
+# scanner's resolution must not touch the package under test. Compile with:
+#   uv pip compile requirements/agt.in --generate-hashes --universal \
+#     --python-version 3.11 -o requirements/agt.txt
+agent-governance-toolkit>=4.1

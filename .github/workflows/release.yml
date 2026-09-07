@@ -19,7 +19,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install build
-        run: python -m pip install build twine
+        run: python -m pip install --require-hashes -r requirements/release.txt
 
       - name: Build distributions
         run: python -m build
@@ -91,7 +91,7 @@ jobs:
       - name: Install AGT as isolated release tooling
         run: |
           python -m venv .agt-venv
-          .agt-venv/bin/python -m pip install --upgrade pip "agent-governance-toolkit>=4.1"
+          .agt-venv/bin/python -m pip install --require-hashes -r requirements/agt.txt
           .agt-venv/bin/python -m pip install --no-deps -e .
 
       - name: Generate evidence file
