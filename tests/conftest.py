@@ -27,7 +27,10 @@ import textwrap
 import pytest
 
 #: Packages this suite is meant to exercise from source.
-_PACKAGES_UNDER_TEST = ("cmcp_runtime", "cmcp_verify",)
+_PACKAGES_UNDER_TEST = (
+    "cmcp_runtime",
+    "cmcp_verify",
+)
 
 #: Repository root, resolved from this file.
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -53,6 +56,7 @@ def _subprocess_origin(package: str) -> pathlib.Path | None:
             capture_output=True,
             text=True,
             timeout=60,
+            check=False,  # a non-zero exit just means "cannot import", handled below
         )
     except (OSError, subprocess.SubprocessError):
         return None
