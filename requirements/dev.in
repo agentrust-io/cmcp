@@ -26,3 +26,7 @@ mypy>=1.10
 types-pyyaml
 bandit[toml]>=1.7
 pip-audit>=2.6
+# Pinned rather than left to the runner's copy: dropping the old
+# "pip install --upgrade setuptools" prefix would otherwise freeze whatever
+# the image ships, and pip-audit rightly flags 79.0.1 for PYSEC-2026-3447.
+setuptools>=83.0.0
