@@ -33,12 +33,12 @@ Closes #20, #21.
 | Transport | Phase 1 Status | Reason |
 |-----------|---------------|--------|
 | HTTP/SSE | **In scope** | MCP server runs as a network-addressable process. The runtime terminates the connection at the TEE boundary, inspects each call, and forwards to the upstream server over a separate internal connection. No subprocess spawning required. |
-| stdio | **Out of Phase 1 scope** | The stdio transport requires the agent (or MCP client) to spawn the MCP server as a child subprocess. A subprocess cannot cross the TEE boundary: the agent process lives outside the enclave and cannot fork a child that executes inside isolated TEE memory. The memory isolation guarantee of SEV-SNP, TDX, and TPM Trusted Launch is per-VM or per-enclave, not per-process-tree. Bridging stdio into the TEE would require a new component (see options below), deferred to Phase 2 or a future extension. |
+| stdio | **Implemented as a gateway child** | The gateway spawns the catalog-configured MCP server within its own deployment boundary. Digest checks and explicit unmeasured-spawn configuration apply. See [stdio transport](stdio-transport.md) for behavior and isolation limits. |
 | WebSocket | **TBD** | WebSocket provides bidirectional framing over HTTP/1.1 or HTTP/2. The runtime can terminate WebSocket connections in principle; evaluation is deferred pending the MCP specification WebSocket profile stabilizing. |
 
 ---
 
-## stdio Gap: Technical Reason
+## Original stdio Gap Analysis (historical)
 
 The MCP stdio transport works as follows:
 
@@ -104,16 +104,7 @@ Agent
 | Agent developer effort | Low | Medium |
 | Recommended | No | Workaround only |
 
-**Decision for Phase 1**: stdio transport is unsupported. Agents using stdio-only MCP servers must either migrate those servers to HTTP/SSE or use Option B as an undocumented workaround at their own risk.
-
-> **Under review (2026-08-09).** Both options above share an assumption that does not hold
-> once cMCP is in the path: that the *agent* spawns the MCP server. It does not — this
-> document's own agent-configuration section states that the agent reaches only the gateway
-> and that the runtime catalog is authoritative. [`stdio-transport.md`](stdio-transport.md)
-> proposes the gateway spawning the server as its own child *inside* the enclave, which
-> introduces no component outside the TEE and makes the server binary measurable before it
-> runs. It also states what that costs, which is that the server then executes inside the
-> same isolation domain as the policy evaluator.
+**Current decision:** the gateway-as-parent stdio path is implemented. The earlier exclusion and bridging options above record the original design analysis; they are not the current support matrix. See [stdio transport](stdio-transport.md) for session lifecycle, executable identity, and the shared isolation boundary.
 
 ---
 
