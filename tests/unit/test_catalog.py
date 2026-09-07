@@ -242,3 +242,72 @@ def test_extra_sensitivity_levels_does_not_loosen_built_in_check(catalog_file):
     entry = dict(ENTRY_1, sensitivity_level="secret")
     with pytest.raises(ConfigError, match="is not one of"):
         load_catalog(catalog_file([entry]), extra_sensitivity_levels=frozenset({"top_secret"}))
+
+
+def test_cert_pinned_rotation_mode_is_expressible_in_a_catalog(catalog_file):
+    """docs/spec/tool-identity.md offers cert-pinned; the schema has to accept it.
+
+    The loader has always read server.rotation_mode and the proxy uses it to
+    decide whether a certificate renewal counts as an identity change. But the
+    server block is additionalProperties: false, so a catalog that asked for
+    cert-pinned was rejected before the loader saw it, and every deployment ran
+    on the weaker key-pinned default with no way to opt out.
+    """
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["server"]["rotation_mode"] = "cert-pinned"
+
+    catalog = load_catalog(catalog_file([entry]))
+
+    assert catalog.require("crm.query").server.rotation_mode == "cert-pinned"
+
+
+def test_rotation_mode_defaults_to_key_pinned_when_absent(catalog_file):
+    catalog = load_catalog(catalog_file([ENTRY_1]))
+
+    assert catalog.require("crm.query").server.rotation_mode == "key-pinned"
+
+
+def test_unknown_rotation_mode_is_rejected(catalog_file):
+    """The enum is the point: a typo must fail loudly, not silently downgrade."""
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["server"]["rotation_mode"] = "cert_pinned"
+
+    with pytest.raises(ConfigError):
+        load_catalog(catalog_file([entry]))
+
+
+# ---------------------------------------------------------------------------
+# compliance_domain was a closed seven-value enum in the schema, so a
+# deployment with its own classification could not express it at all: the
+# catalog simply would not load. Validation moves to load time, mirroring what
+# sensitivity_level already does (#479), so the legal set can be deployment
+# dependent while still failing closed on a value nobody declared.
+# ---------------------------------------------------------------------------
+
+def test_builtin_compliance_domains_load(catalog_file):
+    for domain in ["hipaa_phi", "pci_data", "mnpi", "pii", "internal", "external", "public"]:
+        entry = json.loads(json.dumps(ENTRY_1))
+        entry["compliance_domain"] = domain
+
+        catalog = load_catalog(catalog_file([entry]))
+
+        assert catalog.require("crm.query").compliance_domain == domain
+
+
+def test_an_undeclared_compliance_domain_fails_closed(catalog_file):
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["compliance_domain"] = "clinical"
+
+    with pytest.raises(ConfigError, match="compliance_domain"):
+        load_catalog(catalog_file([entry]))
+
+
+def test_a_deployment_declared_compliance_domain_loads(catalog_file):
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["compliance_domain"] = "clinical"
+
+    catalog = load_catalog(
+        catalog_file([entry]), extra_compliance_domains=frozenset({"clinical"})
+    )
+
+    assert catalog.require("crm.query").compliance_domain == "clinical"

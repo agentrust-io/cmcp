@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import rfc8785
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -153,17 +154,29 @@ def _canonical_bundle_hash(
         for name, content in sorted(policy_files.items())
     }
     hashed_manifest = {k: v for k, v in manifest.items() if k not in _UNHASHED_MANIFEST_KEYS}
-    canonical = json.dumps(
+    # docs/spec/cedar-policy.md section 1 defines canonical_json as RFC 8785
+    # (JCS), so this uses a JCS implementation rather than approximating one.
+    #
+    # json.dumps(sort_keys=True, ensure_ascii=True) agrees with JCS for
+    # ASCII-only, integer-only bundles, which is why the divergence went
+    # unnoticed. It differs on two input classes the spec explicitly allows:
+    #
+    #   non-ASCII strings   JCS emits raw UTF-8; ensure_ascii emits an escape
+    #   float-typed numbers JCS 3.2.2.3 requires the ES6 shortest form (1),
+    #                       json.dumps emits 1.0
+    #
+    # Section 1 defines author_identity as a SPIFFE SVID or git identity, and
+    # git identities routinely carry non-ASCII names, so this is ordinary input
+    # rather than an adversarial edge case. Two implementations following the
+    # written spec would have computed different hashes for the same bundle.
+    canonical = rfc8785.dumps(
         {
             "manifest": hashed_manifest,
             "policy_files": policy_hashes,
             "schema_hash": _sha256_hex(schema_content.encode()),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
+        }
     )
-    return _sha256_hex(canonical.encode())
+    return _sha256_hex(canonical)
 
 
 def load_policy_bundle(

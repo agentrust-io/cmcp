@@ -15,10 +15,36 @@ _OPAQUE_API_KEY_ENV = "OPAQUE_API_KEY"
 _OPAQUE_TIMEOUT_SECONDS = 10
 
 
+# HW-008: header names whose values never reach a log. Matched as substrings
+# against the lower-cased header name, so x-api-key, proxy-authorization and
+# set-cookie are all covered without enumerating every vendor spelling.
+_SENSITIVE_HEADER_PARTS = (
+    "authorization",
+    "auth",
+    "api-key",
+    "apikey",
+    "cookie",
+    "token",
+    "secret",
+    "password",
+    "credential",
+    "signature",
+)
+
+
 def _redact_auth_headers(headers: dict[str, str]) -> dict[str, str]:
-    """HW-008: return a copy of headers with Authorization value replaced by [REDACTED]."""
+    """HW-008: return a copy of headers with every credential-bearing value redacted.
+
+    Redacting only Authorization was too narrow: the same call is configured with
+    OPAQUE_API_KEY, and a deployment that carries it in x-api-key or a cookie would
+    have logged it in clear. Redaction is now deny-by-default over a name match.
+    """
     return {
-        k: "[REDACTED]" if k.lower() == "authorization" else v
+        k: (
+            "[REDACTED]"
+            if any(part in k.lower() for part in _SENSITIVE_HEADER_PARTS)
+            else v
+        )
         for k, v in headers.items()
     }
 

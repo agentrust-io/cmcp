@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cmcp-runtime"
-version = "0.4.1"
+version = "0.5.0"
 description = "Hardware-attested MCP runtime, TEE-enforced policy and TRACE Claim generation"
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,9 +27,12 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "agentrust-trace>=0.5",
-    # 0.11.2 is the floor: verification binds the manifest's declared policy
-    # enforcement mode to the runtime's attested enforcement mode.
-    "agent-manifest>=0.11.2",
+    # 0.12.0 is the floor: it makes the full-binding requirement enforceable
+    # independently of Pydantic's model validator (GHSA-6hjj-gh3c-r6wv), which
+    # changes what this gateway accepts, and it moves the TPM AK chain onto the
+    # shared certificate-chain verifier, which changes the failure detail this
+    # repo asserts on.
+    "agent-manifest>=0.12.0",
     "cryptography>=50.0,<51.0",
     "pyyaml>=6.0",
     "httpx>=0.27",
@@ -38,6 +41,10 @@ dependencies = [
     "uvicorn>=0.29",
     "click>=8.1",
     "cedarpy>=4.0",
+    # The policy bundle hash is specified as RFC 8785 (docs/spec/cedar-policy.md
+    # section 1). Declared directly rather than relied on transitively: the
+    # bundle hash is a startup gate, not an incidental dependency.
+    "rfc8785>=0.1.4",
 ]
 
 [project.optional-dependencies]

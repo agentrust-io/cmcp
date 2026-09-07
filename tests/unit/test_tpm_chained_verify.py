@@ -244,7 +244,7 @@ def test_a_chain_whose_root_is_not_pinned_is_rejected_distinctly() -> None:
 
     assert verified is False
     assert "chain_error" in details
-    assert "not among the supplied trusted" in details["chain_error"]
+    assert "does not match any trusted root" in details["chain_error"]
 
 
 def test_a_malformed_signature_blob_is_reported_as_such() -> None:

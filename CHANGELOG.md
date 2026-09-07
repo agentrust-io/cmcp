@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-05
+
+### Security
+
+- **Cross-boundary compliance recording was dead for HIPAA PHI, PCI data and
+  MNPI.** `call_log._HIGH_SENSITIVITY_DOMAINS`, which decides whether a call
+  leaving a domain is recorded as a boundary crossing in the TRACE claim, was the
+  literal `{"pii", "phi", "pci", "restricted"}`, while the catalog schema
+  permitted `{hipaa_phi, pci_data, mnpi, pii, internal, external, public}`. The
+  two overlapped on `pii` alone: `phi`, `pci` and `restricted` could never appear
+  as a `compliance_domain`, and the three most regulated domains the field can
+  express never matched. A session that read HIPAA PHI and then called an
+  external tool recorded no crossing. The set is now derived from a single
+  `COMPLIANCE_DOMAINS` vocabulary beside `SENSITIVITY_ORDER`; the legacy
+  spellings stay in it so no deployment regresses.
+
+- **Policy bundle hash now uses RFC 8785** (GHSA-wh6r-6j4v-p4p6).
+  `docs/spec/cedar-policy.md` §1 defines `canonical_json` as RFC 8785 and the
+  implementation used `json.dumps(sort_keys=True, ensure_ascii=True)`. The two
+  agree for ASCII-only, integer-only bundles and diverge on non-ASCII strings and
+  float-typed numbers, so an independent implementation following the spec could
+  not reproduce this gateway's startup gate. **Breaking for bundles carrying
+  non-ASCII text or float-typed numbers:** those change hash and need re-pinning.
+  ASCII-only bundles are byte-identical.
+
+- **`_redact_auth_headers` is deny-by-default.** It redacted only
+  `Authorization`, while the same request is configured with `OPAQUE_API_KEY`, so
+  a deployment carrying it in `x-api-key` or a cookie logged it in clear on the
+  debug path.
+
+- **Least-privilege CI.** All 24 third-party action references pin a commit SHA
+  rather than a mutable tag, including the release-path steps that hold registry
+  credentials, signing keys and `id-token: write`. Four workflows gained a
+  top-level `permissions:` floor, and four `${{ }}` interpolations moved out of
+  `run:` blocks into `env:`.
+
+### Added
+
+- **`cert-pinned` rotation mode is reachable.** `server.rotation_mode` has always
+  been read by the loader and used by the proxy, and
+  `docs/spec/tool-identity.md` documents `"rotation_mode": "cert-pinned"` as the
+  catalog field an operator sets. The catalog schema declared the `server` block
+  `additionalProperties: false` and never listed it, so a catalog following the
+  documentation was rejected at load and every deployment ran the weaker
+  `key-pinned` default with no way to opt out.
+
+- **`compliance_domain` is deployment extensible.** It was a closed seven-value
+  enum, so a deployment with its own classification could not express it and the
+  catalog would not load. Validation moves to load time against the built-in
+  vocabulary plus `sensitivity.compliance_domains` in config, mirroring what
+  `sensitivity_level` already does since #479. A deployment adding a domain declares
+  whether it is regulated. Additive only: a config key colliding with a built-in
+  is rejected.
+
+- `rfc8785` is a declared dependency rather than a transitive one.
+
+### Fixed
+
+- TLS pinning test fixtures set `minimum_version = TLSv1_2`; the server was built
+  with `PROTOCOL_TLS_SERVER` and no floor, leaving TLSv1 and TLSv1.1 reachable in
+  the test that asserts the gateway's transport rules.
+
+
+### Security
+
+- Bind SNP, Azure CVM and TDX evidence to the claim's existing
+  `trace.runtime.nonce` (#595). These branches previously read a `report_data`
+  field forbidden by the runtime schema, passing `None` to an optional binding
+  check. A valid report for a different key or audit root could therefore receive
+  hardware-verification credit on the SNP and Azure paths. The verifier now
+  requires the canonical 64-byte nonce and checks it against the report (or the
+  AK-signed quote on Azure). TDX TDREPORT-only claims remain partially verified;
+  this does not add DCAP quote collection or transport.
+
 ## [0.4.1] - 2026-09-02
 
 **Anyone running 0.4.0 should upgrade.** On 0.4.0 `verify_gateway_measurement()` could return
