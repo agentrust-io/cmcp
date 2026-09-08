@@ -1,0 +1,5 @@
+# Release tooling. Compile with:
+#   uv pip compile requirements/release.in --generate-hashes --universal \
+#     --python-version 3.11 -o requirements/release.txt
+build
+twine

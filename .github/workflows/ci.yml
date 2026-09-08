@@ -31,14 +31,22 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip setuptools && pip install -e ".[dev]"
+        # Third-party dependencies come from the hash-pinned lock first; the
+        # local package then goes in with --no-deps, because pip cannot
+        # hash-pin an editable install in the same invocation.
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install --no-deps -e .
 
       - name: Security scan
         # --skip-editable: pip-audit resolves the editable install of this package
         # against PyPI and fails when the version is not published yet, so without
         # it no version-bump PR can ever pass CI. Dependencies are still audited.
         #
-        run: pip install bandit pip-audit && bandit -r src/ -c pyproject.toml && pip-audit --skip-editable
+        # bandit and pip-audit are already in the dev extra above, so the
+        # scan runs against the same pinned versions rather than fetching
+        # whatever is current at scan time.
+        run: bandit -r src/ -c pyproject.toml && pip-audit --skip-editable
 
       - name: Lint
         run: ruff check src/ tests/
@@ -67,12 +75,17 @@ jobs:
           python-version: "3.12"
 
       - name: Install cMCP dependencies
-        run: python -m pip install --upgrade pip setuptools && pip install -e ".[dev]"
+        # Third-party dependencies come from the hash-pinned lock first; the
+        # local package then goes in with --no-deps, because pip cannot
+        # hash-pin an editable install in the same invocation.
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install --no-deps -e .
 
       - name: Install AGT as isolated CI tooling
         run: |
           python -m venv .agt-venv
-          .agt-venv/bin/python -m pip install --upgrade pip "agent-governance-toolkit>=4.1"
+          .agt-venv/bin/python -m pip install --require-hashes -r requirements/agt.txt
           .agt-venv/bin/python -m pip install --no-deps -e .
 
       - name: Generate evidence file
@@ -119,7 +132,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip setuptools && pip install -e ".[dev]"
+        # Third-party dependencies come from the hash-pinned lock first; the
+        # local package then goes in with --no-deps, because pip cannot
+        # hash-pin an editable install in the same invocation.
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install --no-deps -e .
 
       - name: Run benchmark (software-only, CI gate p99 < 5ms)
         run: python -m cmcp_runtime.benchmarks --provider software-only --calls 10000 --out benchmarks/
