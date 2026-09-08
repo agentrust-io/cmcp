@@ -609,6 +609,15 @@ class MCPServer:
             cmcp_params = {}
         raw_workflow = cmcp_params.get("workflow_id")
         workflow_id: str | None = raw_workflow if isinstance(raw_workflow, str) else None
+        # #565: validated session-independent execution identity, supplied beside
+        # workflow_id and independent of it. Only an omitted ID is absent.
+        # Map present non-strings to an invalid empty ID so the proxy uses its
+        # audited refusal path instead of silently bypassing correlation.
+        raw_execution = cmcp_params.get("execution_id")
+        execution_id: str | None = (
+            raw_execution if isinstance(raw_execution, str)
+            else "" if "execution_id" in cmcp_params else None
+        )
         # #479 piece 2: the caller may declare a class for this specific call.
         raw_data_class = cmcp_params.get("data_class")
         declared_data_class: str | None = (
@@ -622,6 +631,7 @@ class MCPServer:
                 arguments,
                 workflow_id=workflow_id,
                 declared_data_class=declared_data_class,
+                execution_id=execution_id,
             )
         except Exception as exc:
             logger.error("TEE_FAULT during call_tool: call_id=%s error=%s", call_id, exc)
