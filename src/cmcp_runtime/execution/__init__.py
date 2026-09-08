@@ -1,6 +1,5 @@
-"""Durable execution correlation (issue #565)."""
+"""Non-operational execution-state foundation; no gateway integration (#565)."""
 
-from cmcp_runtime.execution.binding import ActionBindingError, provisional_action_binding
 from cmcp_runtime.execution.registry import (
     Admission,
     AdmissionStatus,
@@ -11,12 +10,10 @@ from cmcp_runtime.execution.registry import (
 )
 
 __all__ = [
-    "ActionBindingError",
     "Admission",
     "AdmissionStatus",
     "Disposition",
     "ExecutionRegistry",
     "ExecutionStateError",
-    "provisional_action_binding",
     "valid_execution_id",
 ]

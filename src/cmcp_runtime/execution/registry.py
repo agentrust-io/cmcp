@@ -1,43 +1,16 @@
-"""
-Authoritative execution-correlation state for issue #565.
+"""Standalone execution-state foundation for #565; not wired into the gateway.
 
-One executable unit is identified by (authenticated agent identity, execution_id).
-This module owns the only durable record of that unit's lifecycle and is the
-single place that decides whether a later request is a fresh admission, a replay
-that must not re-invoke, or a collision that must be refused before any upstream
-effect. Callers ask `admit()` once before invoking upstream and `finalize()`
-once after the attempt terminates; they never branch on collision or replay
-policy themselves.
+Reservations are keyed by (agent_identity, execution_id). Admission atomically
+stores or compares an opaque binding. Completed and outcome_unknown rows are
+terminal, while recovery marks abandoned in_flight rows outcome_unknown.
+Identifiers never expire and repeat reservations never authorize invocation.
 
-The action binding reaches `admit()` as an opaque digest string. This module
-does not compute it and does not know its preimage: it only stores the value and
-compares it byte for byte to detect a mutated operation reusing an identifier.
-The canonical construction of that digest is defined elsewhere
-(docs/spec/execution-correlation.md, issue #588); swapping it in never touches
-this state machine.
-
-State machine per key:
-
-    (absent) --admit--> in_flight --finalize(completed)--------> completed
-                        in_flight --finalize(outcome_unknown)--> outcome_unknown
-                        in_flight --recover()------------------> outcome_unknown
-
-`completed` and `outcome_unknown` are both terminal and neither is ever
-replayable. `outcome_unknown` is deliberately terminal: uncertainty about an
-irreversible effect must not become permission to repeat it
-(docs/spec/execution-correlation.md, "Collision, replay, and missing context").
-An execution that never terminates holds its identifier forever; there is no
-expiry and no replay window. That is the fail-closed result.
-
-Durability boundary. The terminal audit chain entry and this row live in
-separate SQLite databases, so they cannot share one transaction. The proxy
-writes the audit entry first, then calls `finalize()` with its hash. A crash in
-that gap, or a failure inside `finalize()`, leaves the row `in_flight`;
-`recover()` at the next startup turns it into `outcome_unknown`, which is
-terminal and non-replayable. The only surviving ambiguity is an audit entry that
-records a definite outcome while this store says `outcome_unknown`, which is
-strictly the more conservative reading. A single cross-store transaction would
-need a shared single-writer datastore and is out of scope for this slice.
+These are storage primitives, not production execution enforcement. The binding
+preimage is unresolved in #588. finalize() commits only the registry row: it
+cannot atomically publish a terminal audit entry. Integrating this module requires
+an adopted binding contract and a shared durable terminal/audit boundary, with
+crash and recovery tests. The gateway refuses supplied execution IDs until both
+requirements are met; there is no runtime activation option.
 """
 
 from __future__ import annotations

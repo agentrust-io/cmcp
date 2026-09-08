@@ -15,7 +15,6 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -33,12 +32,7 @@ from cmcp_runtime.catalog.loader import (
 from cmcp_runtime.catalog.scanner import CatalogScanner
 from cmcp_runtime.config import Config, DriftPolicy
 from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
-from cmcp_runtime.execution import (
-    ActionBindingError,
-    Disposition,
-    ExecutionRegistry,
-    valid_execution_id,
-)
+from cmcp_runtime.execution import valid_execution_id
 from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.mcp.stdio import StdioServer
 from cmcp_runtime.mcp.streamable_http import (
@@ -104,11 +98,8 @@ class _CallFinalizationState:
     server_identity: str | None = None
     external_execution_evidence: dict[str, str] | None = None
     terminal_entry_id: str | None = None
-    # #565: set once _admit_execution reserves this execution_id. When set, the
-    # single terminal audit write in _append_call_terminal also finalizes the
-    # execution, so replay/collision policy lives in exactly one place.
+    # Validated caller identity retained on the unavailable-feature refusal.
     execution_id: str | None = None
-    execution_admitted: bool = False
 
     @property
     def terminal_disposition(self) -> str:
@@ -214,11 +205,12 @@ def _extract_external_execution_evidence(response_text: str) -> dict[str, str] |
 class CMCPProxy:
     """
     Enforces every tool call through the cMCP runtime gateway:
-      1. Checked against the attested catalog
-      2. Evaluated by the Cedar PolicyEvaluator
-      3. Checked for rate limits, dangerous parameters, and unsafe responses
-      4. Logged to the TEE-sealed AuditChain
-      5. Session state updated via inspection handoff
+      1. Execution-correlation requests validated or refused before discovery
+      2. Checked against the attested catalog
+      3. Evaluated by the Cedar PolicyEvaluator
+      4. Checked for rate limits, dangerous parameters, and unsafe responses
+      5. Logged to the TEE-sealed AuditChain
+      6. Session state updated via inspection handoff
 
     One CMCPProxy instance per gateway session.
     """
@@ -237,20 +229,8 @@ class CMCPProxy:
         catalog_hash: str | None = None,
         attestation_platform: str = "unknown",
         catalog_scanner: CatalogScanner | None = None,
-        execution_registry: ExecutionRegistry | None = None,
-        agent_identity: str = "unauthenticated",
-        action_binding_fn: Callable[[str, dict[str, Any]], str] | None = None,
     ) -> None:
         self._catalog = catalog
-        # #565: process-wide execution correlation. Both the registry and the
-        # action-binding function must be present for a caller's execution_id to
-        # be honoured; a value that arrives without them is refused, never run
-        # unvalidated (see _admit_execution). agent_identity scopes collision.
-        # The binding function is injected so this module never encodes the
-        # binding preimage (issue #588 owns that).
-        self._executions = execution_registry
-        self._agent_identity = agent_identity
-        self._action_binding = action_binding_fn
         self._policy = policy_evaluator
         self._session = session
         self._audit = audit_chain
@@ -789,53 +769,31 @@ class CMCPProxy:
         """Persist one terminal for this invocation, independent of call_id reuse."""
         if finalization.terminal_entry_id is not None:
             raise RuntimeError("terminal audit entry already persisted for this invocation")
-        boundary_before_terminal = finalization.effect_boundary_state
         # #565: every terminal for a correlated call carries its execution_id.
         # Set from one place so no per-branch call site has to remember it.
         fields.setdefault("execution_id", finalization.execution_id)
         entry = self._audit.append(entry_type, **fields)  # type: ignore[arg-type]
         finalization.terminal_entry_id = entry.entry_id
         finalization.effect_boundary_state = _EffectBoundaryState.TERMINAL_DURABLE
-        # #565: an admitted execution reaches its one terminal here, pinned to
-        # the audit entry that records the same fact. completed only when the
-        # transport delivered a response; anything earlier is outcome_unknown,
-        # which is terminal and never replayable. A failure in finalize() leaves
-        # the row in_flight for recover() to seal - fail closed, not silent.
-        if finalization.execution_admitted and finalization.execution_id is not None:
-            delivered = (
-                boundary_before_terminal
-                is _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
-            )
-            self._executions.finalize(  # type: ignore[union-attr]
-                agent_identity=self._agent_identity,
-                execution_id=finalization.execution_id,
-                disposition=Disposition.COMPLETED if delivered else Disposition.OUTCOME_UNKNOWN,
-                terminal_audit_entry_hash=entry.entry_hash,
-            )
 
-    def _admit_execution(
+    def _check_execution_available(
         self,
         finalization: _CallFinalizationState,
         *,
         execution_id: str | None,
         call_id: str,
         tool_name: str,
-        arguments: dict[str, Any],
-        entry: CatalogEntry,
+        entry: CatalogEntry | None,
         request_payload_hash: str,
         sensitivity_before: str,
         workflow_id: str | None,
         t0: float,
         called_at: datetime,
     ) -> CallResult | None:
-        """
-        Reserve this execution identity before upstream, or return the refusal.
+        """Refuse requested execution correlation until its contract is implemented.
 
-        None means proceed. A CallResult means the request is a replay or a
-        collision and upstream must not be invoked; the refusal is already
-        audited under the asserted execution_id. A present execution_id with no
-        registry configured is refused too, so a value that proceeds always came
-        through validation.
+        Omission preserves legacy calls. There is no runtime opt-in: action
+        binding and atomic terminal/audit persistence must both land first.
         """
         if execution_id is None:
             return None
@@ -847,41 +805,17 @@ class CMCPProxy:
                 deny_reason="execution_invalid_execution_id",
             )
         finalization.execution_id = execution_id
-        if self._executions is None or self._action_binding is None:
-            return self._refuse_execution(
-                finalization, entry, call_id, tool_name, request_payload_hash,
-                sensitivity_before, workflow_id, t0, called_at,
-                rule="execution:unavailable",
-                deny_reason="execution_correlation_unavailable",
-            )
-        try:
-            binding = self._action_binding(tool_name, arguments)
-        except ActionBindingError:
-            return self._refuse_execution(
-                finalization, entry, call_id, tool_name, request_payload_hash,
-                sensitivity_before, workflow_id, t0, called_at,
-                rule="execution:invalid_binding",
-                deny_reason="execution_invalid_binding",
-            )
-        admission = self._executions.admit(
-            agent_identity=self._agent_identity,
-            execution_id=execution_id,
-            action_binding=binding,
-            call_id=call_id,
-        )
-        if admission.admitted:
-            finalization.execution_admitted = True
-            return None
         return self._refuse_execution(
             finalization, entry, call_id, tool_name, request_payload_hash,
             sensitivity_before, workflow_id, t0, called_at,
-            rule=admission.audit_rule, deny_reason=admission.audit_rule,
+            rule="execution:unavailable",
+            deny_reason="execution_correlation_unavailable",
         )
 
     def _refuse_execution(
         self,
         finalization: _CallFinalizationState,
-        entry: CatalogEntry,
+        entry: CatalogEntry | None,
         call_id: str,
         tool_name: str,
         request_payload_hash: str,
@@ -901,7 +835,7 @@ class CMCPProxy:
             "tool_call",
             call_id=call_id,
             tool_name=tool_name,
-            server_identity=entry.server.url,
+            server_identity=entry.server.url if entry is not None else None,
             policy_decision="deny",
             policy_rule_matched=rule,
             request_payload_hash=request_payload_hash,
@@ -1029,13 +963,15 @@ class CMCPProxy:
         Execute one MCP tool call through the full enforcement pipeline.
 
         Pipeline:
-          1. Catalog lookup (fast-path deny if not in catalog)
-          2. Cedar policy evaluation
-          3. cMCP runtime enforcement (sanitization, rate limit, scan)
-          4. Forward to upstream
-          5. Audit chain write
-          6. Session state update
-          7. Call log record + suspicious-sequence check
+          1. Request serialization and execution-correlation validation/refusal
+          2. Health check
+          3. Catalog lookup (fast-path deny if not in catalog)
+          4. Cedar policy evaluation
+          5. cMCP runtime enforcement (sanitization, rate limit, scan)
+          6. Forward to upstream
+          7. Audit chain write
+          8. Session state update
+          9. Call log record + suspicious-sequence check
 
         declared_data_class (#479 piece 2): an optional class the caller declares
         for this specific call via _cmcp.data_class, raising this call's effective
@@ -1054,7 +990,38 @@ class CMCPProxy:
         sensitivity_before = self._session.max_sensitivity
         would_have_denied = False
 
-        # Step 0: health check (attestation staleness, catalog drift)
+        # Step 0: serialize the request before any early refusal so the audit
+        # entry can retain a stable request hash even when no catalog entry is
+        # available. JSON-RPC ingress already guarantees JSON-compatible args;
+        # direct callers still get the normal fault-finalization path if this
+        # serialization fails.
+        _finalization.failure_stage = "request_serialization"
+        _payload_bytes = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+        request_payload_hash = f"sha256:{hashlib.sha256(_payload_bytes).hexdigest()}"
+        _finalization.request_payload_hash = request_payload_hash
+
+        # Step 1: execution correlation is unavailable until binding and
+        # persistence contracts are complete; supplied IDs must be refused
+        # before health/catalog checks or any upstream discovery. The entry is
+        # not known yet, so the refusal carries request context and a null
+        # server. Omission returns immediately and preserves the normal path.
+        _finalization.failure_stage = "execution_admission"
+        execution_refusal = self._check_execution_available(
+            _finalization,
+            execution_id=execution_id,
+            call_id=call_id,
+            tool_name=tool_name,
+            entry=None,
+            request_payload_hash=request_payload_hash,
+            sensitivity_before=sensitivity_before,
+            workflow_id=workflow_id,
+            t0=t0,
+            called_at=called_at,
+        )
+        if execution_refusal is not None:
+            return execution_refusal
+
+        # Step 2: health check (attestation staleness, catalog drift)
         _finalization.failure_stage = "health_check"
         unhealthy_reason = self._check_health()
         if unhealthy_reason is not None:
@@ -1069,12 +1036,7 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
-        _finalization.failure_stage = "request_serialization"
-        _payload_bytes = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
-        request_payload_hash = f"sha256:{hashlib.sha256(_payload_bytes).hexdigest()}"
-        _finalization.request_payload_hash = request_payload_hash
-
-        # Step 1: catalog lookup
+        # Step 3: catalog lookup
         _finalization.failure_stage = "catalog_lookup"
         entry = self._catalog.lookup(tool_name)
         if entry is None:
@@ -1117,7 +1079,7 @@ class CMCPProxy:
 
         _finalization.server_identity = entry.server.url
 
-        # Step 1a (#521): does this server still offer what we approved? First
+        # Step 3a (#521): does this server still offer what we approved? First
         # contact with each server only, so the cost is one tools/list per server
         # per session. Placed after the catalog lookup because it needs the entry
         # to know which server to ask, and before the policy decision because a
@@ -1159,7 +1121,7 @@ class CMCPProxy:
             else None
         )
 
-        # Step 1b: break-glass warning - log and audit every call via an exception entry
+        # Step 3b: break-glass warning - log and audit every call via an exception entry
         if entry.catalog_exception:
             logger.warning(
                 "BREAK_GLASS_ACTIVE: tool=%s call_id=%s server=%s",
@@ -1178,7 +1140,7 @@ class CMCPProxy:
                 workflow_id=workflow_id,
             )
 
-        # Step 2: Cedar policy evaluation
+        # Step 4: Cedar policy evaluation
         _finalization.failure_stage = "policy_evaluation"
         cedar_context = self._build_cedar_context(
             tool_name, arguments, workflow_id, effective_data_class
@@ -1248,7 +1210,7 @@ class CMCPProxy:
             )
             raise
 
-        # Step 3a: native pre-call interception: per-agent rate limiting,
+        # Step 5a: native pre-call interception: per-agent rate limiting,
         # parameter sanitization, and allow/deny. Fail closed on internal errors.
         _finalization.failure_stage = "ingress_gateway"
         agt_allowed, agt_reason = self._mcp_gateway.intercept_tool_call(
@@ -1294,27 +1256,7 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
-        # Step 3a.5 (#565): atomically reserve this execution identity and its
-        # immutable action binding before any upstream effect. A replay or a
-        # collision is refused here and never reaches the upstream.
-        _finalization.failure_stage = "execution_admission"
-        execution_refusal = self._admit_execution(
-            _finalization,
-            execution_id=execution_id,
-            call_id=call_id,
-            tool_name=tool_name,
-            arguments=arguments,
-            entry=entry,
-            request_payload_hash=request_payload_hash,
-            sensitivity_before=sensitivity_before,
-            workflow_id=workflow_id,
-            t0=t0,
-            called_at=called_at,
-        )
-        if execution_refusal is not None:
-            return execution_refusal
-
-        # Step 3b: forward to the attested upstream MCP server.
+        # Step 5b: forward to the attested upstream MCP server.
         _finalization.failure_stage = "upstream_invocation"
         try:
             response_text = await self._forward_to_upstream(

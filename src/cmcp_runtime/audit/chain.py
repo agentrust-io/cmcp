@@ -83,9 +83,10 @@ class AuditEntry:
     effective_data_class: str | None = None
     # #565: validated session-independent correlation key for one executable unit.
     # A typed field, always serialized (null when the caller supplied none), never
-    # a `detail` key. A present value came through the validated admission path in
-    # ExecutionRegistry; null means the caller made no assertion and none was
-    # synthesized. The TRACE Claim does not enumerate these values.
+    # a `detail` key. A present value passed ingress validation; operational
+    # admission is a separate integration step. Null means no valid execution
+    # identifier was retained; inspect the refusal rule to distinguish omission
+    # from invalid input. The TRACE Claim does not enumerate these values.
     execution_id: str | None = None
     entry_hash: str = field(default="")  # computed after construction
 

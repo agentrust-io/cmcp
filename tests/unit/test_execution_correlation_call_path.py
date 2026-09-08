@@ -1,14 +1,11 @@
-"""Call-path gates for durable execution correlation (issue #565).
-
-Proves the proxy reserves before upstream, never re-invokes on replay or
-collision, refuses a changed binding before upstream, and finalizes the
-execution on its one terminal audit write.
-"""
+"""Unavailable execution correlation fails closed at ingress and in the proxy."""
 
 from __future__ import annotations
 
+import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from cmcp_runtime.audit.chain import AuditChain
@@ -19,8 +16,6 @@ from cmcp_runtime.catalog.loader import (
     ToolCatalog,
 )
 from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
-from cmcp_runtime.execution import AdmissionStatus, provisional_action_binding
-from cmcp_runtime.execution.registry import ExecutionRegistry
 from cmcp_runtime.policy.evaluator import PolicyDecision, PolicyEvaluator
 from cmcp_runtime.session.state import SessionState
 
@@ -47,8 +42,7 @@ def _evaluator() -> PolicyEvaluator:
     return evaluator
 
 
-def _make_proxy(chain: AuditChain, registry: ExecutionRegistry | None, *, agent: str = AGENT,
-                binding_fn=provisional_action_binding):
+def _make_proxy(chain: AuditChain, mode=EnforcementMode.ENFORCING):
     from cmcp_runtime.mcp.proxy import CMCPProxy
 
     entry = CatalogEntry(
@@ -72,7 +66,7 @@ def _make_proxy(chain: AuditChain, registry: ExecutionRegistry | None, *, agent:
         approved_by="issue-565",
     )
     catalog = ToolCatalog(entries={"billing.charge": entry}, catalog_hash="sha256:" + "1" * 64)
-    config = Config(attestation=AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING))
+    config = Config(attestation=AttestationConfig(enforcement_mode=mode))
     with (
         patch("cmcp_runtime.mcp.proxy.MCPGateway") as gateway,
         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"),
@@ -89,9 +83,6 @@ def _make_proxy(chain: AuditChain, registry: ExecutionRegistry | None, *, agent:
             SessionState(session_id="s-565"),
             chain,
             config,
-            execution_registry=registry,
-            agent_identity=agent,
-            action_binding_fn=binding_fn,
         )
     proxy._check_upstream_drift = AsyncMock(return_value=False)
     proxy._forward_to_upstream = AsyncMock(return_value='{"ok": true}')
@@ -102,209 +93,148 @@ def _tool_entries(chain: AuditChain):
     return [e for e in chain.entries if e.entry_type in ("tool_call", "fault", "egress_denied")]
 
 
-@pytest.mark.parametrize("metadata,allowed,rows", [
-    ({"execution_id": 17}, False, 0),
-    ({"execution_id": True}, False, 0),
-    ({"execution_id": []}, False, 0),
-    ({"execution_id": {}}, False, 0),
-    ({"execution_id": None}, False, 0),
-    ({"execution_id": ""}, False, 0),
-    ({"execution_id": "valid-id"}, True, 1),
-    ({}, True, 0),
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata,allowed,reason,audit_id", [
+    ({"execution_id": 17}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": True}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": []}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": {}}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": None}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": ""}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": "has space"}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": "x" * 201}, False, "execution_invalid_execution_id", None),
+    ({"execution_id": "valid-id"}, False, "execution_correlation_unavailable", "valid-id"),
+    ({}, True, None, None),
 ])
-def test_http_execution_identity_validation(tmp_path, metadata, allowed, rows):
-    from starlette.testclient import TestClient
-
+async def test_http_execution_identity_validation(metadata, allowed, reason, audit_id):
     from cmcp_runtime.mcp.server import MCPServer
 
-    registry = ExecutionRegistry(tmp_path / "http.db")
     chain = AuditChain(session_id="s-565")
-    proxy = _make_proxy(chain, registry)
-    try:
-        with TestClient(MCPServer(proxy).app) as client:
-            response = client.post("/mcp", json={
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "billing.charge", "arguments": {"amount": 100},
-                           "_cmcp": metadata},
-            })
-        assert response.status_code == (200 if allowed else 403)
-        assert proxy._forward_to_upstream.await_count == int(allowed)
-        assert registry._conn.execute("SELECT COUNT(*) FROM executions").fetchone()[0] == rows
-        assert len(_tool_entries(chain)) == 1
-    finally:
-        registry._conn.close()
+    proxy = _make_proxy(chain)
+    transport = httpx.ASGITransport(app=MCPServer(proxy).app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/mcp", json={
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "billing.charge", "arguments": {"amount": 100},
+                       "_cmcp": metadata},
+        })
+    assert response.status_code == (200 if allowed else 403)
+    assert proxy._forward_to_upstream.await_count == int(allowed)
+    assert len(_tool_entries(chain)) == 1
+    assert _tool_entries(chain)[0].execution_id == audit_id
+    if reason:
+        expected_rule = (
+            "execution:unavailable" if audit_id else "execution:invalid_execution_id"
+        )
+        assert _tool_entries(chain)[0].policy_rule_matched == expected_rule
 
 
 @pytest.mark.asyncio
-async def test_first_call_reserves_invokes_and_finalizes(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
+@pytest.mark.parametrize("mode", list(EnforcementMode))
+@pytest.mark.parametrize("execution_id,reason", [
+    ("valid-id", "execution_correlation_unavailable"),
+    ("", "execution_invalid_execution_id"),
+    ("x\ny", "execution_invalid_execution_id"),
+])
+async def test_direct_proxy_calls_cannot_enable_execution(execution_id, reason, mode):
     chain = AuditChain(session_id="s-565")
-    proxy = _make_proxy(chain, registry)
-
-    result = await proxy.call_tool("call-1", "billing.charge", {"amount": 100}, execution_id="x1")
-
-    assert result.allowed
-    assert proxy._forward_to_upstream.await_count == 1
-    terminal = _tool_entries(chain)[-1]
-    assert terminal.execution_id == "x1"
-    row = registry._conn.execute(
-        "SELECT state, terminal_audit_entry_hash FROM executions WHERE execution_id='x1'"
-    ).fetchone()
-    assert row[0] == "completed"
-    assert row[1] == terminal.entry_hash
+    proxy = _make_proxy(chain, mode)
+    for amount in (100, 999):
+        result = await proxy.call_tool("c1", "billing.charge", {"amount": amount},
+                                       execution_id=execution_id)
+        assert not result.allowed
+        assert result.deny_reason == reason
+    proxy._forward_to_upstream.assert_not_awaited()
+    assert len(_tool_entries(chain)) == 2
 
 
 @pytest.mark.asyncio
-async def test_replay_after_terminal_does_not_reinvoke_upstream(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    proxy = _make_proxy(AuditChain(session_id="s-a"), registry)
-    await proxy.call_tool("call-1", "billing.charge", {"amount": 100}, execution_id="x1")
-    assert proxy._forward_to_upstream.await_count == 1
-
-    # A fresh session (new chain) replays the same execution_id, exactly the
-    # session-independent case #565 exists for.
-    replay_proxy = _make_proxy(AuditChain(session_id="s-b"), registry)
-    result = await replay_proxy.call_tool(
-        "call-2", "billing.charge", {"amount": 100}, execution_id="x1"
-    )
-    assert not result.allowed
-    assert result.deny_reason == "execution:replay_terminal"
-    assert replay_proxy._forward_to_upstream.await_count == 0
-
-
-@pytest.mark.asyncio
-async def test_in_flight_replay_does_not_reinvoke_upstream(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    registry.admit(
-        agent_identity=AGENT, execution_id="x2",
-        action_binding=provisional_action_binding("billing.charge", {"amount": 100}),
-        call_id="earlier",
-    )
-    proxy = _make_proxy(AuditChain(session_id="s-a"), registry)
-    result = await proxy.call_tool("call-1", "billing.charge", {"amount": 100}, execution_id="x2")
-    assert not result.allowed
-    assert result.deny_reason == "execution:replay_in_flight"
-    assert proxy._forward_to_upstream.await_count == 0
-
-
-@pytest.mark.asyncio
-async def test_changed_binding_is_refused_before_upstream(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    proxy = _make_proxy(AuditChain(session_id="s-a"), registry)
-    await proxy.call_tool("call-1", "billing.charge", {"amount": 100}, execution_id="x3")
-    proxy._forward_to_upstream.reset_mock()
+async def test_execution_refusal_precedes_unknown_tool_lookup_and_discovery():
+    """A supplied ID is refused and audited before an unknown tool is resolved."""
+    chain = AuditChain(session_id="s-565")
+    proxy = _make_proxy(chain)
+    lookup = MagicMock(wraps=proxy._catalog.lookup)
+    proxy._catalog.lookup = lookup
 
     result = await proxy.call_tool(
-        "call-2", "billing.charge", {"amount": 999}, execution_id="x3"
+        "unknown-call",
+        "unknown.tool",
+        {"amount": 100},
+        workflow_id="wf-565",
+        execution_id="valid-id",
     )
-    assert not result.allowed
-    assert result.deny_reason == "execution:collision_changed_binding"
-    assert proxy._forward_to_upstream.await_count == 0
 
-
-@pytest.mark.asyncio
-async def test_cross_identity_same_execution_id_does_not_collide(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    proxy_a = _make_proxy(AuditChain(session_id="s-a"), registry, agent=AGENT)
-    proxy_b = _make_proxy(
-        AuditChain(session_id="s-b"), registry, agent="spiffe://example.org/agent-b"
-    )
-    r_a = await proxy_a.call_tool("c1", "billing.charge", {"amount": 100}, execution_id="shared")
-    r_b = await proxy_b.call_tool("c2", "billing.charge", {"amount": 100}, execution_id="shared")
-    assert r_a.allowed and r_b.allowed
-    assert proxy_a._forward_to_upstream.await_count == 1
-    assert proxy_b._forward_to_upstream.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_missing_execution_id_is_unchanged_and_audits_null(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    chain = AuditChain(session_id="s-565")
-    proxy = _make_proxy(chain, registry)
-    result = await proxy.call_tool("call-1", "billing.charge", {"amount": 100})
-    assert result.allowed
-    assert proxy._forward_to_upstream.await_count == 1
-    assert _tool_entries(chain)[-1].execution_id is None
-    assert registry._conn.execute("SELECT COUNT(*) FROM executions").fetchone() == (0,)
-
-
-@pytest.mark.asyncio
-async def test_execution_id_without_registry_is_refused(tmp_path):
-    proxy = _make_proxy(AuditChain(session_id="s-565"), None)
-    result = await proxy.call_tool("call-1", "billing.charge", {"amount": 100}, execution_id="x1")
     assert not result.allowed
     assert result.deny_reason == "execution_correlation_unavailable"
-    assert proxy._forward_to_upstream.await_count == 0
+    lookup.assert_not_called()
+    proxy._check_upstream_drift.assert_not_awaited()
+    proxy._forward_to_upstream.assert_not_awaited()
+
+    [entry] = _tool_entries(chain)
+    assert entry.call_id == "unknown-call"
+    assert entry.tool_name == "unknown.tool"
+    assert entry.server_identity is None
+    assert entry.workflow_id == "wf-565"
+    assert entry.execution_id == "valid-id"
+    expected_hash = "sha256:" + hashlib.sha256(b'{"amount":100}').hexdigest()
+    assert entry.request_payload_hash == expected_hash
+    assert entry.policy_rule_matched == "execution:unavailable"
 
 
 @pytest.mark.asyncio
-async def test_upstream_fault_finalizes_execution_as_terminal(tmp_path):
-    from cmcp_runtime.errors import UpstreamUnavailable
+async def test_execution_refusal_precedes_upstream_drift_discovery():
+    """A supplied ID is refused before catalog or upstream drift discovery."""
+    chain = AuditChain(session_id="s-565")
+    proxy = _make_proxy(chain)
+    lookup = MagicMock(wraps=proxy._catalog.lookup)
+    proxy._catalog.lookup = lookup
+    proxy._check_upstream_drift = AsyncMock(return_value=True)
 
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    proxy = _make_proxy(AuditChain(session_id="s-a"), registry)
-    proxy._forward_to_upstream = AsyncMock(
-        side_effect=UpstreamUnavailable("upstream down")
-    )
-    result = await proxy.call_tool("call-1", "billing.charge", {"amount": 100}, execution_id="x4")
-    assert not result.allowed
-
-    # The attempt terminated after transport may have started: outcome_unknown,
-    # terminal, and not replayable.
-    replay = registry.admit(
-        agent_identity=AGENT, execution_id="x4",
-        action_binding=provisional_action_binding("billing.charge", {"amount": 100}),
-        call_id="c2",
-    )
-    assert replay.status is AdmissionStatus.REPLAY_OUTCOME_UNKNOWN
-
-
-@pytest.mark.asyncio
-async def test_float_argument_refused_before_upstream(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    proxy = _make_proxy(AuditChain(session_id="s-a"), registry)
     result = await proxy.call_tool(
-        "call-1", "billing.charge", {"amount": 10.5}, execution_id="xf"
+        "drift-call",
+        "billing.charge",
+        {"amount": 100},
+        execution_id="valid-id",
     )
+
     assert not result.allowed
-    assert result.deny_reason == "execution_invalid_binding"
-    assert proxy._forward_to_upstream.await_count == 0
-    assert registry._conn.execute("SELECT COUNT(*) FROM executions").fetchone() == (0,)
+    assert result.deny_reason == "execution_correlation_unavailable"
+    lookup.assert_not_called()
+    proxy._check_upstream_drift.assert_not_awaited()
+    proxy._forward_to_upstream.assert_not_awaited()
+
+    [entry] = _tool_entries(chain)
+    assert entry.tool_name == "billing.charge"
+    assert entry.server_identity is None
+    assert entry.execution_id == "valid-id"
+    assert entry.policy_rule_matched == "execution:unavailable"
 
 
 @pytest.mark.asyncio
-async def test_injected_binding_fn_is_used_verbatim(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    proxy = _make_proxy(
-        AuditChain(session_id="s-a"), registry,
-        binding_fn=lambda tool, args: "stub-binding",
+async def test_execution_refusal_precedes_existing_catalog_drift_health_failure():
+    """A supplied ID is audited even when the session is already unhealthy."""
+    chain = AuditChain(session_id="s-565")
+    proxy = _make_proxy(chain)
+    lookup = MagicMock(wraps=proxy._catalog.lookup)
+    proxy._catalog.lookup = lookup
+    proxy._session.catalog_drift = True
+
+    result = await proxy.call_tool(
+        "drifted-call",
+        "billing.charge",
+        {"amount": 100},
+        execution_id="valid-id",
     )
-    await proxy.call_tool("c1", "billing.charge", {"amount": 100}, execution_id="xs")
-    row = registry._conn.execute(
-        "SELECT action_binding FROM executions WHERE execution_id='xs'"
-    ).fetchone()
-    assert row == ("stub-binding",)
 
+    assert not result.allowed
+    assert result.deny_reason == "execution_correlation_unavailable"
+    lookup.assert_not_called()
+    proxy._check_upstream_drift.assert_not_awaited()
+    proxy._forward_to_upstream.assert_not_awaited()
 
-@pytest.mark.asyncio
-async def test_malformed_execution_id_is_refused_before_upstream(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    proxy = _make_proxy(AuditChain(session_id="s-a"), registry)
-    for bad in ("", "a" * 201, "has space", "x\ny"):
-        proxy._forward_to_upstream.reset_mock()
-        result = await proxy.call_tool(
-            "c1", "billing.charge", {"amount": 100}, execution_id=bad
-        )
-        assert not result.allowed
-        assert result.deny_reason == "execution_invalid_execution_id"
-        assert proxy._forward_to_upstream.await_count == 0
-    assert registry._conn.execute("SELECT COUNT(*) FROM executions").fetchone() == (0,)
-
-
-@pytest.mark.asyncio
-async def test_malformed_execution_id_is_not_written_to_the_audit_entry(tmp_path):
-    registry = ExecutionRegistry(tmp_path / "e.db")
-    chain = AuditChain(session_id="s-a")
-    proxy = _make_proxy(chain, registry)
-    await proxy.call_tool("c1", "billing.charge", {"amount": 100}, execution_id="a" * 400)
-    assert _tool_entries(chain)[-1].execution_id is None
+    [entry] = _tool_entries(chain)
+    assert entry.call_id == "drifted-call"
+    assert entry.tool_name == "billing.charge"
+    assert entry.server_identity is None
+    assert entry.execution_id == "valid-id"
+    assert entry.policy_rule_matched == "execution:unavailable"
