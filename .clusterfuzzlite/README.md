@@ -46,6 +46,12 @@ as a crash in the target rather than a build problem. `build.sh` passes
 `--collect-submodules=email`. A new dependency with a lazy import can need the
 same treatment.
 
+PyInstaller also bundles code and not package data. `cmcp_verify`'s import
+chain reaches `agentrust_trace`, which loads its JSON schema from inside the
+package at import time, so `build.sh` passes `--collect-data` for the three
+packages involved. Without it the build check reports the target as broken
+with `FileNotFoundError` on `agentrust_trace/schema/trace-v0.2.json`.
+
 ## Running locally
 
 ```
