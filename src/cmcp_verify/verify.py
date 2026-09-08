@@ -539,6 +539,15 @@ def _external_evidence_failure(entry_index: int, reason: str) -> str:
     return f"entry {entry_index}: {_EXTERNAL_EVIDENCE_ERROR}: {reason}"
 
 
+def _audit_bundle_shape_failure(path: str, entry_count: int = 0) -> AuditBundleResult:
+    """Classify malformed external structure without interpreting its contents."""
+    return AuditBundleResult(
+        verified=False,
+        entry_count=entry_count,
+        failures=[f"{path} has invalid object or array shape"],
+    )
+
+
 def verify_audit_bundle(
     bundle_json: dict[str, Any],
     claim_json: dict[str, Any] | None = None,
@@ -560,8 +569,39 @@ def verify_audit_bundle(
        signature). This is opt-in: receipt-less entries and callers that do not
        supply keys are unaffected, so existing evidence keeps verifying.
     """
-    failures: list[str] = []
+    if not isinstance(bundle_json, dict):
+        return _audit_bundle_shape_failure("bundle")
+
     entries = bundle_json.get("entries", [])
+    if not isinstance(entries, list):
+        return _audit_bundle_shape_failure("bundle.entries")
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            return _audit_bundle_shape_failure(f"bundle.entries[{i}]", len(entries))
+
+    if claim_json is not None:
+        if not isinstance(claim_json, dict):
+            return _audit_bundle_shape_failure("claim", len(entries))
+        for path in (
+            ("gateway",),
+            ("gateway", "audit_chain"),
+            ("gateway", "call_summary"),
+            ("trace",),
+            ("trace", "tool_transcript"),
+            ("trace", "cnf"),
+            ("trace", "cnf", "jwk"),
+        ):
+            obj: Any = claim_json
+            for depth, name in enumerate(path):
+                if name not in obj:
+                    break
+                obj = obj[name]
+                if not isinstance(obj, dict):
+                    return _audit_bundle_shape_failure(
+                        "claim." + ".".join(path[: depth + 1]), len(entries)
+                    )
+
+    failures: list[str] = []
     if not entries:
         return AuditBundleResult(verified=False, entry_count=0, failures=["bundle has no entries"])
 
