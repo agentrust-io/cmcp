@@ -226,3 +226,53 @@ def test_upgrade_attestation_does_not_increment_reset_count():
     state = SessionState(session_id="s1")
     state.upgrade_attestation()
     assert state.reset_count == 0
+
+
+@pytest.mark.asyncio
+async def test_response_from_closed_session_does_not_raise_successor():
+    """A response issued before an operator reset must not elevate the successor.
+
+    The successor session exists to start at the minimum level. A response that
+    was in flight when the reset closed the previous session is evidence about
+    that closed session, so it is dropped rather than applied.
+    """
+    state = SessionState(session_id="s-pre")
+    state.update_from_inspection("call-A", ["pii"], False, True)
+    generation = state.reset_count
+
+    async def _responder() -> bool:
+        async with state.mutation_lock:
+            return state.update_from_inspection(
+                "call-B", ["confidential"], False, True, for_reset_count=generation
+            )
+
+    async def _reset() -> None:
+        async with state.mutation_lock:
+            state.reset(reason="operator reset via API", authorized_by="test")
+
+    # Hold the lock so both queue behind us, then let the reset win it.
+    await state.mutation_lock.acquire()
+    resetter = asyncio.create_task(_reset())
+    await asyncio.sleep(0)
+    responder = asyncio.create_task(_responder())
+    await asyncio.sleep(0)
+    state.mutation_lock.release()
+    await resetter
+    applied = await responder
+
+    assert applied is False
+    assert state.max_sensitivity == "public"
+    assert state.sensitivity_raised_by_call is None
+
+
+@pytest.mark.asyncio
+async def test_response_across_attestation_upgrade_still_raises():
+    """upgrade_attestation() continues the session, so an in-flight response applies."""
+    state = SessionState(session_id="s1")
+    generation = state.reset_count
+    state.upgrade_attestation()
+    applied = state.update_from_inspection(
+        "call-C", ["pii"], False, True, for_reset_count=generation
+    )
+    assert applied is True
+    assert state.max_sensitivity == "pii"

@@ -78,6 +78,26 @@ class InjectionEvent:
     timestamp: str
 
 
+@dataclass(frozen=True)
+class ClosedSessionRecord:
+    """The final state of a session closed by a credentialed reset.
+
+    Held apart from the successor's live state so that the accumulated value the
+    closed session reached is preserved rather than overwritten. The successor
+    starts at the minimum level, and this is the only place its predecessor's
+    final value survives outside the audit chain.
+    """
+
+    session_id: str
+    max_sensitivity: str
+    sensitivity_raised_at: str | None
+    sensitivity_raised_by_call: str | None
+    reset_count: int
+    closed_at: str
+    reason: str
+    authorized_by: str
+
+
 @dataclass
 class SessionState:
     """
@@ -88,9 +108,17 @@ class SessionState:
     only way to lower sensitivity.
 
     update_from_inspection() is the ONLY place where session sensitivity state
-    is updated. It is called by InspectionPipeline after all inspection stages
+    is updated. It is called by the proxy response path after all inspection stages
     complete, including for denied responses (a denied high-sensitivity response
     still raises session sensitivity because the agent knows the call was attempted).
+
+    A response is only allowed to raise the session it was issued under. Callers
+    pass the ``reset_count`` observed when the call started and a response that
+    lands after a reset is dropped rather than applied to the successor. The
+    discriminator is ``reset_count`` and not ``session_id`` because
+    upgrade_attestation() rotates ``session_id`` while deliberately continuing
+    the same session at its current sensitivity, so a call in flight across an
+    attestation upgrade must still be applied.
     """
 
     session_id: str
@@ -125,12 +153,23 @@ class SessionState:
         sensitivity_tags: list[str],
         injection_detected: bool,
         response_allowed: bool,  # noqa: ARG002 (logged for future use)
-    ) -> None:
+        *,
+        for_reset_count: int | None = None,
+    ) -> bool:
         """
         Update session state from an inspection result.
 
-        Called by InspectionPipeline after all stages complete.
+        Called by the proxy response path after all stages complete. Returns True
+        if the state was updated, False if the response belonged to a session that
+        has since been closed by a reset and was therefore dropped.
+
+        ``for_reset_count`` is the reset counter observed when the call started.
+        When it does not match the current counter the response is evidence about
+        a closed session and must not raise the successor, whose whole purpose is
+        to start at the minimum level.
         """
+        if for_reset_count is not None and for_reset_count != self.reset_count:
+            return False
         for tag in sensitivity_tags:
             new_max = _max_sensitivity(self.max_sensitivity, tag, self.sensitivity_order)
             if new_max != self.max_sensitivity:
@@ -145,6 +184,24 @@ class SessionState:
                     timestamp=datetime.now(tz=UTC).isoformat(),
                 )
             )
+        return True
+
+    def snapshot_for_close(self, *, reason: str, authorized_by: str) -> ClosedSessionRecord:
+        """Capture this session's final state before a reset opens a successor.
+
+        Call inside the mutation lock, immediately before reset(), so the value
+        recorded is the one the session held at the ordered session boundary.
+        """
+        return ClosedSessionRecord(
+            session_id=self.session_id,
+            max_sensitivity=self.max_sensitivity,
+            sensitivity_raised_at=self.sensitivity_raised_at,
+            sensitivity_raised_by_call=self.sensitivity_raised_by_call,
+            reset_count=self.reset_count,
+            closed_at=datetime.now(tz=UTC).isoformat(),
+            reason=reason,
+            authorized_by=authorized_by,
+        )
 
     def reset(self, *, reason: str, authorized_by: str) -> tuple[str, str]:
         """

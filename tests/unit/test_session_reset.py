@@ -224,3 +224,141 @@ def test_reset_without_session_configured_returns_501():
     client = TestClient(server.app, raise_server_exceptions=True)
     resp = client.post("/sessions/bare-sess/reset")
     assert resp.status_code == 501
+
+
+# ── OPQ_P0006: the reset credential is not the tool-invocation credential ─────
+
+
+def _make_token_server(session_id: str = "sess-tok-001", *, operator_token: str | None):
+    """Server with a tool-invocation bearer token and an optional operator token."""
+    from cmcp_runtime.mcp.proxy import CMCPProxy
+
+    cfg = Config()
+    cfg.attestation = AttestationConfig(enforcement_mode=EnforcementMode.ENFORCING)
+    session = SessionState(session_id=session_id)
+    chain = AuditChain(session_id)
+    with patch("cmcp_runtime.mcp.proxy.MCPGateway"), \
+         patch("cmcp_runtime.mcp.proxy.MCPResponseScanner"):
+        proxy = CMCPProxy(_make_catalog(), _make_evaluator(), session, chain, cfg)
+        wire_mock_gateway(proxy)
+    server = MCPServer(
+        proxy,
+        session=session,
+        audit_chain=chain,
+        bearer_token="tool-token",
+        operator_token=operator_token,
+    )
+    return server, session, chain
+
+
+def test_reset_rejects_the_tool_invocation_token():
+    """The credential that invokes tools must not authorize a sensitivity reset."""
+    server, session, _ = _make_token_server(operator_token="operator-token")
+    client = TestClient(server.app, raise_server_exceptions=True)
+
+    resp = client.post(
+        f"/sessions/{session.session_id}/reset",
+        headers={"Authorization": "Bearer tool-token"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "INVALID_BEARER_TOKEN"
+
+
+def test_reset_accepts_the_operator_token():
+    server, session, _ = _make_token_server(operator_token="operator-token")
+    original_id = session.session_id
+    client = TestClient(server.app, raise_server_exceptions=True)
+
+    resp = client.post(
+        f"/sessions/{original_id}/reset",
+        headers={"Authorization": "Bearer operator-token"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["old_session_id"] == original_id
+
+
+def test_tool_endpoint_rejects_the_operator_token():
+    """The separation runs both ways: the operator credential is not a tool credential."""
+    server, _, _ = _make_token_server(operator_token="operator-token")
+    client = TestClient(server.app, raise_server_exceptions=True)
+
+    resp = client.get("/tools/list", headers={"Authorization": "Bearer operator-token"})
+    assert resp.status_code == 401
+
+
+def test_reset_falls_back_to_bearer_token_when_no_operator_token():
+    """Single-token deployments keep working; startup refuses them outside dev mode."""
+    server, session, _ = _make_token_server(operator_token=None)
+    client = TestClient(server.app, raise_server_exceptions=True)
+
+    resp = client.post(
+        f"/sessions/{session.session_id}/reset",
+        headers={"Authorization": "Bearer tool-token"},
+    )
+    assert resp.status_code == 200
+
+
+# ── OPQ_P0006: the reset record carries the session boundary ──────────────────
+
+
+def test_reset_audit_entry_identifies_both_sessions_and_the_credential():
+    server, session, chain = _make_token_server(operator_token="operator-token")
+    session.update_from_inspection("call-A", ["pii"], False, True)
+    original_id = session.session_id
+
+    client = TestClient(server.app, raise_server_exceptions=True)
+    resp = client.post(
+        f"/sessions/{original_id}/reset",
+        headers={"Authorization": "Bearer operator-token"},
+    )
+    new_id = resp.json()["new_session_id"]
+
+    entry = next(e for e in chain.entries if e.entry_type == "session_reset")
+    assert entry.session_id == original_id
+    assert entry.session_sensitivity_before == "pii"
+    assert entry.session_sensitivity_after == "public"
+    assert entry.detail["closed_session_id"] == original_id
+    assert entry.detail["successor_session_id"] == new_id
+    assert entry.detail["reset_count"] == 1
+    assert entry.detail["credential_verified"] == "operator_token"
+    assert entry.prev_entry_hash
+    # detail is inside the canonical body, so these fields are hash-covered
+    assert entry.entry_hash == entry.compute_hash()
+
+
+def test_entries_after_a_reset_are_attributed_to_the_successor():
+    """Before this, every later entry carried the closed session's identifier."""
+    server, session, chain = _make_token_server(operator_token="operator-token")
+    original_id = session.session_id
+
+    client = TestClient(server.app, raise_server_exceptions=True)
+    new_id = client.post(
+        f"/sessions/{original_id}/reset",
+        headers={"Authorization": "Bearer operator-token"},
+    ).json()["new_session_id"]
+
+    later = chain.append("session_start", policy_decision="n/a")
+    assert later.session_id == new_id
+    reset_entry = next(e for e in chain.entries if e.entry_type == "session_reset")
+    assert reset_entry.session_id == original_id
+    assert chain.verify_chain()
+
+
+def test_closed_session_final_value_is_preserved_apart_from_the_successor():
+    server, session, _ = _make_token_server(operator_token="operator-token")
+    session.update_from_inspection("call-A", ["pii"], False, True)
+    original_id = session.session_id
+
+    client = TestClient(server.app, raise_server_exceptions=True)
+    resp = client.post(
+        f"/sessions/{original_id}/reset",
+        headers={"Authorization": "Bearer operator-token"},
+    )
+
+    assert resp.json()["closed_session_max_sensitivity"] == "pii"
+    assert session.max_sensitivity == "public"
+    closed = server._closed_sessions[original_id]
+    assert closed.session_id == original_id
+    assert closed.max_sensitivity == "pii"
+    assert closed.sensitivity_raised_by_call == "call-A"
+    assert closed.authorized_by == "operator_token"

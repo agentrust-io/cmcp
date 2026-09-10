@@ -91,6 +91,9 @@ class _CallFinalizationState:
     """Per-invocation facts needed for honest terminal finalization."""
 
     failure_stage: str = "call_entry"
+    # Session generation observed at call entry, so a response landing after an
+    # operator reset is not applied to the successor session.
+    reset_count: int | None = None
     effect_boundary_state: _EffectBoundaryState = _EffectBoundaryState.PRE_TRANSPORT
     request_payload_hash: str | None = None
     response_payload_hash: str | None = None
@@ -828,6 +831,10 @@ class CMCPProxy:
     ) -> CallResult:
         """Run one call and guarantee one terminal on failure or cancellation."""
         finalization = _CallFinalizationState()
+        # The session generation this call was issued under. A reset arriving
+        # mid-call closes that session, and this response must not raise the
+        # successor.
+        finalization.reset_count = self._session.reset_count
         try:
             return await self._call_tool_impl(
                 call_id,
@@ -1242,6 +1249,7 @@ class CMCPProxy:
                         else [entry.sensitivity_level]
                     ),
                     injection_detected=injection_detected,
+                    for_reset_count=_finalization.reset_count,
                     response_allowed=False,
                 )
             threat_categories = ",".join(
@@ -1314,11 +1322,18 @@ class CMCPProxy:
         injection_threshold = None
         _finalization.failure_stage = "session_update"
         async with self._session.mutation_lock:
-            self._session.update_from_inspection(
+            applied = self._session.update_from_inspection(
                 call_id=call_id,
                 sensitivity_tags=response_sensitivity,
                 injection_detected=injection_detected,
                 response_allowed=True,
+                for_reset_count=_finalization.reset_count,
+            )
+        if not applied:
+            logger.warning(
+                "SESSION_RESET_RACE: response for call_id=%s dropped from session "
+                "state; the session it was issued under was closed by a reset",
+                call_id,
             )
 
         # Step 5: egress Cedar policy check
