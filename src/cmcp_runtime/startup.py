@@ -441,6 +441,19 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
 
+    # A session reset lowers accumulated session sensitivity. Requiring a
+    # separate credential for it keeps the reset out of reach of a holder of the
+    # tool-invocation token, which is the whole point of the monotonic state.
+    if config.operator_token is None and not config.dev_mode:
+        _fatal(
+            "OPERATOR_TOKEN_REQUIRED",
+            "CMCP_OPERATOR_TOKEN env var is not set. "
+            "Set it to a secret token, distinct from CMCP_BEARER_TOKEN, that "
+            "operators must present to the session reset and catalog exception "
+            "routes. Set CMCP_DEV_MODE=1 only in development.",
+        )
+        sys.exit(1)
+
     # Step 4: policy bundle
     policy_expected_hash = os.environ.get("CMCP_POLICY_HASH")
     if policy_expected_hash is None and not config.dev_mode:

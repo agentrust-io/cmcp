@@ -266,6 +266,18 @@ class AuditChain:
         self._notify_sinks(entry)
         return entry
 
+    def rotate_session_id(self, new_session_id: str) -> None:
+        """Attribute subsequent entries to ``new_session_id``.
+
+        A credentialed reset closes one session and opens a successor on the same
+        hash-linked chain. Without this, every entry after a reset carries the
+        closed session's identifier and the successor's identifier appears
+        nowhere, so the record cannot say which session an entry belongs to.
+        Entries already appended are unchanged: they are hashed and remain
+        attributed to the session that produced them.
+        """
+        self._session_id = new_session_id
+
     def add_sink(self, sink: Callable[[AuditEntry], None]) -> None:
         """Register a read-only observer of appended entries. See __init__."""
         self._sinks.append(sink)

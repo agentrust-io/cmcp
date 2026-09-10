@@ -450,3 +450,31 @@ def test_compliance_domains_non_mapping_raises(config_file):
     path = config_file("sensitivity:\n  compliance_domains: not_a_mapping\n")
     with pytest.raises(ConfigError, match="mapping"):
         load_config(path)
+
+
+# ── OPQ_P0006: the operator credential must be distinct ───────────────────────
+
+
+def test_operator_token_is_loaded(config_file, monkeypatch):
+    import cmcp_runtime.config as config_module
+
+    monkeypatch.setattr(config_module, "DEV_MODE", False)
+    monkeypatch.setenv("CMCP_BEARER_TOKEN", "tool-token")
+    monkeypatch.setenv("CMCP_OPERATOR_TOKEN", "operator-token")
+
+    cfg = load_config(config_file(""))
+
+    assert cfg.bearer_token == "tool-token"
+    assert cfg.operator_token == "operator-token"
+
+
+def test_operator_token_equal_to_bearer_token_is_refused(config_file, monkeypatch):
+    """Reusing the tool-invocation token as the operator token defeats the separation."""
+    import cmcp_runtime.config as config_module
+
+    monkeypatch.setattr(config_module, "DEV_MODE", False)
+    monkeypatch.setenv("CMCP_BEARER_TOKEN", "same-token")
+    monkeypatch.setenv("CMCP_OPERATOR_TOKEN", "same-token")
+
+    with pytest.raises(ConfigError, match="must differ from CMCP_BEARER_TOKEN"):
+        load_config(config_file(""))

@@ -134,6 +134,13 @@ class Config:
     audit_db_path: str = "audit.db"  # AUDIT-001: durable audit chain storage
     dev_mode: bool = False
     bearer_token: str | None = None
+    #: Credential for the operator interface (session reset, catalog exception).
+    #: Held separately from ``bearer_token`` so that the credential authorizing a
+    #: reset is not the credential an agent host already holds to invoke tools.
+    #: A reset lowers accumulated session sensitivity, so an agent able to
+    #: present its own tool-invocation token to the reset route could clear the
+    #: state that monotonicity exists to keep.
+    operator_token: str | None = None
     #: AARM R6. A named conformance profile tightens defaults that stay
     #: permissive for developers. None is the default, and nothing changes.
     #: "aarm" requires an Agent Manifest binding, because R6 says every receipt
@@ -446,6 +453,14 @@ def load_config(path: str) -> Config:
 
     dev_mode = DEV_MODE  # TEE-002: use the frozen constant, never re-read from env
     bearer_token = os.environ.get("CMCP_BEARER_TOKEN") or None
+    operator_token = os.environ.get("CMCP_OPERATOR_TOKEN") or None
+
+    if operator_token is not None and operator_token == bearer_token:
+        raise ConfigError(
+            "CMCP_OPERATOR_TOKEN must differ from CMCP_BEARER_TOKEN. The operator "
+            "credential authorizes a session-sensitivity reset and must not be "
+            "reachable by a holder of the tool-invocation credential."
+        )
 
     default_listen_addr = (
         "127.0.0.1:8443"
@@ -533,4 +548,5 @@ def load_config(path: str) -> Config:
         conformance_profile=profile,
         dev_mode=dev_mode,
         bearer_token=bearer_token,
+        operator_token=operator_token,
     )
