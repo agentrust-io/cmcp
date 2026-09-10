@@ -35,6 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unset those routes still fall back to the bearer token, so an existing
   single-token deployment keeps working until it sets the new variable.
 
+### Added
+
+- **The accumulated session-sensitivity value can now live in a shared,
+  persistent store** (`session_state_path`). Without one it is held in the
+  gateway process, so it is lost on restart while the session identifier the
+  agent host holds is still live, and where several instances serve one session
+  the ratchet holds per instance rather than per session: an agent that reads
+  sensitive data through one instance and egresses through another is evaluated
+  by an instance that never saw the read. `SqliteSessionStateStore` serialises
+  the read-modify-write with `BEGIN IMMEDIATE`, which takes SQLite's RESERVED
+  lock and so spans processes; an `asyncio.Lock` cannot, being invisible to every
+  other instance. A gateway now hydrates the session's stored value at call entry,
+  before the pre-call policy evaluation reads it. A reset also advances the closed
+  session's generation in the store, so an instance still holding the old
+  identifier stops applying responses to it. Unset is the default and preserves
+  the previous single-instance behaviour exactly.
+
 ### Changed
 
 - The reset audit entry now identifies the session boundary rather than only the

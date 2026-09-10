@@ -971,21 +971,17 @@ class MCPServer:
         credential = (
             "operator_token" if self._operator_token is not None else "bearer_token"
         )
-        # AUTH-002: lock guards against a concurrent tool-call coroutine modifying sensitivity.
-        async with self._session.mutation_lock:
-            # Capture the pre-reset sensitivity: reset() drops it back to
-            # "public", and the elevated value the session held at reset time
-            # is exactly the forensic detail the audit entry must preserve.
-            sensitivity_before = self._session.max_sensitivity
-            closed = self._session.snapshot_for_close(
-                reason="operator reset via API",
-                authorized_by=credential,
-            )
-            old_id, new_id = self._session.reset(
-                reason="operator reset via API",
-                authorized_by=credential,
-            )
-            reset_count = self._session.reset_count
+        # AUTH-002: apply_reset serialises against concurrent tool-call coroutines,
+        # and against other gateway instances where a shared store is configured.
+        # The pre-reset sensitivity is captured inside that section, because the
+        # elevated value the session held at the boundary is exactly the forensic
+        # detail the audit entry must preserve.
+        old_id, new_id, closed = await self._session.apply_reset(
+            reason="operator reset via API",
+            authorized_by=credential,
+        )
+        sensitivity_before = closed.max_sensitivity
+        reset_count = self._session.reset_count
         self._closed_sessions[closed.session_id] = closed
         # Written while the chain still names the closed session, so the entry
         # recording the boundary belongs to the session that reached that value.
