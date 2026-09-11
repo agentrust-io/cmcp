@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from cmcp_runtime.session.store import SessionStateStore, StoredSensitivity
+
 # Sensitivity level ordering: monotonically increasing only.
 # hipaa_phi, mnpi, trade_secret are all at level 3 (equal highest).
 SENSITIVITY_ORDER: dict[str, int] = {
@@ -78,6 +80,26 @@ class InjectionEvent:
     timestamp: str
 
 
+@dataclass(frozen=True)
+class ClosedSessionRecord:
+    """The final state of a session closed by a credentialed reset.
+
+    Held apart from the successor's live state so that the accumulated value the
+    closed session reached is preserved rather than overwritten. The successor
+    starts at the minimum level, and this is the only place its predecessor's
+    final value survives outside the audit chain.
+    """
+
+    session_id: str
+    max_sensitivity: str
+    sensitivity_raised_at: str | None
+    sensitivity_raised_by_call: str | None
+    reset_count: int
+    closed_at: str
+    reason: str
+    authorized_by: str
+
+
 @dataclass
 class SessionState:
     """
@@ -88,9 +110,17 @@ class SessionState:
     only way to lower sensitivity.
 
     update_from_inspection() is the ONLY place where session sensitivity state
-    is updated. It is called by InspectionPipeline after all inspection stages
+    is updated. It is called by the proxy response path after all inspection stages
     complete, including for denied responses (a denied high-sensitivity response
     still raises session sensitivity because the agent knows the call was attempted).
+
+    A response is only allowed to raise the session it was issued under. Callers
+    pass the ``reset_count`` observed when the call started and a response that
+    lands after a reset is dropped rather than applied to the successor. The
+    discriminator is ``reset_count`` and not ``session_id`` because
+    upgrade_attestation() rotates ``session_id`` while deliberately continuing
+    the same session at its current sensitivity, so a call in flight across an
+    attestation upgrade must still be applied.
     """
 
     session_id: str
@@ -118,6 +148,13 @@ class SessionState:
     )
     # AUTH-002: guards concurrent mutations from tool-call coroutines and session-reset requests
     mutation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False, compare=False)
+    #: Where the accumulated value is held. None keeps the value in this object
+    #: alone, which is the single-instance default. A shared store makes the
+    #: ratchet hold per session across gateway instances rather than per
+    #: instance, and makes it survive a restart. See ``session/store.py``.
+    state_store: SessionStateStore | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def update_from_inspection(
         self,
@@ -125,12 +162,23 @@ class SessionState:
         sensitivity_tags: list[str],
         injection_detected: bool,
         response_allowed: bool,  # noqa: ARG002 (logged for future use)
-    ) -> None:
+        *,
+        for_reset_count: int | None = None,
+    ) -> bool:
         """
         Update session state from an inspection result.
 
-        Called by InspectionPipeline after all stages complete.
+        Called by the proxy response path after all stages complete. Returns True
+        if the state was updated, False if the response belonged to a session that
+        has since been closed by a reset and was therefore dropped.
+
+        ``for_reset_count`` is the reset counter observed when the call started.
+        When it does not match the current counter the response is evidence about
+        a closed session and must not raise the successor, whose whole purpose is
+        to start at the minimum level.
         """
+        if for_reset_count is not None and for_reset_count != self.reset_count:
+            return False
         for tag in sensitivity_tags:
             new_max = _max_sensitivity(self.max_sensitivity, tag, self.sensitivity_order)
             if new_max != self.max_sensitivity:
@@ -145,6 +193,150 @@ class SessionState:
                     timestamp=datetime.now(tz=UTC).isoformat(),
                 )
             )
+        return True
+
+    def snapshot_for_close(self, *, reason: str, authorized_by: str) -> ClosedSessionRecord:
+        """Capture this session's final state before a reset opens a successor.
+
+        Call inside the mutation lock, immediately before reset(), so the value
+        recorded is the one the session held at the ordered session boundary.
+        """
+        return ClosedSessionRecord(
+            session_id=self.session_id,
+            max_sensitivity=self.max_sensitivity,
+            sensitivity_raised_at=self.sensitivity_raised_at,
+            sensitivity_raised_by_call=self.sensitivity_raised_by_call,
+            reset_count=self.reset_count,
+            closed_at=datetime.now(tz=UTC).isoformat(),
+            reason=reason,
+            authorized_by=authorized_by,
+        )
+
+    async def apply_inspection(
+        self,
+        call_id: str,
+        sensitivity_tags: list[str],
+        injection_detected: bool,
+        response_allowed: bool,
+        *,
+        for_reset_count: int | None = None,
+    ) -> bool:
+        """Serialise and apply one inspection result to the accumulated value.
+
+        This is the only write path for tool-call processing. With no store
+        configured it is the previous behaviour: take the in-process lock and
+        mutate. With a store it holds the store's exclusive section, reads the
+        current value back, folds this response into it and writes it, so the
+        greater-of comparison is made against the value every instance shares
+        rather than against this instance's copy.
+        """
+        if self.state_store is None:
+            async with self.mutation_lock:
+                return self.update_from_inspection(
+                    call_id,
+                    sensitivity_tags,
+                    injection_detected,
+                    response_allowed,
+                    for_reset_count=for_reset_count,
+                )
+        async with self.state_store.exclusive(self.session_id):
+            self._adopt(self.state_store.load(self.session_id))
+            applied = self.update_from_inspection(
+                call_id,
+                sensitivity_tags,
+                injection_detected,
+                response_allowed,
+                for_reset_count=for_reset_count,
+            )
+            if applied:
+                self.state_store.save(self.session_id, self._stored())
+            return applied
+
+    async def apply_reset(
+        self, *, reason: str, authorized_by: str
+    ) -> tuple[str, str, ClosedSessionRecord]:
+        """Serialise and apply a credentialed reset, closing the session.
+
+        Returns the closed identifier, the successor identifier, and the record
+        preserving what the closed session reached. The snapshot is taken inside
+        the exclusive section so the preserved value is the one held at the
+        ordered session boundary, and the successor is written to the store so
+        that no instance keeps serving the closed session's value.
+        """
+        if self.state_store is None:
+            async with self.mutation_lock:
+                closed = self.snapshot_for_close(
+                    reason=reason, authorized_by=authorized_by
+                )
+                old_id, new_id = self.reset(reason=reason, authorized_by=authorized_by)
+                return old_id, new_id, closed
+        async with self.state_store.exclusive(self.session_id):
+            self._adopt(self.state_store.load(self.session_id))
+            closed = self.snapshot_for_close(reason=reason, authorized_by=authorized_by)
+            old_id, new_id = self.reset(reason=reason, authorized_by=authorized_by)
+            self.state_store.record_closed(old_id, closed)
+            # Advance the closed session's generation in the store, keeping the
+            # value it reached. Another instance may still be holding the old
+            # identifier with a response in flight; without this it would read a
+            # generation matching the one it captured and raise a session that is
+            # already closed. The successor is written under its own identifier,
+            # so bumping the old row is the only way that instance finds out.
+            self.state_store.save(
+                old_id,
+                StoredSensitivity(
+                    max_sensitivity=closed.max_sensitivity,
+                    sensitivity_raised_at=closed.sensitivity_raised_at,
+                    sensitivity_raised_by_call=closed.sensitivity_raised_by_call,
+                    reset_count=self.reset_count,
+                ),
+            )
+            self.state_store.save(new_id, self._stored())
+            return old_id, new_id, closed
+
+    async def hydrate(self) -> bool:
+        """Adopt this session's stored value, if the store holds one.
+
+        Called at startup so a gateway that restarts, or an instance joining a
+        session another instance opened, enforces against what the session
+        already accumulated instead of starting the ratchet again at the minimum
+        level. Returns True when a stored value was adopted.
+        """
+        if self.state_store is None:
+            return False
+        async with self.state_store.exclusive(self.session_id):
+            stored = self.state_store.load(self.session_id)
+            if stored is None:
+                self.state_store.save(self.session_id, self._stored())
+                return False
+            self._adopt(stored)
+            return True
+
+    def _stored(self) -> StoredSensitivity:
+        return StoredSensitivity(
+            max_sensitivity=self.max_sensitivity,
+            sensitivity_raised_at=self.sensitivity_raised_at,
+            sensitivity_raised_by_call=self.sensitivity_raised_by_call,
+            reset_count=self.reset_count,
+        )
+
+    def _adopt(self, stored: StoredSensitivity | None) -> None:
+        """Take the store's value as this instance's own.
+
+        Only ever raises: the stored value is the greater of what any instance
+        has seen, and a local value above it would mean this instance observed
+        something it has not yet written. The reset counter is taken whole,
+        because a reset performed on another instance closed this session there
+        and this instance must not keep applying responses to it.
+        """
+        if stored is None:
+            return
+        self.max_sensitivity = _max_sensitivity(
+            self.max_sensitivity, stored.max_sensitivity, self.sensitivity_order
+        )
+        if self.max_sensitivity == stored.max_sensitivity:
+            self.sensitivity_raised_at = stored.sensitivity_raised_at
+            self.sensitivity_raised_by_call = stored.sensitivity_raised_by_call
+        self.reset_count = max(self.reset_count, stored.reset_count)
 
     def reset(self, *, reason: str, authorized_by: str) -> tuple[str, str]:
         """

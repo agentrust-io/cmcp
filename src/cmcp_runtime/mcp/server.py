@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -32,7 +33,7 @@ from cmcp_runtime.mcp.proxy import CMCPProxy
 if TYPE_CHECKING:
     from cmcp_runtime.audit.chain import AuditChain
     from cmcp_runtime.session.manager import SessionManager
-    from cmcp_runtime.session.state import SessionState
+    from cmcp_runtime.session.state import ClosedSessionRecord, SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,12 @@ class StatelessKernel:
 
 # Endpoints exempt from bearer-token auth (Kubernetes liveness / readiness probes)
 _AUTH_EXEMPT_PATHS = {"/health", "/readyz"}
+
+# The operator interface. These routes are not reachable as MCP tools and, when an
+# operator token is configured, they do not accept the tool-invocation token: a
+# reset lowers accumulated session sensitivity, so the credential that authorizes
+# one must not be the credential an agent host already holds.
+_OPERATOR_PATH_RE = re.compile(r"^/(?:sessions/[^/]+/reset|catalog/exception)$")
 
 # DOS-001: default ceiling on a single request body. Overridable per
 # deployment via MCPServer(max_request_bytes=...). Named here rather than
@@ -264,15 +271,27 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class _BearerAuthMiddleware(BaseHTTPMiddleware):
-    """AUTH-001 (CRITICAL): validate Authorization: Bearer <token> on all protected endpoints."""
+    """AUTH-001 (CRITICAL): validate Authorization: Bearer <token> on all protected endpoints.
 
-    def __init__(self, app: Any, *, bearer_token: str) -> None:
+    Operator routes are matched against ``_OPERATOR_PATH_RE`` and, when an
+    operator token is configured, accept only that token. Where none is
+    configured they fall back to the bearer token, which keeps existing
+    single-token deployments working; startup refuses that outside dev mode.
+    """
+
+    def __init__(
+        self, app: Any, *, bearer_token: str, operator_token: str | None = None
+    ) -> None:
         super().__init__(app)
         self._token = bearer_token
+        self._operator_token = operator_token
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         if request.url.path in _AUTH_EXEMPT_PATHS:
             return await call_next(request)
+        expected = self._token
+        if self._operator_token is not None and _OPERATOR_PATH_RE.match(request.url.path):
+            expected = self._operator_token
         auth = request.headers.get("Authorization", "")
         prefix = "Bearer "
         if not auth.startswith(prefix):
@@ -283,7 +302,7 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
             )
         provided = auth[len(prefix):]
         # Constant-time compare to prevent timing oracle on the token
-        if not hmac.compare_digest(provided, self._token):
+        if not hmac.compare_digest(provided, expected):
             logger.warning("AUTH_FAILURE: invalid bearer token from %s", request.client)
             return JSONResponse(
                 {"error": "unauthorized", "error_code": "INVALID_BEARER_TOKEN"},
@@ -308,6 +327,7 @@ class MCPServer:
         session_manager: SessionManager | None = None,
         audit_chain: AuditChain | None = None,
         bearer_token: str | None = None,
+        operator_token: str | None = None,
         session: SessionState | None = None,
         max_request_bytes: int = _DEFAULT_MAX_REQUEST_BYTES,
     ) -> None:
@@ -316,6 +336,7 @@ class MCPServer:
         self._audit_chain = audit_chain
         self._session = session
         self._max_request_bytes = max_request_bytes
+        self._operator_token = operator_token
         self._audit = audit_chain
         # Chains of closed sessions, kept so /audit/export still serves them
         # after the live session rotates.
@@ -329,10 +350,20 @@ class MCPServer:
             requests_per_minute=60,
         )
         middleware = [rate_limit] + (
-            [Middleware(_BearerAuthMiddleware, bearer_token=bearer_token)]
+            [
+                Middleware(
+                    _BearerAuthMiddleware,
+                    bearer_token=bearer_token,
+                    operator_token=operator_token,
+                )
+            ]
             if bearer_token is not None
             else []
         )
+        # Final state of sessions closed by a credentialed reset, kept so the
+        # value a closed session reached survives the successor starting at the
+        # minimum level.
+        self._closed_sessions: dict[str, ClosedSessionRecord] = {}
         # AUTH-004: session cleanup interval configurable via env var (default 60s)
         self._cleanup_interval_s: int = int(
             os.environ.get("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
@@ -935,16 +966,25 @@ class MCPServer:
             return JSONResponse(
                 {"error": f"session_id={session_id} not found"}, status_code=404
             )
-        # AUTH-002: lock guards against a concurrent tool-call coroutine modifying sensitivity.
-        async with self._session.mutation_lock:
-            # Capture the pre-reset sensitivity: reset() drops it back to
-            # "public", and the elevated value the session held at reset time
-            # is exactly the forensic detail the audit entry must preserve.
-            sensitivity_before = self._session.max_sensitivity
-            old_id, new_id = self._session.reset(
-                reason="operator reset via API",
-                authorized_by="api",
-            )
+        # The middleware has already authenticated the operator credential on this
+        # route; record which credential was verified so the entry says so.
+        credential = (
+            "operator_token" if self._operator_token is not None else "bearer_token"
+        )
+        # AUTH-002: apply_reset serialises against concurrent tool-call coroutines,
+        # and against other gateway instances where a shared store is configured.
+        # The pre-reset sensitivity is captured inside that section, because the
+        # elevated value the session held at the boundary is exactly the forensic
+        # detail the audit entry must preserve.
+        old_id, new_id, closed = await self._session.apply_reset(
+            reason="operator reset via API",
+            authorized_by=credential,
+        )
+        sensitivity_before = closed.max_sensitivity
+        reset_count = self._session.reset_count
+        self._closed_sessions[closed.session_id] = closed
+        # Written while the chain still names the closed session, so the entry
+        # recording the boundary belongs to the session that reached that value.
         self._audit_chain.append(
             "session_reset",
             call_id=None,
@@ -952,10 +992,21 @@ class MCPServer:
             policy_decision="n/a",
             session_sensitivity_before=sensitivity_before,
             session_sensitivity_after=self._session.max_sensitivity,
+            detail={
+                "closed_session_id": old_id,
+                "successor_session_id": new_id,
+                "reset_count": reset_count,
+                "credential_verified": credential,
+                "reason": "operator reset via API",
+            },
         )
+        # Entries after the boundary belong to the successor.
+        self._audit_chain.rotate_session_id(new_id)
         return JSONResponse({
             "old_session_id": old_id,
             "new_session_id": new_id,
+            "closed_session_max_sensitivity": closed.max_sensitivity,
+            "reset_count": reset_count,
             "status": "reset",
             "attestation_stale": False,
         })

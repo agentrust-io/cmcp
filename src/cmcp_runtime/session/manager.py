@@ -116,7 +116,11 @@ class SessionManager:
             )
 
         session_id = str(uuid4())
-        state = SessionState(session_id=session_id, sensitivity_order=self._sensitivity_order)
+        state = SessionState(
+            session_id=session_id,
+            sensitivity_order=self._sensitivity_order,
+            state_store=getattr(self._ctx, "session_state_store", None),
+        )
         chain = AuditChain(
             session_id=session_id,
             store=self._ctx.audit_store,

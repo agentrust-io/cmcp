@@ -32,6 +32,7 @@ from cmcp_runtime.errors import (
     PolicyHashMismatch,
 )
 from cmcp_runtime.policy.bundle import PolicyStore, load_policy_bundle
+from cmcp_runtime.session.store import SqliteSessionStateStore
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 from cmcp_runtime.tee.detect import detect_provider
 from cmcp_runtime.tee.measurement import (
@@ -80,6 +81,9 @@ class RuntimeContext:
     # and still enforces via digest comparison.
     catalog_scanner: CatalogScanner | None = None
     audit_store: SqliteAuditStore | None = None
+    #: Shared, persistent home for the accumulated session-sensitivity value.
+    #: None means the value lives in this process only.
+    session_state_store: SqliteSessionStateStore | None = None
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
     agent_manifest: AgentManifestBinding | None = None
@@ -438,6 +442,19 @@ def run_startup(config_path: str) -> RuntimeContext:
             "CMCP_BEARER_TOKEN env var is not set. "
             "Set it to a secret token that agent hosts must present in the "
             "Authorization header. Set CMCP_DEV_MODE=1 only in development.",
+        )
+        sys.exit(1)
+
+    # A session reset lowers accumulated session sensitivity. Requiring a
+    # separate credential for it keeps the reset out of reach of a holder of the
+    # tool-invocation token, which is the whole point of the monotonic state.
+    if config.operator_token is None and not config.dev_mode:
+        _fatal(
+            "OPERATOR_TOKEN_REQUIRED",
+            "CMCP_OPERATOR_TOKEN env var is not set. "
+            "Set it to a secret token, distinct from CMCP_BEARER_TOKEN, that "
+            "operators must present to the session reset and catalog exception "
+            "routes. Set CMCP_DEV_MODE=1 only in development.",
         )
         sys.exit(1)
 

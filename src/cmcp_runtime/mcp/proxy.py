@@ -92,6 +92,9 @@ class _CallFinalizationState:
     """Per-invocation facts needed for honest terminal finalization."""
 
     failure_stage: str = "call_entry"
+    # Session generation observed at call entry, so a response landing after an
+    # operator reset is not applied to the successor session.
+    reset_count: int | None = None
     effect_boundary_state: _EffectBoundaryState = _EffectBoundaryState.PRE_TRANSPORT
     request_payload_hash: str | None = None
     response_payload_hash: str | None = None
@@ -926,6 +929,17 @@ class CMCPProxy:
     ) -> CallResult:
         """Run one call and guarantee one terminal on failure or cancellation."""
         finalization = _CallFinalizationState()
+        # Adopt the session's shared value before anything evaluates this call.
+        # An instance joining a session another instance opened, or one that has
+        # restarted, would otherwise evaluate the first call against its own
+        # empty copy and permit what the session's accumulated value forbids.
+        # No-op when no shared store is configured.
+        await self._session.hydrate()
+        # The session generation this call was issued under, read after hydration
+        # so a reset performed on another instance is already visible. A reset
+        # arriving mid-call closes that session, and this response must not raise
+        # the successor.
+        finalization.reset_count = self._session.reset_count
         try:
             return await self._call_tool_impl(
                 call_id,
@@ -1361,17 +1375,17 @@ class CMCPProxy:
         )
         injection_detected = bool(scan.threats)
         if not scan.allowed:
-            async with self._session.mutation_lock:
-                self._session.update_from_inspection(
-                    call_id=call_id,
-                    sensitivity_tags=(
-                        [entry.sensitivity_level, declared_data_class]
-                        if declared_data_class is not None
-                        else [entry.sensitivity_level]
-                    ),
-                    injection_detected=injection_detected,
-                    response_allowed=False,
-                )
+            await self._session.apply_inspection(
+                call_id=call_id,
+                sensitivity_tags=(
+                    [entry.sensitivity_level, declared_data_class]
+                    if declared_data_class is not None
+                    else [entry.sensitivity_level]
+                ),
+                injection_detected=injection_detected,
+                for_reset_count=_finalization.reset_count,
+                response_allowed=False,
+            )
             threat_categories = ",".join(
                 sorted({str(t.get("category", "unknown")) for t in scan.threats})
             )
@@ -1441,12 +1455,18 @@ class CMCPProxy:
         )
         injection_threshold = None
         _finalization.failure_stage = "session_update"
-        async with self._session.mutation_lock:
-            self._session.update_from_inspection(
-                call_id=call_id,
-                sensitivity_tags=response_sensitivity,
-                injection_detected=injection_detected,
-                response_allowed=True,
+        applied = await self._session.apply_inspection(
+            call_id=call_id,
+            sensitivity_tags=response_sensitivity,
+            injection_detected=injection_detected,
+            response_allowed=True,
+            for_reset_count=_finalization.reset_count,
+        )
+        if not applied:
+            logger.warning(
+                "SESSION_RESET_RACE: response for call_id=%s dropped from session "
+                "state; the session it was issued under was closed by a reset",
+                call_id,
             )
 
         # Step 5: egress Cedar policy check

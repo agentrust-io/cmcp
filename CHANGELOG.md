@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A response arriving during an operator reset raised the successor session.**
+  The per-session mutation lock serialised a reset and a response elevation but
+  did not order them, so whichever coroutine acquired it second won. A response
+  in flight when the reset landed was applied to the successor, which had just
+  been initialised to `public`, and recorded the pre-reset `call_id` as the call
+  that raised it. The successor exists to start at the minimum level, so this
+  carried the closed session's sensitivity across the boundary the reset drew.
+  `update_from_inspection()` now takes the `reset_count` observed at call entry
+  and drops a response whose generation no longer matches, logging
+  `SESSION_RESET_RACE`. The discriminator is `reset_count` rather than
+  `session_id` because `upgrade_attestation()` rotates the identifier while
+  deliberately continuing the same session, so a call in flight across an
+  attestation upgrade must still apply. The previous concurrency test asserted
+  only that `max_sensitivity` remained a member of `SENSITIVITY_ORDER`, which
+  every value satisfies.
+
+- **The reset route accepted the tool-invocation token.** `POST
+  /sessions/{id}/reset` is not reachable as an MCP tool, but it sat behind the
+  same single `CMCP_BEARER_TOKEN` as `POST /mcp`, so an agent host holding its
+  own tool-invocation credential could clear accumulated session sensitivity.
+  The operator interface (session reset and catalog exception) now takes
+  `CMCP_OPERATOR_TOKEN`, which must differ from `CMCP_BEARER_TOKEN` and is
+  required outside `CMCP_DEV_MODE=1` (`OPERATOR_TOKEN_REQUIRED`). Where it is
+  unset those routes still fall back to the bearer token, so an existing
+  single-token deployment keeps working until it sets the new variable.
+
+### Added
+
+- **The accumulated session-sensitivity value can now live in a shared,
+  persistent store** (`session_state_path`). Without one it is held in the
+  gateway process, so it is lost on restart while the session identifier the
+  agent host holds is still live, and where several instances serve one session
+  the ratchet holds per instance rather than per session: an agent that reads
+  sensitive data through one instance and egresses through another is evaluated
+  by an instance that never saw the read. `SqliteSessionStateStore` serialises
+  the read-modify-write with `BEGIN IMMEDIATE`, which takes SQLite's RESERVED
+  lock and so spans processes; an `asyncio.Lock` cannot, being invisible to every
+  other instance. A gateway now hydrates the session's stored value at call entry,
+  before the pre-call policy evaluation reads it. A reset also advances the closed
+  session's generation in the store, so an instance still holding the old
+  identifier stops applying responses to it. Unset is the default and preserves
+  the previous single-instance behaviour exactly.
+
+### Changed
+
+- The reset audit entry now identifies the session boundary rather than only the
+  sensitivity transition: `detail` carries the closed session identifier, the
+  successor identifier, the resulting reset counter, and which credential was
+  verified. `detail` is inside the canonical body, so those fields are covered by
+  the entry hash.
+
+- **The audit chain no longer attributes post-reset entries to the closed
+  session.** `AuditChain.rotate_session_id()` moves attribution to the successor
+  after the boundary entry is written, so the reset entry belongs to the session
+  that reached the recorded value and later entries belong to the successor.
+  Previously every entry after a reset carried the closed session's identifier
+  and the successor's identifier appeared nowhere in the chain.
+
+- A reset now preserves the closed session's final state as a distinct
+  `ClosedSessionRecord` instead of overwriting it, and
+  `POST /sessions/{id}/reset` returns `closed_session_max_sensitivity` and
+  `reset_count`.
+
 ## [0.5.0] - 2026-09-05
 
 ### Security
