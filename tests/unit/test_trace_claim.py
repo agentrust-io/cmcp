@@ -559,3 +559,46 @@ def test_software_only_claim_validates_against_json_schema():
     schema = json.loads(schema_path.read_text())
     claim = _make_claim()
     jsonschema.validate(instance=_to_dict(claim), schema=schema)
+
+
+def test_agent_identity_binding_with_intent_hash_and_enforcement_mode_validates_against_json_schema():
+    """#622: gateway.agent_identity's schema rejected intent_hash, agent_key_thumbprint,
+    and enforcement_mode, three of AgentIdentityOut's fields, even though the runtime
+    sets intent_hash and enforcement_mode from the Agent Manifest binding by default
+    (config.py's enforcement_mode default is "enforcing", startup.py always supplies
+    it). Any deployment with a manifest binding was signing a claim the project's own
+    normative schema rejected. This reproduces that shape end to end and pins the fix.
+    """
+    schema_path = pathlib.Path(__file__).parents[2] / "schemas" / "trace-claim.schema.json"
+    schema = json.loads(schema_path.read_text())
+    key = SigningKey()
+    chain = AuditChain("sess-622")
+    claim = generate_trace_claim(
+        session_id="sess-622",
+        signing_key=key,
+        attestation_report=_make_report(),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64,
+            enforcement_mode="enforcing",
+            policy_version="1.0.0",
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=_make_call_summary(),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        agent_identity=AgentIdentityInfo(
+            manifest_id="0197739a-8c00-7000-8000-000000000001",
+            agent_id="spiffe://factory.example/agent/material-movement/dev",
+            authenticated_subject="spiffe://factory.example/agent/material-movement/dev",
+            subject_source="config",
+            issuer="spiffe://factory.example/signing-authority/development",
+            issuer_key_id="a" * 64,
+            policy_bundle_hash="sha256:" + "0" * 64,
+            tool_catalog_hash="sha256:" + "1" * 64,
+            intent_hash="sha256:" + "b" * 64,
+            enforcement_mode="enforcing",
+        ),
+        do_sign=False,
+    )
+    jsonschema.validate(instance=_to_dict(claim), schema=schema)
