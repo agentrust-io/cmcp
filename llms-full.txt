@@ -946,6 +946,8 @@ Verification (no operator trust required):
 1. Check `gateway.catalog.hash` against the approved catalog hash on record
 1. Recompute `trace.tool_transcript.hash` and walk `gateway.audit_chain` root to tip for call-level detail
 
+**Schema evolution.** `schemas/trace-claim.schema.json` is versioned by `cmcp_version`, and objects under it, `gateway.agent_identity` included, gain new optional properties across minor updates as the evidence the runtime signs grows (issue #622 was one such addition). `additionalProperties: false` in this file is a producer-side authoring aid, catching typos and unintended fields in what cMCP itself emits, not a contract that external verifiers should replicate against a pinned, possibly-older copy of the schema. A verifier MUST NOT reject an otherwise-valid claim solely because it carries object members the verifier's copy of the schema does not yet declare; it SHOULD instead validate the members it recognizes and ignore the rest. This is the same problem tracked more generally at `agentrust-io/trace-spec#116`, evidence outliving the verifiers that check it, and #622 is its first concrete instance in cMCP.
+
 ______________________________________________________________________
 
 ## 6. Attestation Bindings (Phase 1 unique properties)
