@@ -12,7 +12,7 @@ import asyncio
 import json
 import sys
 import textwrap
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from types import SimpleNamespace
 
 import httpx
@@ -79,7 +79,9 @@ async def _gateway(tmp_path, monkeypatch, transport):
             pass  # A cancelled discovery deliberately terminates the child.
         finally:
             writer.close()
-            await writer.wait_closed()
+            # Windows reports the deliberately terminated child's reset here too.
+            with suppress(ConnectionResetError, BrokenPipeError):
+                await writer.wait_closed()
             gate_tasks.discard(task)
 
     gate = None
