@@ -25,6 +25,8 @@ cMCP compares what each upstream server advertises against the approved catalog 
 
 Separately, the approved description rather than the live one is what the gateway serves to the agent on `tools/list`, so a mutated description does not reach the model through cMCP even in the windows above. That is a structural property of proxying an approved catalog, not a detection result, and it does not extend to the tool's behaviour once called.
 
+HTTP and stdio discovery exhaust `tools/list` pagination before comparing either drift or provenance. A later-page failure, malformed discovery shape, duplicate tool name, repeated/cyclic cursor, or continuation beyond 1,000 pages makes the entire acquisition unchecked; no partial list is compared. Cursors are passed back unchanged, including an empty string. This bound limits page count, not total elapsed time or response bytes, and pagination does not establish an atomic snapshot of a changing server. This is acquisition validation, not full MCP schema validation or a new approval/hash policy. The unchecked-call behavior above is unchanged.
+
 **Phase 2 completeness: server-side attestation**
 Phase 1 attests the gateway boundary. It does not attest what happens on the other side of that boundary. The `tool_transcript.hash` field in the TRACE Claim records a hash of the audit chain tip, but the tool transcript binding that ties a specific tool execution to a specific response is Phase 2 work. Phase 1 partially addresses P1.4 (transitive trust into upstream dependencies) and P4.1 (typosquatted packages added to catalog) -- both are fully closed by Phase 2. Any compliance claim that relies on server-side proof must wait for Phase 2.
 

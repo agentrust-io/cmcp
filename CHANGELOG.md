@@ -130,6 +130,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Exhaust upstream `tools/list` pagination before drift and provenance
+  comparisons** (#631). HTTP and stdio share bounded acquisition: later-page
+  failures, malformed or ambiguous listings, and cursor cycles are unchecked,
+  never a comparison against a partial catalog. Existing drift policy and
+  unchecked-call behavior are unchanged. Observed by solloek369-arch on #566
+  and confirmed in #631 by Imran Siddique.
+
 - TLS pinning test fixtures set `minimum_version = TLSv1_2`; the server was built
   with `PROTOCOL_TLS_SERVER` and no floor, leaving TLSv1 and TLSv1.1 reachable in
   the test that asserts the gateway's transport rules.
