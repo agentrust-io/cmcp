@@ -111,7 +111,46 @@ the launch measurement and must be reported as a distinct evidence class, not fo
 
 1. **Lifecycle.** Implemented as children scoped to a session, reused by execution identity within it, and closed with that session. The original alternative was a pool across sessions. A pool is
    faster and leaks state between sessions, which is exactly the kind of cross-session
-   contamination the audit chain cannot see.
+   contamination the audit chain cannot see. "Closed with that session" covers every way a
+   session ends: an explicit `POST /sessions/{id}/close`, the gateway process exiting
+   with a session still live during graceful shutdown, and `POST /sessions/{id}/reset`,
+   which also retires a session id and opens a successor. Reset drains admitted calls
+   and releases the same session-scoped resources before it records the boundary, so
+   the successor never inherits a child, a pooled client, or a provenance entry from
+   the session it replaced. If a child fails to close, the current session ID and
+   audit boundary remain unchanged, admission stays sealed, and a retry closes the
+   retained child before recording the reset.
+   A call that arrives during a transition waits for it and is admitted to the
+   successor, but that wait is bounded: a transition that has already failed is
+   lifted only by a close retry or operator action, so a call waiting past the
+   bound is answered with the reason rather than held on an open socket.
+   Close blocks new calls,
+   waits up to `CMCP_SESSION_CLOSE_DRAIN_SECONDS` (default 30 seconds), then
+   requests cancellation and allows a further five seconds for calls to unwind.
+   If calls remain, close fails with `SessionDrainIncomplete` and admission stays
+   sealed; a retry must drain them before signing and rebinding. Partial claim
+   failure also seals admission and requires operator investigation. Successful
+   task completion alone does not prove audit completeness: a failed terminal
+   audit write prevents signing, rotation, reset, and further call admission.
+   Hydration failures and cancellations are included in terminal finalization.
+   Shutdown can still release resources without signing an incomplete claim.
+   Successful cleanup precedes rebinding; a child that fails to close is retained
+   for retry. Pooled HTTP clients are closed on a best-effort basis instead: an
+   `AsyncClient` marks itself closed and HTTPcore empties its pool before the
+   underlying streams are released, so a failed close leaves connections no retry
+   reaches through any public API. Such a client is dropped and the failure logged
+   rather than sealing the session, because it is reuse by the successor, not the
+   socket, that this lifecycle rule exists to prevent.
+   Graceful shutdown permanently rejects new work and resource acquisition,
+   drains active calls, and serializes spawning with cleanup. An incomplete
+   drain, or a child that could not be closed, is reported as shutdown failure
+   rather than success; a pooled client that could not be closed is logged and
+   does not fail the shutdown, for the reason given above. Hard
+   process termination cannot run this cleanup, and a shutdown that waits out an
+   in-flight close can need twice the drain budget before cleanup begins, so a
+   deployment's termination grace period has to exceed it or the cleanup is cut
+   short by the kill. These drain deadlines do not
+   bound arbitrary signing or transport cleanup time.
 2. **stderr.** The implementation logs diagnostics through the gateway logger and records a byte count in evidence. MCP servers write diagnostics there. Capturing it into the audit chain risks
    payload leakage into an artifact meant to be shareable; discarding it loses the only
    signal when a child misbehaves.

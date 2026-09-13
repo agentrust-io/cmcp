@@ -15,10 +15,12 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
@@ -31,7 +33,13 @@ from cmcp_runtime.catalog.loader import (
 )
 from cmcp_runtime.catalog.scanner import CatalogScanner
 from cmcp_runtime.config import Config, DriftPolicy
-from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
+from cmcp_runtime.errors import (
+    PolicyDeny,
+    SessionCloseIncomplete,
+    SessionDrainIncomplete,
+    UpstreamToolError,
+    UpstreamUnavailable,
+)
 from cmcp_runtime.execution import valid_execution_id
 from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.mcp.discovery import DiscoveryError, collect_tools
@@ -49,6 +57,7 @@ from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_runtime.session.state import SessionState, _max_sensitivity
 
 logger = logging.getLogger(__name__)
+
 
 _EXTERNAL_EVIDENCE_FIELDS: frozenset[str] = frozenset(
     {
@@ -206,6 +215,14 @@ def _extract_external_execution_evidence(response_text: str) -> dict[str, str] |
     return {field: receipt[field] for field in sorted(_EXTERNAL_EVIDENCE_FIELDS)}
 
 
+# Default matches the existing upstream HTTP timeout.
+SESSION_CLOSE_DRAIN_SECONDS = 30.0
+
+# Cancellation is cooperative; failure after this grace keeps admission sealed.
+SESSION_CANCELLATION_GRACE_SECONDS = 5.0
+
+
+
 class CMCPProxy:
     """
     Enforces every tool call through the cMCP runtime gateway:
@@ -279,6 +296,29 @@ class CMCPProxy:
         # Servers already warned about unenforceable pinning (warn once each).
         self._tls_pin_warned: set[str] = set()
         self._catalog_scanner = catalog_scanner
+        # #625: serialises first-use stdio spawns so two calls racing on the
+        # same server's first use cannot both spawn a child - see `_stdio_for`.
+        self._stdio_spawn_lock = asyncio.Lock()
+
+        # Calls drain before signing; failed transitions may keep admission sealed.
+        self._lifecycle_condition = asyncio.Condition()
+        # Ownership ends on failure; admission may remain sealed for retry.
+        self._transition_lock = asyncio.Lock()
+        self._active_calls = 0
+        self._active_call_tasks: set[asyncio.Task[Any]] = set()
+        self._session_rotation_in_progress = False
+        self._session_rebound = False
+        self._close_committed = False
+        self._drain_incomplete = False
+        self._cleanup_incomplete = False
+        # The drain deadline the current transition runs under. A waiting call
+        # bounds itself by this, so raising the configured deadline does not
+        # start rejecting calls an ordinary close would have admitted.
+        self._transition_drain_s = SESSION_CLOSE_DRAIN_SECONDS
+        # No safe reconstruction is available for a terminal that failed to
+        # persist. Keep this separate from drain state: shutdown can still reap.
+        self._failed_terminal_call: str | None = None
+        self._shutting_down = False
 
     def _reset_upstream_checks(self) -> None:
         # Drift and provenance share one completed paginated acquisition per
@@ -291,18 +331,272 @@ class CMCPProxy:
         self._provenance: dict[tuple[str, ...], ProvenanceResult] = {}
         self._drift_checked: set[tuple[str, ...]] = set()
 
-    def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
-        """
-        Point the proxy at a fresh session after the previous one was closed.
+    def _ensure_running(self) -> None:
+        if self._shutting_down:
+            raise UpstreamUnavailable("gateway is shutting down")
 
-        Call logs and first-contact checks are reset for the new session;
-        catalog, policy evaluator, and gateway are unchanged.
+    def _ensure_terminal_audit_complete(self) -> None:
+        if self._failed_terminal_call is not None:
+            raise SessionCloseIncomplete(
+                "A call's terminal audit write failed; signing or rotating this "
+                "session would omit an outcome. Operator investigation is required.",
+                detail=self._failed_terminal_call,
+            )
+
+    def _admission_wait_s(self) -> float:
+        """How long to wait out a transition: its own deadline, plus the grace."""
+        return self._transition_drain_s + SESSION_CANCELLATION_GRACE_SECONDS
+
+    def _raise_stuck_transition(self) -> NoReturn:
+        """Explain the transition a waiting call gave up on.
+
+        Waiting out a rotation is ordinary back-pressure; the successor admits
+        the call. Waiting on one that has already failed is not: only a close
+        retry or operator action lifts it, so the caller is told what to fix.
         """
+        if self._drain_incomplete:
+            raise SessionDrainIncomplete(
+                "calls from the closing session did not drain; a close retry "
+                "must finish draining before this gateway admits work again"
+            )
+        if self._close_committed:
+            raise SessionCloseIncomplete(
+                "the session was closed but no successor was adopted; retry "
+                "the close once the cause of the failure is cleared"
+            )
+        raise SessionCloseIncomplete(
+            f"a session transition did not complete within "
+            f"{self._admission_wait_s():g}s; the gateway is not admitting calls"
+        )
+
+    async def _enter_call(self) -> None:
+        async with self._lifecycle_condition:
+            # Only a transition in flight is worth waiting on, and waiting is
+            # the whole cost here: the deadline is set up per call otherwise.
+            if self._session_rotation_in_progress:
+                try:
+                    await asyncio.wait_for(
+                        self._lifecycle_condition.wait_for(
+                            lambda: self._shutting_down
+                            or self._failed_terminal_call is not None
+                            or not self._session_rotation_in_progress
+                        ),
+                        timeout=self._admission_wait_s(),
+                    )
+                except TimeoutError:
+                    self._raise_stuck_transition()
+            self._ensure_running()
+            self._ensure_terminal_audit_complete()
+            self._active_calls += 1
+            task = asyncio.current_task()
+            if task is not None:
+                self._active_call_tasks.add(task)
+
+    async def _leave_call(self) -> None:
+        async with self._lifecycle_condition:
+            self._active_calls -= 1
+            self._active_call_tasks.discard(asyncio.current_task())
+            if self._active_calls == 0 or self._failed_terminal_call is not None:
+                self._lifecycle_condition.notify_all()
+
+    async def _begin_session_rotation(
+        self, expected_session_id: str | None, *, drain_timeout: float
+    ) -> bool:
+        """Acquire admission exclusion; retry a failed drain without reopening it.
+
+        The caller owns _transition_lock. A committed close already drained;
+        an incomplete drain must still wait for the outstanding calls.
+        """
+        async with self._lifecycle_condition:
+            self._ensure_running()
+            if expected_session_id is not None and self._session.session_id != expected_session_id:
+                return False
+            if self._close_committed:
+                self._session_rotation_in_progress = True
+                return True
+            await self._seal_and_drain(drain_timeout)
+            return True
+
+    async def _seal_and_drain(self, drain_timeout: float) -> None:
+        """Block admission, then wait out the calls already admitted.
+
+        The caller owns _lifecycle_condition. A failure that needs operator
+        recovery keeps admission sealed; any other failure reopens it so one
+        failed transition does not take the gateway down with it.
+        """
+        self._session_rotation_in_progress = True
+        self._transition_drain_s = drain_timeout
+        try:
+            await self._drain_calls(drain_timeout)
+            self._ensure_terminal_audit_complete()
+        except BaseException:
+            if (
+                not self._drain_incomplete
+                and not self._cleanup_incomplete
+                and self._failed_terminal_call is None
+            ):
+                self._session_rotation_in_progress = False
+                self._lifecycle_condition.notify_all()
+            raise
+
+    async def _drain_calls(self, drain_timeout: float) -> None:
+        """Drain while holding the condition; wait releases it for call finalizers.
+
+        Once cancellation is requested, admission stays sealed on any failure.
+        A later transition can retry draining; only zero active calls clears
+        the incomplete state. Cancellation cannot forcibly stop a coroutine.
+        """
+        try:
+            await asyncio.wait_for(
+                self._lifecycle_condition.wait_for(lambda: self._active_calls == 0),
+                timeout=drain_timeout,
+            )
+        except TimeoutError:
+            self._drain_incomplete = True
+            for task in tuple(self._active_call_tasks):
+                task.cancel("session lifecycle drain deadline exceeded")
+            try:
+                await asyncio.wait_for(
+                    self._lifecycle_condition.wait_for(lambda: self._active_calls == 0),
+                    timeout=SESSION_CANCELLATION_GRACE_SECONDS,
+                )
+            except TimeoutError:
+                raise SessionDrainIncomplete(
+                    f"{self._active_calls} call(s) did not honor cancellation within "
+                    f"{SESSION_CANCELLATION_GRACE_SECONDS}s of the drain deadline",
+                    detail=str(self._active_calls),
+                ) from None
+        self._drain_incomplete = False
+
+    async def shutdown(self, *, drain_timeout: float = SESSION_CLOSE_DRAIN_SECONDS) -> None:
+        """Permanently reject admission, drain calls, then close owned resources.
+
+        Failed drain or cleanup is reported, not a successful shutdown. State
+        and resource ownership remain available for a shutdown retry. The spawn
+        lock also excludes a first-use start from the cleanup snapshot.
+        """
+        async with self._lifecycle_condition:
+            self._shutting_down = True
+            self._lifecycle_condition.notify_all()
+        async with self._transition_lock:
+            async with self._lifecycle_condition:
+                self._session_rotation_in_progress = True
+                await self._drain_calls(drain_timeout)
+            async with self._stdio_spawn_lock:
+                await self.aclose()
+
+    @asynccontextmanager
+    async def session_rotation(
+        self,
+        *,
+        expected_session_id: str | None = None,
+        drain_timeout: float = SESSION_CLOSE_DRAIN_SECONDS,
+    ) -> AsyncIterator[bool]:
+        """Serialize close attempts while blocking admission across retries.
+
+        Active calls drain before yielding. Once the caller marks irreversible
+        close work, failure keeps admission sealed, but releases transition
+        ownership so another close request can recover. A stale session ID
+        yields False. Only successful rebind reopens a closing session.
+        """
+        async with self._transition_lock:
+            acquired = await self._begin_session_rotation(
+                expected_session_id, drain_timeout=drain_timeout
+            )
+            if not acquired:
+                yield False
+                return
+            self._session_rebound = False
+            try:
+                yield True
+            finally:
+                async with self._lifecycle_condition:
+                    if (
+                        not self._shutting_down
+                        and not self._drain_incomplete
+                        and not self._cleanup_incomplete
+                        and self._failed_terminal_call is None
+                        and (self._session_rebound or not self._close_committed)
+                    ):
+                        self._session_rotation_in_progress = False
+                        self._lifecycle_condition.notify_all()
+
+    def mark_close_committed(self) -> None:
+        """Seal admission after irreversible close work, including partial failure.
+
+        The caller must hold session_rotation. This does not assert that a
+        signature exists; it prevents further mutation once close has started.
+        """
+        if not self._session_rotation_in_progress:
+            raise RuntimeError("mark_close_committed requires an active session_rotation")
+        self._close_committed = True
+
+    @asynccontextmanager
+    async def exclude_session_transition(
+        self,
+        *,
+        expected_session_id: str | None = None,
+        drain_timeout: float = SESSION_CLOSE_DRAIN_SECONDS,
+    ) -> AsyncIterator[bool]:
+        """Serialize reset against close, and drain before the caller's boundary.
+
+        Reset ends a session and opens a successor, so it releases the same
+        session-scoped resources close does (#625). Draining first is what
+        makes releasing them safe: an admitted call may still hold the child,
+        and closing it underneath that call would break it.
+
+        Reject a reset of a session awaiting close recovery. Waiting while
+        holding transition ownership would prevent that recovery from running.
+        """
+        async with self._transition_lock:
+            if (
+                expected_session_id is not None
+                and self._session.session_id != expected_session_id
+            ):
+                yield False
+                return
+            async with self._lifecycle_condition:
+                self._ensure_running()
+                self._ensure_terminal_audit_complete()
+                if self._drain_incomplete:
+                    if self._active_calls:
+                        raise SessionDrainIncomplete("session drain requires recovery")
+                    # A prior reset timed out, but every cancelled call has now
+                    # reached a terminal state. Retry the same reset safely.
+                    self._drain_incomplete = False
+                if self._close_committed:
+                    raise SessionCloseIncomplete("session close requires recovery")
+                await self._seal_and_drain(drain_timeout)
+            try:
+                yield True
+            finally:
+                async with self._lifecycle_condition:
+                    # Mirrors session_rotation: a failure needing operator
+                    # recovery keeps admission sealed rather than serving the
+                    # successor from a session that did not finish unwinding.
+                    if (
+                        not self._shutting_down
+                        and not self._drain_incomplete
+                        and not self._cleanup_incomplete
+                        and self._failed_terminal_call is None
+                    ):
+                        self._session_rotation_in_progress = False
+                        self._lifecycle_condition.notify_all()
+
+    async def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
+        """Close resources before adopting the successor inside session_rotation."""
+        if not self._session_rotation_in_progress:
+            raise RuntimeError("rebind_session requires an active session_rotation")
+        if self._session_rebound:
+            raise RuntimeError("session has already been rebound")
+        self._ensure_terminal_audit_complete()
+        await self.aclose()
         self._session = session
         self._audit = audit_chain
         self._call_log = CallLog(session_id=session.session_id)
         self._session_call_log = SessionCallLog(session_id=session.session_id)
-        self._reset_upstream_checks()
+        self._session_rebound = True
+        self._close_committed = False
 
     def _warn_pin_unenforced(self, server_url: str, reason: str) -> None:
         """Log TLS_PIN_UNENFORCED once per server URL (#281, dev/demo paths)."""
@@ -342,6 +636,7 @@ class CMCPProxy:
         pinned are not the same peer, and must not share state meant to be
         scoped to one.
         """
+        self._ensure_running()
         server_url = entry.server.url
         fingerprint = entry.server.tls_fingerprint
         scheme = httpx.URL(server_url).scheme.lower()
@@ -383,10 +678,19 @@ class CMCPProxy:
         return client
 
     async def _stdio_for(self, entry: CatalogEntry) -> StdioServer:
-        """The child for this server, spawned on first use in this session."""
+        """Return the session-owned child, serializing first use with shutdown."""
+        self._ensure_running()
         key = _server_execution_key(entry)
         server = self._stdio_servers.get(key)
-        if server is None:
+        if server is not None:
+            return server
+        async with self._stdio_spawn_lock:
+            self._ensure_running()
+            # Re-check: a coroutine that waited for the lock may find another
+            # already finished spawning this key while it waited.
+            server = self._stdio_servers.get(key)
+            if server is not None:
+                return server
             if entry.server.spawn is None:
                 raise UpstreamUnavailable(
                     f"catalog entry {entry.tool_name!r} declares stdio transport with no "
@@ -398,14 +702,70 @@ class CMCPProxy:
             )
             await server.start()
             self._stdio_servers[key] = server
-        return server
+            return server
 
     async def aclose(self) -> None:
-        """Terminate spawned children. A session that ends leaves nothing running."""
-        for server in self._stdio_servers.values():
-            await server.close()
-        self._stdio_servers.clear()
+        """Close owned resources: children retryably, HTTP clients best-effort.
+
+        Callers must exclude admission and resource creation before cleanup.
+
+        A child that fails to close is retained and its failure propagates: the
+        process is still live, still owns the handle, and a retry can still reap
+        it. An HTTP client cannot offer the same guarantee. `AsyncClient` marks
+        itself closed and HTTPcore empties its pool before the underlying
+        streams are released, so a failed close leaves connections that no retry
+        reaches through any public API. Retaining such a client would advertise a
+        recovery that does not exist, so it is dropped and the failure logged.
+        Dropping it is what the successor needs anyway: it is the reuse, not the
+        socket, that #625 is about.
+        """
+        stdio_items = tuple(self._stdio_servers.items())
+        http_items = tuple(self._http_clients.items())
         self._reset_upstream_checks()
+
+        if not stdio_items and not http_items:
+            self._cleanup_incomplete = False
+            return
+        try:
+            results = await asyncio.gather(
+                *(server.close() for _, server in stdio_items),
+                *(client.aclose() for _, client in http_items),
+                return_exceptions=True,
+            )
+        except BaseException:
+            self._cleanup_incomplete = True
+            raise
+        # Every close is attempted even if an earlier one raises (gather with
+        # return_exceptions=True), so one stuck child cannot leak the rest.
+        stdio_results = results[: len(stdio_items)]
+        http_results = results[len(stdio_items) :]
+        failures: list[BaseException] = []
+        for (stdio_key, _), result in zip(stdio_items, stdio_results, strict=True):
+            if isinstance(result, BaseException):
+                failures.append(result)
+            else:
+                del self._stdio_servers[stdio_key]
+        for (http_key, _), result in zip(http_items, http_results, strict=True):
+            del self._http_clients[http_key]
+            if isinstance(result, BaseException):
+                logger.error(
+                    "session-owned HTTP client for %s failed to close and was "
+                    "dropped; its connections may be leaked: %r",
+                    http_key,
+                    result,
+                )
+
+        # Only the first failure propagates; it is logged with how many others
+        # also failed so a partial-cleanup failure is not read as a single one.
+        if failures:
+            self._cleanup_incomplete = True
+            if len(failures) > 1:
+                logger.error(
+                    "%d session-owned children failed to close; raising the first",
+                    len(failures),
+                )
+            raise failures[0]
+        self._cleanup_incomplete = False
 
     async def _advertised_tools(self, entry: CatalogEntry) -> list[dict[str, Any]] | None:
         """One first-contact acquisition shared by drift and provenance checks.
@@ -945,6 +1305,10 @@ class CMCPProxy:
                 external_execution_evidence=(finalization.external_execution_evidence),
             )
         except (Exception, asyncio.CancelledError) as persistence_exc:
+            # A finished task is not proof of a recorded outcome. Retain the
+            # first failure before admission accounting can let close proceed.
+            if self._failed_terminal_call is None:
+                self._failed_terminal_call = call_id
             exc.add_note(
                 "terminal audit persistence failed with "
                 f"{type(persistence_exc).__name__} during "
@@ -963,38 +1327,33 @@ class CMCPProxy:
     ) -> CallResult:
         """Run one call and guarantee one terminal on failure or cancellation."""
         finalization = _CallFinalizationState()
-        # Adopt the session's shared value before anything evaluates this call.
-        # An instance joining a session another instance opened, or one that has
-        # restarted, would otherwise evaluate the first call against its own
-        # empty copy and permit what the session's accumulated value forbids.
-        # No-op when no shared store is configured.
-        await self._session.hydrate()
-        # The session generation this call was issued under, read after hydration
-        # so a reset performed on another instance is already visible. A reset
-        # arriving mid-call closes that session, and this response must not raise
-        # the successor.
-        finalization.reset_count = self._session.reset_count
+        await self._enter_call()
         try:
-            return await self._call_tool_impl(
-                call_id,
-                tool_name,
-                arguments,
-                workflow_id,
-                declared_data_class,
-                execution_id=execution_id,
-                _finalization=finalization,
-            )
-        except BaseException as exc:
-            if not isinstance(exc, (Exception, asyncio.CancelledError)):
+            try:
+                await self._session.hydrate()
+                finalization.reset_count = self._session.reset_count
+                return await self._call_tool_impl(
+                    call_id,
+                    tool_name,
+                    arguments,
+                    workflow_id,
+                    declared_data_class,
+                    execution_id=execution_id,
+                    _finalization=finalization,
+                )
+            except BaseException as exc:
+                if not isinstance(exc, (Exception, asyncio.CancelledError)):
+                    raise
+                self._finalize_unexpected_call_failure(
+                    finalization,
+                    exc,
+                    call_id=call_id,
+                    tool_name=tool_name,
+                    workflow_id=workflow_id,
+                )
                 raise
-            self._finalize_unexpected_call_failure(
-                finalization,
-                exc,
-                call_id=call_id,
-                tool_name=tool_name,
-                workflow_id=workflow_id,
-            )
-            raise
+        finally:
+            await self._leave_call()
 
     async def _call_tool_impl(
         self,

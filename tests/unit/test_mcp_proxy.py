@@ -728,3 +728,66 @@ async def test_float_arguments_do_not_fail_policy_evaluation():
     result = await proxy.call_tool("c1", "test.tool", {"risk_score": 72.3})
     assert result.allowed is True
     assert captured["arguments"] == {"risk_score": "72.3"}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_use_spawns_exactly_one_stdio_child(monkeypatch):
+    import asyncio
+
+    from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
+    from cmcp_runtime.mcp import proxy as proxy_module
+    from cmcp_runtime.mcp.stdio import StdioSpawn
+
+    entry = CatalogEntry(
+        tool_name="stdio.tool",
+        server=ServerIdentity(
+            display_name="stdio test server",
+            url="",
+            tls_fingerprint="",
+            spiffe_id=None,
+            transport="stdio",
+            rotation_mode="key-pinned",
+            spawn=StdioSpawn(
+                command="unused", args=(), binary_digest=None, measure_target="unused"
+            ),
+        ),
+        approved_definition=ApprovedDefinition(
+            description="stdio test tool", input_schema={}, output_schema=None
+        ),
+        definition_hash="sha256:" + "0" * 64,
+        compliance_domain="public",
+        requires_baa=False,
+        sensitivity_level="public",
+        added_at="2026-09-12T00:00:00Z",
+        approved_by="test",
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    spawned = []
+
+    class SlowFakeStdioServer:
+        def __init__(self, *args, **kwargs):
+            spawned.append(self)
+
+        async def start(self):
+            started.set()
+            await release.wait()
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(proxy_module, "StdioServer", SlowFakeStdioServer)
+    proxy, _, _ = _make_proxy()
+
+    task_a = asyncio.create_task(proxy._stdio_for(entry))
+    await started.wait()
+    task_b = asyncio.create_task(proxy._stdio_for(entry))
+    await asyncio.sleep(0)  # let task_b reach the lock and block on it
+
+    release.set()
+    server_a, server_b = await asyncio.gather(task_a, task_b)
+
+    assert len(spawned) == 1, f"expected exactly one spawn, got {len(spawned)}"
+    assert server_a is server_b
+    assert proxy._stdio_servers[_server_execution_key(entry)] is server_a

@@ -389,6 +389,43 @@ def test_close_session_fails_closed_on_hardware_platform_when_tee_fails() -> Non
         mgr.close_session(state.session_id, state, chain)
 
 
+def test_close_session_retry_after_partial_failure_does_not_double_append() -> None:
+    ctx = _make_ctx()
+    ctx.attestation_report.provider = "sev-snp"
+    ctx.tee_provider.get_attestation_report.side_effect = RuntimeError("TEE down")
+
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+
+    with pytest.raises(TeeFault, match="chain-root commitment"):
+        mgr.close_session(state.session_id, state, chain)
+    session_end_count = sum(1 for e in chain.entries if e.entry_type == "session_end")
+    assert session_end_count == 1
+
+    # Retry on the same chain: must not append a second session_end, and must
+    # not attempt to produce a claim for a close that already partially ran.
+    from cmcp_runtime.errors import SessionCloseIncomplete
+
+    with pytest.raises(SessionCloseIncomplete):
+        mgr.close_session(state.session_id, state, chain)
+    session_end_count = sum(1 for e in chain.entries if e.entry_type == "session_end")
+    assert session_end_count == 1, "retry must not double-append session_end"
+    assert mgr.get_trace_claim(state.session_id) is None
+
+
+def test_close_session_retry_returns_cached_claim_if_first_attempt_fully_succeeded() -> None:
+    ctx = _make_ctx()
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+
+    first_claim = mgr.close_session(state.session_id, state, chain)
+    second_claim = mgr.close_session(state.session_id, state, chain)
+
+    assert second_claim == first_claim
+    session_end_count = sum(1 for e in chain.entries if e.entry_type == "session_end")
+    assert session_end_count == 1, "retry after full success must not double-append either"
+
+
 # ── #479 piece 2: per call data class in the transcript ────────────────────────
 
 
@@ -426,3 +463,18 @@ def test_transcript_falls_back_to_catalog_when_no_effective_data_class() -> None
     claim = mgr.close_session(state.session_id, state, chain)
     entries = claim["trace"]["tool_transcript"]["entries"]
     assert entries[0]["data_class"] == "pii"
+
+
+def test_partial_close_guard_survives_later_audit_entry():
+    from cmcp_runtime.errors import SessionCloseIncomplete, TeeFault
+
+    ctx = _make_ctx()
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    ctx.attestation_report.provider = 'hardware'
+    with pytest.raises(TeeFault):
+        mgr.close_session(state.session_id, state, chain)
+    chain.append('session_reset')
+    with pytest.raises(SessionCloseIncomplete):
+        mgr.close_session(state.session_id, state, chain)
+    assert sum(e.entry_type == 'session_end' for e in chain.entries) == 1

@@ -374,8 +374,11 @@ class StdioServer:
             )
 
     async def close(self) -> None:
-        proc, self._proc = self._proc, None
-        if proc is None or proc.returncode is not None:
+        proc = self._proc
+        if proc is None:
+            return
+        if proc.returncode is not None:
+            self._proc = None
             return
         try:
             if proc.stdin is not None:
@@ -386,7 +389,9 @@ class StdioServer:
             proc.kill()
             await proc.wait()
         except ProcessLookupError:
-            pass
+            await proc.wait()
+        # Cancellation or failure above retains ownership for a later retry.
+        self._proc = None
 
 
 def _text_content(result: Any) -> str:

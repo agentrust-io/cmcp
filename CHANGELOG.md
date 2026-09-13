@@ -35,6 +35,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unset those routes still fall back to the bearer token, so an existing
   single-token deployment keeps working until it sets the new variable.
 
+- **Session close retained stdio children and per-session upstream caches.**
+  (`#625`) `rebind_session()` rotated the audit chain and call logs but never
+  called `aclose()`, so the stdio child, pooled HTTP clients, and the
+  provenance/drift-checked caches all survived a close and were reused by the
+  next session - the exact cross-session contamination `docs/spec/stdio-transport.md`
+  names as the reason children are scoped to one session rather than pooled.
+  Close now serializes session transitions, drains admitted calls before
+  signing, cleans up resources before rebinding, and preserves claim and
+  resource ownership across retryable failures. Partial claim failures keep
+  admission sealed and are reported for operator investigation. A failed
+  cancellation drain also keeps admission sealed until a close retry can
+  drain the remaining work. Graceful shutdown rejects new work and resource
+  acquisition, drains active calls, and coordinates spawning with cleanup;
+  an incomplete drain is reported as failure. Concurrent first-use stdio
+  spawning is serialized to avoid creating an untracked second child.
+  Cancellation during session hydration is finalized before signing; a failed
+  terminal audit write prevents signing or rotating an incomplete claim.
+  `POST /sessions/{id}/reset` retires a session id and opens a successor, so it
+  leaked the same resources for the same reason; it now drains admitted calls
+  and releases them before recording the boundary, which also leaves a failed
+  reset retryable with the session untouched. A reset naming an already-rotated
+  session is rejected before draining, so it cannot cancel the successor's
+  in-flight calls. A child that fails to close is retained for retry; a pooled
+  HTTP client that fails to close is dropped and logged instead, because an
+  `AsyncClient` marks itself closed and HTTPcore empties its pool before the
+  streams are released, leaving nothing a retry could reach. A call arriving
+  during a transition still waits for the successor, but the wait is bounded:
+  a close that cannot resolve, such as one whose successor creation keeps
+  failing, now answers callers with the reason instead of blocking them
+  indefinitely.
+
 ### Added
 
 - **The accumulated session-sensitivity value can now live in a shared,

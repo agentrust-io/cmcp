@@ -88,6 +88,9 @@ def _make_proxy(*, allowed: bool = True) -> MagicMock:
     )
     proxy = MagicMock()
     proxy._catalog = catalog
+    # Session transitions release session-scoped resources (#625); the real
+    # aclose() is a coroutine, so an auto-specced MagicMock will not do.
+    proxy.aclose = AsyncMock()
 
     if allowed:
         # Return allowed for known tools; denied for unknown tools (catalog miss).

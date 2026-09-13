@@ -215,7 +215,8 @@ async def test_rebind_rechecks_discovery_drift_and_provenance():
 
         session = SessionState(session_id="next-session")
         chain = AuditChain(session_id=session.session_id)
-        proxy.rebind_session(session, chain)
+        async with proxy.session_rotation():
+            await proxy.rebind_session(session, chain)
         assert await proxy._check_upstream_drift(entry) is True
         assert await proxy._check_provenance(entry) == changed
         assert check.call_count == 2
@@ -227,10 +228,14 @@ async def test_rebind_rechecks_discovery_drift_and_provenance():
     assert len([item for item in chain.entries if item.entry_type == "catalog_drift"]) == 1
 
 
-async def test_rebind_discards_old_inflight_result_and_retries_old_waiters():
-    """Neither an old acquisition nor a waiter may publish into the next session."""
+async def test_cache_generation_discards_inflight_result_and_retries_waiters():
+    """Private cache-unit coverage, not permission to rebind during public calls.
+
+    The production lifecycle drains admitted calls before resetting these caches.
+    This directly exercises the acquisition's defensive cache-identity check.
+    """
     catalog = _catalog()
-    proxy, _, old_chain = _proxy(catalog, drift_policy=DriftPolicy.FAIL_CLOSED)
+    proxy, session, chain = _proxy(catalog, drift_policy=DriftPolicy.FAIL_CLOSED)
     entry = catalog.entries["lookup_customer"]
     started, release, second_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
     attempts = 0
@@ -253,11 +258,9 @@ async def test_rebind_discards_old_inflight_result_and_retries_old_waiters():
     await asyncio.wait_for(started.wait(), timeout=1)
     old_waiting = asyncio.create_task(old_waiter())
     await asyncio.wait_for(second_started.wait(), timeout=1)
-    session = SessionState(session_id="next-session")
-    chain = AuditChain(session_id=session.session_id)
-    proxy.rebind_session(session, chain)
+    proxy._reset_upstream_checks()
     try:
-        # The new session must not wait for the old session's acquisition lock.
+        # The new cache generation must not reuse the old acquisition lock.
         assert await asyncio.wait_for(proxy._check_upstream_drift(entry), timeout=1) is False
     finally:
         release.set()
@@ -267,5 +270,69 @@ async def test_rebind_discards_old_inflight_result_and_retries_old_waiters():
     assert await proxy._advertised_tools(entry) == _advertise()
     assert proxy._discover_tools.await_count == 2
     assert session.catalog_drift is False
-    assert not any(item.entry_type == "catalog_drift" for item in old_chain.entries)
     assert not any(item.entry_type == "catalog_drift" for item in chain.entries)
+
+
+@pytest.mark.parametrize("child_fails", [False, True], ids=["no-resources", "failed-child"])
+async def test_rebind_invalidates_all_discovery_caches_before_cleanup(child_fails):
+    """Empty cleanup and retryable failure both discard first-contact observations."""
+    catalog = _catalog()
+    proxy, old_session, old_chain = _proxy(catalog, drift_policy=DriftPolicy.FAIL_CLOSED)
+    entry = catalog.entries["lookup_customer"]
+    proxy._discover_tools = AsyncMock(return_value=_advertise())
+    assert await proxy._check_upstream_drift(entry) is False
+    await proxy._check_provenance(entry)
+    old_caches = (
+        proxy._advertised,
+        proxy._discovery_locks,
+        proxy._provenance,
+        proxy._drift_checked,
+    )
+    assert all(old_caches)
+
+    def assert_invalidated():
+        for old, current in zip(
+            old_caches,
+            (
+                proxy._advertised,
+                proxy._discovery_locks,
+                proxy._provenance,
+                proxy._drift_checked,
+            ),
+            strict=True,
+        ):
+            assert current is not old
+            assert not current
+
+    session = SessionState(session_id="next-session")
+    chain = AuditChain(session_id=session.session_id)
+    if child_fails:
+
+        async def fail_close():
+            # Invalidate before the first resource-cleanup await, not just on success.
+            assert_invalidated()
+            raise OSError("injected child close failure")
+
+        child = AsyncMock()
+        child.close.side_effect = fail_close
+        proxy._stdio_servers[("test-child",)] = child
+        with pytest.raises(OSError, match="injected child close failure"):
+            async with proxy.session_rotation():
+                await proxy.rebind_session(session, chain)
+        assert proxy._session is old_session
+        assert proxy._audit is old_chain
+        assert proxy._stdio_servers[("test-child",)] is child
+        assert proxy._cleanup_incomplete
+        assert proxy._session_rotation_in_progress
+        assert not proxy._session_rebound
+        child.close.side_effect = None
+
+    async with proxy.session_rotation():
+        await proxy.rebind_session(session, chain)
+    assert_invalidated()
+    assert proxy._session is session
+    assert proxy._audit is chain
+    assert not proxy._stdio_servers
+    assert not proxy._cleanup_incomplete
+    assert not proxy._session_rotation_in_progress
+    assert proxy._session_rebound
