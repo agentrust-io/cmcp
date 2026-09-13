@@ -487,7 +487,7 @@ async def test_cancelled_later_list_page_closes_child_before_another_call(tmp_pa
         for line in sys.stdin:
             req = json.loads(line)
             if req["params"].get("cursor") == "second":
-                sys.stderr.write("later-page-received\\n")
+                sys.stderr.buffer.write(b"later-page-received\\n")
                 sys.stderr.flush()
                 sys.stdin.readline()
                 result = {"tools": [{"name": "late", "inputSchema": {}}]}
