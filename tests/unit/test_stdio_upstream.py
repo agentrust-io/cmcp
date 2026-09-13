@@ -9,6 +9,7 @@ would leave the feature working and the argument for it gone.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import stat
@@ -384,4 +385,165 @@ async def test_list_tools_returns_none_rather_than_raising(tmp_path) -> None:
     try:
         assert await server.list_tools() is None
     finally:
+        await server.close()
+
+
+def _paginated_list_server(tmp_path, pages):
+    return _script(
+        tmp_path,
+        f"""
+        import json, sys
+        pages = {pages!r}
+        requests = []
+        for line in sys.stdin:
+            req = json.loads(line)
+            if req["method"] == "tools/list":
+                requests.append(req["params"])
+                reply = pages[min(len(requests) - 1, len(pages) - 1)]
+            else:
+                reply = {{"result": {{"content": [
+                    {{"type": "text", "text": json.dumps(requests)}},
+                ]}}}}
+            body = {{"jsonrpc": "2.0", "id": req["id"], **reply}}
+            sys.stdout.write(json.dumps(body) + "\\n")
+            sys.stdout.flush()
+        """,
+    )
+
+
+async def test_list_tools_exhausts_pages_with_opaque_and_empty_cursors(tmp_path) -> None:
+    tools = [
+        {"name": "search", "description": "search", "inputSchema": {}},
+        {"name": "fetch", "description": "fetch", "inputSchema": {}},
+    ]
+    opaque_cursor = "  page/%2F+雪==  "
+    script = _paginated_list_server(
+        tmp_path,
+        [
+            {"result": {"tools": tools[:1], "nextCursor": ""}},
+            {"result": {"tools": [], "nextCursor": opaque_cursor}},
+            {"result": {"tools": tools[1:]}},
+        ],
+    )
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    try:
+        assert await asyncio.wait_for(server.list_tools(), timeout=2) == tools
+        requests = json.loads(await server.call("after-list", "requests", {}))
+        assert requests == [{}, {"cursor": ""}, {"cursor": opaque_cursor}]
+    finally:
+        await server.close()
+
+
+@pytest.mark.parametrize(
+    "later_pages",
+    [
+        [{"error": {"code": -32603, "message": "listing failed"}}],
+        [{"result": {"tools": {}}}],
+        [{"result": {"tools": [{"name": 7, "inputSchema": {}}]}}],
+        [{"result": {"tools": [], "nextCursor": None}}],
+        [{"result": {"tools": [], "nextCursor": 0}}],
+        [{"result": {"tools": [{"name": "search", "inputSchema": {}}]}}],
+        [{"result": {"tools": [], "nextCursor": "next"}}],
+        [
+            {"result": {"tools": [], "nextCursor": "another"}},
+            {"result": {"tools": [], "nextCursor": "next"}},
+        ],
+    ],
+    ids=[
+        "rpc-error", "malformed-tools", "malformed-name", "null-cursor", "numeric-cursor",
+        "duplicate-name", "repeated-cursor", "cursor-cycle",
+    ],
+)
+async def test_list_tools_discards_partial_pages_without_desynchronizing(
+    tmp_path, later_pages
+) -> None:
+    script = _paginated_list_server(
+        tmp_path,
+        [
+            {"result": {"tools": [{"name": "search", "inputSchema": {}}],
+                        "nextCursor": "next"}},
+            *later_pages,
+        ],
+    )
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    try:
+        assert await asyncio.wait_for(server.list_tools(), timeout=2) is None
+        requests = json.loads(await server.call("after-list", "requests", {}))
+        expected = [{}, {"cursor": "next"}]
+        if len(later_pages) == 2:
+            expected.append({"cursor": "another"})
+        assert requests == expected
+    finally:
+        await server.close()
+
+
+async def test_mismatched_later_list_response_discards_pages_and_closes_child(
+    tmp_path, caplog
+) -> None:
+    script = _paginated_list_server(
+        tmp_path,
+        [
+            {"result": {"tools": [{"name": "search", "inputSchema": {}}],
+                        "nextCursor": "next"}},
+            {"id": "wrong-page-id-do-not-log", "result": {
+                "tools": [{"name": "fetch", "inputSchema": {}}],
+            }},
+        ],
+    )
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    proc = server._proc
+    assert proc is not None
+    try:
+        assert await asyncio.wait_for(server.list_tools(), timeout=2) is None
+        assert proc.returncode is not None
+        assert server._proc is None
+        assert "tools discovery incomplete: upstream request failed" in caplog.text
+        assert "wrong-page-id-do-not-log" not in caplog.text
+        with pytest.raises(UpstreamUnavailable, match="not running"):
+            await server.call("after-invalid-list", "search", {})
+    finally:
+        await server.close()
+
+
+async def test_cancelled_later_list_page_closes_child_before_another_call(tmp_path) -> None:
+    script = _script(
+        tmp_path,
+        """
+        import json, sys
+        for line in sys.stdin:
+            req = json.loads(line)
+            if req["params"].get("cursor") == "second":
+                sys.stderr.buffer.write(b"later-page-received\\n")
+                sys.stderr.flush()
+                sys.stdin.readline()
+                result = {"tools": [{"name": "late", "inputSchema": {}}]}
+            else:
+                result = {"tools": [], "nextCursor": "second"}
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req["id"],
+                                         "result": result}) + "\\n")
+            sys.stdout.flush()
+        """,
+    )
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    proc = server._proc
+    assert proc is not None and proc.stderr is not None
+    task = asyncio.create_task(server.list_tools())
+    try:
+        assert await asyncio.wait_for(proc.stderr.readline(), timeout=2) == (
+            b"later-page-received\n"
+        )
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert proc.returncode is not None
+        assert server._proc is None
+        with pytest.raises(UpstreamUnavailable, match="not running"):
+            await server.call("after-cancel", "search", {})
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         await server.close()

@@ -34,6 +34,7 @@ from cmcp_runtime.config import Config, DriftPolicy
 from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
 from cmcp_runtime.execution import valid_execution_id
 from cmcp_runtime.mcp import tls_pinning
+from cmcp_runtime.mcp.discovery import DiscoveryError, collect_tools
 from cmcp_runtime.mcp.stdio import StdioServer
 from cmcp_runtime.mcp.streamable_http import (
     build_request,
@@ -412,21 +413,26 @@ class CMCPProxy:
         """
         if entry.server.is_stdio:
             return await (await self._stdio_for(entry)).list_tools()
-        try:
+
+        async def fetch_page(request_id: str, params: dict[str, Any]) -> dict[str, Any]:
+            payload, headers = build_request(request_id, "tools/list", params)
             client = self._client_for_upstream(entry)
-            payload, headers = build_request("provenance-tools-list", "tools/list", {})
             resp = await client.post(
                 entry.server.url,
                 json=payload,
                 headers=headers,
             )
             resp.raise_for_status()
-            result = parse_response(resp, "provenance-tools-list").get("result")
-        except Exception as exc:  # noqa: BLE001 - any failure means "could not check"
-            logger.warning("could not list tools for provenance check: %s", exc)
-            return None
-        tools = result.get("tools") if isinstance(result, dict) else None
-        return tools if isinstance(tools, list) else None
+            return parse_response(resp, request_id)
+
+        try:
+            return await collect_tools(fetch_page)
+        except DiscoveryError as exc:
+            logger.warning("tools discovery incomplete: %s", exc)
+        except Exception:  # noqa: BLE001 - any acquisition failure means "could not check"
+            # Upstream exceptions may contain response bodies or opaque cursors.
+            logger.warning("tools discovery incomplete: upstream request failed")
+        return None
 
     async def _check_upstream_drift(self, entry: CatalogEntry) -> bool:
         """Compare what a server advertises against what we approved (P4.2).
@@ -449,7 +455,13 @@ class CMCPProxy:
             return self._session.catalog_drift
         self._drift_checked.add(key)
 
-        advertised = await self._advertised_tools(entry)
+        try:
+            advertised = await self._advertised_tools(entry)
+        except asyncio.CancelledError:
+            # A cancelled read is not a completed first-contact check. Retain
+            # the existing cache behavior for ordinary unchecked outcomes.
+            self._drift_checked.discard(key)
+            raise
         if advertised is None:
             logger.info(
                 "upstream drift: server=%s outcome=unchecked (server would not list tools)",
