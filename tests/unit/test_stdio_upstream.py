@@ -479,6 +479,35 @@ async def test_list_tools_discards_partial_pages_without_desynchronizing(
         await server.close()
 
 
+async def test_mismatched_later_list_response_discards_pages_and_closes_child(
+    tmp_path, caplog
+) -> None:
+    script = _paginated_list_server(
+        tmp_path,
+        [
+            {"result": {"tools": [{"name": "search", "inputSchema": {}}],
+                        "nextCursor": "next"}},
+            {"id": "wrong-page-id-do-not-log", "result": {
+                "tools": [{"name": "fetch", "inputSchema": {}}],
+            }},
+        ],
+    )
+    server = StdioServer(_spawn_for(script, None), allow_unmeasured=True)
+    await server.start()
+    proc = server._proc
+    assert proc is not None
+    try:
+        assert await asyncio.wait_for(server.list_tools(), timeout=2) is None
+        assert proc.returncode is not None
+        assert server._proc is None
+        assert "tools discovery incomplete: upstream request failed" in caplog.text
+        assert "wrong-page-id-do-not-log" not in caplog.text
+        with pytest.raises(UpstreamUnavailable, match="not running"):
+            await server.call("after-invalid-list", "search", {})
+    finally:
+        await server.close()
+
+
 async def test_cancelled_later_list_page_closes_child_before_another_call(tmp_path) -> None:
     script = _script(
         tmp_path,
