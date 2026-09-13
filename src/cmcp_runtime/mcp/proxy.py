@@ -275,31 +275,34 @@ class CMCPProxy:
         # in memory would carry it from one agent's session into the next, and
         # the audit chain cannot see that happen (docs/spec/stdio-transport.md).
         self._stdio_servers: dict[tuple[str, ...], StdioServer] = {}
-        # Provenance outcome per server, decided once per session on first use.
-        # Cached because the answer cannot change within a session without the
-        # server being replaced underneath us, and re-listing tools on every call
-        # would make the check expensive enough to be turned off.
-        self._provenance: dict[tuple[str, ...], ProvenanceResult] = {}
+        self._reset_upstream_checks()
         # Servers already warned about unenforceable pinning (warn once each).
         self._tls_pin_warned: set[str] = set()
-        # #521: servers whose advertised tool definitions have been compared against
-        # the catalog. Cached per server for the same reason provenance is: one
-        # tools/list round trip per server per session is affordable, one per call
-        # is not, and a check expensive enough to hurt is a check that gets disabled.
-        self._drift_checked: set[tuple[str, ...]] = set()
         self._catalog_scanner = catalog_scanner
+
+    def _reset_upstream_checks(self) -> None:
+        # Drift and provenance share one completed paginated acquisition per
+        # server/authority per session, including an unchecked (None) outcome.
+        # These are first-contact observations, not continuous monitoring.
+        # Replace, rather than clear: an in-flight acquisition retains its old
+        # cache identity and must retry before returning into a new session.
+        self._advertised: dict[tuple[str, ...], list[dict[str, Any]] | None] = {}
+        self._discovery_locks: dict[tuple[str, ...], asyncio.Lock] = {}
+        self._provenance: dict[tuple[str, ...], ProvenanceResult] = {}
+        self._drift_checked: set[tuple[str, ...]] = set()
 
     def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
         """
         Point the proxy at a fresh session after the previous one was closed.
 
-        Call logs are recreated for the new session id; catalog, policy
-        evaluator, and gateway are unchanged.
+        Call logs and first-contact checks are reset for the new session;
+        catalog, policy evaluator, and gateway are unchanged.
         """
         self._session = session
         self._audit = audit_chain
         self._call_log = CallLog(session_id=session.session_id)
         self._session_call_log = SessionCallLog(session_id=session.session_id)
+        self._reset_upstream_checks()
 
     def _warn_pin_unenforced(self, server_url: str, reason: str) -> None:
         """Log TLS_PIN_UNENFORCED once per server URL (#281, dev/demo paths)."""
@@ -402,15 +405,35 @@ class CMCPProxy:
         for server in self._stdio_servers.values():
             await server.close()
         self._stdio_servers.clear()
+        self._reset_upstream_checks()
 
     async def _advertised_tools(self, entry: CatalogEntry) -> list[dict[str, Any]] | None:
-        """What the server offers *this gateway*, for the provenance comparison.
+        """One first-contact acquisition shared by drift and provenance checks.
 
         Returns ``None`` when the server will not say, which the caller records as
         ``unchecked`` rather than as a pass. Never falls back to the catalog's own
         approved definitions: comparing a record against our approval instead of
         against the server is the substitution that turns the check into theatre.
         """
+        key = _server_provenance_key(entry)
+        while True:
+            cache = self._advertised
+            lock = self._discovery_locks.setdefault(key, asyncio.Lock())
+            async with lock:
+                if cache is not self._advertised:
+                    continue
+                if key in cache:
+                    return cache[key]
+                advertised = await self._discover_tools(entry)
+                if cache is not self._advertised:
+                    continue
+                # Only completed acquisition outcomes are cached. In particular,
+                # cancellation propagates without storing partial data or None.
+                cache[key] = advertised
+                return advertised
+
+    async def _discover_tools(self, entry: CatalogEntry) -> list[dict[str, Any]] | None:
+        """Acquire the entire listing, or None on an ordinary acquisition failure."""
         if entry.server.is_stdio:
             return await (await self._stdio_for(entry)).list_tools()
 
@@ -453,20 +476,17 @@ class CMCPProxy:
         key = _server_provenance_key(entry)
         if key in self._drift_checked:
             return self._session.catalog_drift
-        self._drift_checked.add(key)
-
-        try:
-            advertised = await self._advertised_tools(entry)
-        except asyncio.CancelledError:
-            # A cancelled read is not a completed first-contact check. Retain
-            # the existing cache behavior for ordinary unchecked outcomes.
-            self._drift_checked.discard(key)
-            raise
+        advertised = await self._advertised_tools(entry)
+        # Another caller may have completed the comparison while this one was
+        # waiting for discovery. An in-flight check is never marked completed.
+        if key in self._drift_checked:
+            return self._session.catalog_drift
         if advertised is None:
             logger.info(
                 "upstream drift: server=%s outcome=unchecked (server would not list tools)",
                 key,
             )
+            self._drift_checked.add(key)
             return self._session.catalog_drift
 
         by_name = {
@@ -489,6 +509,7 @@ class CMCPProxy:
 
         if not drifted:
             logger.info("upstream drift: server=%s outcome=match", key)
+            self._drift_checked.add(key)
             return self._session.catalog_drift
 
         fail_closed = self._config.catalog.drift_policy is DriftPolicy.FAIL_CLOSED
@@ -521,6 +542,7 @@ class CMCPProxy:
 
         if fail_closed:
             self._session.catalog_drift = True
+        self._drift_checked.add(key)
         return self._session.catalog_drift
 
     async def _check_provenance(self, entry: CatalogEntry) -> ProvenanceResult:
