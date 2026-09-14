@@ -1,18 +1,54 @@
 # cMCP
 
-> Govern routed MCP tool calls with Cedar policy and signed TRACE session records. Start in software mode; evaluate hardware provenance separately.
+> Check routed MCP tool calls against Cedar policy and sign TRACE session records. Start in software mode; evaluate hardware provenance separately.
 
 cMCP is an open-source gateway for MCP tool-call policy enforcement. It evaluates routed calls against Cedar policy and signs session records. Software mode demonstrates policy and signature checks without hardware provenance. Hardware deployments require provider-specific attestation verification, trusted inputs, and a deployment that prevents gateway bypass. The agent, model, and upstream tool server remain separate components.
 
 # Getting started
 
-# Govern tool calls. Verify the evidence.
+[03 · Actions: was each tool call checked inside attested hardware?](https://agentrust-io.com/#chain)
 
-cMCP (Confidential MCP) is an open-source gateway between your AI agent's MCP client and its tool servers. It checks routed calls against Cedar policy, blocks denied calls in enforcing mode, and produces a signed TRACE session record.
+# Check routed MCP tool calls and sign the evidence
 
-[Block a call in 10 minutes](https://agentrust-io.com/quickstart/) [See the architecture](https://cmcp.agentrust-io.com/concepts/index.md)
+cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy, blocks denied calls in enforcing mode, and signs a TRACE session record a verifier can check offline.
 
-The first demo runs on your laptop with a mock tool and software attestation. You will see `403 POLICY_DENY`, then the expected `partially_verified` result because no hardware attestation is present. It needs Python 3.11+ and no cloud account.
+[Block a call in 10 minutes](https://agentrust-io.com/quickstart/) [What this proves, and what it does not](https://cmcp.agentrust-io.com/limitations/index.md)
+
+TL;DR
+
+Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.5.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and see `403 POLICY_DENY` locally, reported as `partially_verified` because software mode carries no hardware attestation. The SEV-SNP and Intel TDX verifiers are validated on real Azure and GCP evidence, and calls that bypass the gateway, along with NVIDIA GPU confidential computing, are outside what it proves today.
+
+- **Run it**
+
+  ______________________________________________________________________
+
+  A blocked request and a signed session record on your laptop, with a mock tool and software attestation.
+
+  [Guided first demo](https://agentrust-io.com/quickstart/)
+
+- **What it proves, and what it does not**
+
+  ______________________________________________________________________
+
+  Software mode has no hardware isolation, and the upstream tool server stays outside the TEE.
+
+  [Limitations](https://cmcp.agentrust-io.com/limitations/index.md)
+
+- **Hardware evidence**
+
+  ______________________________________________________________________
+
+  SEV-SNP on an Azure confidential VM and Intel TDX on GCP C3, validated 2026-07-27. NVIDIA GPU CC is not implemented.
+
+  [Hardware validation](https://cmcp.agentrust-io.com/testing/hardware-validation/index.md)
+
+- **The chain**
+
+  ______________________________________________________________________
+
+  Before it: [Agent Manifest](https://manifest.agentrust-io.com) declares the agent. Alongside: [cA2A](https://ca2a.agentrust-io.com) covers delegation. After it: records in [TRACE](https://trace.agentrust-io.com). Check a real TDX quote at [agentrust-io.com/verify](https://agentrust-io.com/verify/).
+
+  [See the chain](https://agentrust-io.com/#chain)
 
 ## Choose your next step
 
@@ -33,11 +69,11 @@ A hardware deployment can protect the runtime from its host, subject to the prov
 
 Read the [architecture](https://cmcp.agentrust-io.com/concepts/index.md), [enforcement modes](https://cmcp.agentrust-io.com/configuration/index.md), and [limitations](https://cmcp.agentrust-io.com/limitations/index.md) before treating a successful software demo as evidence of hardware isolation.
 
-## How it fits AgenTrust
-
-[Agent Manifest](https://manifest.agentrust-io.com) declares identity and intended authority. cMCP governs the MCP tool-call path. [TRACE](https://trace.agentrust-io.com) defines signed runtime evidence, and [cA2A](https://ca2a.agentrust-io.com) addresses delegation between agents. Use the components required by your application's trust boundaries.
+## Get involved
 
 For implementation bugs or specification feedback, include the failing command, runtime version, and expected behavior in an [issue](https://github.com/agentrust-io/cmcp/issues). See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
+
+**Status:** cmcp-runtime 0.5.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · Sponsored by OPAQUE, which funds the engineering, infrastructure and confidential-computing work behind these projects.
 
 # Quickstart - cMCP Runtime
 
