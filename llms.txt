@@ -2,28 +2,43 @@
 
 > Check routed MCP tool calls against Cedar policy and sign TRACE session records. Start in software mode; evaluate hardware provenance separately.
 
-cMCP is an open-source gateway for MCP tool-call policy enforcement. It evaluates routed calls against Cedar policy and signs session records. Software mode demonstrates policy and signature checks without hardware provenance. Hardware deployments require provider-specific attestation verification, trusted inputs, and a deployment that prevents gateway bypass. The agent, model, and upstream tool server remain separate components.
+cMCP is an open-source gateway for MCP tool-call policy enforcement. It evaluates routed calls against Cedar policy and signs session records. Software mode demonstrates policy and signature checks without hardware provenance. Hardware deployments require provider-specific attestation verification, trusted inputs, and a deployment that prevents gateway bypass. The agent, model, and upstream tool server remain separate components. Part of AgenTrust, open specifications for verifiable AI: https://agentrust-io.com.
 
-## Getting started
+## Get started
 
 - [Home](https://cmcp.agentrust-io.com/index.md)
 - [Quick start](https://cmcp.agentrust-io.com/quickstart/index.md)
 - [How it works](https://cmcp.agentrust-io.com/concepts/index.md)
 - [Configuration](https://cmcp.agentrust-io.com/configuration/index.md)
+- [Specification index](https://cmcp.agentrust-io.com/spec-index/index.md)
 
 ## Specification
 
 - [Overview](https://cmcp.agentrust-io.com/SPEC/index.md)
 - [Cedar policy](https://cmcp.agentrust-io.com/spec/cedar-policy/index.md)
+- [Session policy](https://cmcp.agentrust-io.com/spec/session-policy/index.md)
+- [Tool identity](https://cmcp.agentrust-io.com/spec/tool-identity/index.md)
+- [Transport](https://cmcp.agentrust-io.com/spec/transport/index.md)
+- [Proxy security](https://cmcp.agentrust-io.com/spec/proxy-security/index.md)
 - [Attestation](https://cmcp.agentrust-io.com/spec/attestation/index.md)
-- [Threat model](https://cmcp.agentrust-io.com/spec/threat-model/index.md)
 - [Verification library](https://cmcp.agentrust-io.com/spec/verification-library/index.md)
 - [Embodied action evidence](https://cmcp.agentrust-io.com/spec/embodied-action-evidence/index.md)
+- [Error codes](https://cmcp.agentrust-io.com/spec/error-codes/index.md)
+- [Threat model](https://cmcp.agentrust-io.com/spec/threat-model/index.md)
 
-## Tutorials
+## Guides
 
+- [Try it from an existing MCP client](https://cmcp.agentrust-io.com/tutorials/existing-mcp-clients/index.md)
 - [Connecting agent frameworks](https://cmcp.agentrust-io.com/tutorials/connecting-agent-frameworks/index.md)
 - [Cedar policy walkthrough](https://cmcp.agentrust-io.com/tutorials/cedar-policy-walkthrough/index.md)
 - [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md)
 - [TEE attestation](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md)
+- [Deploy on Azure](https://cmcp.agentrust-io.com/tutorials/deploy-azure/index.md)
+- [Deploy on GCP](https://cmcp.agentrust-io.com/tutorials/deploy-gcp/index.md)
+- [Hardware validation](https://cmcp.agentrust-io.com/testing/hardware-validation/index.md)
+
+## Project
+
+- [Limitations](https://cmcp.agentrust-io.com/limitations/index.md)
+- [Sponsors](https://cmcp.agentrust-io.com/sponsors/index.md)
 

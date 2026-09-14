@@ -1,0 +1,210 @@
+# Session Policy
+
+Status: Draft v0.1 | Closes #36 | Related: [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) (feeds this), [call-graph.md](https://cmcp.agentrust-io.com/spec/call-graph/index.md) (uses this)
+
+## Overview
+
+Individual call policy, Cedar evaluated before each tool call, is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.
+
+Phase 1.5 introduces session sensitivity tracking to close this gap. Once a session has handled data at a given sensitivity level, outbound calls to destinations that are not approved for that sensitivity level are denied, even if each individual call would pass pre-call Cedar policy in isolation. The session sensitivity state is monotonically increasing within a session: it can only go up, never down, short of an explicit operator-authorized reset.
+
+## Session Sensitivity State Machine
+
+### States
+
+Sensitivity states, ordered from lowest to highest:
+
+```
+public < pii < confidential < hipaa_phi = mnpi = trade_secret
+```
+
+`hipaa_phi`, `mnpi`, and `trade_secret` are all at the highest level. There is no ordering among them: a session that has seen MNPI is equally restricted as one that has seen PHI. Once a session reaches any of the three, the same egress rules apply.
+
+These six are fixed and always present. A deployment that needs to express a classification scheme its own regulation names, for example a public sector Open/Confidential/Secret/Top Secret ladder, adds new labels alongside them via `sensitivity.vocabulary` in config, rather than replacing the built in set (#479):
+
+```
+sensitivity:
+  vocabulary:
+    secret: 4
+    top_secret: 5
+```
+
+This is additive only. A vocabulary key that names a built in label is rejected at config load, since response inspection's pattern based detectors (see [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md)) emit the built in tags directly, `pii` and `hipaa_phi` among them, and those tags must always resolve to their real rank rather than an unrecognised one. `SessionManager` and `PolicyEvaluator` each derive the same effective vocabulary from the same config, so a session's `max_sensitivity` and the `sensitivity_level` integer Cedar sees can never disagree about what a custom label ranks as. The tool catalog's `sensitivity_level` field is validated at load time against this same effective set, so it stays a closed vocabulary, just not a hardcoded one.
+
+A single call can also declare its own class above its tool's catalogued floor, via `_cmcp.data_class` on the request (see [connecting-agent-frameworks.md](https://cmcp.agentrust-io.com/tutorials/connecting-agent-frameworks/#declare-a-per-call-data-class)), for a tool whose catalogued level is a floor rather than the true class of every call it serves. The two pieces compose: a deployment adds a label via `sensitivity.vocabulary`, and a call declares that label via `_cmcp.data_class` in the same session. The declaration can only raise the effective class, both for the session's `max_sensitivity` and for that call's own row in the signed transcript, never lower it, the same `_max_sensitivity` comparison this vocabulary section describes is what enforces that.
+
+### State Transitions
+
+State is monotonically increasing within a session. It never decreases automatically. The only way to return to a lower state is an explicit operator-authorized session reset (see below).
+
+The transition trigger is the `update_from_inspection` call made by the response inspection pipeline after every tool call. See [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) for when and how that call is made.
+
+```
+SENSITIVITY_ORDER = {
+    "public": 0,
+    "pii": 1,
+    "confidential": 2,
+    "hipaa_phi": 3,
+    "mnpi": 3,
+    "trade_secret": 3,
+}
+
+def update_from_inspection(
+    self,
+    call_id: str,
+    sensitivity_tags: list[str],
+    injection_detected: bool,
+    response_allowed: bool,
+) -> None:
+    for tag in sensitivity_tags:
+        if SENSITIVITY_ORDER[tag] > SENSITIVITY_ORDER[self.max_sensitivity]:
+            self.max_sensitivity = tag
+            self.sensitivity_raised_at = now()
+            self.sensitivity_raised_by_call = call_id
+    if injection_detected:
+        self.injection_events.append({
+            "call_id": call_id,
+            "timestamp": now(),
+            "response_allowed": response_allowed,
+        })
+```
+
+`response_allowed` is recorded in injection events but does not affect state transition logic. A denied response that carried high-sensitivity tags still raises `max_sensitivity`: the agent is aware the call was attempted.
+
+## Cedar Egress Policy Using Session State
+
+Cedar evaluates pre-call policy with session state available as a context attribute. Three representative policies:
+
+Policy 1: Block PHI egress to uncovered external destinations
+
+```
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource
+)
+when {
+  context.session.max_sensitivity == "hipaa_phi" &&
+  resource.tool.destination_type == "external" &&
+  !resource.tool.hipaa_covered
+};
+```
+
+Policy 2: Block MNPI egress to communication tools
+
+```
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource
+)
+when {
+  context.session.max_sensitivity == "mnpi" &&
+  resource.tool.category == "communication"
+};
+```
+
+Policy 3: Block any high-sensitivity session from writing to public channels
+
+```
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource
+)
+when {
+  [3].contains(context.session.sensitivity_level_int) &&
+  resource.tool.output_visibility == "public"
+};
+```
+
+In Policy 3, `sensitivity_level_int` is a derived integer attribute on the session context object (computed from `SENSITIVITY_ORDER` at context construction time) so Cedar can use numeric comparison.
+
+## Session Reset Protocol
+
+Endpoint: `POST /session/reset`
+
+Credential required: Operator credential. Agent credentials are not accepted. This is intentional, see below.
+
+Effect:
+
+- `max_sensitivity` is reset to `"public"`
+- A new `session_id` is generated; the old session ID is retired
+- An audit chain entry of type `"session_reset"` is written:
+
+```
+{
+  "type": "session_reset",
+  "reason": "<operator-supplied string>",
+  "authorized_by": "<operator principal>",
+  "previous_session_id": "<old session id>",
+  "new_session_id": "<new session id>",
+  "timestamp": "<ISO-8601>"
+}
+```
+
+When reset is not possible or not yet called: If the runtime is in enforcement mode and `max_sensitivity` is `"hipaa_phi"`, `"mnpi"`, or `"trade_secret"`, outbound calls to non-covered or non-approved destinations are denied by Cedar egress policy (see above). The agent cannot unblock itself. There is no agent-callable override endpoint.
+
+This is intentional. The agent is an LLM: it is non-deterministic, and the runtime cannot trust agent assertions about what is or is not in its context window. Once a session has handled high-sensitivity data, the only entity that can attest "this session is now clean" is a human operator who has verified the agent's context. The reset endpoint is the mechanism for that attestation.
+
+If an operator reset is not available (e.g., the runtime is processing automated batch jobs with no operator in the loop), the correct architectural response is to provision short-lived sessions scoped to a single sensitivity domain, rather than relying on reset.
+
+## Session Lifetime and Attestation Validity
+
+A session's maximum duration is bounded by the attestation validity period of the agent's TRACE token. When the TRACE token expires, the session must end: the gateway cannot continue to enforce session-level policy for an agent whose identity and configuration are no longer attested.
+
+In practice: session `max_duration_seconds` is set to `min(configured_session_max, trace_token_ttl_remaining)` at session creation. A session that is still active when its TRACE token would expire is terminated by the runtime with an audit entry of type `"session_expired"`.
+
+This means a long-running agent that handles high-sensitivity data early in its session will face increasingly tight call restrictions as the session progresses, both because `max_sensitivity` is monotonically increasing and because the TRACE token TTL is monotonically decreasing. Deployments should size TRACE token lifetimes to match expected task durations.
+
+## Agent Manifest Identity Binding
+
+When `agent_manifest` is configured, session creation is bound to a signed Agent Manifest. The runtime loads the manifest and issuer trust anchor, delegates Agent Manifest signature and artifact verification to the `agent-manifest` SDK `verify_manifest()` API, and extracts:
+
+- `manifest_id`
+- `agent_id`
+- `artifacts.policy_bundle.hash`
+- `artifacts.tool_manifest.catalog_hash`
+
+The authenticated agent subject for the session MUST be a SPIFFE URI and MUST equal `manifest.agent_id`. In the current HTTP runtime this subject is supplied by `agent_manifest.authenticated_subject`; production deployments SHOULD wire this value from the inbound agent SVID/mTLS identity. The runtime records the provenance of this assertion in `gateway.agent_identity.subject_source`: `config` for configured input, `svid` for transport/mTLS SVID, or `manifest-dev` for the development-mode fallback that uses `manifest.agent_id`. If the subject, manifest signature, manifest expiry, policy hash, or catalog hash does not match, the runtime fails closed before serving the session.
+
+The Agent Manifest signing pre-image uses the manifest `signed_fields` subset. For HITL workflows, `hitl_record.approvals` is normalized to an empty array before signing so approvals can be attached after the manifest is issued without invalidating the manifest signature.
+
+This binding answers "who acted" for the session. It does not replace `trace.subject`, which identifies the cMCP gateway's TEE-backed issuing identity. The session identifier remains in `gateway.session_id`. Instead, the TRACE Trust Record carries `gateway.agent_identity` alongside the gateway subject:
+
+```
+{
+  "trace": {
+    "subject": "spiffe://cmcp.gateway/tee/<gateway-id>"
+  },
+  "gateway": {
+    "session_id": "<session-id>",
+    "agent_identity": {
+      "manifest_id": "<manifest UUID>",
+      "agent_id": "spiffe://factory.example/agent/material-movement/dev",
+      "authenticated_subject": "spiffe://factory.example/agent/material-movement/dev",
+      "subject_source": "config",
+      "issuer": "spiffe://factory.example/signing-authority/development",
+      "issuer_key_id": "<sha256 of issuer public key>",
+      "policy_bundle_hash": "sha256:<manifest policy hash>",
+      "tool_catalog_hash": "sha256:<manifest catalog hash>"
+    }
+  }
+}
+```
+
+Offline verifiers SHOULD cross-check `gateway.agent_identity` against the signed manifest and trusted issuer key. This keeps the runtime boundary check and the evidence artifact self-checking.
+
+`gateway.agent_identity` MAY also carry `intent_hash` (AARM R2: a digest of the issuer-signed declared intent, agent-manifest spec §3.9) and `enforcement_mode` (the Agent Manifest binding's enforcement mode at session creation, distinct from `trace.policy.enforcement_mode`). Both are populated whenever the bound manifest supplies them, which is the common case once `agent_manifest` is configured.
+
+`gateway.agent_identity` MAY also carry `agent_key_thumbprint`: an RFC 7638 JWK thumbprint of the agent's own signing key, rendered as `sha256:<hex>`, distinct from `issuer_key_id` (the key that signed the manifest). It is optional and is omitted from every claim the current runtime can produce, since no code path here has access to agent key bytes yet. When a producer does populate it, it MUST only do so while `subject_source` names a live-authenticated source (currently `svid`) - never `config` or `manifest-dev`, which are operator-supplied assertions rather than proof of key possession. `cmcp_verify.verify_trace_claim` fails closed (`AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT`) on any claim that violates this.
+
+## TRACE Claim Fields from Session State
+
+The following fields from session state are included in the TRACE attestation record for the session (written at session close):
+
+| Field                     | Type    | Description                                                                                                                                                                                                                                                                                   |
+| ------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_max_sensitivity` | string  | The highest `max_sensitivity` value reached during the session.                                                                                                                                                                                                                               |
+| `session_reset_count`     | integer | Number of times `POST /session/reset` was called during the session lifetime. Normally `0`; a non-zero value warrants review.                                                                                                                                                                 |
+| `agent_identity`          | object  | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, subject source, issuer key ID, policy hash, catalog hash, and the optional `intent_hash`, `agent_key_thumbprint`, and `enforcement_mode`. Present only when `agent_manifest` is configured and verified. |

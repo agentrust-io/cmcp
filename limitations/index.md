@@ -1,0 +1,150 @@
+# Limitations
+
+This document describes what cMCP does not prevent, where its guarantees end, and what operators and verifiers must address through separate controls.
+
+## What cMCP does not prevent
+
+**Prompt injection into Cedar policy** Cedar policy evaluation is only as correct as the policy the operator wrote and approved. cMCP measures the policy bundle hash into the TEE attestation report, which proves the policy that ran is the policy that was approved. It does not evaluate whether that policy achieves the intended security outcome. A policy that contains `permit(principal, action, resource);` without conditions permits every tool call. Policy correctness is the operator's responsibility; policy review is a separate control.
+
+**Compromised TEE firmware or microcode** Hardware attestation proves the workload hash was measured in silicon. It does not protect against vulnerabilities in the TEE firmware or CPU microcode itself (Spectre-class side channels, cache timing, power analysis, fault injection targeting the TEE boundary). Protection at this level is the responsibility of the hardware vendor. Operators must keep TEE firmware and microcode up to date; see [Compensating Controls](https://cmcp.agentrust-io.com/spec/threat-model/#compensating-controls-operator-responsibilities) in the threat model.
+
+**Azure confidential VMs: attestation is vTPM-rooted, one hop longer** On Azure confidential VMs (`AzureCVMProvider`), SEV-SNP runs behind a Hyper-V paravisor: there is no `/dev/sev-guest`, and the guest cannot write the SNP `REPORT_DATA` field (the paravisor sets it to `sha256(runtime_data)`, binding the vTPM attestation key). cMCP therefore does not bind its key/audit-root directly into the SNP report on Azure. Instead it commits the nonce into an AK-signed TPM quote, and the SNP report (verified via the VCEK→ASK→ARK chain) attests that the AK is genuine SNP silicon. The trust root is still AMD, but the chain is one hop longer than direct-silicon binding, and it additionally trusts the paravisor's binding of the vTPM AK into `REPORT_DATA`. Bare-metal / non-paravisor SNP guests (`SEVSNPProvider`) bind directly into the report and do not add this hop.
+
+**Operator-controlled key material** The TEE-sealed signing key is generated inside the enclave and cannot be extracted by a privileged operator under normal circumstances. However, if the operator can substitute the TEE firmware, modify the enclave startup measurement, or compromise the SPIRE infrastructure that issues SVIDs, they can effectively control what key material is used. The trust root is the hardware platform vendor (AMD, Intel, or the TPM manufacturer), not cMCP. Deployments that do not independently verify the attestation report before routing traffic treat attestation as post-hoc audit evidence only.
+
+**Upstream tool-definition drift: checked on first contact, not continuously** cMCP compares what each upstream server advertises against the approved catalog entry (threat model P4.2, rug-pull via tool-definition mutation). The comparison is a digest of the semantic triple: description, input schema, output schema. It uses only the standard library, so it does not weaken when the optional `agent-os-kernel` scanner is absent; that scanner classifies the kind of change and is not the control. A mismatch fails the call closed by default, is written to the audit chain, and sets `tool_catalog.drift_detected` in the session's TRACE Claim. Three things it does not do, all of them real gaps rather than theoretical ones:
+
+- **It runs once per server per session, on first contact.** A server that mutates a tool definition mid-session is not caught until a new session starts. Re-listing tools on every call would make the check expensive enough that operators would turn it off, which is worse than a check with a stated window.
+- **It is not driven by `notifications/tools/list_changed`.** The gateway does not subscribe to that notification. Only stdio upstreams could carry one today, since HTTP upstreams are plain request/response here, so notification-driven detection would silently cover one transport and not the other. First-contact checking covers both the same way.
+- **A server that will not answer `tools/list` is recorded as unchecked, not denied.** Nothing in MCP obliges a server to answer, and denying on silence would take out deployments whose servers simply do not implement it. `unchecked` is not a pass, and it is visible in the logs, but it does not block a call.
+
+Separately, the approved description rather than the live one is what the gateway serves to the agent on `tools/list`, so a mutated description does not reach the model through cMCP even in the windows above. That is a structural property of proxying an approved catalog, not a detection result, and it does not extend to the tool's behaviour once called.
+
+HTTP and stdio discovery exhaust `tools/list` pagination before comparing either drift or provenance. A later-page failure, malformed discovery shape, duplicate tool name, repeated/cyclic cursor, or continuation beyond 1,000 pages makes the entire acquisition unchecked; no partial list is compared. Cursors are passed back unchanged, including an empty string. This bound limits page count, not total elapsed time or response bytes, and pagination does not establish an atomic snapshot of a changing server. This is acquisition validation, not full MCP schema validation or a new approval/hash policy. The unchecked-call behavior above is unchanged.
+
+Drift and provenance share the completed first-contact acquisition for the same server and publisher authority within a session, rather than independently walking all pages. An unchecked acquisition is also cached until the next session. Cancellation leaves no cached acquisition; existing stdio child-close behavior is unchanged, not an automatic child restart. Close/reset drains admitted calls before cleanup invalidates both comparisons and the shared acquisition, even if resource cleanup subsequently fails. This avoids duplicate discovery work; it does not add continuous monitoring or make the listing an atomic snapshot.
+
+**Phase 2 completeness: server-side attestation** Phase 1 attests the gateway boundary. It does not attest what happens on the other side of that boundary. The `tool_transcript.hash` field in the TRACE Claim records a hash of the audit chain tip, but the tool transcript binding that ties a specific tool execution to a specific response is Phase 2 work. Phase 1 partially addresses P1.4 (transitive trust into upstream dependencies) and P4.1 (typosquatted packages added to catalog) -- both are fully closed by Phase 2. Any compliance claim that relies on server-side proof must wait for Phase 2.
+
+**Tool server non-repudiation** The audit chain records a `response_payload_hash` for each tool call and an `evidence_class` that indicates the assurance level of the recorded response:
+
+- **`tls-pinned`**: The tool server URL uses HTTPS and has a non-placeholder TLS certificate fingerprint in the catalog. The response was received over a TLS connection whose certificate was pinned at catalog-load time. A verifier can confirm the server identity against the catalog fingerprint.
+- **`hash-only`**: The tool server uses HTTP, has no TLS fingerprint assigned in the catalog (dev placeholder), or TLS pinning could not be enforced on the current platform. The hash proves what the gateway received, but the server identity cannot be independently verified from the audit record alone.
+
+Tool servers do not sign their individual responses. A `tls-pinned` entry proves the response came from a server holding the catalog-pinned certificate but does not prevent the server itself from later denying it produced a specific response. For strong non-repudiation, configure non-placeholder TLS fingerprints for all upstream servers so all evidence is `tls-pinned`, and treat the TEE attestation as the binding authority for what the gateway recorded.
+
+**External execution evidence (issue #301)** An audit entry may carry an optional `external_execution_evidence` receipt: a signature from an independent authority (for example a safety controller) attesting to an outcome, bound to a specific `call_id`. This is deliberately distinct from `response_payload_hash`, which records what the gateway forwarded. The receipt establishes that the named issuer signed an assertion about that call. It does not establish that a physical action occurred, that it was safe, or that it meets any functional-safety standard, and it is only as trustworthy as the issuer key behind it. cMCP does not observe the actuation; it records the receipt and, when a verifier is configured with the issuer trusted key, checks the signature and the `call_id` binding. Trust in the issuer key is an out-of-band PKI concern, the same shape as the manifest issuer trust anchor in issue #302. Verification is opt-in: receipt-less entries, and verifiers that do not configure issuer keys, are unaffected. In the proxy path, cMCP binds the receipt when an allowed upstream tool response is a JSON object with a top-level `external_execution_evidence` object matching the audit schema. The full response, including that receipt if present, remains covered by `response_payload_hash`. The TRACE Claim does not carry a separate "external evidence present" flag. Verifiers learn that external evidence was bound by fetching the committed audit bundle and checking entries under the TRACE Claim's `gateway.audit_chain.tip`.
+
+**Agent Manifest identity binding (issue #302)** When configured, cMCP verifies a signed Agent Manifest against a trusted issuer key, checks that the authenticated agent subject equals `manifest.agent_id`, and requires the manifest's policy and catalog hashes to match the loaded runtime hashes. The Trust Record carries this as `gateway.agent_identity`. This proves that the session was bound to the reviewed manifest identity and approved hashes. It does not prove that the agent behaved correctly, that the model output was safe, or that the same logical agent persisted across restarts. The first implementation takes the authenticated subject from configuration; production deployments should source it from the agent SVID/mTLS identity path. Trust in the manifest issuer key remains an out-of-band PKI concern.
+
+**LLM inference and model output** cMCP intercepts tool calls at the MCP protocol boundary. It does not observe or modify LLM inference, the contents of the agent's context window, or model outputs that do not produce a tool call. A model could hallucinate a response, leak sensitive context in a chat reply, or receive a poisoned tool response that influences subsequent reasoning -- none of these are visible to the gateway. cMCP controls the tool boundary, not the model boundary.
+
+**Response injection evasion via novel patterns** The response inspector uses pattern-based detection for prompt injection in tool responses. Pattern-based detection has false negatives. A sufficiently sophisticated injection may evade the current pattern list. The pattern list must be maintained and updated by the operator as new injection techniques emerge; see [Compensating Controls](https://cmcp.agentrust-io.com/spec/threat-model/#compensating-controls-operator-responsibilities).
+
+**Cross-channel fusion: no single call is a violation (GhostSplice)** Cedar evaluates one tool call at a time. GhostSplice ([ASSET Research Group, July 2026](https://asset-group.github.io/disclosures/ghostsplice/)) splits one instruction across channels a server already owns, so that no channel carries a violating instruction: the tool description advertises a form with fields named `alpha` through `delta` and names nothing sensitive, and a later tool result supplies the mapping from those fields to `.ssh/id_rsa`, `.env` and source files. The harm exists only once the model has fused both in its own context, which is not a place the gateway can read.
+
+Three things follow, and all three are gaps rather than theoretical concerns.
+
+- **The shipped injection patterns do not fire on any GhostSplice channel.** Run the ten patterns in `src/cmcp_runtime/inspection/patterns_v1.json` against the published `deep_scan` result, the `integrity_checker` description, and the sampling disposition, and all three return no match, while a classic tool-poisoning payload matches `xml-system-tag` and `ignore-instructions` in the same run. That is not a tuning problem. Each fragment is a grammatical, harmless sentence, so there is no pattern to write that does not also match ordinary tool output.
+- **Cedar sees argument values, not their provenance.** `_build_cedar_context` passes `arguments` through `_cedar_safe` as opaque values. Nothing records that the bytes in `alpha` are a file the agent read because a previous tool's *result* told it to. The control the researchers prescribe, "never let values from one tool's output flow untouched into another tool's arguments", cannot be written as a Cedar policy against the context the gateway builds today.
+- **In a coding-assistant deployment the gateway never sees the read.** The file reads are performed by the client's own filesystem tools, not by an MCP server in the catalog. cMCP observes one call, `integrity_checker(alpha=<blob>, ...)`, with no record that a read happened at all.
+
+What cMCP does carry across calls is `session_max_sensitivity`, a monotonic ratchet that a caller cannot lower. Where the sensitive read *does* go through the gateway, a policy denying external-destination calls above a sensitivity floor will stop the egress leg, and that is a real defence rather than a hypothetical one. It depends on the operator having written that policy, and it does not apply when the read bypasses the gateway, which is the common case for a coding assistant.
+
+Two things this entry deliberately does not claim. The study's compliance figures are an average over eleven models under one costume and one channel split, moving from 42% to 82%; several models complied with the blunt single-instruction version too, so "models refuse until you split it" is not accurate as a general statement. And while Claude Sonnet 4.6 and Opus 4.6 held at 0% across every split in the tabulated configuration, the same write-up reports a separate run in which Sonnet called the tool and redacted the obvious secrets while still returning proprietary source with a live key inside it. Model choice is not a control.
+
+**APM and telemetry payload capture** The TEE prevents plaintext from leaving the enclave to any destination not covered by the egress policy. This protection is structural only when the egress policy explicitly denies APM and telemetry endpoints. If the operator allowlists those endpoints in the Cedar policy, the TEE boundary does not prevent payload capture by the APM agent. A TRACE Claim with an egress policy that permits APM or SDK telemetry endpoints does not provide this protection. Verifiers must inspect the policy bundle hash and confirm the policy excludes those endpoints.
+
+**Tool name collision via malicious catalog entries** The catalog binds each tool name to a specific upstream server identity, which prevents routing ambiguity for approved servers. It does not prevent a typosquatted or look-alike package from being added to the catalog in the first place. Catalog approval is human-gated. The gateway trusts the catalog; it cannot detect that a catalog entry was added via a compromised reviewer or a social engineering attack.
+
+**Session cleanup is bounded by cooperation and by time** Session-scoped resources, meaning the stdio child, the pooled HTTP clients, and the provenance and drift caches, are released on every path that ends a session: `POST /sessions/{id}/close`, `POST /sessions/{id}/reset`, and graceful shutdown. None of those paths released anything before this was implemented, so the first three limits below are what remains rather than what was added. The last two are deliberate trades the behaviour introduces.
+
+- **A pooled HTTP client that fails to close leaks its connections.** `AsyncClient` marks itself closed, and HTTPcore empties its pool, before the underlying streams are released, so nothing a retry could reach survives a failed close. The client is dropped so the successor cannot reuse it, and the failure is logged. A child process that fails to close is retained instead, and a close retry can still reap it.
+- **Graceful shutdown can outlast a deployment's termination grace period.** It waits for any in-flight close, then drains again on the same budget, so with the defaults cleanup can begin as late as seventy seconds in. A shorter grace period ends in SIGKILL and none of this runs. Size the grace period above twice `CMCP_SESSION_CLOSE_DRAIN_SECONDS`, or lower that deadline.
+- **Cancellation is cooperative, so a failed drain does not prove a call stopped.** Close requests cancellation at the deadline and allows a further five seconds to unwind. A call that does not honour it leaves the drain incomplete, which seals admission rather than signing a claim that omits an outcome.
+- **A failed terminal audit write leaves the session unavailable, with no repair.** A deliberate trade: it blocks signing, rotation, reset, and further admission for that session, because the alternative is a signed claim missing a call the gateway made. Restoring the writer does not reconstruct the missing outcome, and none is provided. Recovery is a new session.
+- **A close that trips the kill switch leaves the gateway with no live session.** Also deliberate. The claim for the closed session is signed and retrievable, but no successor can be created until an operator unblocks that agent identity. This is the kill switch working as specified, at the cost of availability.
+
+## What Level 0 (CMCP_DEV_MODE) does not provide
+
+`CMCP_DEV_MODE=1` uses a software-only TEE provider. It is suitable for development, testing, and demo scenarios. It does not satisfy production governance requirements because:
+
+- **No hardware root of trust.** The signing key is held in software and is accessible to any process running as the same user. A privileged operator can extract it.
+- **No verifiable measurement.** The `trace.runtime.measurement` field is all zeros in dev mode. There is no hardware-measured enclave identity, so a verifier cannot confirm which binary ran.
+- **Threat classes T1 through T4 are not covered.** These are the rogue administrator, host OS compromise, post-incident audit log reconstruction, and policy substitution threats described in the [threat model](https://cmcp.agentrust-io.com/spec/threat-model/). All four require a hardware TEE to close. In software-only mode, all four remain open.
+- **TRACE Claims are partially verified only.** The `cmcp_verify` library returns `status: partially_verified` and reports `hardware_attestation: software-only mode -- not hardware-backed`. Claims produced in dev mode must not be presented as hardware-attested proof to auditors or regulators.
+
+## What attestation verification establishes, and what it does not
+
+`cmcp_verify` reports `status: verified` only when the platform evidence is cryptographically checked; a claim whose report signature or certificate chain is unverified stays `partially_verified` and is never presented as hardware-backed (issue #370). What that check covers differs by platform:
+
+- **AMD SEV-SNP** — report signature plus the VCEK → ASK → ARK chain, with the ARK pinned by the operator.
+- **Intel TDX** — DCAP quote signature and the PCK chain to a pinned Intel SGX Root CA.
+- **TPM 2.0** — the `TPMT_SIGNATURE` over the `TPMS_ATTEST`, verified with the attestation key, plus the AK certificate chain to a manufacturer CA the operator pins via `trusted_tpm_ca_pem`. Absent signature or chain material degrades to `unverified`; supplied material that fails is fatal.
+
+Three gaps are worth stating plainly for the TPM path:
+
+- **The attestation key is not bound to a specific TPM.** A verified AK chain proves the key was certified under a CA you pinned. It does not prove the key lives in the endorsed TPM. That binding is TPM credential activation (`TPM2_MakeCredential` / `TPM2_ActivateCredential`), a live challenge-response an offline verifier cannot perform, and it is not implemented. A CA that mis-issues, or a platform CA that certifies a software key, is not caught.
+- **Evidence rides in the cmcp envelope, not the TRACE runtime block.** `RuntimeInfo` in `agentrust-trace` is `extra="forbid"`, so a claim carrying `raw_evidence` / `quote_signature` / `cert_chain` under `trace.runtime` is rejected as `CLAIM_MALFORMED` before platform verification runs. Signed evidence therefore travels as `gateway.attestation_evidence`, a cmcp-owned field. The verifier still reads `trace.runtime` as a fallback so older claims keep working, but that path cannot pass schema validation. All current platform branches read the envelope, including the SNP VCEK chain. SNP, Azure CVM and TDX compare their evidence binding against the 64-byte value already carried as `trace.runtime.nonce`; missing or malformed nonces cannot disable that check. **TDX DCAP quote collection and transport remain absent**: the current provider collects a TDREPORT, and the claim models do not carry `raw_quote`. TDX claims therefore remain partially verified without a verified quote signature. The standalone quote-verification API is a separate path.
+- **The gateway NV-certify pair is not an ordinary TRACE-claim property.** TPM startup collects a bracketing pair, and the standalone appraisal accepts it only with a verifier-owned root, nonce, exact NV Name and range, and expected gateway digest. The current claim schema does not carry the pair and `verify_trace_claim` does not invoke that appraisal. Policy reload also does not replace the startup pair. Even under direct appraisal, the deterministic TPM Name identifies the public template rather than a unique index incarnation, so it does not prove that owner authorization never redefined the index or that the signed pre-value has an approved history.
+
+## Platform state is not appraised
+
+The SEV-SNP path here establishes that a report is authentic and which workload it describes: report signature, the VCEK to ASK to ARK chain with the ARK pinned by the operator, and measurement binding. Those are the right four checks and they are not in dispute.
+
+**What none of them ask is what kind of machine the report came from.** A SEV-SNP report carries that separately in `PLATFORM_INFO` at offset 0x40: whether SMT is on, whether ECC is enabled, whether ciphertext hiding is enforced, and whether the firmware completed its boot-time DRAM alias check, which is AMD's mitigation for BadRAM (security bulletin SB-3015).
+
+The practical consequence: a report from a machine with SMT enabled and the alias check never completed verifies exactly as cleanly as one from a machine with neither condition. If that distinction matters to your deployment, it has to be asserted explicitly.
+
+Related: [google/go-sev-guest#195](https://github.com/google/go-sev-guest/issues/195), where the reference verifier's own platform-info policy field is documented as a ceiling while four of its seven fields are enforced as minimums. Worth reading before writing any policy over these bits.
+
+**In cMCP.** [`agent-manifest`](https://manifest.agentrust-io.com/limitations/) parses these fields and can enforce a policy over them as of 2026-08-20. cMCP does not yet call that appraisal, so cMCP does not assert it for you.
+
+## What cMCP does not do
+
+- **cMCP is not a WAF.** It does not inspect HTTP traffic for SQL injection, XSS, or other web application attack patterns. It operates at the MCP tool call layer, not the HTTP layer.
+- **cMCP is not a content filter.** It does not classify or filter free-text content for harmful material, bias, or policy violations in the LLM inference path. Response inspection is scoped to tool response payloads at the gateway boundary.
+- **cMCP is not a network proxy.** It does not perform general-purpose HTTP proxying, TLS termination for arbitrary traffic, or routing outside the MCP protocol. It proxies MCP tool calls only.
+- **cMCP is not responsible for MCP server bugs.** The gateway enforces policy and records what happened. Bugs in upstream MCP servers -- memory corruption, logic errors, incorrect data handling -- are outside the gateway's control and are not attested by the TRACE Claim.
+
+## AARM v1.0 decision types: what is enforced versus classified
+
+cMCP records the five AARM R4 decision types (see `cmcp_runtime.policy.decisions` for the crosswalk). Three caveats on what that means in practice.
+
+- **DEFER is classified, not asynchronously enforced.** AARM's DEFER means asynchronous evaluation with a callback. A policy annotated `@aarm_decision("defer")` produces a blocked call recorded as `defer` with its advice payload attached. The gateway does not hold the MCP request open pending an out-of-band decision, because it has no callback registry and keeping requests open across a policy round trip is a transport design decision. Do not read a `defer` entry as evidence that a deferred decision was later resolved.
+- **STEP_UP blocks the call.** A `step_up` entry means policy refused and named a human authority who can authorize it, and the caller receives that authority in `advice`. The call itself did not proceed, and no in-band re-submission path exists yet.
+- **MODIFY is recorded as `redact`.** cMCP's modification mechanism is response redaction and surplus stripping in the inspection pipeline, so that is the value the audit chain and the audit-entry schema carry. There is no separate `modify` value.
+
+The TRACE Claim schema is unchanged by this. `trace-claim.schema.json` pins its per-call decision enum to the pre-AARM vocabulary, and widening it would change what a version `1.0` claim can contain, which an older verifier would reject. Widening it is a TRACE specification decision spanning `trace-spec` and `trace-tests`, not a cMCP one. Until that is settled, `step_up` and `defer` are visible in the audit chain and in telemetry, and a claim reports the coarser value.
+
+## Performance
+
+Attestation is a startup cost, not a per-call cost. Per-call gateway overhead covers Cedar policy evaluation, audit entry creation, and routing. Upstream tool execution time is excluded.
+
+### Attestation handshake (one-time, at startup)
+
+| Provider       | Typical latency                               |
+| -------------- | --------------------------------------------- |
+| TPM            | less than 500ms (hardware I/O bound)          |
+| SEV-SNP        | less than 100ms (Azure DCasv5, AWS C6a Nitro) |
+| TDX            | less than 100ms (Azure DCedsv5, GCP C3)       |
+| OPAQUE Managed | less than 50ms                                |
+| software-only  | negligible                                    |
+
+### Per-call gateway overhead
+
+| Percentile | Target        |
+| ---------- | ------------- |
+| p50        | less than 1ms |
+| p95        | less than 3ms |
+| p99        | less than 5ms |
+
+Expected component breakdown for a 10-rule policy bundle:
+
+| Component                    | Estimated cost      |
+| ---------------------------- | ------------------- |
+| Cedar evaluation (10 rules)  | 0.2 to 0.5ms        |
+| Audit entry hash computation | approximately 0.1ms |
+| Network routing overhead     | 0.5 to 2ms          |
+
+These are targets from [the benchmark methodology](https://cmcp.agentrust-io.com/testing/benchmarks/). Actual results on real TEE hardware will vary by provider and payload size; benchmark results are committed per provider to `benchmarks/` in CI.

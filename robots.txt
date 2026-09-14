@@ -1,0 +1,38 @@
+# cmcp.agentrust-io.com: search and answer-engine crawlers are welcome.
+
+User-agent: *
+Allow: /
+# Cloudflare email-obfuscation endpoint: not a page
+Disallow: /cdn-cgi/
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+Sitemap: https://cmcp.agentrust-io.com/sitemap.xml

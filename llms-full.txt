@@ -2,9 +2,9 @@
 
 > Check routed MCP tool calls against Cedar policy and sign TRACE session records. Start in software mode; evaluate hardware provenance separately.
 
-cMCP is an open-source gateway for MCP tool-call policy enforcement. It evaluates routed calls against Cedar policy and signs session records. Software mode demonstrates policy and signature checks without hardware provenance. Hardware deployments require provider-specific attestation verification, trusted inputs, and a deployment that prevents gateway bypass. The agent, model, and upstream tool server remain separate components.
+cMCP is an open-source gateway for MCP tool-call policy enforcement. It evaluates routed calls against Cedar policy and signs session records. Software mode demonstrates policy and signature checks without hardware provenance. Hardware deployments require provider-specific attestation verification, trusted inputs, and a deployment that prevents gateway bypass. The agent, model, and upstream tool server remain separate components. Part of AgenTrust, open specifications for verifiable AI: https://agentrust-io.com.
 
-# Getting started
+# Get started
 
 [03 · Actions: was each tool call checked inside attested hardware?](https://agentrust-io.com/#chain)
 
@@ -811,6 +811,106 @@ catalog_path: ./catalog.json
 - Set `attestation.expected_measurement` to the expected TEE measurement for your deployment. Without this, a different binary could be deployed and would still produce valid attestation reports.
 - Use a real TEE provider (`tpm`, `sev-snp`, `tdx`, or `opaque`), not `software-only`. Software-only mode does not provide a hardware root of trust and leaves threat classes T1 through T4 open.
 - Rotate the TEE signing key by performing a full enclave restart on a regular schedule. The signing key is hardware-sealed per enclave instance; rotation requires restart.
+
+# Specification index
+
+This page lists every specification file in the repository, what it covers, which phase it belongs to, and the schemas and conformance tests that go with it. For what cMCP is and where to start reading, see the [home page](https://cmcp.agentrust-io.com/index.md).
+
+Issues in this repository track specification decisions rather than implementation bugs. Each issue corresponds to a design question, and is closed with a reference to the spec file that resolves it.
+
+## Spec File Index
+
+| File                              | Covers                                                                        | Phase | Status     | Issues                  |
+| --------------------------------- | ----------------------------------------------------------------------------- | ----- | ---------- | ----------------------- |
+| docs/SPEC.md                      | Problem taxonomy, coverage matrix, Phase 1/2 scope                            | 1+2   | Draft v0.1 | -                       |
+| docs/spec/component-model.md      | All MCP components, trust levels, hardware vs. software boundaries            | 1+2   | Draft v0.1 | #43                     |
+| docs/spec/transport.md            | HTTP/SSE scope, stdio gap, SPIFFE-to-TEE binding spike                        | 1     | Draft v0.1 | #20, #21                |
+| docs/spec/attestation.md          | TEE provider detection, audit chain, key management, catalog pinning          | 1     | Draft v0.1 | #5, #6, #23, #33, #38   |
+| docs/spec/cedar-policy.md         | Policy bundle format, Cedar examples, enforcement modes, provenance           | 1     | Draft v0.1 | #4, #7, #26, #39, #41   |
+| docs/spec/tool-identity.md        | Server identity binding, catalog schema, collision detection                  | 1     | Draft v0.1 | #40                     |
+| docs/spec/failure-modes.md        | Runtime failure scenarios, decision table, log formats                        | 1     | Draft v0.1 | #22                     |
+| docs/spec/call-graph.md           | Tag-propagation model, observability limits, cross-boundary policy            | 1     | Draft v0.1 | #35                     |
+| docs/spec/session-policy.md       | Session sensitivity state machine, egress policy, session reset               | 1     | Draft v0.1 | #36                     |
+| docs/spec/response-inspection.md  | 4-stage response inspection pipeline, injection patterns                      | 1     | Draft v0.1 | #37                     |
+| docs/spec/error-codes.md          | Central error code registry for all runtime and verification errors           | 1+2   | Draft v0.1 | -                       |
+| docs/spec/threat-model.md         | Assets, adversaries, STRIDE analysis per component                            | 1     | Draft v0.1 | #18, #24                |
+| docs/spec/verification-library.md | cmcp-verify Python library interface and per-provider verification steps      | 1     | Draft v0.1 | #25                     |
+| docs/spec/mcp-spec-strategy.md    | MCP spec monitoring and attestation extension contribution window             | 1+2   | Draft v0.1 | #30                     |
+| docs/spec/proxy-security.md       | Phase 2 proxy parser fuzzing DoD                                              | 2     | Draft v0.1 | #34                     |
+| docs/spec/phase2-server.md        | Provider-side attestation, 5 unique properties, streaming proxy, multi-tenant | 2     | Draft v0.1 | #17, #28, #29, #32, #42 |
+| docs/testing/benchmarks.md        | Latency targets and benchmark methodology                                     | 1     | Draft v0.1 | #27                     |
+| docs/testing/soak-test.md         | 72-hour soak test plan                                                        | 1     | Draft v0.1 | #31                     |
+
+______________________________________________________________________
+
+## Schema Files
+
+Machine-readable schemas in `schemas/` let implementations validate their outputs before shipping.
+
+| File                              | What it validates                         | Use with                                   |
+| --------------------------------- | ----------------------------------------- | ------------------------------------------ |
+| schemas/trace-claim.schema.json   | TRACE Claim JSON (draft-07)               | jsonschema, ajv, any JSON Schema validator |
+| schemas/audit-entry.schema.json   | Single audit chain entry                  | jsonschema, ajv                            |
+| schemas/catalog-entry.schema.json | Tool catalog entry                        | jsonschema, ajv                            |
+| schemas/cedar-schema.cedarschema  | Cedar entity types and context attributes | cedar-policy CLI: `cedar validate`         |
+
+To validate a TRACE Claim:
+
+```
+ajv validate -s schemas/trace-claim.schema.json -d your-trace-claim.json
+```
+
+To validate Cedar policies:
+
+```
+cedar validate --schema schemas/cedar-schema.cedarschema --policies policies/
+```
+
+______________________________________________________________________
+
+## Conformance Tests
+
+`tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
+
+- Input conditions
+- Expected behavior (pass/fail, error code, field values)
+- The spec section it validates
+
+A conforming implementation passes all MUST-level tests. SHOULD-level tests indicate higher-quality conformance.
+
+______________________________________________________________________
+
+## Contributing
+
+**Spec versioning:** All files use `Status: Draft/Review/Accepted/Superseded` plus a version number (e.g. `v0.1`). Stability is `Unstable` until v1.0.
+
+**Process:**
+
+1. Open an issue describing the spec gap or design question
+1. Discuss in the issue : the issue body captures the decision context
+1. Submit a PR with the spec change, referencing the issue
+1. PR is merged when the spec change is accepted
+
+**Scope:** Issues here are about specification design decisions. Runtime bugs belong on the [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) implementation, in the [issue tracker](https://github.com/agentrust-io/cmcp/issues) under an implementation label.
+
+______________________________________________________________________
+
+## Glossary
+
+| Term                | Definition                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| TRACE Claim         | The signed, hardware-attested proof artifact produced by the runtime per session                   |
+| TEE                 | Trusted Execution Environment (TPM, SEV-SNP, TDX, or OPAQUE Managed)                               |
+| SPIFFE SVID         | Short-lived cryptographic identity issued by SPIRE after TEE attestation succeeds                  |
+| Cedar               | The policy language used for tool call authorization                                               |
+| Audit chain         | The append-only hash-chained log of all runtime decisions, signed with a TEE-sealed key            |
+| Session sensitivity | The maximum sensitivity level seen in any tool response within the current session                 |
+| Tag-propagation     | The runtime's mechanism for tracking sensitivity across calls based on observable events           |
+| Catalog entry       | The runtime's approved record for one tool: name, server identity, approved definition             |
+| Attestation report  | The hardware-produced evidence that a specific binary ran in a specific TEE at a specific time     |
+| policy_bundle_hash  | SHA-256 of the canonical Cedar policy bundle, measured into the TEE at startup                     |
+| tool_catalog_hash   | SHA-256 of the canonical tool catalog, measured into the TEE at startup                            |
+| Call graph          | Per-session record of tool calls and temporal adjacency edges (approximation, not data provenance) |
 # Specification
 
 # cMCP Runtime - Product Specification
@@ -1485,6 +1585,681 @@ Break-glass use is visible in the TRACE Claim:
 
 TRACE Claims with a non-empty `catalog_exceptions` list are flagged for auditor review. Break-glass use appears in all TRACE Claims for the duration of that enclave session.
 
+# Session Policy
+
+Status: Draft v0.1 | Closes #36 | Related: [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) (feeds this), [call-graph.md](https://cmcp.agentrust-io.com/spec/call-graph/index.md) (uses this)
+
+## Overview
+
+Individual call policy, Cedar evaluated before each tool call, is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.
+
+Phase 1.5 introduces session sensitivity tracking to close this gap. Once a session has handled data at a given sensitivity level, outbound calls to destinations that are not approved for that sensitivity level are denied, even if each individual call would pass pre-call Cedar policy in isolation. The session sensitivity state is monotonically increasing within a session: it can only go up, never down, short of an explicit operator-authorized reset.
+
+## Session Sensitivity State Machine
+
+### States
+
+Sensitivity states, ordered from lowest to highest:
+
+```
+public < pii < confidential < hipaa_phi = mnpi = trade_secret
+```
+
+`hipaa_phi`, `mnpi`, and `trade_secret` are all at the highest level. There is no ordering among them: a session that has seen MNPI is equally restricted as one that has seen PHI. Once a session reaches any of the three, the same egress rules apply.
+
+These six are fixed and always present. A deployment that needs to express a classification scheme its own regulation names, for example a public sector Open/Confidential/Secret/Top Secret ladder, adds new labels alongside them via `sensitivity.vocabulary` in config, rather than replacing the built in set (#479):
+
+```
+sensitivity:
+  vocabulary:
+    secret: 4
+    top_secret: 5
+```
+
+This is additive only. A vocabulary key that names a built in label is rejected at config load, since response inspection's pattern based detectors (see [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md)) emit the built in tags directly, `pii` and `hipaa_phi` among them, and those tags must always resolve to their real rank rather than an unrecognised one. `SessionManager` and `PolicyEvaluator` each derive the same effective vocabulary from the same config, so a session's `max_sensitivity` and the `sensitivity_level` integer Cedar sees can never disagree about what a custom label ranks as. The tool catalog's `sensitivity_level` field is validated at load time against this same effective set, so it stays a closed vocabulary, just not a hardcoded one.
+
+A single call can also declare its own class above its tool's catalogued floor, via `_cmcp.data_class` on the request (see [connecting-agent-frameworks.md](https://cmcp.agentrust-io.com/tutorials/connecting-agent-frameworks/#declare-a-per-call-data-class)), for a tool whose catalogued level is a floor rather than the true class of every call it serves. The two pieces compose: a deployment adds a label via `sensitivity.vocabulary`, and a call declares that label via `_cmcp.data_class` in the same session. The declaration can only raise the effective class, both for the session's `max_sensitivity` and for that call's own row in the signed transcript, never lower it, the same `_max_sensitivity` comparison this vocabulary section describes is what enforces that.
+
+### State Transitions
+
+State is monotonically increasing within a session. It never decreases automatically. The only way to return to a lower state is an explicit operator-authorized session reset (see below).
+
+The transition trigger is the `update_from_inspection` call made by the response inspection pipeline after every tool call. See [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) for when and how that call is made.
+
+```
+SENSITIVITY_ORDER = {
+    "public": 0,
+    "pii": 1,
+    "confidential": 2,
+    "hipaa_phi": 3,
+    "mnpi": 3,
+    "trade_secret": 3,
+}
+
+def update_from_inspection(
+    self,
+    call_id: str,
+    sensitivity_tags: list[str],
+    injection_detected: bool,
+    response_allowed: bool,
+) -> None:
+    for tag in sensitivity_tags:
+        if SENSITIVITY_ORDER[tag] > SENSITIVITY_ORDER[self.max_sensitivity]:
+            self.max_sensitivity = tag
+            self.sensitivity_raised_at = now()
+            self.sensitivity_raised_by_call = call_id
+    if injection_detected:
+        self.injection_events.append({
+            "call_id": call_id,
+            "timestamp": now(),
+            "response_allowed": response_allowed,
+        })
+```
+
+`response_allowed` is recorded in injection events but does not affect state transition logic. A denied response that carried high-sensitivity tags still raises `max_sensitivity`: the agent is aware the call was attempted.
+
+## Cedar Egress Policy Using Session State
+
+Cedar evaluates pre-call policy with session state available as a context attribute. Three representative policies:
+
+Policy 1: Block PHI egress to uncovered external destinations
+
+```
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource
+)
+when {
+  context.session.max_sensitivity == "hipaa_phi" &&
+  resource.tool.destination_type == "external" &&
+  !resource.tool.hipaa_covered
+};
+```
+
+Policy 2: Block MNPI egress to communication tools
+
+```
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource
+)
+when {
+  context.session.max_sensitivity == "mnpi" &&
+  resource.tool.category == "communication"
+};
+```
+
+Policy 3: Block any high-sensitivity session from writing to public channels
+
+```
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource
+)
+when {
+  [3].contains(context.session.sensitivity_level_int) &&
+  resource.tool.output_visibility == "public"
+};
+```
+
+In Policy 3, `sensitivity_level_int` is a derived integer attribute on the session context object (computed from `SENSITIVITY_ORDER` at context construction time) so Cedar can use numeric comparison.
+
+## Session Reset Protocol
+
+Endpoint: `POST /session/reset`
+
+Credential required: Operator credential. Agent credentials are not accepted. This is intentional, see below.
+
+Effect:
+
+- `max_sensitivity` is reset to `"public"`
+- A new `session_id` is generated; the old session ID is retired
+- An audit chain entry of type `"session_reset"` is written:
+
+```
+{
+  "type": "session_reset",
+  "reason": "<operator-supplied string>",
+  "authorized_by": "<operator principal>",
+  "previous_session_id": "<old session id>",
+  "new_session_id": "<new session id>",
+  "timestamp": "<ISO-8601>"
+}
+```
+
+When reset is not possible or not yet called: If the runtime is in enforcement mode and `max_sensitivity` is `"hipaa_phi"`, `"mnpi"`, or `"trade_secret"`, outbound calls to non-covered or non-approved destinations are denied by Cedar egress policy (see above). The agent cannot unblock itself. There is no agent-callable override endpoint.
+
+This is intentional. The agent is an LLM: it is non-deterministic, and the runtime cannot trust agent assertions about what is or is not in its context window. Once a session has handled high-sensitivity data, the only entity that can attest "this session is now clean" is a human operator who has verified the agent's context. The reset endpoint is the mechanism for that attestation.
+
+If an operator reset is not available (e.g., the runtime is processing automated batch jobs with no operator in the loop), the correct architectural response is to provision short-lived sessions scoped to a single sensitivity domain, rather than relying on reset.
+
+## Session Lifetime and Attestation Validity
+
+A session's maximum duration is bounded by the attestation validity period of the agent's TRACE token. When the TRACE token expires, the session must end: the gateway cannot continue to enforce session-level policy for an agent whose identity and configuration are no longer attested.
+
+In practice: session `max_duration_seconds` is set to `min(configured_session_max, trace_token_ttl_remaining)` at session creation. A session that is still active when its TRACE token would expire is terminated by the runtime with an audit entry of type `"session_expired"`.
+
+This means a long-running agent that handles high-sensitivity data early in its session will face increasingly tight call restrictions as the session progresses, both because `max_sensitivity` is monotonically increasing and because the TRACE token TTL is monotonically decreasing. Deployments should size TRACE token lifetimes to match expected task durations.
+
+## Agent Manifest Identity Binding
+
+When `agent_manifest` is configured, session creation is bound to a signed Agent Manifest. The runtime loads the manifest and issuer trust anchor, delegates Agent Manifest signature and artifact verification to the `agent-manifest` SDK `verify_manifest()` API, and extracts:
+
+- `manifest_id`
+- `agent_id`
+- `artifacts.policy_bundle.hash`
+- `artifacts.tool_manifest.catalog_hash`
+
+The authenticated agent subject for the session MUST be a SPIFFE URI and MUST equal `manifest.agent_id`. In the current HTTP runtime this subject is supplied by `agent_manifest.authenticated_subject`; production deployments SHOULD wire this value from the inbound agent SVID/mTLS identity. The runtime records the provenance of this assertion in `gateway.agent_identity.subject_source`: `config` for configured input, `svid` for transport/mTLS SVID, or `manifest-dev` for the development-mode fallback that uses `manifest.agent_id`. If the subject, manifest signature, manifest expiry, policy hash, or catalog hash does not match, the runtime fails closed before serving the session.
+
+The Agent Manifest signing pre-image uses the manifest `signed_fields` subset. For HITL workflows, `hitl_record.approvals` is normalized to an empty array before signing so approvals can be attached after the manifest is issued without invalidating the manifest signature.
+
+This binding answers "who acted" for the session. It does not replace `trace.subject`, which identifies the cMCP gateway's TEE-backed issuing identity. The session identifier remains in `gateway.session_id`. Instead, the TRACE Trust Record carries `gateway.agent_identity` alongside the gateway subject:
+
+```
+{
+  "trace": {
+    "subject": "spiffe://cmcp.gateway/tee/<gateway-id>"
+  },
+  "gateway": {
+    "session_id": "<session-id>",
+    "agent_identity": {
+      "manifest_id": "<manifest UUID>",
+      "agent_id": "spiffe://factory.example/agent/material-movement/dev",
+      "authenticated_subject": "spiffe://factory.example/agent/material-movement/dev",
+      "subject_source": "config",
+      "issuer": "spiffe://factory.example/signing-authority/development",
+      "issuer_key_id": "<sha256 of issuer public key>",
+      "policy_bundle_hash": "sha256:<manifest policy hash>",
+      "tool_catalog_hash": "sha256:<manifest catalog hash>"
+    }
+  }
+}
+```
+
+Offline verifiers SHOULD cross-check `gateway.agent_identity` against the signed manifest and trusted issuer key. This keeps the runtime boundary check and the evidence artifact self-checking.
+
+`gateway.agent_identity` MAY also carry `intent_hash` (AARM R2: a digest of the issuer-signed declared intent, agent-manifest spec §3.9) and `enforcement_mode` (the Agent Manifest binding's enforcement mode at session creation, distinct from `trace.policy.enforcement_mode`). Both are populated whenever the bound manifest supplies them, which is the common case once `agent_manifest` is configured.
+
+`gateway.agent_identity` MAY also carry `agent_key_thumbprint`: an RFC 7638 JWK thumbprint of the agent's own signing key, rendered as `sha256:<hex>`, distinct from `issuer_key_id` (the key that signed the manifest). It is optional and is omitted from every claim the current runtime can produce, since no code path here has access to agent key bytes yet. When a producer does populate it, it MUST only do so while `subject_source` names a live-authenticated source (currently `svid`) - never `config` or `manifest-dev`, which are operator-supplied assertions rather than proof of key possession. `cmcp_verify.verify_trace_claim` fails closed (`AGENT_KEY_THUMBPRINT_UNBOUND_SUBJECT`) on any claim that violates this.
+
+## TRACE Claim Fields from Session State
+
+The following fields from session state are included in the TRACE attestation record for the session (written at session close):
+
+| Field                     | Type    | Description                                                                                                                                                                                                                                                                                   |
+| ------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_max_sensitivity` | string  | The highest `max_sensitivity` value reached during the session.                                                                                                                                                                                                                               |
+| `session_reset_count`     | integer | Number of times `POST /session/reset` was called during the session lifetime. Normally `0`; a non-zero value warrants review.                                                                                                                                                                 |
+| `agent_identity`          | object  | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, subject source, issuer key ID, policy hash, catalog hash, and the optional `intent_hash`, `agent_key_thumbprint`, and `enforcement_mode`. Present only when `agent_manifest` is configured and verified. |
+
+# Tool Identity and Catalog Specification
+
+______________________________________________________________________
+
+Status: Draft v0.1 Last updated: 2026-06-04 Stability: Unstable , expect breaking changes before v1.0
+
+______________________________________________________________________
+
+This document specifies how the cMCP Runtime identifies upstream MCP servers, prevents tool name collisions, and routes tool calls. These mechanisms close the protocol-level gap in MCP (issue #40): MCP defines no signed manifest binding a tool name to a publisher. The runtime closes this by maintaining a catalog that binds each tool name to a specific upstream server identity.
+
+______________________________________________________________________
+
+## Section 1 -- Server Identity Format
+
+Each upstream MCP server has two identity anchors:
+
+### TLS Fingerprint
+
+The SHA-256 fingerprint of the server's TLS certificate public key:
+
+```
+SHA256:aabbccdd...
+```
+
+The fingerprint is computed over the server's public key. Its behavior at cert renewal depends on the configured rotation mode -- see [Cert Rotation Policy](#cert-rotation-policy) below.
+
+### SPIFFE SVID
+
+A URI of the form:
+
+```
+spiffe://<trust-domain>/<namespace>/<service-name>
+```
+
+Example: `spiffe://corp.example/salesforce/mcp-server`
+
+SPIFFE SVIDs are issued by a SPIRE server shared between the runtime and the upstream servers. The runtime verifies the SVID against the SPIRE trust bundle at connection time. SPIFFE is the preferred identity anchor when the deployment includes a SPIRE server.
+
+### Phase 1 Requirement
+
+In Phase 1, each catalog entry must include at least one identity anchor (`tls_fingerprint` or `spiffe_id`). Including both is preferred: the runtime verifies whichever anchors are present, and a mismatch on either is treated as an identity failure.
+
+______________________________________________________________________
+
+## Section 2 -- Catalog Entry Schema
+
+Each tool in the catalog has a full entry binding the tool name to its upstream server and approved definition:
+
+```
+{
+  "tool_name": "salesforce.query",
+  "server": {
+    "display_name": "Salesforce MCP Server",
+    "url": "https://mcp.salesforce.com/mcp",
+    "tls_fingerprint": "SHA256:aabbcc...",
+    "spiffe_id": "spiffe://corp.example/salesforce/mcp-server",
+    "rotation_mode": "key-pinned"
+  },
+  "approved_definition": {
+    "description": "Query Salesforce records by SOQL",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" }
+      }
+    },
+    "output_schema": {
+      "type": "object"
+    }
+  },
+  "definition_hash": "sha256:...",
+  "added_at": "2026-06-01T00:00:00Z",
+  "approved_by": "security-team@example.com"
+}
+```
+
+### Field Definitions
+
+| Field                    | Type    | Required                                         | Description                                                                                                             |
+| ------------------------ | ------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `tool_name`              | string  | yes                                              | Unique tool name as it appears in MCP. Must be unique across the entire catalog.                                        |
+| `server.display_name`    | string  | yes                                              | Human-readable name for the upstream server.                                                                            |
+| `server.url`             | string  | yes                                              | URL the runtime routes calls to for this tool.                                                                          |
+| `server.tls_fingerprint` | string  | at least one of `tls_fingerprint` or `spiffe_id` | SHA-256 fingerprint of the server's TLS public key.                                                                     |
+| `server.spiffe_id`       | string  | at least one of `tls_fingerprint` or `spiffe_id` | SPIFFE SVID URI for the server.                                                                                         |
+| `server.rotation_mode`   | string  | no (default: `key-pinned`)                       | `key-pinned` or `cert-pinned`. Controls how cert renewal is handled. See [Cert Rotation Policy](#cert-rotation-policy). |
+| `approved_definition`    | object  | yes                                              | The approved tool definition (description and schemas) as reviewed by the security team.                                |
+| `definition_hash`        | string  | yes                                              | SHA-256 of `canonical_json(approved_definition)`. Used for mutation detection.                                          |
+| `added_at`               | ISO8601 | yes                                              | Timestamp when the entry was added to the catalog.                                                                      |
+| `approved_by`            | string  | yes                                              | Identity of the approver (email or SPIFFE SVID).                                                                        |
+
+### Definition Hash and Mutation Detection
+
+The `definition_hash` is computed at catalog approval time and included in the `tool_catalog.hash` measurement in the TRACE Claim. At runtime, the process fetches the live tool definition from the upstream server and compares it against `approved_definition`. If the live definition does not match:
+
+- The call is denied.
+- The audit log records the event as `definition_mismatch`.
+- The TRACE Claim reflects the denial.
+
+This closes the rug-pull attack vector (P4.2): a compromised upstream server cannot change a tool's behavior by altering its definition without being detected.
+
+______________________________________________________________________
+
+## Section 3 -- Collision Detection
+
+Tool name uniqueness is enforced at catalog load time (enclave startup).
+
+**Rule**: each `tool_name` must map to exactly one upstream server. If two catalog entries share the same `tool_name`, the runtime refuses to start.
+
+**Error message**:
+
+```
+Duplicate tool name in catalog: "salesforce.query" is registered by two different servers:
+  - https://mcp.salesforce.com/mcp (tls_fingerprint: SHA256:aabbcc...)
+  - https://legacy-crm.internal/mcp (tls_fingerprint: SHA256:112233...)
+Each tool name must map to exactly one upstream server.
+```
+
+The runtime does not attempt to resolve the collision. It fails closed: no tools are available until the collision is resolved.
+
+**Resolution**: namespace the tool names. Example:
+
+| Original (colliding)                            | Namespaced             |
+| ----------------------------------------------- | ---------------------- |
+| `salesforce.query` (from Salesforce MCP Server) | `salesforce_mcp.query` |
+| `salesforce.query` (from legacy CRM)            | `legacy_crm.query`     |
+
+Cedar policies and agent configurations must be updated to use the namespaced names.
+
+### Why Fail-Closed
+
+Silent collision resolution (e.g., last-write-wins or first-registered-wins) would allow a malicious or misconfigured server to shadow a legitimate tool. Refusing to start ensures that an operator must explicitly resolve the ambiguity. This closes the tool name collision attack vector (P2.3).
+
+______________________________________________________________________
+
+## Section 4 -- Routing
+
+When the runtime receives a tool call for `tool_name`:
+
+1. Look up `tool_name` in the catalog.
+1. If not found: deny the call, log as `tool_not_in_catalog`.
+1. Extract `server.url`, `server.tls_fingerprint`, `server.spiffe_id`, and `server.rotation_mode` from the catalog entry.
+1. Open (or reuse) a connection to `server.url`.
+1. Verify the server's identity:
+1. If `tls_fingerprint` is set: verify the server's TLS certificate public key fingerprint matches `catalog[tool_name].server.tls_fingerprint`. For `key-pinned` mode, the fingerprint is stable across cert renewals; for `cert-pinned` mode, a new cert triggers an identity mismatch even if the key is the same.
+1. If `spiffe_id` is set: verify the server's SPIFFE SVID matches `catalog[tool_name].server.spiffe_id` via the SPIRE trust bundle.
+1. If either verification that is configured fails: deny the call, log as `identity_mismatch`.
+1. Fetch the live tool definition from the upstream server and compare against `approved_definition` using `definition_hash`.
+1. If mismatch: deny the call, log as `definition_mismatch`.
+1. Forward the tool call to the upstream server.
+1. Return the response to the runtime's response inspection pipeline.
+
+### Identity Mismatch Handling
+
+An `identity_mismatch` event indicates one of:
+
+- The upstream server's TLS certificate was rotated with a new key (legitimate rotation requiring catalog update, or key compromise).
+- The upstream server's TLS certificate was renewed with the same key but `cert-pinned` mode is configured (legitimate renewal requiring catalog update).
+- A man-in-the-middle or DNS hijack is in progress.
+- The server was replaced with a different instance (legitimate infrastructure change, requires catalog update).
+
+In all cases, the runtime denies the call and does not forward any data to the server until the catalog is updated and the enclave is restarted with the new measurement.
+
+______________________________________________________________________
+
+## Cert Rotation Policy
+
+Two modes are supported. The operator selects one when adding a server to the catalog by setting `server.rotation_mode`.
+
+**Mode A: Key-pinning (recommended)** The catalog entry stores the fingerprint of the server's current public key. The server reuses the same keypair at cert renewal (renewing only the certificate, not the key). The fingerprint does not change at renewal. No catalog update required.
+
+- Advantage: no operational disruption at cert renewal
+- Risk: if the server's private key is compromised, the attacker can use the same key indefinitely until the catalog is manually updated
+- Catalog field: `"rotation_mode": "key-pinned"`
+
+**Mode B: Cert-pinning** The catalog entry stores the fingerprint of the server's specific certificate (including its expiry). At cert renewal (even with the same keypair), the fingerprint changes. A catalog update and enclave restart are required.
+
+- Advantage: automatic detection of any cert change, including unauthorized renewal
+- Risk: operational overhead at every cert renewal; agents cannot call the tool until the catalog is updated
+- Catalog field: `"rotation_mode": "cert-pinned"`
+
+**Default:** Mode A (key-pinned) for HTTP/SSE MCP servers with long-lived endpoints. Mode B for short-lived or frequently rotated certs.
+
+**For SPIFFE-based identity:** SPIFFE SVIDs are short-lived (typically 1 hour). The catalog entry stores the SPIFFE ID URI (not the SVID certificate itself). SPIRE issues new SVIDs automatically; the SPIFFE ID URI is stable across renewals. No cert rotation policy needed when SPIFFE is the primary identity anchor.
+
+# Transport Compatibility Specification
+
+______________________________________________________________________
+
+Status: Draft v0.1 Last updated: 2026-06-04 Stability: Unstable , expect breaking changes before v1.0
+
+______________________________________________________________________
+
+Covers: Streamable HTTP scope, stdio gap analysis, SPIFFE-to-TEE attestation binding.
+
+## Current network transport
+
+cMCP speaks the stateless MCP 2026-07-28 Streamable HTTP contract to network servers. Every upstream request is a new POST carrying matching protocol metadata in the body and `MCP-Protocol-Version`, `Mcp-Method`, and (where applicable) `Mcp-Name` headers. The gateway advertises both JSON and SSE and accepts a request-scoped SSE stream only when it ends with the matching final JSON-RPC response. A missing response, malformed event, unsupported content type, or mismatched response id fails closed.
+
+The catalog value for new network entries is `streamable-http`. The `http-sse` value remains loadable for existing catalogs, but names the legacy 2024-11-05 transport and should not be used for new entries. `websocket` is rejected because cMCP has no WebSocket implementation; silently sending such an entry over HTTP would misrepresent the measured catalog.
+
+Closes #20, #21.
+
+______________________________________________________________________
+
+## Transport Compatibility Matrix
+
+| Transport | Phase 1 Status                     | Reason                                                                                                                                                                                                                                                                          |
+| --------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP/SSE  | **In scope**                       | MCP server runs as a network-addressable process. The runtime terminates the connection at the TEE boundary, inspects each call, and forwards to the upstream server over a separate internal connection. No subprocess spawning required.                                      |
+| stdio     | **Implemented as a gateway child** | The gateway spawns the catalog-configured MCP server within its own deployment boundary. Digest checks and explicit unmeasured-spawn configuration apply. See [stdio transport](https://cmcp.agentrust-io.com/spec/stdio-transport/index.md) for behavior and isolation limits. |
+| WebSocket | **TBD**                            | WebSocket provides bidirectional framing over HTTP/1.1 or HTTP/2. The runtime can terminate WebSocket connections in principle; evaluation is deferred pending the MCP specification WebSocket profile stabilizing.                                                             |
+
+______________________________________________________________________
+
+## Original stdio Gap Analysis (historical)
+
+The MCP stdio transport works as follows:
+
+```
+Agent process
+  └── spawns MCP server as child process
+        └── communicates over stdin/stdout (JSON-RPC 2.0 framing)
+```
+
+For the runtime to intercept this traffic, it would need to run inside the same process tree as the agent, which contradicts TEE isolation. TEE isolation works at the VM boundary (SEV-SNP, TDX) or at the TPM-measured boot boundary. A process inside the TEE cannot be a child of a process outside the TEE. Allowing it would defeat the hardware attestation guarantee: the enclave measurement would no longer cover the full execution context.
+
+______________________________________________________________________
+
+## stdio Bridging Options
+
+### Option A: stdio-to-HTTP Bridge (new component at TEE boundary)
+
+A new sidecar component runs outside the TEE and translates stdio JSON-RPC to HTTP/SSE. The runtime (inside the TEE) connects to the sidecar over localhost HTTP.
+
+```
+Agent
+  └── spawns stdio-bridge (outside TEE)
+        └── translates stdio <-> HTTP/SSE
+              └── cMCP Gateway (inside TEE)
+                    └── MCP Server (HTTP/SSE)
+```
+
+| Dimension               | Assessment                                                                                                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent changes required  | Minimal: configure MCP client to use stdio-bridge binary instead of MCP server binary directly                                                                                     |
+| Attack surface          | Increased. The stdio-bridge runs outside the TEE and can be tampered with. An attacker who compromises the bridge can inject or suppress tool calls before they reach the runtime. |
+| Attestation coverage    | The bridge is not inside the TEE. Its behavior is not covered by the hardware attestation report. TRACE Claims reflect runtime decisions, not bridge fidelity.                     |
+| Complexity              | New component to build, deploy, and maintain.                                                                                                                                      |
+| Recommended for Phase 1 | No. The untrusted bridge segment weakens the security model.                                                                                                                       |
+
+### Option B: Agent-side stdio Proxy (agent wraps stdio server, exposes HTTP/SSE)
+
+The agent developer wraps the stdio MCP server in a thin HTTP adapter that speaks HTTP/SSE externally. The runtime connects to the adapter endpoint as if it were a native HTTP/SSE MCP server.
+
+```
+Agent
+  └── stdio-http-adapter (agent-side, outside TEE)
+        └── spawns MCP server (stdio)
+        └── exposes HTTP/SSE on localhost port
+              └── cMCP Gateway (inside TEE)
+```
+
+| Dimension               | Assessment                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Agent changes required  | Agent developer must run an adapter (e.g., mcp-proxy or equivalent) alongside the stdio server                 |
+| Attack surface          | Same as Option A at the adapter layer, but the responsibility is clearer: the agent developer owns the adapter |
+| Attestation coverage    | Same gap: adapter is outside the TEE                                                                           |
+| Complexity              | Lower than Option A: no new first-party component. Reuses existing open-source adapters.                       |
+| Recommended for Phase 1 | Acceptable as a workaround documented under "unsupported configurations." Not a supported path.                |
+
+### Comparison Table
+
+|                           | Option A: Bridge at TEE boundary | Option B: Agent-side proxy                |
+| ------------------------- | -------------------------------- | ----------------------------------------- |
+| New first-party component | Yes                              | No                                        |
+| Attack surface added      | High (bridge at trust boundary)  | Medium (adapter is agent-developer-owned) |
+| Attestation covers it     | No                               | No                                        |
+| Agent developer effort    | Low                              | Medium                                    |
+| Recommended               | No                               | Workaround only                           |
+
+**Current decision:** the gateway-as-parent stdio path is implemented. The earlier exclusion and bridging options above record the original design analysis; they are not the current support matrix. See [stdio transport](https://cmcp.agentrust-io.com/spec/stdio-transport/index.md) for session lifecycle, executable identity, and the shared isolation boundary.
+
+______________________________________________________________________
+
+## "Zero Code Changes" Claim: Precise Scope
+
+The "zero code changes" claim applies only to the following configuration:
+
+- The MCP server is containerized (Docker or OCI image).
+- The MCP server already supports HTTP/SSE transport (not stdio-only).
+- The MCP server does not depend on host-level resources: local filesystem mounts, host network interfaces, or host-specific library versions (e.g., a specific glibc ABI not present in the TEE base image).
+- The agent MCP client is configured to point to the runtime endpoint rather than the MCP server directly.
+
+If any of these conditions are not met, code or configuration changes are required before the runtime can be used.
+
+______________________________________________________________________
+
+## Concrete Agent-Side Configuration
+
+The runtime is the sole MCP endpoint the agent host is configured to reach. All MCP servers are registered with the runtime, not with the agent directly.
+
+### YAML example
+
+```
+# agent-config.yaml
+mcp:
+  # The agent host connects only to the cMCP Runtime.
+  # No direct connections to individual MCP servers.
+  gateway_endpoint: "https://cmcp-runtime.internal:4433"
+  tls:
+    ca_cert: "/etc/cmcp/runtime-ca.pem"
+    # SPIFFE SVID for mutual TLS (issued only after TEE attestation succeeds)
+    client_cert: "/var/run/spire/svids/agent.pem"
+    client_key:  "/var/run/spire/svids/agent.key"
+
+  # The agent does not list individual MCP servers here.
+  # The runtime tool catalog is the authoritative list of available tools.
+  # servers: []  # empty -- runtime handles routing
+```
+
+### JSON example (alternative)
+
+```
+{
+  "mcp": {
+    "gateway_endpoint": "https://cmcp-runtime.internal:4433",
+    "tls": {
+      "ca_cert": "/etc/cmcp/runtime-ca.pem",
+      "client_cert": "/var/run/spire/svids/agent.pem",
+      "client_key": "/var/run/spire/svids/agent.key"
+    }
+  }
+}
+```
+
+The agent host must not have direct network routes to any MCP server. Network policy (Kubernetes NetworkPolicy, security group, or firewall rule) enforces this. The runtime is the only reachable MCP endpoint from the agent network namespace.
+
+______________________________________________________________________
+
+## SPIFFE-to-TEE Attestation Binding (Issue #21)
+
+### Problem Statement
+
+SPIFFE SVID issuance must be conditioned on successful TEE attestation. If a SVID can be issued without attestation, any process -- attested or not -- can claim a runtime identity. The binding is the critical-path item for Phase 1: without it, the chain of trust has a gap between hardware measurement and workload identity.
+
+### Standards Basis
+
+- **IETF RATS RFC 9334**: Defines the reference architecture for remote attestation. The Attester (TEE) produces Evidence; the Verifier checks Evidence against Reference Values and produces an Attestation Result; the Relying Party (SPIRE) consumes the Attestation Result to make a trust decision.
+- **SPIFFE/SPIRE**: SPIRE issues X.509 SVIDs and JWT SVIDs. SPIRE node attestation plugin model supports custom attestors. The TEE attestation plugin produces an attestation result that SPIRE uses as the basis for SVID issuance.
+
+### Binding Mechanism
+
+```
+TEE boots
+  └── TEE produces attestation Evidence (measurement)
+        └── SPIRE node attestation plugin receives Evidence
+              └── Plugin forwards to Verifier (external or embedded)
+                    └── Verifier checks measurement against Reference Values
+                          └── On success: SPIRE issues SVID to TEE workload
+                                └── Gateway uses SVID for mTLS with agents and MCP servers
+```
+
+### Per-Provider Attestation Evidence Formats
+
+| Provider | Evidence Type                      | Description                                                                                                                                                                                                                                                                                           |
+| -------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TPM      | PCR values                         | Platform Configuration Registers (PCR0-PCR7 minimum) contain hashed measurements of each boot component: firmware, bootloader, kernel, initrd. The SPIRE TPM plugin reads PCR values via the TPM2 TSS stack and verifies them against expected values.                                                |
+| SEV-SNP  | SEV measurement                    | A SHA-384 hash of the encrypted VM memory contents at launch time, produced by the AMD PSP. The measurement covers the initial memory pages loaded into the encrypted VM. The SPIRE SEV-SNP plugin submits the measurement to AMD attestation service (or a self-hosted equivalent) for verification. |
+| TDX      | RTMR values                        | Runtime Measurement Registers (RTMR0-RTMR3) accumulate hashes of components loaded after the TD is created (analogous to TPM PCRs but for TDs). The SPIRE TDX plugin reads the RTMR values from the TD Quote and verifies them against expected values.                                               |
+| OPAQUE   | OPAQUE Managed Runtime measurement | The OPAQUE platform produces a composite measurement of the enclave and its configuration. The SPIRE plugin delegates to the OPAQUE attestation API.                                                                                                                                                  |
+
+### Validation Spike
+
+**Goal**: Confirm that a SPIFFE SVID can be issued if and only if TEE attestation succeeds, using at least one provider (TPM recommended for accessibility).
+
+**Pass conditions**:
+
+1. SPIRE issues an SVID to the runtime workload only after the TEE attestation plugin returns a successful result.
+1. If the TPM PCR values are tampered with (e.g., by modifying the boot sequence in a test VM), SPIRE refuses to issue the SVID and the runtime does not start.
+1. The SVID contains a SPIFFE ID that encodes the TEE provider and measurement (or a reference to it).
+
+**Fail conditions**:
+
+1. SPIRE issues an SVID without consulting the attestation plugin.
+1. No existing SPIRE plugin supports the target TEE provider; a custom plugin would require more than 2 days to build.
+1. The attestation API is not reachable from the TEE environment (network policy or credential bootstrap problem).
+
+**Estimated duration**: 1-2 days.
+
+**If the spike fails**: Phase 1 timeline slips. The binding is non-negotiable for the security model. A failed spike triggers one of:
+
+- Switch to a provider with a working SPIRE plugin (e.g., TPM if the SEV-SNP plugin is missing).
+- Build a minimal custom SPIRE plugin (adds 1-2 weeks).
+- Defer SPIFFE and use a simpler credential bootstrap (e.g., pre-provisioned TLS cert pinned to the TEE measurement via a separate verification step) -- requires a security architecture review before proceeding.
+
+# Phase 2 Proxy Security: Parser Fuzzing
+
+______________________________________________________________________
+
+Status: Draft v0.1 Last updated: 2026-08-27 Stability: Unstable , expect breaking changes before v1.0
+
+______________________________________________________________________
+
+This document defines the fuzzing definition of done (DoD) for the Phase 2 proxy parser. No Phase 2 release ships without satisfying every item below.
+
+## Fuzz Targets
+
+Four fuzz targets are required:
+
+1. **JSON-RPC parser.** Input: arbitrary bytes. Output: valid or invalid parse result. Must not crash or hang under any input.
+1. **MCP message schema validator.** Input: valid JSON-RPC with arbitrary MCP message content. Output: valid or invalid schema result. Must not crash.
+1. **Tool call argument deserializer.** Input: arbitrary JSON as tool arguments. Output: deserialized result or parse error. Must not crash and must not produce unbounded memory allocation.
+1. **Tool response processor.** Input: arbitrary JSON as tool response. Output: processed response or error. Must not crash.
+
+## Fuzzing Definition of Done
+
+All items must be satisfied before Phase 2 ships. Items are non-negotiable; a partial pass does not qualify.
+
+- [ ] 1 billion fuzz iterations on each target with no crashes
+- [ ] 0 timeout-inducing inputs (max 100ms per fuzz case)
+- [ ] Resource limits enforced in code (see constants below)
+- [ ] All inputs resulting in a parse error return a structured error response (no null returns, no uncaught exceptions)
+- [ ] Regression corpus of 50+ MCP edge cases committed to `test/corpus/`
+
+## Resource Limits
+
+These constants are hard-coded in the proxy implementation. They are not configurable at runtime or via operator-supplied configuration. Making them configurable would allow an operator to raise limits and defeat the protection.
+
+```
+MAX_REQUEST_BYTES = 1_000_000  # 1MB, decimal
+MAX_JSON_NESTING_DEPTH = 64
+MAX_PARSE_TIME_MS = 100
+MAX_STRING_LENGTH = MAX_REQUEST_BYTES // 2   # per string field, see invariant below
+```
+
+### MAX_STRING_LENGTH is a ratio, not an absolute
+
+`MAX_STRING_LENGTH` must stay meaningfully below `MAX_REQUEST_BYTES`, and it is written above as a derivation rather than a literal so that it cannot drift out of that relationship.
+
+The invariant matters because violating it produces a check that reads like a control and can never fire. A single string at or above the whole-body cap makes a request the body-size check already rejects, so the per-string check is unreachable on every input that survives long enough to reach it. That is worse than an absent check: an absent control is visible as missing, while a present one passes review, passes an audit read of the source, and counts toward this Definition of Done.
+
+An implementation MUST derive the per-string cap from whatever whole-body cap it enforces. It MUST NOT restate the value as a literal, since a later change to the body cap then silently recreates the unreachable condition at a new ratio.
+
+### MAX_REQUEST_BYTES is 1MB by design
+
+Both implementations enforce `1_000_000`, decimal: `scripts/mock_upstream.py` and `MCPServer.__init__` in `src/cmcp_runtime/mcp/server.py`. This is the DOS-001 control created by [issue #147](https://github.com/agentrust-io/cmcp/issues/147), which established the request body limit before the gateway reads the body.
+
+The per-string cap is therefore derived as `MAX_REQUEST_BYTES // 2`, which is 500,000 bytes at the current limit. Deriving it keeps the ratio explicit and prevents the per-string control from drifting when the body limit changes.
+
+`MAX_JSON_NESTING_DEPTH` and `MAX_PARSE_TIME_MS` must be implemented and evaluated against the 1MB request cap. Raising the cap to 10MB would be a separate resource and denial of service design decision, not a documentation correction.
+
+The decision and its provenance are recorded in [issue #573](https://github.com/agentrust-io/cmcp/issues/573) and [DOS-001 issue #147](https://github.com/agentrust-io/cmcp/issues/147).
+
+## Malformed Input Handling
+
+Every parse path has an explicit error handler. No input reaches undefined behavior. The error handler contract:
+
+1. Log the input hash (SHA-256 of the raw bytes), not the input content. This prevents log-injection and limits PII exposure.
+1. Return a structured error response to the caller.
+1. Do not pass partial parse results downstream. A partial result is treated as a failed parse.
+
+This contract applies to all four fuzz targets. Any code path that returns a null, panics, or passes a partial result downstream is a bug, not an acceptable error mode.
+
 # Attestation Specification
 
 **Document status:** Draft v0.1\
@@ -2064,126 +2839,6 @@ A relying party verifying a TRACE Claim must perform all of the following checks
 
 Failure of any check means the TRACE Claim must not be accepted for compliance purposes.
 
-# Threat Model
-
-Status: Draft v0.1 | Covers: Phase 1 cMCP Runtime
-
-## Assets
-
-| Asset                                                     | Sensitivity | Why it matters                                     |
-| --------------------------------------------------------- | ----------- | -------------------------------------------------- |
-| Tool call payloads (PII, PHI, financial data in requests) | Critical    | Core data the runtime is protecting                |
-| Tool responses (data returned to agent)                   | High        | May contain more data than requested               |
-| Cedar policy bundle                                       | Critical    | Defines what is allowed; tampering enables bypass  |
-| Audit chain + signing key                                 | Critical    | Tampered audit chain can't be detected post-breach |
-| Tool catalog                                              | High        | Wrong catalog enables routing to wrong server      |
-| SPIFFE SVIDs / TLS private keys                           | High        | Compromise enables impersonation                   |
-| Session sensitivity state                                 | Medium      | Incorrect state can allow data leakage             |
-
-## Adversaries
-
-**A1: Rogue operator / privileged insider**
-
-- Has root access to the host VM
-- Can read/write host memory, modify files, access environment variables
-- On a memory-encrypting TEE (SEV-SNP, TDX): cannot read or modify guest memory while the gateway runs, so policy evaluation and audit construction are outside this adversary's reach.
-- On the `tpm` tier: cannot unseal TPM-sealed secrets outside a matching measured boot, and cannot alter the measured components without the attestation reporting it. This is a boot-time and at-rest guarantee only. **A TPM does not encrypt the memory of a running process**, so on bare-metal TPM an operator with root can read or modify the gateway's memory while it runs, including flipping a Cedar decision, without the TPM detecting it. The `tpm` tier defends against a tampered boot, not against a live privileged insider.
-- Goal: bypass policy, forge audit entries, or exfiltrate data
-
-**A2: Supply chain attacker**
-
-- Has compromised a dependency, a build pipeline, or a package registry
-- Can insert malicious code into the runtime binary or its dependencies
-- Cannot change the binary after TEE measurement without invalidating the attestation report
-- Goal: modify runtime behavior without detection
-
-**A3: Malicious or compromised MCP server**
-
-- Controls the tool's response payload
-- Can craft responses designed to inject instructions or exfiltrate data
-- Cannot modify runtime policy or audit entries
-- Goal: indirect prompt injection, data exfiltration via crafted responses
-
-**A4: External attacker (network)**
-
-- Can attempt to connect to the runtime or intercept traffic
-- Runtime uses mTLS; must have a valid SPIFFE SVID to connect
-- Goal: bypass auth, replay attacks, MitM
-
-**A5: Compromised agent**
-
-- The agent (LLM) produces unexpected or adversarial tool calls
-- The runtime treats all agent tool calls as untrusted inputs
-- Goal: call unauthorized tools, exfiltrate via authorized tools, exceed workflow scope
-
-## STRIDE Analysis
-
-### cMCP Runtime (inside TEE)
-
-| STRIDE                 | Threat                                       | Mitigated by                                                                                               | Residual risk                                                                                              |
-| ---------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Spoofing               | Attacker impersonates the gateway            | SPIFFE SVID issued only after TEE attestation; TRACE Claim signed with TEE-sealed key                      | If SPIRE is compromised, SVID issuance can be faked - SPIRE integrity is out of scope                      |
-| Tampering              | A1 modifies Cedar policy on disk             | Policy bundle hash measured at TEE startup; tampered bundle produces measurement mismatch                  | Runtime config injection (env vars, mounted secrets) not covered by measurement                            |
-| Repudiation            | A1 rewrites audit log after breach           | Audit chain signing key is TEE-sealed; new valid signatures are computationally infeasible without the key | If the TEE is breached (physical attack, firmware vulnerability), key extraction is theoretically possible |
-| Information Disclosure | A1 reads tool call payloads from host memory | SEV-SNP/TDX encrypts enclave memory; host hypervisor cannot read plaintext                                 | Side-channel attacks (Spectre, cache timing) on the TEE boundary; TEE firmware vulnerabilities             |
-| Denial of Service      | A1 kills the runtime process                 | Standard process management; runtime has no availability SLA from the TEE itself                           | TEE cannot prevent the host from killing the process                                                       |
-| Elevation of Privilege | A5 calls a tool not in the approved workflow | Per-workflow Cedar policy prevents out-of-workflow calls                                                   | Catalog must be correctly configured; a too-permissive catalog is operator error                           |
-
-### MCP Protocol Interceptor
-
-| STRIDE                 | Threat                                                                                     | Mitigated by                                                             | Residual risk                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Spoofing               | A4 sends forged MCP messages                                                               | mTLS with SPIFFE SVID required; SVID issued only to attested agent hosts | Attacker who compromises agent host can send arbitrary MCP messages                                             |
-| Tampering              | A3 injects instructions in tool response payload                                           | Response inspection (Stage 4: injection detection patterns)              | Pattern-based detection has false negatives; sophisticated injection may evade patterns                         |
-| Repudiation            | Tool server denies a call was made                                                         | Audit entry records call, tool server identity, and response hash        | Tool server can deny it produced a specific response (only response hash is recorded, not content)              |
-| Information Disclosure | A3 returns more data than requested                                                        | Response schema validation strips surplus fields (redact mode)           | Strict mode may be too disruptive; redact mode requires correct schema in catalog                               |
-| Denial of Service      | A3 returns oversized responses                                                             | Stage 1 size check (default 2MB limit)                                   | DDoS via many simultaneous large responses                                                                      |
-| Denial of Service      | A4 churns source addresses against unauthenticated probes                                  | Per-IP windows expire and the limiter caps tracked client cardinality    | Distributed traffic can still exhaust the configured request budget                                             |
-| Elevation of Privilege | A5 calls escalating sequence of individually-authorized tools crossing compliance boundary | Call graph tracking + session sensitivity policy                         | Runtime uses temporal adjacency, not true data provenance; sophisticated cross-system flows may not be detected |
-
-### Tool Catalog
-
-| STRIDE                 | Threat                                                         | Mitigated by                                                                             | Residual risk                                                                                        |
-| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Spoofing               | A3 serves different tool definition than registered (rug-pull) | Tool catalog hash pinned in TEE attestation; drift detected via delta check              | If the rug-pull happens before the runtime starts, it is measured into the catalog hash as correct   |
-| Tampering              | A1 modifies catalog file on disk                               | Catalog hash measured at enclave startup; tampered catalog produces mismatch             | Same as Cedar policy tampering                                                                       |
-| Repudiation            | Unauthorized server added to catalog                           | Policy provenance manifest records who approved each catalog entry                       | Approver's identity is only as trustworthy as the identity system backing it                         |
-| Information Disclosure | Catalog exposes sensitive server details                       | Catalog is inside the TEE; not externally accessible                                     | N/A                                                                                                  |
-| Denial of Service      | A2 seeds catalog with malicious package                        | Catalog approval process is human-gated                                                  | Depends on reviewer vigilance; typosquatted packages may pass review (see CVE-2025-54136 / MCPoison) |
-| Elevation of Privilege | A3 uses tool name collision to route to wrong server           | Catalog binds tool_name to specific server_identity; collisions rejected at catalog load | N/A                                                                                                  |
-
-## Precision Corrections to SPEC.md Coverage Claims
-
-These corrections were identified during security review and must be reflected in any compliance claim referencing these controls.
-
-### APM Payload Capture and SDK Telemetry (status: Mitigated, not Closed)
-
-The SPEC claims structural protection against APM payload capture. The protection is structural only when the egress policy denies the APM/telemetry endpoint. The TEE prevents plaintext from leaving the enclave, but if the operator allowlists the APM endpoint in the egress policy, the protection is not active. This threat is mitigated by correct configuration, not eliminated structurally.
-
-Verifiers must confirm that the egress policy hash excludes APM and telemetry endpoints. A TRACE Claim with an egress policy that permits APM endpoints does not provide this protection and the verifier should flag it.
-
-### Server Swap / Tool Identity : T.1 (status: requires agent-side verification)
-
-The SPEC states T.1 is closed by the runtime producing an attestation report. T.1 is only closed if the agent (or the agent's runtime) verifies the attestation report before sending traffic. Without verification, the attestation exists as post-hoc evidence but provides no runtime protection against server swap at the moment of the call.
-
-The verification library (`cmcp-verify`, see [verification-library.md](https://cmcp.agentrust-io.com/spec/verification-library/index.md)) is required to close this threat. Deployments that do not run `cmcp-verify` (or an equivalent) treat attestation as audit evidence only, not as a runtime gate.
-
-### P4.1 Supply Chain (status: binary-level only)
-
-Hardware measurement at launch time proves the binary is what it should be. Runtime configuration injection - environment variables, mounted secrets, configuration files loaded after startup - happens after the measurement. A supply chain attack that operates via runtime configuration changes server behavior without changing the binary measurement.
-
-The binary-level protection is real and valuable. The runtime config gap must be stated explicitly in any compliance claim referencing this control. This is reflected in the Tampering row for the Runtime STRIDE table above (residual risk: runtime config injection not covered by measurement).
-
-## Compensating Controls (operator responsibilities)
-
-These threats are real but outside the TEE's scope. Operators must address them separately:
-
-1. TEE firmware and microcode must be kept up to date (addresses Spectre-class side channels and the Information Disclosure residual risk in the Runtime table)
-1. SPIRE infrastructure must be secured (compromise enables SVID forgery, which negates the Spoofing mitigation for the runtime)
-1. Catalog approval process must be documented and audited (catalog entries are human-approved; the runtime trusts the catalog)
-1. Pattern list for injection detection must be maintained and updated (pattern-based detection in the MCP Protocol Interceptor has a residual false-negative risk)
-1. Egress policy must explicitly exclude APM and telemetry endpoints to make the payload capture protection structural rather than operator-dependent
-
 # cmcp-verify: Verification Library Interface Spec
 
 Draft
@@ -2667,7 +3322,205 @@ The profile intentionally preserves the distinction between:
 - `action_ref`: the content-derived identifier for the requested embodied action.
 
 Keeping these three identifiers separate avoids making the gateway claim it observed physical execution.
-# Tutorials
+
+# Error Code Registry
+
+This is the normative registry for all error codes used across the cMCP Runtime. Every error code MUST be registered here before it is referenced in code, configuration, or other spec documents. Implementations MUST NOT emit error codes that do not appear in this registry.
+
+## Runtime Errors
+
+| error_code                             | HTTP status | log level | description                                                                                                                                                                                                                        | spec reference                                                                                    |
+| -------------------------------------- | ----------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `ATTESTATION_REPORT_UNAVAILABLE`       | 503         | FATAL     | TEE provider did not return an attestation report within timeout                                                                                                                                                                   | [failure-modes.md FM-1](https://cmcp.agentrust-io.com/spec/failure-modes/index.md)                |
+| `ATTESTATION_PROVIDER_UNSUPPORTED`     | 500         | FATAL     | No supported TEE provider detected and `CMCP_DEV_MODE` is not set                                                                                                                                                                  | [attestation.md §1.1](https://cmcp.agentrust-io.com/spec/attestation/index.md)                    |
+| `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` | 501         | FATAL     | A recognized provider was explicitly selected but is not yet implemented (e.g. `opaque`)                                                                                                                                           | [attestation.md §1.1](https://cmcp.agentrust-io.com/spec/attestation/index.md)                    |
+| `POLICY_HASH_MISMATCH`                 | 500         | FATAL     | Measured policy bundle hash does not match deployment manifest                                                                                                                                                                     | [failure-modes.md FM-4](https://cmcp.agentrust-io.com/spec/failure-modes/index.md)                |
+| `POLICY_RELOAD_PINNED_HASH`            | 500         | FATAL     | `policy_reload_interval_seconds > 0` configured alongside a pinned `CMCP_POLICY_HASH`. Every reload is validated against that hash, so a changed bundle could never be installed; refused at startup rather than appearing to work | [policy-hot-reload.md](https://cmcp.agentrust-io.com/spec/policy-hot-reload/index.md)             |
+| `POLICY_SIGNATURE_INVALID`             | 500         | FATAL     | A policy bundle's manifest signature is absent, malformed, or does not verify under the pinned `CMCP_POLICY_SIGNING_KEY`; or its `version` did not increase, which would allow a genuinely signed older bundle to be replayed      | [policy-hot-reload.md](https://cmcp.agentrust-io.com/spec/policy-hot-reload/index.md)             |
+| `CONFORMANCE_PROFILE_UNSATISFIED`      | 500         | FATAL     | A named `conformance_profile` requires something the deployment has not configured; `aarm` requires an Agent Manifest binding (AARM R6)                                                                                            | [STATUS.md](https://github.com/agentrust-io/cmcp/blob/main/STATUS.md)                             |
+| `CATALOG_HASH_MISMATCH`                | 500         | FATAL     | Measured catalog hash does not match deployment manifest                                                                                                                                                                           | [attestation.md §5](https://cmcp.agentrust-io.com/spec/attestation/index.md)                      |
+| `CATALOG_RESTART_REQUIRED`             | startup     | FATAL     | Runtime catalog mutation was configured, but routing authority remains immutable until a newly pinned gateway restart                                                                                                              | [catalog-lifecycle.md](https://cmcp.agentrust-io.com/spec/catalog-lifecycle/index.md)             |
+| `AGENT_MANIFEST_BINDING_FAILED`        | 500         | FATAL     | Signed Agent Manifest signature, authenticated subject, policy hash, or catalog hash did not match the runtime session inputs                                                                                                      | [session-policy.md](https://cmcp.agentrust-io.com/spec/session-policy/index.md)                   |
+| `TOOL_NOT_IN_CATALOG`                  | 403         | WARN      | Agent requested a tool not present in the attested catalog                                                                                                                                                                         | [cedar-policy.md](https://cmcp.agentrust-io.com/spec/cedar-policy/index.md)                       |
+| `POLICY_DENY`                          | 403         | INFO      | Cedar policy evaluation returned deny for this call                                                                                                                                                                                | [cedar-policy.md](https://cmcp.agentrust-io.com/spec/cedar-policy/index.md)                       |
+| `CATALOG_TOOL_NAME_COLLISION`          | 500         | FATAL     | Two catalog entries register the same `tool_name`                                                                                                                                                                                  | [tool-identity.md](https://cmcp.agentrust-io.com/spec/tool-identity/index.md)                     |
+| `CATALOG_DRIFT_DETECTED`               | 409         | ERROR     | Upstream server changed a tool definition since catalog was sealed                                                                                                                                                                 | [attestation.md §5](https://cmcp.agentrust-io.com/spec/attestation/index.md)                      |
+| `MCP_PARSE_FAILURE`                    | 400         | WARN      | Incoming MCP JSON-RPC message failed to parse                                                                                                                                                                                      | [failure-modes.md FM-5](https://cmcp.agentrust-io.com/spec/failure-modes/index.md)                |
+| `MCP_INVALID_REQUEST`                  | 400         | WARN      | Parsed JSON is not a valid JSON-RPC request shape                                                                                                                                                                                  | [failure-modes.md FM-5](https://cmcp.agentrust-io.com/spec/failure-modes/index.md)                |
+| `RESPONSE_SIZE_EXCEEDED`               | 413         | WARN      | Tool response exceeds `max_response_size_bytes`                                                                                                                                                                                    | [response-inspection.md Stage 1](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) |
+| `RESPONSE_INJECTION_DETECTED`          | 403         | ERROR     | Response inspection detected indirect injection pattern                                                                                                                                                                            | [response-inspection.md Stage 4](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) |
+| `RESPONSE_SCHEMA_VIOLATION_STRICT`     | 409         | WARN      | Tool response contains fields outside approved `output_schema` (strict mode)                                                                                                                                                       | [response-inspection.md Stage 2](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) |
+| `SESSION_SENSITIVITY_POLICY_DENY`      | 403         | INFO      | Call denied due to session sensitivity state                                                                                                                                                                                       | [session-policy.md](https://cmcp.agentrust-io.com/spec/session-policy/index.md)                   |
+| `SESSION_RESET_REQUIRED`               | 428         | INFO      | Agent attempted call that requires session reset first                                                                                                                                                                             | [session-policy.md](https://cmcp.agentrust-io.com/spec/session-policy/index.md)                   |
+| `TEE_FAULT`                            | 500         | ERROR     | TEE process fault during call execution                                                                                                                                                                                            | [failure-modes.md FM-3](https://cmcp.agentrust-io.com/spec/failure-modes/index.md)                |
+| `ATTESTATION_STALE`                    | 412         | WARN      | Attestation report validity period has expired                                                                                                                                                                                     | [attestation.md §3](https://cmcp.agentrust-io.com/spec/attestation/index.md)                      |
+| `BREAK_GLASS_ACTIVE`                   | 200         | WARN      | Call allowed via catalog exception (break-glass procedure active)                                                                                                                                                                  | [tool-identity.md](https://cmcp.agentrust-io.com/spec/tool-identity/index.md)                     |
+
+## Verification Library Errors
+
+The following error codes are defined and documented in [verification-library.md](https://cmcp.agentrust-io.com/spec/verification-library/index.md). They are listed here for cross-reference completeness; the verification library spec is authoritative for their semantics.
+
+| error_code                              |
+| --------------------------------------- |
+| `UNSUPPORTED_PROVIDER`                  |
+| `SIGNATURE_INVALID`                     |
+| `PUBLIC_KEY_NOT_BOUND`                  |
+| `POLICY_HASH_MISMATCH`                  |
+| `CATALOG_HASH_MISMATCH`                 |
+| `AGENT_MANIFEST_MISMATCH`               |
+| `ATTESTATION_STALE`                     |
+| `CHAIN_BROKEN`                          |
+| `CLAIM_MALFORMED`                       |
+| `EXTERNAL_EVIDENCE_VERIFICATION_FAILED` |
+
+> Note: `POLICY_HASH_MISMATCH`, `CATALOG_HASH_MISMATCH`, and `ATTESTATION_STALE` appear in both tables. The Runtime emits them during startup or request handling; the verification library emits them during offline or client-side verification. The semantics are consistent across both contexts.
+
+# Threat Model
+
+Status: Draft v0.1 | Covers: Phase 1 cMCP Runtime
+
+## Assets
+
+| Asset                                                     | Sensitivity | Why it matters                                     |
+| --------------------------------------------------------- | ----------- | -------------------------------------------------- |
+| Tool call payloads (PII, PHI, financial data in requests) | Critical    | Core data the runtime is protecting                |
+| Tool responses (data returned to agent)                   | High        | May contain more data than requested               |
+| Cedar policy bundle                                       | Critical    | Defines what is allowed; tampering enables bypass  |
+| Audit chain + signing key                                 | Critical    | Tampered audit chain can't be detected post-breach |
+| Tool catalog                                              | High        | Wrong catalog enables routing to wrong server      |
+| SPIFFE SVIDs / TLS private keys                           | High        | Compromise enables impersonation                   |
+| Session sensitivity state                                 | Medium      | Incorrect state can allow data leakage             |
+
+## Adversaries
+
+**A1: Rogue operator / privileged insider**
+
+- Has root access to the host VM
+- Can read/write host memory, modify files, access environment variables
+- On a memory-encrypting TEE (SEV-SNP, TDX): cannot read or modify guest memory while the gateway runs, so policy evaluation and audit construction are outside this adversary's reach.
+- On the `tpm` tier: cannot unseal TPM-sealed secrets outside a matching measured boot, and cannot alter the measured components without the attestation reporting it. This is a boot-time and at-rest guarantee only. **A TPM does not encrypt the memory of a running process**, so on bare-metal TPM an operator with root can read or modify the gateway's memory while it runs, including flipping a Cedar decision, without the TPM detecting it. The `tpm` tier defends against a tampered boot, not against a live privileged insider.
+- Goal: bypass policy, forge audit entries, or exfiltrate data
+
+**A2: Supply chain attacker**
+
+- Has compromised a dependency, a build pipeline, or a package registry
+- Can insert malicious code into the runtime binary or its dependencies
+- Cannot change the binary after TEE measurement without invalidating the attestation report
+- Goal: modify runtime behavior without detection
+
+**A3: Malicious or compromised MCP server**
+
+- Controls the tool's response payload
+- Can craft responses designed to inject instructions or exfiltrate data
+- Cannot modify runtime policy or audit entries
+- Goal: indirect prompt injection, data exfiltration via crafted responses
+
+**A4: External attacker (network)**
+
+- Can attempt to connect to the runtime or intercept traffic
+- Runtime uses mTLS; must have a valid SPIFFE SVID to connect
+- Goal: bypass auth, replay attacks, MitM
+
+**A5: Compromised agent**
+
+- The agent (LLM) produces unexpected or adversarial tool calls
+- The runtime treats all agent tool calls as untrusted inputs
+- Goal: call unauthorized tools, exfiltrate via authorized tools, exceed workflow scope
+
+## STRIDE Analysis
+
+### cMCP Runtime (inside TEE)
+
+| STRIDE                 | Threat                                       | Mitigated by                                                                                               | Residual risk                                                                                              |
+| ---------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Spoofing               | Attacker impersonates the gateway            | SPIFFE SVID issued only after TEE attestation; TRACE Claim signed with TEE-sealed key                      | If SPIRE is compromised, SVID issuance can be faked - SPIRE integrity is out of scope                      |
+| Tampering              | A1 modifies Cedar policy on disk             | Policy bundle hash measured at TEE startup; tampered bundle produces measurement mismatch                  | Runtime config injection (env vars, mounted secrets) not covered by measurement                            |
+| Repudiation            | A1 rewrites audit log after breach           | Audit chain signing key is TEE-sealed; new valid signatures are computationally infeasible without the key | If the TEE is breached (physical attack, firmware vulnerability), key extraction is theoretically possible |
+| Information Disclosure | A1 reads tool call payloads from host memory | SEV-SNP/TDX encrypts enclave memory; host hypervisor cannot read plaintext                                 | Side-channel attacks (Spectre, cache timing) on the TEE boundary; TEE firmware vulnerabilities             |
+| Denial of Service      | A1 kills the runtime process                 | Standard process management; runtime has no availability SLA from the TEE itself                           | TEE cannot prevent the host from killing the process                                                       |
+| Elevation of Privilege | A5 calls a tool not in the approved workflow | Per-workflow Cedar policy prevents out-of-workflow calls                                                   | Catalog must be correctly configured; a too-permissive catalog is operator error                           |
+
+### MCP Protocol Interceptor
+
+| STRIDE                 | Threat                                                                                     | Mitigated by                                                             | Residual risk                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Spoofing               | A4 sends forged MCP messages                                                               | mTLS with SPIFFE SVID required; SVID issued only to attested agent hosts | Attacker who compromises agent host can send arbitrary MCP messages                                             |
+| Tampering              | A3 injects instructions in tool response payload                                           | Response inspection (Stage 4: injection detection patterns)              | Pattern-based detection has false negatives; sophisticated injection may evade patterns                         |
+| Repudiation            | Tool server denies a call was made                                                         | Audit entry records call, tool server identity, and response hash        | Tool server can deny it produced a specific response (only response hash is recorded, not content)              |
+| Information Disclosure | A3 returns more data than requested                                                        | Response schema validation strips surplus fields (redact mode)           | Strict mode may be too disruptive; redact mode requires correct schema in catalog                               |
+| Denial of Service      | A3 returns oversized responses                                                             | Stage 1 size check (default 2MB limit)                                   | DDoS via many simultaneous large responses                                                                      |
+| Denial of Service      | A4 churns source addresses against unauthenticated probes                                  | Per-IP windows expire and the limiter caps tracked client cardinality    | Distributed traffic can still exhaust the configured request budget                                             |
+| Elevation of Privilege | A5 calls escalating sequence of individually-authorized tools crossing compliance boundary | Call graph tracking + session sensitivity policy                         | Runtime uses temporal adjacency, not true data provenance; sophisticated cross-system flows may not be detected |
+
+### Tool Catalog
+
+| STRIDE                 | Threat                                                         | Mitigated by                                                                             | Residual risk                                                                                        |
+| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Spoofing               | A3 serves different tool definition than registered (rug-pull) | Tool catalog hash pinned in TEE attestation; drift detected via delta check              | If the rug-pull happens before the runtime starts, it is measured into the catalog hash as correct   |
+| Tampering              | A1 modifies catalog file on disk                               | Catalog hash measured at enclave startup; tampered catalog produces mismatch             | Same as Cedar policy tampering                                                                       |
+| Repudiation            | Unauthorized server added to catalog                           | Policy provenance manifest records who approved each catalog entry                       | Approver's identity is only as trustworthy as the identity system backing it                         |
+| Information Disclosure | Catalog exposes sensitive server details                       | Catalog is inside the TEE; not externally accessible                                     | N/A                                                                                                  |
+| Denial of Service      | A2 seeds catalog with malicious package                        | Catalog approval process is human-gated                                                  | Depends on reviewer vigilance; typosquatted packages may pass review (see CVE-2025-54136 / MCPoison) |
+| Elevation of Privilege | A3 uses tool name collision to route to wrong server           | Catalog binds tool_name to specific server_identity; collisions rejected at catalog load | N/A                                                                                                  |
+
+## Precision Corrections to SPEC.md Coverage Claims
+
+These corrections were identified during security review and must be reflected in any compliance claim referencing these controls.
+
+### APM Payload Capture and SDK Telemetry (status: Mitigated, not Closed)
+
+The SPEC claims structural protection against APM payload capture. The protection is structural only when the egress policy denies the APM/telemetry endpoint. The TEE prevents plaintext from leaving the enclave, but if the operator allowlists the APM endpoint in the egress policy, the protection is not active. This threat is mitigated by correct configuration, not eliminated structurally.
+
+Verifiers must confirm that the egress policy hash excludes APM and telemetry endpoints. A TRACE Claim with an egress policy that permits APM endpoints does not provide this protection and the verifier should flag it.
+
+### Server Swap / Tool Identity : T.1 (status: requires agent-side verification)
+
+The SPEC states T.1 is closed by the runtime producing an attestation report. T.1 is only closed if the agent (or the agent's runtime) verifies the attestation report before sending traffic. Without verification, the attestation exists as post-hoc evidence but provides no runtime protection against server swap at the moment of the call.
+
+The verification library (`cmcp-verify`, see [verification-library.md](https://cmcp.agentrust-io.com/spec/verification-library/index.md)) is required to close this threat. Deployments that do not run `cmcp-verify` (or an equivalent) treat attestation as audit evidence only, not as a runtime gate.
+
+### P4.1 Supply Chain (status: binary-level only)
+
+Hardware measurement at launch time proves the binary is what it should be. Runtime configuration injection - environment variables, mounted secrets, configuration files loaded after startup - happens after the measurement. A supply chain attack that operates via runtime configuration changes server behavior without changing the binary measurement.
+
+The binary-level protection is real and valuable. The runtime config gap must be stated explicitly in any compliance claim referencing this control. This is reflected in the Tampering row for the Runtime STRIDE table above (residual risk: runtime config injection not covered by measurement).
+
+## Compensating Controls (operator responsibilities)
+
+These threats are real but outside the TEE's scope. Operators must address them separately:
+
+1. TEE firmware and microcode must be kept up to date (addresses Spectre-class side channels and the Information Disclosure residual risk in the Runtime table)
+1. SPIRE infrastructure must be secured (compromise enables SVID forgery, which negates the Spoofing mitigation for the runtime)
+1. Catalog approval process must be documented and audited (catalog entries are human-approved; the runtime trusts the catalog)
+1. Pattern list for injection detection must be maintained and updated (pattern-based detection in the MCP Protocol Interceptor has a residual false-negative risk)
+1. Egress policy must explicitly exclude APM and telemetry endpoints to make the payload capture protection structural rather than operator-dependent
+# Guides
+
+# Try cMCP from an existing MCP client
+
+Start the cMCP gateway, then configure a client that supports the standard `mcpServers` stdio shape to launch the included bridge:
+
+```
+{
+  "mcpServers": {
+    "governed-tools": {
+      "command": "cmcp",
+      "args": ["client-bridge", "--gateway-url", "https://gateway.example/mcp"],
+      "env": {"CMCP_BEARER_TOKEN": "replace-with-the-gateway-token"}
+    }
+  }
+}
+```
+
+Restart the client after changing its configuration. Its `tools/list` and `tools/call` messages now pass through cMCP and appear in the gateway audit chain; upstream addresses remain solely in the attested cMCP catalog.
+
+## What this proves—and what it does not
+
+The bridge is an evaluation aid. It runs on the user's machine, outside the TEE and outside cMCP's measurement. A user who controls the client configuration can remove it, so this does **not** prove cMCP cannot be bypassed. Production enforcement requires controls that make the governed gateway the only reachable path to upstream servers.
+
+The bearer token is read from `CMCP_BEARER_TOKEN`; do not put it in command arguments, where process-list tooling may expose it. Diagnostics go to stderr so stdout remains strict newline-delimited JSON-RPC.
+
+Design and trust boundary: [#510](https://github.com/agentrust-io/cmcp/issues/510).
 
 # Connecting Agent Frameworks
 
@@ -3507,3 +4360,914 @@ ______________________________________________________________________
 You configured cMCP for AMD SEV-SNP, confirmed the `trace.runtime.platform` and `trace.runtime.measurement` fields reflect real hardware values, and pinned the expected measurement in config. On a real TEE host, `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`, providing hardware-backed assurance that the workload was not tampered with.
 
 Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md): hardware attestation is one of the verification steps that determines overall status. [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md): each tenant's policy bundle hash is separate; the hardware measurement is shared across tenants on the same host.
+
+# Deploy on Azure Confidential VMs
+
+Run cMCP on Azure hardware-attested infrastructure so TRACE claims carry real SEV-SNP or TDX measurements.
+
+## What you'll learn
+
+- Which Azure VM SKUs give you SEV-SNP vs TDX
+- How to provision a Confidential VM with the Azure CLI
+- How to install and configure cMCP for each hardware type
+- What to verify in the TRACE claim to confirm hardware attestation is live
+
+## Prerequisites
+
+- Azure CLI installed and authenticated (`az login`)
+- An Azure subscription with Confidential VM quota in your target region
+- SSH key pair (`~/.ssh/id_rsa.pub` or equivalent)
+
+______________________________________________________________________
+
+## Choose your hardware
+
+| TEE type              | Azure VM series                 | `provider` value | Notes                                     |
+| --------------------- | ------------------------------- | ---------------- | ----------------------------------------- |
+| AMD SEV-SNP           | DCasv5, DCadsv5                 | `sev-snp`        | Most widely available                     |
+| Intel TDX             | DCesv6, DCedsv6                 | `tdx`            | Current-gen (v6); DCedsv5 is previous gen |
+| vTPM (Trusted Launch) | Any Gen2 VM with Trusted Launch | `tpm`            | All regions                               |
+
+SEV-SNP (DCasv5) is the most widely available. Use TDX (DCesv6) where your compliance requirements specify Intel.
+
+Region availability varies. Check which SKUs are available in your target region before creating a resource group:
+
+```
+az vm list-skus --location eastus --size dc --output table
+```
+
+______________________________________________________________________
+
+## Provision the VM
+
+### SEV-SNP (DCasv5)
+
+```
+# Set your target region: verify DCasv5 is available first:
+# az vm list-skus --location <region> --size Standard_DC2as_v5 --output table
+LOCATION=eastus
+
+az group create --name cmcp-rg --location $LOCATION
+
+# Azure Confidential VMs require a CVM-specific OS image.
+# Verify the latest available image with:
+# az vm image list --publisher Canonical --offer 0001-com-ubuntu-confidential-vm-jammy --all --output table
+az vm create \
+  --resource-group cmcp-rg \
+  --name cmcp-gateway \
+  --image Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest \
+  --size Standard_DC2as_v5 \
+  --security-type ConfidentialVM \
+  --os-disk-security-encryption-type VMGuestStateOnly \
+  --enable-secure-boot true \
+  --enable-vtpm true \
+  --admin-username azureuser \
+  --ssh-key-values ~/.ssh/id_rsa.pub \
+  --public-ip-sku Standard
+```
+
+### TDX (DCesv6)
+
+DCesv6 is the current-gen Intel TDX series (5th Gen Intel). DCedsv5 (previous gen) also supports TDX but is superseded.
+
+```
+# Verify DCesv6 availability in your region first:
+# az vm list-skus --location <region> --size Standard_DC2es_v6 --output table
+LOCATION=eastus
+
+az group create --name cmcp-rg --location $LOCATION
+
+az vm create \
+  --resource-group cmcp-rg \
+  --name cmcp-gateway-tdx \
+  --image Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest \
+  --size Standard_DC2es_v6 \
+  --security-type ConfidentialVM \
+  --os-disk-security-encryption-type VMGuestStateOnly \
+  --enable-secure-boot true \
+  --enable-vtpm true \
+  --admin-username azureuser \
+  --ssh-key-values ~/.ssh/id_rsa.pub \
+  --public-ip-sku Standard
+```
+
+### Open the gateway port
+
+```
+az network nsg rule create \
+  --resource-group cmcp-rg \
+  --nsg-name cmcp-gatewayNSG \
+  --name allow-cmcp \
+  --protocol Tcp \
+  --priority 1010 \
+  --destination-port-ranges 8443
+```
+
+Get the public IP:
+
+```
+az vm show \
+  --resource-group cmcp-rg \
+  --name cmcp-gateway \
+  --show-details \
+  --query publicIps -o tsv
+```
+
+______________________________________________________________________
+
+## Install cMCP on the VM
+
+SSH in and run the setup script from the repo:
+
+```
+VM_IP=$(az vm show --resource-group cmcp-rg --name cmcp-gateway --show-details --query publicIps -o tsv)
+ssh azureuser@$VM_IP
+
+# On the VM:
+sudo apt-get update -qq && sudo apt-get install -y python3-pip
+pip install cmcp-runtime
+cmcp --version
+```
+
+______________________________________________________________________
+
+## Configure for SEV-SNP
+
+Confirm the hardware device is present:
+
+```
+ls -la /dev/sev-guest
+# Expected: crw------- 1 root root ...
+```
+
+Create a working directory and write the config:
+
+```
+mkdir ~/cmcp-deploy && cd ~/cmcp-deploy
+mkdir policies
+```
+
+`cmcp-config.yaml`:
+
+```
+attestation:
+  provider: sev-snp
+  enforcement_mode: enforcing
+  validity_seconds: 86400
+  staleness_policy: fail_closed
+
+policy_bundle_path: ./policies/
+catalog_path: ./catalog.json
+listen_addr: "0.0.0.0:8443"
+```
+
+For TDX, change `provider: sev-snp` to `provider: tdx`.
+
+Add a minimal policy bundle (replace with your actual policies):
+
+```
+cat > policies/manifest.json <<'EOF'
+{
+  "version": "0.1.0",
+  "authored_at": "2026-01-01T00:00:00Z",
+  "author_identity": "ops@example.com",
+  "commit_sha": "initial"
+}
+EOF
+
+cat > policies/allow-all.cedar <<'EOF'
+permit (principal, action, resource);
+EOF
+
+cat > policies/schema.cedarschema <<'EOF'
+{"cMCP":{"entityTypes":{"Principal":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{"session_id":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}},"Resource":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{"tool_name":{"type":"String","required":true}}}}},"actions":{"call_tool":{"appliesTo":{"principalTypes":["cMCP::Principal"],"resourceTypes":["cMCP::Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}}}}}
+EOF
+```
+
+Add a minimal catalog:
+
+```
+cat > catalog.json <<'EOF'
+[]
+EOF
+```
+
+______________________________________________________________________
+
+## Start the gateway
+
+```
+export CMCP_BEARER_TOKEN="$(openssl rand -hex 32)"
+echo "Bearer token: $CMCP_BEARER_TOKEN"  # save this
+
+cmcp start --config cmcp-config.yaml
+```
+
+Expected startup log on a real SEV-SNP VM:
+
+```
+cMCP Runtime starting: TEE: sev-snp, listen: 0.0.0.0:8443
+```
+
+The TEE field reads `sev-snp` (not `software-only`). If it reads `software-only`, the VM does not have an accessible SEV-SNP device: confirm the VM SKU and that `/dev/sev-guest` exists.
+
+______________________________________________________________________
+
+## Verify hardware attestation
+
+From your local machine, retrieve a TRACE claim and verify it:
+
+```
+# Start a session and retrieve its claim
+curl -s -H "Authorization: Bearer $CMCP_BEARER_TOKEN" \
+  http://$VM_IP:8443/session/test-session/claim \
+  | python3 -m json.tool > claim.json
+
+# Verify
+python3 - <<'EOF'
+import json
+from cmcp_verify import verify_trace_claim, ApprovedHashes
+
+with open("claim.json") as f:
+    claim = json.load(f)
+
+# Replace these hashes with values from the gateway startup log
+approved = ApprovedHashes(
+    policy_bundle_hash="sha256:<bundle_hash from startup log>",
+    tool_catalog_hash="sha256:<catalog_hash from startup log>",
+)
+
+result = verify_trace_claim(claim, approved)
+print(f"Status:          {result.status.value}")
+print(f"Platform:        {claim['trace']['runtime']['platform']}")
+print(f"Measurement:     {claim['trace']['runtime']['measurement']}")
+print(f"Verified fields: {result.verified_fields}")
+EOF
+```
+
+Expected output on a real SEV-SNP VM:
+
+```
+Status:          verified
+Platform:        amd-sev-snp
+Measurement:     sha384:<non-zero hardware measurement>
+Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain', 'hardware_attestation']
+```
+
+`hardware_attestation` appearing in `verified_fields` confirms the measurement is hardware-backed. On a DCedsv5 with TDX, `platform` reads `intel-tdx`.
+
+______________________________________________________________________
+
+## Pin the expected measurement
+
+Once you've confirmed the measurement on a known-good deploy, pin it to reject unknown workload versions at startup:
+
+```
+attestation:
+  provider: sev-snp
+  enforcement_mode: enforcing
+  expected_measurement: "sha384:<measurement from claim>"
+```
+
+If the cMCP binary is updated or the startup config changes, the measurement changes and the gateway exits at startup rather than producing claims with an unexpected value.
+
+______________________________________________________________________
+
+## Tear down
+
+```
+az group delete --name cmcp-rg --yes --no-wait
+```
+
+______________________________________________________________________
+
+## Next steps
+
+- [GCP deployment](https://cmcp.agentrust-io.com/tutorials/deploy-gcp/index.md): Intel TDX on GCP C3 Confidential VMs
+- [TEE attestation](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md): detailed explanation of what each provider proves
+- [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md): full verification protocol
+- [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md): one gateway instance per tenant
+
+# Deploy on GCP Confidential VMs
+
+Run cMCP on Google Cloud infrastructure with Intel TDX so TRACE claims carry hardware-backed measurements.
+
+## What you'll learn
+
+- Which GCP machine types give you Intel TDX
+- How to provision a Confidential VM with the gcloud CLI
+- How to install and configure cMCP for TDX
+- What to verify in the TRACE claim to confirm hardware attestation is live
+
+## Prerequisites
+
+- Google Cloud SDK installed and authenticated (`gcloud auth login`)
+- A GCP project with Confidential Computing API enabled
+- A GCP project with billing enabled and Confidential VM quota
+
+Enable the required APIs:
+
+```
+gcloud services enable compute.googleapis.com \
+  confidentialcomputing.googleapis.com
+```
+
+______________________________________________________________________
+
+## Choose your hardware
+
+GCP Confidential VMs offer two TEE types:
+
+| TEE type         | GCP machine type                           | `provider` value | Notes                                  |
+| ---------------- | ------------------------------------------ | ---------------- | -------------------------------------- |
+| Intel TDX        | C3 (`c3-standard-*`, `c3-highmem-*`)       | `tdx`            | Supported in select zones              |
+| AMD SEV-SNP      | N2D (`n2d-standard-*`)                     | `sev-snp`        | Wider zone availability                |
+| AMD SEV (legacy) | N2D with `--confidential-compute-type=SEV` | `tpm` (vTPM)     | Use SEV-SNP or TDX for new deployments |
+
+C3 with TDX is the recommended path for highest assurance on GCP. N2D with SEV-SNP is more widely available by zone.
+
+Check which zones support C3 + TDX in your project:
+
+```
+gcloud compute zones list --filter="name~us-central1" --format="table(name,status)"
+```
+
+______________________________________________________________________
+
+## Provision the VM
+
+### Intel TDX (C3)
+
+```
+PROJECT_ID=$(gcloud config get-value project)
+ZONE=us-central1-a
+
+gcloud compute instances create cmcp-gateway \
+  --project=$PROJECT_ID \
+  --zone=$ZONE \
+  --machine-type=c3-standard-4 \
+  --confidential-compute-type=TDX \
+  --on-host-maintenance=TERMINATE \
+  --image-family=ubuntu-2404-lts-amd64 \
+  --image-project=ubuntu-os-cloud \
+  --boot-disk-size=20GB \
+  --shielded-secure-boot \
+  --shielded-vtpm \
+  --shielded-integrity-monitoring \
+  --tags=cmcp-gateway
+```
+
+### AMD SEV-SNP (N2D)
+
+```
+gcloud compute instances create cmcp-gateway \
+  --project=$PROJECT_ID \
+  --zone=$ZONE \
+  --machine-type=n2d-standard-4 \
+  --confidential-compute-type=SEV_SNP \
+  --on-host-maintenance=TERMINATE \
+  --image-family=ubuntu-2404-lts-amd64 \
+  --image-project=ubuntu-os-cloud \
+  --boot-disk-size=20GB \
+  --shielded-secure-boot \
+  --shielded-vtpm \
+  --tags=cmcp-gateway
+```
+
+### Open the gateway port
+
+```
+gcloud compute firewall-rules create allow-cmcp \
+  --direction=INGRESS \
+  --action=ALLOW \
+  --rules=tcp:8443 \
+  --target-tags=cmcp-gateway \
+  --source-ranges=0.0.0.0/0
+```
+
+Get the external IP:
+
+```
+gcloud compute instances describe cmcp-gateway \
+  --zone=$ZONE \
+  --format="get(networkInterfaces[0].accessConfigs[0].natIP)"
+```
+
+______________________________________________________________________
+
+## Install cMCP on the VM
+
+```
+VM_IP=$(gcloud compute instances describe cmcp-gateway \
+  --zone=$ZONE \
+  --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+
+gcloud compute ssh azureuser@cmcp-gateway --zone=$ZONE
+
+# On the VM:
+sudo apt-get update -qq && sudo apt-get install -y python3-pip
+pip install cmcp-runtime
+cmcp --version
+```
+
+______________________________________________________________________
+
+## Configure for TDX
+
+Confirm the hardware is accessible. On a GCP TDX VM the TDX RTMR (Runtime Measurement Register) device is available:
+
+```
+ls /dev/tdx_guest 2>/dev/null && echo "TDX present" || echo "TDX not found"
+```
+
+If `tdx_guest` is absent, verify the instance was created with `--confidential-compute-type=TDX` and the zone supports TDX.
+
+Create the working directory:
+
+```
+mkdir ~/cmcp-deploy && cd ~/cmcp-deploy
+mkdir policies
+```
+
+`cmcp-config.yaml`:
+
+```
+attestation:
+  provider: tdx
+  enforcement_mode: enforcing
+  validity_seconds: 86400
+  staleness_policy: fail_closed
+
+policy_bundle_path: ./policies/
+catalog_path: ./catalog.json
+listen_addr: "0.0.0.0:8443"
+```
+
+For SEV-SNP, change `provider: tdx` to `provider: sev-snp`.
+
+Add a minimal policy bundle:
+
+```
+cat > policies/manifest.json <<'EOF'
+{
+  "version": "0.1.0",
+  "authored_at": "2026-01-01T00:00:00Z",
+  "author_identity": "ops@example.com",
+  "commit_sha": "initial"
+}
+EOF
+
+cat > policies/allow-all.cedar <<'EOF'
+permit (principal, action, resource);
+EOF
+
+cat > policies/schema.cedarschema <<'EOF'
+{"cMCP":{"entityTypes":{"Principal":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{"session_id":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}},"Resource":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{"tool_name":{"type":"String","required":true}}}}},"actions":{"call_tool":{"appliesTo":{"principalTypes":["cMCP::Principal"],"resourceTypes":["cMCP::Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}}}}}
+EOF
+
+cat > catalog.json <<'EOF'
+[]
+EOF
+```
+
+______________________________________________________________________
+
+## Start the gateway
+
+```
+export CMCP_BEARER_TOKEN="$(openssl rand -hex 32)"
+echo "Bearer token: $CMCP_BEARER_TOKEN"  # save this
+
+cmcp start --config cmcp-config.yaml
+```
+
+Expected startup log on a real TDX VM:
+
+```
+cMCP Runtime starting: TEE: tdx, listen: 0.0.0.0:8443
+```
+
+The TEE field reads `tdx`. If it reads `software-only`, the TDX device was not found: confirm the instance type and that `/dev/tdx_guest` exists.
+
+______________________________________________________________________
+
+## Verify hardware attestation
+
+From your local machine:
+
+```
+VM_IP=<external IP from above>
+
+# Retrieve a TRACE claim
+curl -s -H "Authorization: Bearer $CMCP_BEARER_TOKEN" \
+  http://$VM_IP:8443/session/test-session/claim \
+  | python3 -m json.tool > claim.json
+
+# Verify
+python3 - <<'EOF'
+import json
+from cmcp_verify import verify_trace_claim, ApprovedHashes
+
+with open("claim.json") as f:
+    claim = json.load(f)
+
+approved = ApprovedHashes(
+    policy_bundle_hash="sha256:<bundle_hash from startup log>",
+    tool_catalog_hash="sha256:<catalog_hash from startup log>",
+)
+
+result = verify_trace_claim(claim, approved)
+print(f"Status:          {result.status.value}")
+print(f"Platform:        {claim['trace']['runtime']['platform']}")
+print(f"Measurement:     {claim['trace']['runtime']['measurement']}")
+print(f"Verified fields: {result.verified_fields}")
+EOF
+```
+
+Expected output on a real TDX VM:
+
+```
+Status:          verified
+Platform:        intel-tdx
+Measurement:     sha384:<non-zero hardware measurement>
+Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain', 'hardware_attestation']
+```
+
+`hardware_attestation` in `verified_fields` confirms the measurement is hardware-backed.
+
+______________________________________________________________________
+
+## Pin the expected measurement
+
+After confirming the measurement on a known-good deploy:
+
+```
+attestation:
+  provider: tdx
+  enforcement_mode: enforcing
+  expected_measurement: "sha384:<measurement from claim>"
+```
+
+Any change to the cMCP binary or startup config produces a different measurement. The gateway exits at startup if the measurement does not match, rather than producing claims with an unknown value.
+
+______________________________________________________________________
+
+## Tear down
+
+```
+gcloud compute instances delete cmcp-gateway --zone=$ZONE --quiet
+gcloud compute firewall-rules delete allow-cmcp --quiet
+```
+
+______________________________________________________________________
+
+## Next steps
+
+- [Azure deployment](https://cmcp.agentrust-io.com/tutorials/deploy-azure/index.md): AMD SEV-SNP and TDX on Azure DCasv5 / DCedsv5
+- [TEE attestation](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md): detailed explanation of what each provider proves
+- [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md): full verification protocol
+- [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md): one gateway instance per tenant
+
+# Hardware validation
+
+What has been verified against real confidential-computing hardware, what has not, and how to reproduce each run. [STATUS.md](https://github.com/agentrust-io/cmcp/blob/main/STATUS.md) links here rather than restating it.
+
+The rule this page exists to enforce: no document describes cMCP as hardware-attested for a platform until a genuine quote from that platform has been verified end to end by `cmcp_verify`, and the run is recorded below.
+
+## Current state
+
+| Platform                             | Report parsing  | Certificate chain                                    | Report signature | Verified against real hardware evidence                                                                          |
+| ------------------------------------ | --------------- | ---------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
+| AMD SEV-SNP (Azure CVM, vTPM-rooted) | Yes             | Yes, to the real AMD ARK-Milan root                  | Yes              | **Yes**, 2026-07-27, both from a stored capture and **live inside a running CVM**                                |
+| Intel TDX (GCP C3, non-paravisor)    | Yes             | Yes, to the pinned Intel SGX Root CA                 | Yes              | **Yes**, 2026-07-27, capture of 2026-07-21. DCAP quote path only; the TDREPORT path is unvalidated, see below    |
+| TPM 2.0 (Azure vTPM, Trusted Launch) | Yes             | Not yet (`ek_cert_chain` stays unverified, see #431) | Yes              | **Yes**, 2026-07-31. AK-signed quote verified end to end, tampered copies rejected; certificate chain still open |
+| NVIDIA GPU CC (H100/H200)            | Not implemented |                                                      |                  | No                                                                                                               |
+
+"Verified against real hardware evidence" means the committed verifier accepted a quote produced by that silicon, with signature and chain checks live, and rejects a tampered copy. It does not mean cMCP has run *inside* that TEE in production; quote generation still requires the corresponding hardware.
+
+## Scope of the guarantee
+
+Verification is bounded to a remote or rogue-admin adversary. It does not hold against an adversary with physical access to the hardware: [TEE.fail](https://tee.fail) demonstrates attestation-key extraction from fully-patched SEV-SNP and TDX with a sub-$1000 DDR5 interposer. See [LIMITATIONS.md](https://github.com/agentrust-io/cmcp/blob/main/LIMITATIONS.md).
+
+## SEV-SNP, Azure confidential VM
+
+Evidence: an HCL report read from the vTPM NV index `0x01400001` on an Azure DCasv5 CVM (family 0x19 / model 0x01, Milan), plus the VCEK and the AMD ASK/ARK chain. Azure SEV-SNP is paravisor-mediated, so `REPORT_DATA` binds the vTPM attestation key rather than a cMCP-supplied nonce directly; the nonce is carried in the AK-signed TPM quote's `extraData` and the two are bound together by `cmcp_verify.azure_cvm.verify_azure_cvm_measurement`.
+
+What the run checks: the paravisor `REPORT_DATA == sha256(runtime_data)` binding, the VCEK chain to the genuine AMD ARK-Milan root, and the ECDSA-P384 report signature over the report body.
+
+```
+CMCP_AZURE_FIXTURE_DIR=<capture dir> pytest tests/unit/test_azure_cvm_verify.py
+```
+
+The capture directory holds `hcl.bin`, `vcek.der` and `cert_chain.pem`. It is **not** committed: the SNP report's 64-byte `CHIP_ID` is a per-CPU hardware identifier. Zeroing it invalidates the signature, so a redacted vector cannot exercise the signature path, which is why this test is env-gated instead of running in CI.
+
+## Live run inside a SEV-SNP confidential VM
+
+The runs above appraise stored evidence. On 2026-07-27 the collector and the verifier were also run **inside** a real Azure confidential VM (`Standard_DC2ads_v5`, Ubuntu 24.04 CVM image, eastus; the guest reports `Detected confidential virtualization sev-snp` and `Memory Encryption Features active: AMD SEV`, with `SEV: Status: vTom` and no `/dev/sev-guest`, the expected paravisor shape).
+
+`AzureCVMProvider.detect()` returned true, the provider collected 13,004 bytes of live evidence under a caller nonce, and `verify_azure_cvm_measurement` returned `verified: true` with **no unverified fields**:
+
+| Verified field         | What it establishes                                                       |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `quote_nonce_binding`  | The caller's nonce is in the AK-signed TPM quote's extraData              |
+| `ak_binding`           | The vTPM AK is bound into the SNP report's `REPORT_DATA` by the paravisor |
+| `runtime_data_binding` | `REPORT_DATA == sha256(runtime_data)` holds on the live report            |
+| `measurement`          | The launch measurement matches the collected report                       |
+| `vcek_cert_chain`      | The VCEK fetched from AMD KDS for this CPU chains to `CN=ARK-Milan`       |
+| `report_signature`     | The SNP report signature verifies under that VCEK                         |
+
+A wrong nonce was rejected with `quote_nonce_mismatch`, so freshness is enforced rather than assumed.
+
+Two deployment facts this surfaced, both worth knowing before anyone repeats it:
+
+- The gateway process needs TPM device access. `AzureCVMProvider` shells out to `tpm2_nvread` without elevation, so the service user must be in the `tss` group (`/dev/tpmrm0` is `tss:tss`). Without it the provider fails with a TCTI load error, not an attestation error, which reads as a broken TPM rather than a permissions problem.
+- `verify_azure_cvm_measurement(..., trusted_ark_pem=...)` wants the ARK alone. Passing AMD KDS's `cert_chain` endpoint output, which is the ASK **and** the ARK, yields `vcek_chain_invalid`. Extract the self-signed root first.
+
+What this still does not establish: cMCP serving live MCP traffic from inside the enclave with a policy bundle measured at boot. This validates attestation collection and verification in situ, which is the part that was never exercised on hardware, not a production gateway deployment.
+
+## Intel TDX, GCP C3 confidential VM
+
+Evidence: a DCAP v4 ECDSA quote from a GCP C3 CVM (non-paravisor TDX, kernel 6.17, configfs-TSM `tdx_guest` provider). Non-paravisor TDX is guest-controlled, so `REPORTDATA` carries the value cMCP supplies.
+
+What the run checks: the attestation key's ECDSA-P256 signature over the quote header plus TD report body, the QE report binding (`report_data[:32] == sha256(att_pub || qe_auth)`), the PCK signature over the QE report, and the PCK chain to the pinned Intel SGX Root CA.
+
+```
+CMCP_TDX_FIXTURE_DIR=<capture dir> pytest tests/unit/test_tdx_quote_verify.py
+```
+
+The capture directory holds `tdx_quote.bin`. Optional: `collateral/intel_root_ca.pem` to override the pinned root, and `report_data.hex` to assert the report_data binding. The quote is not committed: the PCK certificate identifies the CPU.
+
+What this run does not cover: the TDREPORT path. `verify_tdx_measurement()` parses the 1024-byte TDREPORT_STRUCT returned by the `TDX_CMD_GET_REPORT0` ioctl, which is a different artifact from the DCAP quote captured here, and no real TDREPORT has been checked against it. #371 found both of its field offsets wrong -- `MRTD` read from inside `REPORTMACSTRUCT.report_data` and `REPORTDATA` read from the leading RESERVED block -- and #527 corrected them against the published Intel TDX Module ABI. The correction is asserted against the ABI and against a property no hardware is needed to state (a measurement must not move when only the nonce moves), which is not the same as a capture. The row above covers quote verification; read it as covering measurement provenance only once a TDREPORT capture appears here.
+
+This run is what found the parser defect fixed alongside this page. Real DCAP v4 quotes nest the Quoting Enclave material under a type-6 `QE_REPORT_CERTIFICATION_DATA` header; the parser read the QE report six bytes early, so every genuine quote was rejected with `attestation_key_not_bound_to_qe` while the synthetic tests, which emitted the same flat layout, passed. Failure was closed, so this was a false negative rather than an unsound accept, but the TDX path had never worked against real evidence. Synthetic self-consistency is not validation.
+
+## TPM 2.0, Azure Trusted Launch vTPM
+
+Evidence: a `TPMS_ATTEST` quote over PCRs 0-7 (SHA-256) from a `Standard_D2s_v7` Ubuntu 24.04 VM with Trusted Launch, vTPM and secure boot enabled, taken under a fresh 32-byte nonce.
+
+What the run checks, within Phase 1's parse-only scope: parsing a real attest blob, the magic constant, the PCR digest matching the measurement field, and the qualifying-data binding equalling the nonce (with a different nonce correctly leaving `qualifying_data` unverified).
+
+```
+pytest tests/unit/test_tpm_verify.py
+```
+
+The committed capture is loaded from `tests/fixtures/hardware/azure-vtpm-2026-07-27` by default. Set `CMCP_TPM_FIXTURE_DIR=<capture dir>` to replay a newly captured vector instead.
+
+This run also surfaced an interop gap, fixed alongside it. The parser required the outer `TPM2B_ATTEST` two-byte size prefix, but `tpm2_quote -m` writes a bare `TPMS_ATTEST`, so every quote produced by the standard tooling was rejected with `TPM2B_ATTEST size field invalid`. Both framings are now accepted, told apart by the magic constant.
+
+The AK signature is now verified (see the 2026-07-31 run below). The EK/AK certificate chain remains in `unverified_fields`. **Corrected 2026-07-31.** An earlier run recorded that Azure's pre-provisioned AK certificate carries no AIA extension and that its issuing intermediate is therefore not fetchable. On a VM provisioned 2026-07-31 in eastus, the certificate at vTPM NV index `0x01C101D0` is issued by `CN=Azure Cloud Virtual TPM CA - 11`, not `CN=Global Virtual TPM CA - 03`, and it does carry an AIA extension with four CA Issuers URIs. The intermediate was fetched from the public CDN and verified to have signed the AK certificate. See the certificate-chain section below.
+
+**Corrected again 2026-08-01: this is fleet variance, not a migration.** The 2026-07-31 note above concluded that "Azure has changed its vTPM PKI", which implies the old presentation is gone and AIA can be relied on going forward. That is wrong. A VM provisioned 2026-08-01 (`Standard_D2s_v7`, eastus2) presented the *old* form again:
+
+|                          | 2026-07-31, `D2s_v5` eastus       | 2026-08-01, `D2s_v7` eastus2     |
+| ------------------------ | --------------------------------- | -------------------------------- |
+| Certificate size         | 1596 bytes                        | **994 bytes**                    |
+| Issuer                   | `Azure Cloud Virtual TPM CA - 11` | **`Global Virtual TPM CA - 03`** |
+| AIA extension            | present, 4 CA Issuers URIs        | **absent entirely**              |
+| Chain to a pinnable root | yes                               | **no**                           |
+
+Both hierarchies are live concurrently, so the correct planning assumption is that **an Azure Trusted Launch host may present either, and AIA cannot be relied on.** On the 2026-08-01 host `tpm2_getcap handles-nv-index` returned only `0x01C101D0` (plus a test index), confirming the intermediates are not stored in NV as a fallback. Chained verification against the root pinned in `cmcp_verify/tpm_roots.py` is therefore impossible on such a host, and it fails closed with "AK chain root is not among the supplied trusted TPM roots", which is correct: key provenance genuinely cannot be established there.
+
+Consequence for #431 and for any deployment: pinning the 2023 root does not make Azure verify everywhere. A deployment must obtain and pin the root for the hierarchy its own hosts present, and a fleet spanning both needs both.
+
+It remains true that this certificate certifies a different key than an in-guest `tpm2_createak` AK. The resolution is not to certify our own AK: it is to use the key Azure already certified, which is live at persistent handle `0x81000003`.
+
+## TPM 2.0 quote signature, Azure Trusted Launch vTPM, 2026-07-31
+
+Evidence: an AK-signed quote from a `Standard_D2s_v5` Ubuntu 24.04 VM with Trusted Launch, vTPM and secure boot enabled, eastus. The guest reports TPM 2.0 with `TPM2_PT_MANUFACTURER` = `MSFT`. The attestation key was created with `tpm2_createek` followed by `tpm2_createak` (RSA, RSASSA, SHA-256), and the quote taken over PCRs 0-7 in the SHA-256 bank under a fresh 32-byte nonce:
+
+```
+tpm2_createek -c ek.ctx -G rsa -u ek.pub
+tpm2_createak -C ek.ctx -c ak.ctx -G rsa -g sha256 -s rsassa -u ak.pub -n ak.name
+tpm2_readpublic -c ak.ctx -f pem -o ak.pem
+tpm2_quote -c ak.ctx -l sha256:0,1,2,3,4,5,6,7 -q $NONCE -m quote.msg -s quote.sig -g sha256
+```
+
+What the run checks: the `TPMS_ATTEST` magic constant, `extraData` equalling the nonce, and the RSASSA-SHA256 signature over the attest blob verifying under the AK public key. It also confirms rejection of a one-bit tampered attest blob, a tampered signature, and a correct signature checked against a different key.
+
+Unlike the SEV-SNP captures, this vector **is committed**. It carries no per-CPU hardware identifier: the AK public key belongs to a virtual TPM in a VM that no longer exists, and the PCR values describe a stock Ubuntu image. Committing it means the signature path is exercised on every PR rather than only when a fixture directory is set.
+
+**The vector now lives in agent-manifest**, alongside the code it validates: the `TPMT_SIGNATURE` parse and both `TPMS_ATTEST` framings consolidated there in agent-manifest 0.8.0, and cMCP imports them rather than carrying its own copies. Keeping the evidence with the implementation is the point: a capture that validates code in another repository drifts away from it. It runs on every agent-manifest PR.
+
+```
+# in agent-manifest
+pytest python/tests/test_tpm_hardware_vector.py
+```
+
+The provenance above is the record of how the capture was taken and stays here; `tests/unit/test_tpm_quote_signature.py` still covers cMCP's own layer, which is result shaping and fail-closed handling of blobs agent-manifest rejects.
+
+Not closed by this run: the EK certificate chain (#431). The EK certificate was not present at NV index `0x01C00002` on this VM, and as recorded above Azure's pre-provisioned AK certificate certifies a different key and carries no AIA extension. Binding an in-guest AK to the platform EK needs `TPM2_ActivateCredential`, which is the next step for #431.
+
+## TPM 2.0 attestation key certificate chain, Azure Trusted Launch, 2026-07-31
+
+This run establishes that a chain to a public CA is reachable on Azure, which the earlier note had concluded was not possible.
+
+Findings on a `Standard_D2s_v5` Ubuntu 24.04 Trusted Launch VM in eastus:
+
+- The only NV index defined is `0x01C101D0` (1596 bytes). There is **no EK certificate**, at `0x01C00002` or anywhere else. `tpm2_createek` succeeds but produces an uncertified key, so credential activation against a platform EK certificate is not available on this platform.
+- Two persistent handles exist, `0x81000003` and `0x81010001`. The public key at **`0x81000003` is exactly the key certified by the certificate at `0x01C101D0`**, and that handle can produce a quote directly.
+- The certificate carries Extended Key Usage `2.23.133.8.3`, the TCG Attestation Identity Key certificate OID, alongside `1.3.6.1.4.1.311.10.3.12`.
+- Chain, verified end to end: `CN=<vm-id>.TrustedVM.Azure.windows.net` signed by `CN=Azure Cloud Virtual TPM CA - 11` (fetched over AIA from `primary-cdn.pki.core.windows.net`), itself issued by `CN=Azure Cloud Virtual TPM CA 2025`.
+
+So the route for #431 on Azure is not `TPM2_ActivateCredential`. It is to quote with the platform attestation key at `0x81000003` and present the certificate from `0x01C101D0`, letting the relying party build the chain over AIA and pin the Azure vTPM root. Credential activation remains the route on hardware that ships an EK certificate, which is the client fTPM case.
+
+Not yet implemented: the runtime does not read the NV certificate or use the persistent handle, and `cmcp_verify` does not build or pin the chain. `#431` tracks that work.
+
+## TCG event log availability, Azure Trusted Launch, 2026-07-31
+
+`/sys/kernel/security/tpm0/binary_bios_measurements` exists on this platform but is **zero bytes**. The Azure Gen2 UEFI does not hand a TCG log to the guest, so event-log replay cannot be exercised on an Azure vTPM at all. The replay code in `cmcp_verify.tcg_event_log` is covered by synthetic logs, and validating it against a real log needs a platform that publishes one, which in practice means physical client hardware. `#433` tracks that.
+
+## Gateway measurement NV extend index, Azure Trusted Launch vTPM, 2026-08-01
+
+`Standard_D2s_v7`, Ubuntu 24.04, Trusted Launch with vTPM and secure boot, eastus2. This validates `cmcp_runtime.tee.measurement` (#432, #451), whose TPM calls had been written against the documented tpm2-pytss API without ever executing against a TPM. All of them work:
+
+- `nv_define_space(None, nv_public, auth_handle=ESYS_TR.OWNER)` created the index, and `TPMA_NV.parse("ownerwrite|ownerread|authread|no_da") | (TPM2_NT.EXTEND << 4)` produced the intended attributes. Reading the public area back gave `TPM_NT = 4`, confirming a genuine `TPM_NT_EXTEND` index rather than an ordinary one. `tpm2_getcap handles-nv-index` listed `0x01500432` at size 32.
+- `nv_extend(handle, digest, auth_handle=ESYS_TR.OWNER)` extended it. First call reported `provisioned=True`, second `provisioned=False`, so an existing index is reused rather than redefined, which matters because redefining each boot would hand an adversary the reset the design exists to prevent.
+- The extend semantics the security argument rests on hold on hardware: after the second extend, `before` equalled the first `after`, the value moved, and both extends satisfied `after == H(before || digest)`.
+- **A plain `nv_write` to the index was refused by the TPM.** This is the load-bearing check: it is what makes an adversary unable to write a chosen clean value, and it is confirmed independently by the `TPM_NT` field above rather than only by an exception.
+
+Not covered by this run: the index value still travels as an ordinary NV read, which no signature covers, so it is a local integrity control and not yet remote-verifiable evidence. A later run exercised `TPM2_NV_Certify` directly, but the current TRACE schema and verifier still do not carry or appraise that startup pair as part of an ordinary claim.
+
+## TPM2_NV_Certify for the gateway measurement, Azure Trusted Launch vTPM, 2026-08-01
+
+`Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by #461). This run **found two defects in code that had already merged**, which is the argument for running it.
+
+**Defect 1: the call was wrong and could never have worked.** `ESAPI.nv_certify` takes `in_scheme` (a `TPMT_SIG_SCHEME`) and `size` as *required positional* arguments. The shipped call omitted both, so it raised `TypeError` before reaching the TPM. The unit tests passed because the fake accepted any signature.
+
+**Defect 2: a freshly provisioned index cannot be certified at all.** A newly defined `TPM_NT_EXTEND` index is uninitialised, and `TPM2_NV_Certify` on it fails with `TPM_RC_NV_UNINITIALIZED`. So on a first gateway start there was no pre-value to certify. Fixed by seeding the index once at provision time, which keeps the verifier's `post == H(pre || digest)` check free of a first-boot special case.
+
+With both fixed, the following hold on hardware:
+
+- `nv_certify(sign_handle, nv_index, qualifying_data, TPMT_SIG_SCHEME(NULL), 32, 0, auth_handle=ESYS_TR.OWNER)` returns a 173-byte attest and a 262-byte `TPMT_SIGNATURE`. A NULL scheme resolves to the key's own, RSASSA/SHA-256 here.
+- **The platform AK at `0x81000003` can sign an NV certify.** This was an open question, since it is a restricted signing key; the answer is yes.
+- **The signed NV field layout was checked against a real blob.** This was the highest-risk item, as the offsets came from the TCG structures spec and had never met real bytes. `indexName`, `offset` and `nvContents` all parsed, and `nvContents` equalled the value returned by `TPM2_NV_Read`. That run exercised cMCP's then-local parser. cMCP's public `parse_nv_certify` adapter now delegates wire parsing to `agent_manifest.parse_tpm_nv_certify`; the committed swtpm reference pair independently exercises that current boundary without adding a hardware-provenance claim.
+- The extend relation holds on hardware across two consecutive starts: run 1 provisioned the index and run 2 reused it, with run 2's `pre` equal to run 1's `post`, which is the accumulation the two-certify design exists to handle.
+- The standalone `verify_gateway_measurement` path accepts the genuine pair only with a verifier-supplied AK root, transcript nonce, exact authorized NV Name and certified range, and expected gateway digest. It rejects a wrong expected digest, replayed nonce, unapproved signed Name, or altered range. This is direct primitive/fixture appraisal, not evidence that `verify_trace_claim` currently transports or invokes the NV path.
+
+One limit on this run: the VM drew the `Global Virtual TPM CA - 03` hierarchy, whose AK certificate has no AIA, so the chain is the leaf alone. The verification above was therefore anchored on the leaf itself, which exercises the verifier's plumbing but proves **no key provenance**. Chained verification against a vendor root still needs a host of the other hierarchy, or the root from #453.
+
+## Not yet validated
+
+- **TPM certificate chain on every Azure host**: the AK signature is verified, and the sibling [ca2a](https://github.com/agentrust-io/ca2a) verifier has done so against real quotes. Chaining that key to a pinned root is **host-dependent**: see the fleet-variance correction above, where a host presenting the `Global Virtual TPM CA - 03` hierarchy with no AIA extension cannot produce a chain at all.
+- **The NV certify pair against a real vendor-rooted chain**: the 2026-08-01 run anchored on the leaf because that host presented the no-AIA hierarchy, so key provenance for the certifying key is still unproven on Azure (#453).
+- **NVIDIA GPU CC**: not implemented, planned for v0.2 via NRAS.
+- **cMCP serving traffic from inside the TEE**: attestation collection and verification now run in situ on a CVM (above). A production gateway serving MCP traffic from inside the enclave, with the policy bundle measured at boot and TRACE Claims emitted per session, is still a separate milestone.
+- **TCB appraisal**: TCB status and QE identity need Intel PCS collateral by FMSPC and are reported in `unverified_fields`. Do not read a `verified=True` TDX result as a full TCB appraisal.
+# Project
+
+# Limitations
+
+This document describes what cMCP does not prevent, where its guarantees end, and what operators and verifiers must address through separate controls.
+
+## What cMCP does not prevent
+
+**Prompt injection into Cedar policy** Cedar policy evaluation is only as correct as the policy the operator wrote and approved. cMCP measures the policy bundle hash into the TEE attestation report, which proves the policy that ran is the policy that was approved. It does not evaluate whether that policy achieves the intended security outcome. A policy that contains `permit(principal, action, resource);` without conditions permits every tool call. Policy correctness is the operator's responsibility; policy review is a separate control.
+
+**Compromised TEE firmware or microcode** Hardware attestation proves the workload hash was measured in silicon. It does not protect against vulnerabilities in the TEE firmware or CPU microcode itself (Spectre-class side channels, cache timing, power analysis, fault injection targeting the TEE boundary). Protection at this level is the responsibility of the hardware vendor. Operators must keep TEE firmware and microcode up to date; see [Compensating Controls](https://cmcp.agentrust-io.com/spec/threat-model/#compensating-controls-operator-responsibilities) in the threat model.
+
+**Azure confidential VMs: attestation is vTPM-rooted, one hop longer** On Azure confidential VMs (`AzureCVMProvider`), SEV-SNP runs behind a Hyper-V paravisor: there is no `/dev/sev-guest`, and the guest cannot write the SNP `REPORT_DATA` field (the paravisor sets it to `sha256(runtime_data)`, binding the vTPM attestation key). cMCP therefore does not bind its key/audit-root directly into the SNP report on Azure. Instead it commits the nonce into an AK-signed TPM quote, and the SNP report (verified via the VCEK→ASK→ARK chain) attests that the AK is genuine SNP silicon. The trust root is still AMD, but the chain is one hop longer than direct-silicon binding, and it additionally trusts the paravisor's binding of the vTPM AK into `REPORT_DATA`. Bare-metal / non-paravisor SNP guests (`SEVSNPProvider`) bind directly into the report and do not add this hop.
+
+**Operator-controlled key material** The TEE-sealed signing key is generated inside the enclave and cannot be extracted by a privileged operator under normal circumstances. However, if the operator can substitute the TEE firmware, modify the enclave startup measurement, or compromise the SPIRE infrastructure that issues SVIDs, they can effectively control what key material is used. The trust root is the hardware platform vendor (AMD, Intel, or the TPM manufacturer), not cMCP. Deployments that do not independently verify the attestation report before routing traffic treat attestation as post-hoc audit evidence only.
+
+**Upstream tool-definition drift: checked on first contact, not continuously** cMCP compares what each upstream server advertises against the approved catalog entry (threat model P4.2, rug-pull via tool-definition mutation). The comparison is a digest of the semantic triple: description, input schema, output schema. It uses only the standard library, so it does not weaken when the optional `agent-os-kernel` scanner is absent; that scanner classifies the kind of change and is not the control. A mismatch fails the call closed by default, is written to the audit chain, and sets `tool_catalog.drift_detected` in the session's TRACE Claim. Three things it does not do, all of them real gaps rather than theoretical ones:
+
+- **It runs once per server per session, on first contact.** A server that mutates a tool definition mid-session is not caught until a new session starts. Re-listing tools on every call would make the check expensive enough that operators would turn it off, which is worse than a check with a stated window.
+- **It is not driven by `notifications/tools/list_changed`.** The gateway does not subscribe to that notification. Only stdio upstreams could carry one today, since HTTP upstreams are plain request/response here, so notification-driven detection would silently cover one transport and not the other. First-contact checking covers both the same way.
+- **A server that will not answer `tools/list` is recorded as unchecked, not denied.** Nothing in MCP obliges a server to answer, and denying on silence would take out deployments whose servers simply do not implement it. `unchecked` is not a pass, and it is visible in the logs, but it does not block a call.
+
+Separately, the approved description rather than the live one is what the gateway serves to the agent on `tools/list`, so a mutated description does not reach the model through cMCP even in the windows above. That is a structural property of proxying an approved catalog, not a detection result, and it does not extend to the tool's behaviour once called.
+
+HTTP and stdio discovery exhaust `tools/list` pagination before comparing either drift or provenance. A later-page failure, malformed discovery shape, duplicate tool name, repeated/cyclic cursor, or continuation beyond 1,000 pages makes the entire acquisition unchecked; no partial list is compared. Cursors are passed back unchanged, including an empty string. This bound limits page count, not total elapsed time or response bytes, and pagination does not establish an atomic snapshot of a changing server. This is acquisition validation, not full MCP schema validation or a new approval/hash policy. The unchecked-call behavior above is unchanged.
+
+Drift and provenance share the completed first-contact acquisition for the same server and publisher authority within a session, rather than independently walking all pages. An unchecked acquisition is also cached until the next session. Cancellation leaves no cached acquisition; existing stdio child-close behavior is unchanged, not an automatic child restart. Close/reset drains admitted calls before cleanup invalidates both comparisons and the shared acquisition, even if resource cleanup subsequently fails. This avoids duplicate discovery work; it does not add continuous monitoring or make the listing an atomic snapshot.
+
+**Phase 2 completeness: server-side attestation** Phase 1 attests the gateway boundary. It does not attest what happens on the other side of that boundary. The `tool_transcript.hash` field in the TRACE Claim records a hash of the audit chain tip, but the tool transcript binding that ties a specific tool execution to a specific response is Phase 2 work. Phase 1 partially addresses P1.4 (transitive trust into upstream dependencies) and P4.1 (typosquatted packages added to catalog) -- both are fully closed by Phase 2. Any compliance claim that relies on server-side proof must wait for Phase 2.
+
+**Tool server non-repudiation** The audit chain records a `response_payload_hash` for each tool call and an `evidence_class` that indicates the assurance level of the recorded response:
+
+- **`tls-pinned`**: The tool server URL uses HTTPS and has a non-placeholder TLS certificate fingerprint in the catalog. The response was received over a TLS connection whose certificate was pinned at catalog-load time. A verifier can confirm the server identity against the catalog fingerprint.
+- **`hash-only`**: The tool server uses HTTP, has no TLS fingerprint assigned in the catalog (dev placeholder), or TLS pinning could not be enforced on the current platform. The hash proves what the gateway received, but the server identity cannot be independently verified from the audit record alone.
+
+Tool servers do not sign their individual responses. A `tls-pinned` entry proves the response came from a server holding the catalog-pinned certificate but does not prevent the server itself from later denying it produced a specific response. For strong non-repudiation, configure non-placeholder TLS fingerprints for all upstream servers so all evidence is `tls-pinned`, and treat the TEE attestation as the binding authority for what the gateway recorded.
+
+**External execution evidence (issue #301)** An audit entry may carry an optional `external_execution_evidence` receipt: a signature from an independent authority (for example a safety controller) attesting to an outcome, bound to a specific `call_id`. This is deliberately distinct from `response_payload_hash`, which records what the gateway forwarded. The receipt establishes that the named issuer signed an assertion about that call. It does not establish that a physical action occurred, that it was safe, or that it meets any functional-safety standard, and it is only as trustworthy as the issuer key behind it. cMCP does not observe the actuation; it records the receipt and, when a verifier is configured with the issuer trusted key, checks the signature and the `call_id` binding. Trust in the issuer key is an out-of-band PKI concern, the same shape as the manifest issuer trust anchor in issue #302. Verification is opt-in: receipt-less entries, and verifiers that do not configure issuer keys, are unaffected. In the proxy path, cMCP binds the receipt when an allowed upstream tool response is a JSON object with a top-level `external_execution_evidence` object matching the audit schema. The full response, including that receipt if present, remains covered by `response_payload_hash`. The TRACE Claim does not carry a separate "external evidence present" flag. Verifiers learn that external evidence was bound by fetching the committed audit bundle and checking entries under the TRACE Claim's `gateway.audit_chain.tip`.
+
+**Agent Manifest identity binding (issue #302)** When configured, cMCP verifies a signed Agent Manifest against a trusted issuer key, checks that the authenticated agent subject equals `manifest.agent_id`, and requires the manifest's policy and catalog hashes to match the loaded runtime hashes. The Trust Record carries this as `gateway.agent_identity`. This proves that the session was bound to the reviewed manifest identity and approved hashes. It does not prove that the agent behaved correctly, that the model output was safe, or that the same logical agent persisted across restarts. The first implementation takes the authenticated subject from configuration; production deployments should source it from the agent SVID/mTLS identity path. Trust in the manifest issuer key remains an out-of-band PKI concern.
+
+**LLM inference and model output** cMCP intercepts tool calls at the MCP protocol boundary. It does not observe or modify LLM inference, the contents of the agent's context window, or model outputs that do not produce a tool call. A model could hallucinate a response, leak sensitive context in a chat reply, or receive a poisoned tool response that influences subsequent reasoning -- none of these are visible to the gateway. cMCP controls the tool boundary, not the model boundary.
+
+**Response injection evasion via novel patterns** The response inspector uses pattern-based detection for prompt injection in tool responses. Pattern-based detection has false negatives. A sufficiently sophisticated injection may evade the current pattern list. The pattern list must be maintained and updated by the operator as new injection techniques emerge; see [Compensating Controls](https://cmcp.agentrust-io.com/spec/threat-model/#compensating-controls-operator-responsibilities).
+
+**Cross-channel fusion: no single call is a violation (GhostSplice)** Cedar evaluates one tool call at a time. GhostSplice ([ASSET Research Group, July 2026](https://asset-group.github.io/disclosures/ghostsplice/)) splits one instruction across channels a server already owns, so that no channel carries a violating instruction: the tool description advertises a form with fields named `alpha` through `delta` and names nothing sensitive, and a later tool result supplies the mapping from those fields to `.ssh/id_rsa`, `.env` and source files. The harm exists only once the model has fused both in its own context, which is not a place the gateway can read.
+
+Three things follow, and all three are gaps rather than theoretical concerns.
+
+- **The shipped injection patterns do not fire on any GhostSplice channel.** Run the ten patterns in `src/cmcp_runtime/inspection/patterns_v1.json` against the published `deep_scan` result, the `integrity_checker` description, and the sampling disposition, and all three return no match, while a classic tool-poisoning payload matches `xml-system-tag` and `ignore-instructions` in the same run. That is not a tuning problem. Each fragment is a grammatical, harmless sentence, so there is no pattern to write that does not also match ordinary tool output.
+- **Cedar sees argument values, not their provenance.** `_build_cedar_context` passes `arguments` through `_cedar_safe` as opaque values. Nothing records that the bytes in `alpha` are a file the agent read because a previous tool's *result* told it to. The control the researchers prescribe, "never let values from one tool's output flow untouched into another tool's arguments", cannot be written as a Cedar policy against the context the gateway builds today.
+- **In a coding-assistant deployment the gateway never sees the read.** The file reads are performed by the client's own filesystem tools, not by an MCP server in the catalog. cMCP observes one call, `integrity_checker(alpha=<blob>, ...)`, with no record that a read happened at all.
+
+What cMCP does carry across calls is `session_max_sensitivity`, a monotonic ratchet that a caller cannot lower. Where the sensitive read *does* go through the gateway, a policy denying external-destination calls above a sensitivity floor will stop the egress leg, and that is a real defence rather than a hypothetical one. It depends on the operator having written that policy, and it does not apply when the read bypasses the gateway, which is the common case for a coding assistant.
+
+Two things this entry deliberately does not claim. The study's compliance figures are an average over eleven models under one costume and one channel split, moving from 42% to 82%; several models complied with the blunt single-instruction version too, so "models refuse until you split it" is not accurate as a general statement. And while Claude Sonnet 4.6 and Opus 4.6 held at 0% across every split in the tabulated configuration, the same write-up reports a separate run in which Sonnet called the tool and redacted the obvious secrets while still returning proprietary source with a live key inside it. Model choice is not a control.
+
+**APM and telemetry payload capture** The TEE prevents plaintext from leaving the enclave to any destination not covered by the egress policy. This protection is structural only when the egress policy explicitly denies APM and telemetry endpoints. If the operator allowlists those endpoints in the Cedar policy, the TEE boundary does not prevent payload capture by the APM agent. A TRACE Claim with an egress policy that permits APM or SDK telemetry endpoints does not provide this protection. Verifiers must inspect the policy bundle hash and confirm the policy excludes those endpoints.
+
+**Tool name collision via malicious catalog entries** The catalog binds each tool name to a specific upstream server identity, which prevents routing ambiguity for approved servers. It does not prevent a typosquatted or look-alike package from being added to the catalog in the first place. Catalog approval is human-gated. The gateway trusts the catalog; it cannot detect that a catalog entry was added via a compromised reviewer or a social engineering attack.
+
+**Session cleanup is bounded by cooperation and by time** Session-scoped resources, meaning the stdio child, the pooled HTTP clients, and the provenance and drift caches, are released on every path that ends a session: `POST /sessions/{id}/close`, `POST /sessions/{id}/reset`, and graceful shutdown. None of those paths released anything before this was implemented, so the first three limits below are what remains rather than what was added. The last two are deliberate trades the behaviour introduces.
+
+- **A pooled HTTP client that fails to close leaks its connections.** `AsyncClient` marks itself closed, and HTTPcore empties its pool, before the underlying streams are released, so nothing a retry could reach survives a failed close. The client is dropped so the successor cannot reuse it, and the failure is logged. A child process that fails to close is retained instead, and a close retry can still reap it.
+- **Graceful shutdown can outlast a deployment's termination grace period.** It waits for any in-flight close, then drains again on the same budget, so with the defaults cleanup can begin as late as seventy seconds in. A shorter grace period ends in SIGKILL and none of this runs. Size the grace period above twice `CMCP_SESSION_CLOSE_DRAIN_SECONDS`, or lower that deadline.
+- **Cancellation is cooperative, so a failed drain does not prove a call stopped.** Close requests cancellation at the deadline and allows a further five seconds to unwind. A call that does not honour it leaves the drain incomplete, which seals admission rather than signing a claim that omits an outcome.
+- **A failed terminal audit write leaves the session unavailable, with no repair.** A deliberate trade: it blocks signing, rotation, reset, and further admission for that session, because the alternative is a signed claim missing a call the gateway made. Restoring the writer does not reconstruct the missing outcome, and none is provided. Recovery is a new session.
+- **A close that trips the kill switch leaves the gateway with no live session.** Also deliberate. The claim for the closed session is signed and retrievable, but no successor can be created until an operator unblocks that agent identity. This is the kill switch working as specified, at the cost of availability.
+
+## What Level 0 (CMCP_DEV_MODE) does not provide
+
+`CMCP_DEV_MODE=1` uses a software-only TEE provider. It is suitable for development, testing, and demo scenarios. It does not satisfy production governance requirements because:
+
+- **No hardware root of trust.** The signing key is held in software and is accessible to any process running as the same user. A privileged operator can extract it.
+- **No verifiable measurement.** The `trace.runtime.measurement` field is all zeros in dev mode. There is no hardware-measured enclave identity, so a verifier cannot confirm which binary ran.
+- **Threat classes T1 through T4 are not covered.** These are the rogue administrator, host OS compromise, post-incident audit log reconstruction, and policy substitution threats described in the [threat model](https://cmcp.agentrust-io.com/spec/threat-model/). All four require a hardware TEE to close. In software-only mode, all four remain open.
+- **TRACE Claims are partially verified only.** The `cmcp_verify` library returns `status: partially_verified` and reports `hardware_attestation: software-only mode -- not hardware-backed`. Claims produced in dev mode must not be presented as hardware-attested proof to auditors or regulators.
+
+## What attestation verification establishes, and what it does not
+
+`cmcp_verify` reports `status: verified` only when the platform evidence is cryptographically checked; a claim whose report signature or certificate chain is unverified stays `partially_verified` and is never presented as hardware-backed (issue #370). What that check covers differs by platform:
+
+- **AMD SEV-SNP** — report signature plus the VCEK → ASK → ARK chain, with the ARK pinned by the operator.
+- **Intel TDX** — DCAP quote signature and the PCK chain to a pinned Intel SGX Root CA.
+- **TPM 2.0** — the `TPMT_SIGNATURE` over the `TPMS_ATTEST`, verified with the attestation key, plus the AK certificate chain to a manufacturer CA the operator pins via `trusted_tpm_ca_pem`. Absent signature or chain material degrades to `unverified`; supplied material that fails is fatal.
+
+Three gaps are worth stating plainly for the TPM path:
+
+- **The attestation key is not bound to a specific TPM.** A verified AK chain proves the key was certified under a CA you pinned. It does not prove the key lives in the endorsed TPM. That binding is TPM credential activation (`TPM2_MakeCredential` / `TPM2_ActivateCredential`), a live challenge-response an offline verifier cannot perform, and it is not implemented. A CA that mis-issues, or a platform CA that certifies a software key, is not caught.
+- **Evidence rides in the cmcp envelope, not the TRACE runtime block.** `RuntimeInfo` in `agentrust-trace` is `extra="forbid"`, so a claim carrying `raw_evidence` / `quote_signature` / `cert_chain` under `trace.runtime` is rejected as `CLAIM_MALFORMED` before platform verification runs. Signed evidence therefore travels as `gateway.attestation_evidence`, a cmcp-owned field. The verifier still reads `trace.runtime` as a fallback so older claims keep working, but that path cannot pass schema validation. All current platform branches read the envelope, including the SNP VCEK chain. SNP, Azure CVM and TDX compare their evidence binding against the 64-byte value already carried as `trace.runtime.nonce`; missing or malformed nonces cannot disable that check. **TDX DCAP quote collection and transport remain absent**: the current provider collects a TDREPORT, and the claim models do not carry `raw_quote`. TDX claims therefore remain partially verified without a verified quote signature. The standalone quote-verification API is a separate path.
+- **The gateway NV-certify pair is not an ordinary TRACE-claim property.** TPM startup collects a bracketing pair, and the standalone appraisal accepts it only with a verifier-owned root, nonce, exact NV Name and range, and expected gateway digest. The current claim schema does not carry the pair and `verify_trace_claim` does not invoke that appraisal. Policy reload also does not replace the startup pair. Even under direct appraisal, the deterministic TPM Name identifies the public template rather than a unique index incarnation, so it does not prove that owner authorization never redefined the index or that the signed pre-value has an approved history.
+
+## Platform state is not appraised
+
+The SEV-SNP path here establishes that a report is authentic and which workload it describes: report signature, the VCEK to ASK to ARK chain with the ARK pinned by the operator, and measurement binding. Those are the right four checks and they are not in dispute.
+
+**What none of them ask is what kind of machine the report came from.** A SEV-SNP report carries that separately in `PLATFORM_INFO` at offset 0x40: whether SMT is on, whether ECC is enabled, whether ciphertext hiding is enforced, and whether the firmware completed its boot-time DRAM alias check, which is AMD's mitigation for BadRAM (security bulletin SB-3015).
+
+The practical consequence: a report from a machine with SMT enabled and the alias check never completed verifies exactly as cleanly as one from a machine with neither condition. If that distinction matters to your deployment, it has to be asserted explicitly.
+
+Related: [google/go-sev-guest#195](https://github.com/google/go-sev-guest/issues/195), where the reference verifier's own platform-info policy field is documented as a ceiling while four of its seven fields are enforced as minimums. Worth reading before writing any policy over these bits.
+
+**In cMCP.** [`agent-manifest`](https://manifest.agentrust-io.com/limitations/) parses these fields and can enforce a policy over them as of 2026-08-20. cMCP does not yet call that appraisal, so cMCP does not assert it for you.
+
+## What cMCP does not do
+
+- **cMCP is not a WAF.** It does not inspect HTTP traffic for SQL injection, XSS, or other web application attack patterns. It operates at the MCP tool call layer, not the HTTP layer.
+- **cMCP is not a content filter.** It does not classify or filter free-text content for harmful material, bias, or policy violations in the LLM inference path. Response inspection is scoped to tool response payloads at the gateway boundary.
+- **cMCP is not a network proxy.** It does not perform general-purpose HTTP proxying, TLS termination for arbitrary traffic, or routing outside the MCP protocol. It proxies MCP tool calls only.
+- **cMCP is not responsible for MCP server bugs.** The gateway enforces policy and records what happened. Bugs in upstream MCP servers -- memory corruption, logic errors, incorrect data handling -- are outside the gateway's control and are not attested by the TRACE Claim.
+
+## AARM v1.0 decision types: what is enforced versus classified
+
+cMCP records the five AARM R4 decision types (see `cmcp_runtime.policy.decisions` for the crosswalk). Three caveats on what that means in practice.
+
+- **DEFER is classified, not asynchronously enforced.** AARM's DEFER means asynchronous evaluation with a callback. A policy annotated `@aarm_decision("defer")` produces a blocked call recorded as `defer` with its advice payload attached. The gateway does not hold the MCP request open pending an out-of-band decision, because it has no callback registry and keeping requests open across a policy round trip is a transport design decision. Do not read a `defer` entry as evidence that a deferred decision was later resolved.
+- **STEP_UP blocks the call.** A `step_up` entry means policy refused and named a human authority who can authorize it, and the caller receives that authority in `advice`. The call itself did not proceed, and no in-band re-submission path exists yet.
+- **MODIFY is recorded as `redact`.** cMCP's modification mechanism is response redaction and surplus stripping in the inspection pipeline, so that is the value the audit chain and the audit-entry schema carry. There is no separate `modify` value.
+
+The TRACE Claim schema is unchanged by this. `trace-claim.schema.json` pins its per-call decision enum to the pre-AARM vocabulary, and widening it would change what a version `1.0` claim can contain, which an older verifier would reject. Widening it is a TRACE specification decision spanning `trace-spec` and `trace-tests`, not a cMCP one. Until that is settled, `step_up` and `defer` are visible in the audit chain and in telemetry, and a claim reports the coarser value.
+
+## Performance
+
+Attestation is a startup cost, not a per-call cost. Per-call gateway overhead covers Cedar policy evaluation, audit entry creation, and routing. Upstream tool execution time is excluded.
+
+### Attestation handshake (one-time, at startup)
+
+| Provider       | Typical latency                               |
+| -------------- | --------------------------------------------- |
+| TPM            | less than 500ms (hardware I/O bound)          |
+| SEV-SNP        | less than 100ms (Azure DCasv5, AWS C6a Nitro) |
+| TDX            | less than 100ms (Azure DCedsv5, GCP C3)       |
+| OPAQUE Managed | less than 50ms                                |
+| software-only  | negligible                                    |
+
+### Per-call gateway overhead
+
+| Percentile | Target        |
+| ---------- | ------------- |
+| p50        | less than 1ms |
+| p95        | less than 3ms |
+| p99        | less than 5ms |
+
+Expected component breakdown for a 10-rule policy bundle:
+
+| Component                    | Estimated cost      |
+| ---------------------------- | ------------------- |
+| Cedar evaluation (10 rules)  | 0.2 to 0.5ms        |
+| Audit entry hash computation | approximately 0.1ms |
+| Network routing overhead     | 0.5 to 2ms          |
+
+These are targets from [the benchmark methodology](https://cmcp.agentrust-io.com/testing/benchmarks/). Actual results on real TEE hardware will vary by provider and payload size; benchmark results are committed per provider to `benchmarks/` in CI.
+
+# Sponsors
+
+cMCP is an open-source AgenTrust project. It is sponsored by OPAQUE Systems, which funds the engineering, infrastructure and confidential-computing work behind it and contributes to the project's confidential-computing integrations. Organisations that want to support the project are welcome to join as sponsors.
+
+See the repository's [sponsor policy and recognition page](https://github.com/agentrust-io/cmcp/blob/main/SPONSORS.md) for details.
