@@ -1,16 +1,55 @@
 ---
-title: Govern MCP tool calls and verify the evidence
-description: cMCP checks routed MCP tool calls against Cedar policy and signs session records. Run a local allow/deny example, then explore hardware-backed deployment.
+title: "cMCP: policy-checked MCP tool calls with signed evidence"
+description: cMCP checks routed MCP tool calls against Cedar policy and signs session records. Run a local allow/deny example, then evaluate hardware-backed deployment.
 ---
 
-# Govern tool calls. Verify the evidence.
+[03 · Actions: was each tool call checked inside attested hardware?](https://agentrust-io.com/#chain)
 
-cMCP (Confidential MCP) is an open-source gateway between your AI agent's MCP client and its tool servers. It checks routed calls against Cedar policy, blocks denied calls in enforcing mode, and produces a signed TRACE session record.
+# Check routed MCP tool calls and sign the evidence
+
+cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy, blocks denied calls in enforcing mode, and signs a TRACE session record a verifier can check offline.
 
 [Block a call in 10 minutes](https://agentrust-io.com/quickstart/){ .md-button .md-button--primary }
-[See the architecture](concepts.md){ .md-button }
+[What this proves, and what it does not](limitations.md){ .md-button }
 
-The first demo runs on your laptop with a mock tool and software attestation. You will see `403 POLICY_DENY`, then the expected `partially_verified` result because no hardware attestation is present. It needs Python 3.11+ and no cloud account.
+!!! tip "TL;DR"
+    Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.5.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and see `403 POLICY_DENY` locally, reported as `partially_verified` because software mode carries no hardware attestation. The SEV-SNP and Intel TDX verifiers are validated on real Azure and GCP evidence, and calls that bypass the gateway, along with NVIDIA GPU confidential computing, are outside what it proves today.
+
+<div class="grid cards" markdown>
+
+-   __Run it__
+
+    ---
+
+    A blocked request and a signed session record on your laptop, with a mock tool and software attestation.
+
+    [Guided first demo](https://agentrust-io.com/quickstart/)
+
+-   __What it proves, and what it does not__
+
+    ---
+
+    Software mode has no hardware isolation, and the upstream tool server stays outside the TEE.
+
+    [Limitations](limitations.md)
+
+-   __Hardware evidence__
+
+    ---
+
+    SEV-SNP on an Azure confidential VM and Intel TDX on GCP C3, validated 2026-07-27. NVIDIA GPU CC is not implemented.
+
+    [Hardware validation](testing/hardware-validation.md)
+
+-   __The chain__
+
+    ---
+
+    Before it: [Agent Manifest](https://manifest.agentrust-io.com) declares the agent. Alongside: [cA2A](https://ca2a.agentrust-io.com) covers delegation. After it: records in [TRACE](https://trace.agentrust-io.com). Check a real TDX quote at [agentrust-io.com/verify](https://agentrust-io.com/verify/).
+
+    [See the chain](https://agentrust-io.com/#chain)
+
+</div>
 
 ## Choose your next step
 
@@ -31,8 +70,8 @@ A hardware deployment can protect the runtime from its host, subject to the prov
 
 Read the [architecture](concepts.md), [enforcement modes](configuration.md), and [limitations](limitations.md) before treating a successful software demo as evidence of hardware isolation.
 
-## How it fits AgenTrust
-
-[Agent Manifest](https://manifest.agentrust-io.com) declares identity and intended authority. cMCP governs the MCP tool-call path. [TRACE](https://trace.agentrust-io.com) defines signed runtime evidence, and [cA2A](https://ca2a.agentrust-io.com) addresses delegation between agents. Use the components required by your application's trust boundaries.
+## Get involved
 
 For implementation bugs or specification feedback, include the failing command, runtime version, and expected behavior in an [issue](https://github.com/agentrust-io/cmcp/issues). See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
+
+**Status:** cmcp-runtime 0.5.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · Sponsored by OPAQUE, which funds the engineering, infrastructure and confidential-computing work behind these projects.

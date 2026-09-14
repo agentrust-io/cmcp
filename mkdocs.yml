@@ -1,5 +1,5 @@
 site_name: cMCP
-site_description: "Govern routed MCP tool calls with Cedar policy and signed TRACE session records. Start in software mode; evaluate hardware provenance separately."
+site_description: "Check routed MCP tool calls against Cedar policy and sign TRACE session records. Start in software mode; evaluate hardware provenance separately."
 site_url: https://cmcp.agentrust-io.com
 repo_url: https://github.com/agentrust-io/cmcp
 repo_name: agentrust-io/cmcp
