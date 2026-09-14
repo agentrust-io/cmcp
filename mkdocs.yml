@@ -56,7 +56,6 @@ theme:
     - content.code.copy
     - content.tabs.link
     - toc.follow
-    - header.autohide
   icon:
     repo: fontawesome/brands/github
 
@@ -147,57 +146,64 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Quick Start: quickstart.md
-  - Specification index: spec-index.md
-  - How It Works: concepts.md
-  - Configuration: configuration.md
-  - Tutorials:
-      - Try it from an existing MCP client: tutorials/existing-mcp-clients.md
-      - Connecting agent frameworks: tutorials/connecting-agent-frameworks.md
-      - Tool catalog authoring: tutorials/tool-catalog-authoring.md
-      - Cedar policy walkthrough: tutorials/cedar-policy-walkthrough.md
-      - Advisory mode debugging: tutorials/advisory-mode-debugging.md
-      - TLS pinning: tutorials/tls-pinning.md
-      - Verify a TRACE claim: tutorials/verifying-a-trace-claim.md
-      - TEE attestation: tutorials/tee-attestation.md
-      - Deploy on Azure: tutorials/deploy-azure.md
-      - Deploy on GCP: tutorials/deploy-gcp.md
-      - Multi-tenant deployment: tutorials/multi-tenant-config.md
-      - Response inspection: tutorials/response-inspection.md
-      - AGT SRE kill switch: tutorials/kill-switch.md
+  - Get started:
+      - Quick start: quickstart.md
+      - How it works: concepts.md
+      - Configuration: configuration.md
+      - Specification index: spec-index.md
   - Specification:
       - Overview: SPEC.md
-      - Component Model: spec/component-model.md
-      - Cedar Policy: spec/cedar-policy.md
-      - Attestation: spec/attestation.md
-      - Transport: spec/transport.md
-      - stdio Transport: spec/stdio-transport.md
-      - Session Policy: spec/session-policy.md
-      - Tool Identity: spec/tool-identity.md
-      - Catalog Lifecycle: spec/catalog-lifecycle.md
-      - Catalog Approval Provenance: spec/catalog-approval-provenance.md
-      - Response Inspection: spec/response-inspection.md
-      - Call Graph: spec/call-graph.md
-      - Proxy Security: spec/proxy-security.md
-      - Verification Library: spec/verification-library.md
-      - Embodied Action Evidence: spec/embodied-action-evidence.md
-      - Error Codes: spec/error-codes.md
-      - Failure Modes: spec/failure-modes.md
-      - Threat Model: spec/threat-model.md
-      - TPM Security Model: spec/tpm-security-model.md
-      - Policy Hot-Reload: spec/policy-hot-reload.md
-      - Phase 2 Server: spec/phase2-server.md
-  - Testing:
-      - Benchmarks: testing/benchmarks.md
-      - Soak Test: testing/soak-test.md
-      - Hardware Validation: testing/hardware-validation.md
+      - Policy and identity:
+          - Component model: spec/component-model.md
+          - Cedar policy: spec/cedar-policy.md
+          - Session policy: spec/session-policy.md
+          - Policy hot-reload: spec/policy-hot-reload.md
+          - Tool identity: spec/tool-identity.md
+          - Catalog lifecycle: spec/catalog-lifecycle.md
+          - Catalog approval provenance: spec/catalog-approval-provenance.md
+      - Transport and proxy:
+          - Transport: spec/transport.md
+          - stdio transport: spec/stdio-transport.md
+          - Proxy security: spec/proxy-security.md
+          - Response inspection: spec/response-inspection.md
+          - Call graph: spec/call-graph.md
+          - Phase 2 server: spec/phase2-server.md
+      - Attestation and evidence:
+          - Attestation: spec/attestation.md
+          - TPM security model: spec/tpm-security-model.md
+          - Verification library: spec/verification-library.md
+          - Embodied action evidence: spec/embodied-action-evidence.md
+      - Errors and threats:
+          - Error codes: spec/error-codes.md
+          - Failure modes: spec/failure-modes.md
+          - Threat model: spec/threat-model.md
+  - Guides:
+      - Tutorials:
+          - Try it from an existing MCP client: tutorials/existing-mcp-clients.md
+          - Connecting agent frameworks: tutorials/connecting-agent-frameworks.md
+          - Tool catalog authoring: tutorials/tool-catalog-authoring.md
+          - Cedar policy walkthrough: tutorials/cedar-policy-walkthrough.md
+          - Advisory mode debugging: tutorials/advisory-mode-debugging.md
+          - TLS pinning: tutorials/tls-pinning.md
+          - Verify a TRACE claim: tutorials/verifying-a-trace-claim.md
+          - TEE attestation: tutorials/tee-attestation.md
+          - Response inspection: tutorials/response-inspection.md
+          - AGT SRE kill switch: tutorials/kill-switch.md
+      - Deployment:
+          - Deploy on Azure: tutorials/deploy-azure.md
+          - Deploy on GCP: tutorials/deploy-gcp.md
+          - Multi-tenant deployment: tutorials/multi-tenant-config.md
+      - Testing:
+          - Benchmarks: testing/benchmarks.md
+          - Soak test: testing/soak-test.md
+          - Hardware validation: testing/hardware-validation.md
   - Project:
       - Limitations: limitations.md
-      - Sponsors: sponsors.md
-      - Changelog: https://github.com/agentrust-io/cmcp/blob/main/CHANGELOG.md
-      - Contributing: https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md
-      - Governance: https://github.com/agentrust-io/cmcp/blob/main/GOVERNANCE.md
       - Roadmap: https://github.com/agentrust-io/cmcp/blob/main/ROADMAP.md
+      - Governance: https://github.com/agentrust-io/cmcp/blob/main/GOVERNANCE.md
+      - Sponsors: sponsors.md
+      - Contributing: https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md
+      - Changelog: https://github.com/agentrust-io/cmcp/blob/main/CHANGELOG.md
 
 extra_javascript:
   # Shared cross-project top navigation (TRACE / Manifest / cMCP / cA2A / ...)

@@ -1,4 +1,7 @@
 ---
+hide:
+  - navigation
+  - toc
 title: "cMCP: policy-checked MCP tool calls with signed evidence"
 description: cMCP checks routed MCP tool calls against Cedar policy and signs session records. Run a local allow/deny example, then evaluate hardware-backed deployment.
 ---
