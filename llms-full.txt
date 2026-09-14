@@ -88,7 +88,7 @@ You'll run a cMCP Runtime that intercepts tool calls from a demo agent and enfor
 1. **Block** a call to a sensitive tool (`salesforce.contacts`). The gateway returns HTTP 403 and the call never reaches any upstream.
 1. **Allow** a call to a non-sensitive tool (`echo`) and forward it to a small mock upstream.
 
-At the end you close the session and get a signed TRACE Claim that records both calls, which policy decided each one, and the policy bundle hash measured at startup. You inspect its signature and consistency. This software demo does not establish hardware provenance.
+At the end you close the session and get a signed TRACE Claim that records both calls, which policy decided each one, and the policy bundle hash measured at startup. You inspect its signature and consistency. This software demo does not establish hardware provenance, and without a hardware TEE the runtime gives no isolation from the host it runs on.
 
 ______________________________________________________________________
 
@@ -114,8 +114,10 @@ ______________________________________________________________________
 ```
 python3 -m venv cmcp-env
 source cmcp-env/bin/activate
-python3 -m pip install cmcp-runtime==0.4.1
+python3 -m pip install cmcp-runtime==0.5.0
 ```
+
+The install is pinned so the commands and outputs below match what you run. CI runs this page end to end against that release on every docs change.
 
 This installs:
 
@@ -295,7 +297,7 @@ First check the YAML configuration:
 cmcp validate-config --config cmcp-config.yaml
 ```
 
-This command checks the YAML; it does not load the policy bundle and tool catalog. Check those inputs and record their expected hashes **before** starting the gateway:
+Expect `✓ Config valid: cmcp-config.yaml`. This command checks the YAML; it does not load the policy bundle and tool catalog. Check those inputs and record their expected hashes **before** starting the gateway:
 
 ```
 python3 - <<'PY'
@@ -465,6 +467,7 @@ cmcp verify claim.json
 Expected output in dev mode:
 
 ```
+CRYPTO-001: software-only (dev) mode -- TEE key binding cannot be verified; this claim provides no hardware provenance guarantee
 [cmcp verify] schema                   PASS
 [cmcp verify] signature                PASS
 [cmcp verify] policy_bundle.hash       PASS  (not pinned - pass --policy-hash to pin)
@@ -472,8 +475,11 @@ Expected output in dev mode:
 [cmcp verify] attestation_freshness    PASS
 [cmcp verify] audit_chain              PASS
 [cmcp verify] hardware_attestation     FAIL  software-only mode - not hardware-backed
+[cmcp verify] note: software-only mode - not hardware-backed
 [cmcp verify] RESULT: FAIL (partially_verified)
 ```
+
+The `CRYPTO-001` line goes to stderr, ahead of the checks. It is an advisory, not a failure: the CLI is saying up front that a software-mode key binding proves nothing about hardware.
 
 `partially_verified` with exit code 1 is expected when the software checks pass and only hardware attestation is missing. Pin the expected policy and catalog hashes from the file you created before startup:
 
@@ -513,6 +519,20 @@ ______________________________________________________________________
 | `gateway.call_summary`              | Per-session statistics: total, allowed, denied, faulted calls and tools invoked                      |
 | `gateway.catalog.drift_detected`    | `true` if any tool definition changed after catalog load - signals a rug-pull attempt                |
 | `signature`                         | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`)               |
+
+______________________________________________________________________
+
+## If a step fails
+
+| Symptom                                        | What to check                                                                                                                              |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Connection refused` on port 8443              | The gateway terminal must still be running and must have printed `Uvicorn running on http://127.0.0.1:8443`.                               |
+| `cmcp: command not found`, or missing files    | Activate the virtual environment in every terminal, and run commands from the `cmcp-quickstart` folder.                                    |
+| The runtime cannot bind 127.0.0.1:8443         | A gateway from an earlier run still holds the port and would answer with its old policy. Stop it before starting this one.                 |
+| The blocked call returns `200 OK`              | Check `enforcement_mode: enforcing` and the `forbid` rule. Policy and catalog load at startup, so restart the gateway after changing them. |
+| The allowed call fails                         | The mock upstream must be listening on port 9001 in its own terminal.                                                                      |
+| The runtime rejects a catalog entry at startup | Its `definition_hash` no longer matches `approved_definition`. Recompute it with the snippet under Catalog.                                |
+| `FAIL (partially_verified)`, exit 1            | Expected when the six software checks pass and only `hardware_attestation` fails. Any other failing check needs investigation.             |
 
 ______________________________________________________________________
 
