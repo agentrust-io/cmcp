@@ -1,4 +1,8 @@
-﻿# Failure Mode Specification
+﻿---
+description: "Exact cMCP runtime behavior for each failure: attestation at startup and mid-session, TEE faults, policy hash mismatch, and MCP parse errors."
+---
+
+# Failure Mode Specification
 
 ---
 Status: Draft v0.1

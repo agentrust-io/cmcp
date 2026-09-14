@@ -1,5 +1,5 @@
 ---
-description: cMCP quickstart. From zero to your first signed TRACE Claim in under 30 minutes using CMCP_DEV_MODE=1, no hardware TEE required. Install, write a Cedar policy and tool catalog, run the gateway, watch a policy block a call, then verify the signed claim.
+description: Run cMCP in dev mode with no hardware TEE, watch a Cedar policy block a tool call, and verify the signed TRACE claim, in under 30 minutes.
 ---
 
 # Quickstart - cMCP Runtime

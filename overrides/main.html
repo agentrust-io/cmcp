@@ -1,23 +1,54 @@
 {% extends "base.html" %}
 
 {#
-  SEO and AEO head additions:
-  - Open Graph and Twitter card meta for link previews and answer engines.
-  - JSON-LD structured data (SoftwareApplication, Organization, WebSite) so
-    search and answer engines can model what cMCP is.
-  Canonical and description tags are emitted by Material when site_url is set,
-  so they are not repeated here.
+  SEO and AEO head additions for cMCP.
+
+  1. <title>: Material appends " - site_name" to every page title, so the home
+     page read "cMCP: ... - cMCP" and titles that already name cMCP repeated it.
+     The home page uses its front-matter title alone, and other pages drop the
+     suffix when the title already contains the site name.
+
+  2. Open Graph and Twitter card meta, with og:title equal to <title>.
+
+  3. JSON-LD: one Organization node under the hub's @id, so every AgenTrust
+     site names the same organization; a WebSite; a WebPage (home) or
+     TechArticle (inner page) carrying this page's own title, description and
+     canonical URL; a BreadcrumbList on inner pages; and the project node on
+     the home page.
+
+  Per-page meta descriptions come from hooks/seo.py. Canonical and description
+  tags are emitted by Material when site_url is set.
 #}
+
+{% block htmltitle %}
+  {%- set t = page.meta.title if page and page.meta and page.meta.title else (page.title | striptags if page and page.title and not page.is_homepage else "") -%}
+  {%- if not t -%}
+    <title>{{ config.site_name }}</title>
+  {%- elif (page and page.is_homepage) or config.site_name in t -%}
+    <title>{{ t }}</title>
+  {%- else -%}
+    <title>{{ t }} - {{ config.site_name }}</title>
+  {%- endif -%}
+{% endblock %}
+
 {% block extrahead %}
   {{ super() }}
-  {# page.title is the nav label ("Home"); page.meta.title is the front matter. #}
-  {% set page_name = (page.meta.title if page and page.meta and page.meta.title else (page.title if page else None)) %}
-  {% set page_desc = page.meta.description if page and page.meta and page.meta.description else config.site_description %}
-  {% set page_url = page.canonical_url if page and page.canonical_url else config.site_url %}
+  {%- set t = page.meta.title if page and page.meta and page.meta.title else (page.title | striptags if page and page.title and not page.is_homepage else "") -%}
+  {%- if not t -%}
+    {%- set page_title = config.site_name -%}
+  {%- elif (page and page.is_homepage) or config.site_name in t -%}
+    {%- set page_title = t -%}
+  {%- else -%}
+    {%- set page_title = t ~ " - " ~ config.site_name -%}
+  {%- endif -%}
+  {%- set page_desc = page.meta.description if page and page.meta and page.meta.description else config.site_description -%}
+  {%- set page_url = page.canonical_url if page and page.canonical_url else config.site_url -%}
+  {%- set is_home = page and page.is_homepage -%}
+  {%- set org = "https://agentrust-io.com/#organization" -%}
 
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="{{ config.site_name }}">
-  <meta property="og:title" content="{% if page_name %}{{ page_name }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
+  <meta property="og:site_name" content="AgenTrust">
+  <meta property="og:title" content="{{ page_title }}">
   <meta property="og:description" content="{{ page_desc }}">
   <meta property="og:url" content="{{ page_url }}">
   <meta property="og:image" content="{{ config.site_url }}assets/og.png">
@@ -26,7 +57,7 @@
   <meta property="og:image:alt" content="cMCP: part of the AgenTrust verifiable AI supply chain">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{% if page_name %}{{ page_name }} - {{ config.site_name }}{% else %}{{ config.site_name }}: Confidential MCP Runtime{% endif %}">
+  <meta name="twitter:title" content="{{ page_title }}">
   <meta name="twitter:description" content="{{ page_desc }}">
   <meta name="twitter:image" content="{{ config.site_url }}assets/og.png">
 
@@ -35,34 +66,63 @@
     "@context": "https://schema.org",
     "@graph": [
       {
-        "@type": "SoftwareApplication",
-        "name": "cMCP (Confidential MCP Runtime)",
-        "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "Linux",
-        "description": "cMCP evaluates routed MCP tool calls against Cedar policy and produces signed TRACE session records. Hardware provenance depends on attestation verification; software mode provides no hardware isolation.",
-        "url": "{{ config.site_url }}",
-        "softwareHelp": "{{ config.site_url }}",
-        "license": "https://opensource.org/licenses/MIT",
-        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-        "author": { "@type": "Organization", "name": "AgenTrust", "url": "https://agentrust-io.com" },
-        "codeRepository": "{{ config.repo_url }}"
-      },
-      {
         "@type": "Organization",
+        "@id": {{ org | tojson }},
         "name": "AgenTrust",
-        "url": "https://agentrust-io.com",
+        "url": "https://agentrust-io.com/",
         "sameAs": [
           "https://github.com/agentrust-io",
-          "https://cmcp.agentrust-io.com",
+          "https://trace.agentrust-io.com",
           "https://manifest.agentrust-io.com",
-          "https://trace.agentrust-io.com"
+          "https://cmcp.agentrust-io.com",
+          "https://ca2a.agentrust-io.com",
+          "https://wcm.agentrust-io.com",
+          "https://tests.agentrust-io.com",
+          "https://governance.agentrust-io.com"
         ]
       },
       {
         "@type": "WebSite",
-        "name": "{{ config.site_name }}",
-        "url": "{{ config.site_url }}"
+        "@id": {{ (config.site_url ~ "#website") | tojson }},
+        "name": {{ config.site_name | tojson }},
+        "url": {{ config.site_url | tojson }},
+        "publisher": { "@id": {{ org | tojson }} }
+      },
+      {
+        "@type": {{ ("WebPage" if is_home else "TechArticle") | tojson }},
+        "@id": {{ (page_url ~ "#page") | tojson }},
+        "url": {{ page_url | tojson }},
+        "name": {{ page_title | tojson }},
+        "headline": {{ page_title | tojson }},
+        "description": {{ page_desc | tojson }},
+        "isPartOf": { "@id": {{ (config.site_url ~ "#website") | tojson }} },
+        "publisher": { "@id": {{ org | tojson }} },
+        "inLanguage": "en"
       }
+      {%- if is_home %},
+      {
+        "@type": "SoftwareApplication",
+        "@id": {{ (config.site_url ~ "#software") | tojson }},
+        "name": "cMCP",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux",
+        "description": "cMCP evaluates routed MCP tool calls against Cedar policy and produces signed TRACE session records. Hardware provenance depends on attestation verification; software mode provides no hardware isolation.",
+        "url": {{ config.site_url | tojson }},
+        "softwareHelp": {{ config.site_url | tojson }},
+        "codeRepository": {{ config.repo_url | tojson }},
+        "license": "https://opensource.org/licenses/MIT",
+        "author": { "@id": {{ org | tojson }} },
+        "publisher": { "@id": {{ org | tojson }} }
+      }
+      {%- else %},
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": {{ config.site_name | tojson }}, "item": {{ config.site_url | tojson }} },
+          { "@type": "ListItem", "position": 2, "name": {{ page_title | tojson }}, "item": {{ page_url | tojson }} }
+        ]
+      }
+      {%- endif %}
     ]
   }
   </script>

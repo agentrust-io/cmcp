@@ -1,4 +1,8 @@
-﻿# Tool Identity and Catalog Specification
+﻿---
+description: "How cMCP identifies upstream MCP servers by TLS fingerprint or SPIFFE SVID, prevents tool name collisions, and routes each tool call."
+---
+
+# Tool Identity and Catalog Specification
 
 ---
 Status: Draft v0.1

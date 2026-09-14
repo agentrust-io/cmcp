@@ -1,4 +1,8 @@
-﻿# Transport Compatibility Specification
+﻿---
+description: "The MCP transports cMCP supports: stateless Streamable HTTP, stdio servers run as gateway children, and why WebSocket catalog entries are rejected."
+---
+
+# Transport Compatibility Specification
 
 ---
 Status: Draft v0.1

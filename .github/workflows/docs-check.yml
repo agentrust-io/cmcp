@@ -5,6 +5,7 @@ on:
       - 'docs/**'
       - 'overrides/**'
       - 'mkdocs.yml'
+      - 'hooks/**'
       - 'requirements-docs.txt'
       - 'scripts/check_docs_quickstart.py'
       - '.github/workflows/docs-check.yml'

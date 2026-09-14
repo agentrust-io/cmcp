@@ -59,6 +59,10 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+hooks:
+  # Per-page meta descriptions; see the module docstring.
+  - hooks/seo.py
+
 plugins:
   - search
   - llmstxt:
@@ -70,24 +74,38 @@ plugins:
         provenance. Hardware deployments require provider-specific attestation
         verification, trusted inputs, and a deployment that prevents gateway bypass.
         The agent, model, and upstream tool server remain separate components.
+        Part of AgenTrust, open specifications for verifiable AI: https://agentrust-io.com.
       sections:
-        Getting started:
+        Get started:
           - index.md
           - quickstart.md
           - concepts.md
           - configuration.md
+          - spec-index.md
         Specification:
           - SPEC.md
           - spec/cedar-policy.md
+          - spec/session-policy.md
+          - spec/tool-identity.md
+          - spec/transport.md
+          - spec/proxy-security.md
           - spec/attestation.md
-          - spec/threat-model.md
           - spec/verification-library.md
           - spec/embodied-action-evidence.md
-        Tutorials:
+          - spec/error-codes.md
+          - spec/threat-model.md
+        Guides:
+          - tutorials/existing-mcp-clients.md
           - tutorials/connecting-agent-frameworks.md
           - tutorials/cedar-policy-walkthrough.md
           - tutorials/verifying-a-trace-claim.md
           - tutorials/tee-attestation.md
+          - tutorials/deploy-azure.md
+          - tutorials/deploy-gcp.md
+          - testing/hardware-validation.md
+        Project:
+          - limitations.md
+          - sponsors.md
   - minify:
       minify_html: true
   - mkdocstrings:
@@ -188,7 +206,7 @@ nav:
           - TLS pinning: tutorials/tls-pinning.md
           - Verify a TRACE claim: tutorials/verifying-a-trace-claim.md
           - TEE attestation: tutorials/tee-attestation.md
-          - Response inspection: tutorials/response-inspection.md
+          - Response inspection tutorial: tutorials/response-inspection.md
           - AGT SRE kill switch: tutorials/kill-switch.md
       - Deployment:
           - Deploy on Azure: tutorials/deploy-azure.md
