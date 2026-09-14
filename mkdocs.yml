@@ -143,7 +143,7 @@ extra_css:
   # a local override here is how this site drifted to the Material default
   # violet last time. Change the shared file instead.
   # The ?v= matches CSS_VERSION in agentrust-io.github.io tools/site_header.py. Browsers keep these files for hours, so bump it there and here together.
-  - https://agentrust-io.com/design-system.css?v=21
+  - https://agentrust-io.com/design-system.css?v=22
 
 nav:
   - Home: index.md
@@ -209,4 +209,4 @@ nav:
 extra_javascript:
   # Shared cross-project top navigation (TRACE / Manifest / cMCP / cA2A / ...)
   # The ?v= matches CSS_VERSION in agentrust-io.github.io tools/site_header.py. Browsers keep these files for hours, so bump it there and here together.
-  - https://agentrust-io.com/supernav.js?v=21
+  - https://agentrust-io.com/supernav.js?v=22
