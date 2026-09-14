@@ -7,18 +7,18 @@ cMCP is an open-source gateway for MCP tool-call policy enforcement. It evaluate
 ## Getting started
 
 - [Home](https://cmcp.agentrust-io.com/index.md)
-- [Quick Start](https://cmcp.agentrust-io.com/quickstart/index.md)
-- [How It Works](https://cmcp.agentrust-io.com/concepts/index.md)
+- [Quick start](https://cmcp.agentrust-io.com/quickstart/index.md)
+- [How it works](https://cmcp.agentrust-io.com/concepts/index.md)
 - [Configuration](https://cmcp.agentrust-io.com/configuration/index.md)
 
 ## Specification
 
 - [Overview](https://cmcp.agentrust-io.com/SPEC/index.md)
-- [Cedar Policy](https://cmcp.agentrust-io.com/spec/cedar-policy/index.md)
+- [Cedar policy](https://cmcp.agentrust-io.com/spec/cedar-policy/index.md)
 - [Attestation](https://cmcp.agentrust-io.com/spec/attestation/index.md)
-- [Threat Model](https://cmcp.agentrust-io.com/spec/threat-model/index.md)
-- [Verification Library](https://cmcp.agentrust-io.com/spec/verification-library/index.md)
-- [Embodied Action Evidence](https://cmcp.agentrust-io.com/spec/embodied-action-evidence/index.md)
+- [Threat model](https://cmcp.agentrust-io.com/spec/threat-model/index.md)
+- [Verification library](https://cmcp.agentrust-io.com/spec/verification-library/index.md)
+- [Embodied action evidence](https://cmcp.agentrust-io.com/spec/embodied-action-evidence/index.md)
 
 ## Tutorials
 
