@@ -1,4 +1,6 @@
-﻿# Cedar Policy Specification
+﻿<a id="cmcp-cedar-policy"></a>
+
+# Cedar Policy Specification
 
 !!! warning "Draft"
     Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
@@ -62,6 +64,8 @@ This hash is what gets measured into the attestation report (see `policy_bundle.
 ## Section 2 : Cedar Policy Expression Examples
 
 The following examples show working Cedar policies for common enterprise use cases. All policies operate on the action `Action::"call_tool"`.
+
+<a id="cmcp-tool-allowlist"></a>
 
 ### Tool Allowlist
 
@@ -145,6 +149,8 @@ when {
 };
 ```
 
+<a id="cmcp-default-deny"></a>
+
 ### Default-Deny Baseline
 
 Cedar is default-deny: a call is denied unless at least one `permit` matches and no `forbid` matches. To make this explicit and auditable, include a baseline forbid:
@@ -160,6 +166,8 @@ forbid(
 This ensures that even if the policy bundle is empty or all permits are removed, all calls are denied rather than silently allowed.
 
 ---
+
+<a id="cmcp-enforcement-modes"></a>
 
 ## Section 3 : Enforcement Modes
 
@@ -186,6 +194,8 @@ Enforcement mode is set in the deployment configuration, bound into the attestat
 The error does not include the matched rule name or policy text, to avoid leaking policy internals to the agent.
 
 ---
+
+<a id="cmcp-policy-evaluation"></a>
 
 ## Section 4 : Policy Evaluation Decision Flow
 
@@ -233,6 +243,8 @@ Latency budget: Cedar evaluation target is under 1 ms for bundles up to 500 poli
 
 ---
 
+<a id="cmcp-policy-provenance"></a>
+
 ## Section 5 : Policy Provenance (closes #26)
 
 The `manifest.json` provenance metadata is included in the bundle hash measurement (see Section 1). This means:
@@ -256,6 +268,8 @@ A verifier checking a TRACE Claim can perform the following steps:
 If any step fails, the verifier rejects the TRACE Claim. This process requires no trust in the operator: the TEE measurement is the root of trust.
 
 ---
+
+<a id="cmcp-workflow-scope"></a>
 
 ## Section 6 : Per-Workflow Cedar Policy Scope (closes #41)
 
