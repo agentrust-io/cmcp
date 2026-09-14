@@ -1,6 +1,13 @@
-"""Exercise the Markdown tutorial's files, requests, and verification gate."""
+"""Exercise the Markdown tutorial's files, requests, and verification gate.
+
+By default it runs against the checkout, as the docs job installs it. With
+--published it runs against the cmcp-runtime release the page tells readers to
+install, and fails if the installed version is not the page's pin or the import
+resolves to this checkout instead of the release.
+"""
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -34,7 +41,14 @@ def wait_for_server(url, process):
 
 
 def main():
+    page = (ROOT / "docs/quickstart.md").read_text(encoding="utf-8-sig")
     snippets = blocks(ROOT / "docs/quickstart.md")
+    if "--published" in sys.argv[1:]:
+        import cmcp_runtime
+        pin = re.search(r"pip install cmcp-runtime==([0-9][0-9a-z.]*)", page)[1]
+        installed = importlib.metadata.version("cmcp-runtime")
+        assert installed == pin, f"page pins cmcp-runtime=={pin}, but {installed} is installed"
+        assert ROOT not in Path(cmcp_runtime.__file__).resolve().parents, f"imported the checkout, not the release: {cmcp_runtime.__file__}"
     tutorial = blocks(ROOT / "docs/tutorials/verifying-a-trace-claim.md")
     environment = dict(os.environ, CMCP_DEV_MODE="1", PYTHONIOENCODING="utf-8")
     # Tokenless localhost is the documented path, regardless of caller settings.
@@ -52,6 +66,8 @@ def main():
         pins = next(b for b in snippets if 'Path("approved-hashes.json")' in b)
         pins = pins.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
         subprocess.run([sys.executable, "-c", pins], cwd=work, env=environment, check=True)
+        result = subprocess.run(CLI + ["validate-config", "--config", "cmcp-config.yaml"], cwd=work, env=environment, capture_output=True, text=True, encoding="utf-8")
+        assert result.returncode == 0 and "Config valid" in result.stdout, result.stdout + result.stderr
         mock = next(b for b in snippets if "cat > mock_upstream.py" in b)
         mock = mock.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
         save("mock_upstream.py", mock)
@@ -77,6 +93,9 @@ def main():
                 summary = claim["gateway"]["call_summary"]
                 assert summary["tool_calls_total"] == 2 and summary["tool_calls_allowed"] == 1 and summary["tool_calls_denied"] == 1, summary
                 save("claim.json", json.dumps(claim))
+                # The page shows the unpinned command first; its advisory and exit 1 are part of the documented output.
+                result = subprocess.run(CLI + ["verify", "claim.json"], cwd=work, env=environment, capture_output=True, text=True, encoding="utf-8")
+                assert result.returncode == 1 and "partially_verified" in result.stdout and "CRYPTO-001" in result.stdout + result.stderr, result.stdout + result.stderr
                 hashes = json.loads((work / "approved-hashes.json").read_text())
                 result = subprocess.run(CLI + ["verify", "claim.json", "--policy-hash", hashes["policy_bundle_hash"], "--catalog-hash", hashes["tool_catalog_hash"]], cwd=work, env=environment, capture_output=True, text=True, encoding="utf-8")
                 assert result.returncode == 1 and "partially_verified" in result.stdout, result.stdout + result.stderr
