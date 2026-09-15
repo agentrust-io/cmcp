@@ -1,6 +1,7 @@
 {
   "profile": "cmcp.execution-action-binding-vectors/1",
   "contract": "docs/spec/execution-action-binding.md",
+  "member_ordering_note": "This set does not test UTF 16 code unit member ordering versus code point ordering, RFC 8785 section 3.2.3. A member name in the supplementary plane sorts before BMP characters in U+E000 through U+FFFF under code unit ordering, but the v1 preimage's six members are fixed, ASCII named, and hold only strings or the integer 1, so a member name pair that would diverge under the two sort rules cannot exist in a conformant v1 preimage. See the Conformance evidence section of the contract doc for the full reasoning.",
   "vectors": [
     {
       "id": "EAB-001-ascii-sha256",
