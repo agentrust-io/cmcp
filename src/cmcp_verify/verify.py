@@ -657,7 +657,7 @@ def verify_audit_bundle(
                 )
                 continue
             evidence_type = ev.get("evidence_type", "")
-            if evidence_type not in _EXTERNAL_EVIDENCE_TYPES:
+            if not isinstance(evidence_type, str) or evidence_type not in _EXTERNAL_EVIDENCE_TYPES:
                 failures.append(
                     _external_evidence_failure(i, f"unsupported evidence_type '{evidence_type}'")
                 )
@@ -704,6 +704,11 @@ def verify_audit_bundle(
         chain_tip = chain.get("tip")
 
         tool_calls = [entry for entry in entries if entry.get("entry_type") == "tool_call"]
+        for i, entry in enumerate(entries):
+            if entry.get("entry_type") == "tool_call":
+                tool_name = entry.get("tool_name")
+                if tool_name is not None and not isinstance(tool_name, str):
+                    failures.append(f"entry {i}: tool_name must be a string")
         bundle_has_tool_calls = bool(tool_calls)
         if bundle_has_tool_calls and not isinstance(transcript_hash, str):
             failures.append(
@@ -738,7 +743,7 @@ def verify_audit_bundle(
                 {
                     entry["tool_name"]
                     for entry in tool_calls
-                    if entry.get("tool_name") is not None
+                    if isinstance(entry.get("tool_name"), str)
                 }
             ),
         }

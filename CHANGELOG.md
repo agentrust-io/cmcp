@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `verify_audit_bundle()` now reports malformed `tool_name` values during claim
+  summary verification and malformed external-receipt `evidence_type` values as
+  failed verification results instead of raising `TypeError`. Hash-chain checks
+  remain active, and receipt verification remains opt-in (#593).
+
 - **`POST /mcp` `tools/call` 500'd on a non-string `name`, and silently accepted a non-object `arguments`.** `_handle_tool_call` read `tool_name: str = params.get("name", "").lower()` and `arguments: dict[str, Any] = params.get("arguments", {})`: the `.get(field, default)` default only covers a genuinely *absent* field, so a caller-supplied `name` that is present but not a string (an int, a list, a bool, `null`) reached `.lower()` and raised an unhandled `AttributeError`, caught only by the outermost `_unhandled_error_handler` and logged as `UNHANDLED_EXCEPTION`/`INTERNAL_ERROR` for what is ordinary client input validation, not an internal failure. `arguments` had the matching gap on the other side: `_arg_shape_violation` (the #518/#562 depth/key-count/string-length gate) only recognizes `dict`, `list` and `str`, so a scalar `arguments` (an int, for instance) silently returned "no violation" and reached `call_tool` with a shape its own type annotation says cannot occur.
 
 Both fields are exactly as caller-controlled as `_cmcp` a few lines below, already guarded with "A malformed `_cmcp` (string, list, number) must not 500 the call path" `name` and `arguments` were the two places that same reasoning wasn't applied. Both now return the same `-32602 Invalid params` JSON-RPC error the adjacent depth/key/string-length and non-dict-`params` checks already return, before `call_tool` is ever reached.

@@ -112,3 +112,45 @@ def test_valid_entry_preserves_success() -> None:
         entry_count=1,
         failures=[],
     )
+
+
+def _hash_entries(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    previous = "genesis"
+    for entry in entries:
+        entry["prev_entry_hash"] = previous
+        body = {key: value for key, value in entry.items() if key != "entry_hash"}
+        previous = hashlib.sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        ).hexdigest()
+        entry["entry_hash"] = previous
+    return {"entries": entries}
+
+
+@pytest.mark.parametrize("bad_name", [["x"], {"name": "x"}, 1, True])
+@pytest.mark.parametrize("position", [0, 1])
+def test_invalid_tool_name_returns_failure(bad_name: Any, position: int) -> None:
+    entries = [{"entry_type": "tool_call", "tool_name": "valid"} for _ in range(2)]
+    entries[position]["tool_name"] = bad_name
+    result = verify_audit_bundle(_hash_entries(entries), {})
+    assert not result.verified
+    assert f"entry {position}: tool_name must be a string" in result.failures
+    assert not any("hash mismatch" in failure for failure in result.failures)
+
+
+@pytest.mark.parametrize("bad_type", [["receipt"], {"type": "receipt"}, 1, True, None])
+def test_invalid_evidence_type_returns_failure(bad_type: Any) -> None:
+    entry = {
+        "entry_type": "tool_call",
+        "call_id": "call-1",
+        "tool_name": "valid",
+        "external_execution_evidence": {
+            "linked_call_id": "call-1",
+            "issuer_key_id": "a" * 64,
+            "evidence_hash": "sha256:" + "b" * 64,
+            "evidence_type": bad_type,
+        },
+    }
+    result = verify_audit_bundle(_hash_entries([entry]), external_evidence_keys={})
+    assert not result.verified
+    assert any("unsupported evidence_type" in failure for failure in result.failures)
+    assert not any("hash mismatch" in failure for failure in result.failures)
