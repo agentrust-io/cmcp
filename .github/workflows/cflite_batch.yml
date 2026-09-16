@@ -1,0 +1,37 @@
+name: ClusterFuzzLite batch
+
+on:
+  schedule:
+    # 04:20 UTC daily, off the hour so it does not queue behind everything else
+    # that runs at midnight.
+    - cron: '20 4 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: cflite-batch
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: Batch fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Every target, not just what changed, and long enough for the
+          # attestation parsers to get past their length and tag fields.
+          fuzz-seconds: 3600
+          mode: batch
+          sanitizer: address

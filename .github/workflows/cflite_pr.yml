@@ -1,0 +1,41 @@
+name: ClusterFuzzLite PR
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - '.clusterfuzzlite/**'
+      - '.github/workflows/cflite_pr.yml'
+
+# Read-only. Findings surface in the job log and the uploaded crash artifact
+# rather than as code-scanning alerts, so no security-events: write is needed.
+permissions: read-all
+
+concurrency:
+  group: cflite-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Fuzz changed code
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Only the address sanitizer. The targets are pure Python under Atheris,
+      # where undefined-behaviour instrumentation has nothing to instrument.
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 300
+          # code-change fuzzes only what the PR touched, which is what keeps
+          # this inside a PR's time budget. The nightly batch covers the rest.
+          mode: code-change
+          sanitizer: address

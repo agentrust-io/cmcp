@@ -1,0 +1,111 @@
+name: Vouch check
+
+# Closes pull requests from contributors who have not been vouched by a
+# maintainer, and tells them how to get vouched.
+#
+# The judgement is human. This workflow decides nothing about a person: a
+# maintainer adds a name and this only reads the list. That distinction is the
+# whole design. An earlier attempt here scored contributors automatically and
+# produced false and operationally misleading signals.
+#
+# The pattern comes from another open-source project running the same kind of
+# gate. Written independently; the idea worth borrowing was keeping the list on
+# a branch of its own.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  vouch-gate:
+    if: github.repository_owner == 'agentrust-io'
+    runs-on: ubuntu-latest
+    steps:
+      # Nothing from the pull request is checked out. This runs on
+      # pull_request_target with a write-capable token, so it must never
+      # execute code from the incoming branch.
+      - name: Check the author against the vouched list
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+
+            if (pr.user.type === 'Bot' || author.endsWith('[bot]')) {
+              core.info(`${author} is a bot. Nothing to check.`);
+              return;
+            }
+
+            // Anyone who can already push does not need vouching. Uses the
+            // permission API rather than org membership, so no extra secret
+            // is required for the check to work.
+            try {
+              const { data: perm } =
+                await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: author,
+                });
+              if (['admin', 'maintain', 'write'].includes(perm.permission)) {
+                core.info(`${author} has ${perm.permission} access. Nothing to check.`);
+                return;
+              }
+            } catch (e) {
+              core.info(`Could not read permission for ${author} (${e.status}). Continuing.`);
+            }
+
+            // Read the list from the dedicated branch, never from the pull
+            // request branch: an author can edit any file in their own fork.
+            let vouched = [];
+            try {
+              const { data } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: '.github/VOUCHED',
+                ref: 'vouched',
+              });
+              vouched = Buffer.from(data.content, 'base64')
+                .toString('utf-8')
+                .split('\n')
+                .map(l => l.trim())
+                .filter(l => l && !l.startsWith('#'));
+            } catch (e) {
+              // Fail open. A missing or unreadable list is our problem, and
+              // silently closing every pull request would be worse than
+              // letting one through.
+              core.warning(`Could not read .github/VOUCHED on the vouched branch: ${e.message}. Allowing.`);
+              return;
+            }
+
+            if (vouched.some(name => name.toLowerCase() === author.toLowerCase())) {
+              core.info(`${author} is vouched.`);
+              return;
+            }
+
+            core.info(`${author} is not vouched. Closing.`);
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: [
+                `Thanks for this, @${author}. Closing it for now, and it is not about the change itself.`,
+                '',
+                'This repository asks first-time contributors to be vouched by a maintainer before opening a pull request. That is because agent-written contributions are easy to produce and expensive to review, and we would rather talk to you first than review something neither of us can explain.',
+                '',
+                '**To get vouched:** open an issue saying what you want to change and why, in your own words. A maintainer will reply, and add you with `/vouch`. After that, reopen this pull request or open a new one.',
+                '',
+                'See [CONTRIBUTING.md](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md#being-vouched) for the detail.',
+              ].join('\n'),
+            });
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              state: 'closed',
+            });

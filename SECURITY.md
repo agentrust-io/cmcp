@@ -38,3 +38,11 @@ If you are unsure whether an issue is in scope, report it anyway and we will tri
 ## Credit
 
 Reporters of confirmed, in-scope vulnerabilities will be acknowledged by name (or handle, if preferred) in the release notes of the fix. We will not publish details of the report without your consent. If you prefer to remain anonymous, say so in your advisory submission and we will honor that.
+
+### Acknowledgements
+
+Our thanks to the researchers who have reported confirmed vulnerabilities in cMCP:
+
+- [Noah Ingwers](https://github.com/noah-ing) for GHSA-943q-hvhp-mrx2, gateway NV appraisal accepting
+  signed evidence for an unapproved NV object and range, reported with a genuine swtpm reproduction
+  corpus and a complete fix (fixed in 0.4.1)

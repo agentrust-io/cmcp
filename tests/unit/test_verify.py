@@ -161,6 +161,11 @@ def _signed_manifest(
         "issuer": "spiffe://factory.example/signing-authority/development",
         "crypto_profile": "standard",
         "artifacts": {
+            # agent-manifest 0.12.0 (GHSA-6hjj-gh3c-r6wv) enforces the
+            # full-binding requirement, so a manifest with no profile must
+            # carry system_prompt, policy_bundle and model_identity.
+            "system_prompt": {"hash": "sha256:" + "a" * 64},
+            "model_identity": {"version": "claude-3", "deployment_type": "api"},
             "policy_bundle": (
                 {"hash": POLICY_HASH, "policy_language": "cedar", "enforcement_mode": enforcement_mode}
                 if enforcement_mode is not None

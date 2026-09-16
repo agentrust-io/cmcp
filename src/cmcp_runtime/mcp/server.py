@@ -14,9 +14,12 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
@@ -27,12 +30,12 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
-from cmcp_runtime.mcp.proxy import CMCPProxy
+from cmcp_runtime.mcp.proxy import SESSION_CLOSE_DRAIN_SECONDS, CMCPProxy
 
 if TYPE_CHECKING:
     from cmcp_runtime.audit.chain import AuditChain
     from cmcp_runtime.session.manager import SessionManager
-    from cmcp_runtime.session.state import SessionState
+    from cmcp_runtime.session.state import ClosedSessionRecord, SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,12 @@ class StatelessKernel:
 
 # Endpoints exempt from bearer-token auth (Kubernetes liveness / readiness probes)
 _AUTH_EXEMPT_PATHS = {"/health", "/readyz"}
+
+# The operator interface. These routes are not reachable as MCP tools and, when an
+# operator token is configured, they do not accept the tool-invocation token: a
+# reset lowers accumulated session sensitivity, so the credential that authorizes
+# one must not be the credential an agent host already holds.
+_OPERATOR_PATH_RE = re.compile(r"^/(?:sessions/[^/]+/reset|catalog/exception)$")
 
 # DOS-001: default ceiling on a single request body. Overridable per
 # deployment via MCPServer(max_request_bytes=...). Named here rather than
@@ -264,15 +273,27 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class _BearerAuthMiddleware(BaseHTTPMiddleware):
-    """AUTH-001 (CRITICAL): validate Authorization: Bearer <token> on all protected endpoints."""
+    """AUTH-001 (CRITICAL): validate Authorization: Bearer <token> on all protected endpoints.
 
-    def __init__(self, app: Any, *, bearer_token: str) -> None:
+    Operator routes are matched against ``_OPERATOR_PATH_RE`` and, when an
+    operator token is configured, accept only that token. Where none is
+    configured they fall back to the bearer token, which keeps existing
+    single-token deployments working; startup refuses that outside dev mode.
+    """
+
+    def __init__(
+        self, app: Any, *, bearer_token: str, operator_token: str | None = None
+    ) -> None:
         super().__init__(app)
         self._token = bearer_token
+        self._operator_token = operator_token
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         if request.url.path in _AUTH_EXEMPT_PATHS:
             return await call_next(request)
+        expected = self._token
+        if self._operator_token is not None and _OPERATOR_PATH_RE.match(request.url.path):
+            expected = self._operator_token
         auth = request.headers.get("Authorization", "")
         prefix = "Bearer "
         if not auth.startswith(prefix):
@@ -283,7 +304,7 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
             )
         provided = auth[len(prefix):]
         # Constant-time compare to prevent timing oracle on the token
-        if not hmac.compare_digest(provided, self._token):
+        if not hmac.compare_digest(provided, expected):
             logger.warning("AUTH_FAILURE: invalid bearer token from %s", request.client)
             return JSONResponse(
                 {"error": "unauthorized", "error_code": "INVALID_BEARER_TOKEN"},
@@ -308,6 +329,7 @@ class MCPServer:
         session_manager: SessionManager | None = None,
         audit_chain: AuditChain | None = None,
         bearer_token: str | None = None,
+        operator_token: str | None = None,
         session: SessionState | None = None,
         max_request_bytes: int = _DEFAULT_MAX_REQUEST_BYTES,
     ) -> None:
@@ -316,10 +338,19 @@ class MCPServer:
         self._audit_chain = audit_chain
         self._session = session
         self._max_request_bytes = max_request_bytes
+        self._operator_token = operator_token
         self._audit = audit_chain
         # Chains of closed sessions, kept so /audit/export still serves them
         # after the live session rotates.
         self._closed_chains: dict[str, AuditChain] = {}
+        # Preserve the successor across failed resource cleanup. The manager
+        # independently retains claim/partial-close state if creation fails.
+        # At most one close can be pending: admission stays sealed until it
+        # resolves, and a close naming any other session is rejected before it
+        # reaches commit. One slot, so a close nobody retries cannot accumulate.
+        self._pending_close: (
+            tuple[str, dict[str, Any], SessionState, AuditChain] | None
+        ) = None
         self._kernel = StatelessKernel()
         # NET-002: rate-limit unauthenticated /health before auth middleware runs.
         # Starlette applies middleware outermost-first (first in list = first to run).
@@ -329,16 +360,32 @@ class MCPServer:
             requests_per_minute=60,
         )
         middleware = [rate_limit] + (
-            [Middleware(_BearerAuthMiddleware, bearer_token=bearer_token)]
+            [
+                Middleware(
+                    _BearerAuthMiddleware,
+                    bearer_token=bearer_token,
+                    operator_token=operator_token,
+                )
+            ]
             if bearer_token is not None
             else []
         )
+        # Final state of sessions closed by a credentialed reset, kept so the
+        # value a closed session reached survives the successor starting at the
+        # minimum level.
+        self._closed_sessions: dict[str, ClosedSessionRecord] = {}
         # AUTH-004: session cleanup interval configurable via env var (default 60s)
         self._cleanup_interval_s: int = int(
             os.environ.get("CMCP_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
         )
+        self._session_close_drain_s: float = float(
+            os.environ.get(
+                "CMCP_SESSION_CLOSE_DRAIN_SECONDS", str(SESSION_CLOSE_DRAIN_SECONDS)
+            )
+        )
 
         self.app = Starlette(
+            lifespan=self._lifespan,
             routes=[
                 Route("/mcp", self._handle_mcp, methods=["POST"]),
                 Route("/health", self._health, methods=["GET"]),
@@ -365,6 +412,14 @@ class MCPServer:
             middleware=middleware,
             exception_handlers={Exception: _unhandled_error_handler},
         )
+
+    @asynccontextmanager
+    async def _lifespan(self, app: Starlette) -> AsyncIterator[None]:
+        """Drain admitted calls and close session resources on graceful shutdown."""
+        try:
+            yield
+        finally:
+            await self._proxy.shutdown(drain_timeout=self._session_close_drain_s)
 
     async def _parse_mcp_envelope(self, request: Request) -> dict[str, Any] | Response:
         """Read, size-check, and parse the request body.
@@ -609,6 +664,15 @@ class MCPServer:
             cmcp_params = {}
         raw_workflow = cmcp_params.get("workflow_id")
         workflow_id: str | None = raw_workflow if isinstance(raw_workflow, str) else None
+        # #565: validated session-independent execution identity, supplied beside
+        # workflow_id and independent of it. Only an omitted ID is absent.
+        # Map present non-strings to an invalid empty ID so the proxy uses its
+        # audited refusal path instead of silently bypassing correlation.
+        raw_execution = cmcp_params.get("execution_id")
+        execution_id: str | None = (
+            raw_execution if isinstance(raw_execution, str)
+            else "" if "execution_id" in cmcp_params else None
+        )
         # #479 piece 2: the caller may declare a class for this specific call.
         raw_data_class = cmcp_params.get("data_class")
         declared_data_class: str | None = (
@@ -622,6 +686,7 @@ class MCPServer:
                 arguments,
                 workflow_id=workflow_id,
                 declared_data_class=declared_data_class,
+                execution_id=execution_id,
             )
         except Exception as exc:
             logger.error("TEE_FAULT during call_tool: call_id=%s error=%s", call_id, exc)
@@ -790,21 +855,53 @@ class MCPServer:
                 status_code=404,
             )
 
-        claim = self._session_manager.close_session(
-            session_id,
-            self._session,
-            self._audit_chain,
-            call_log=getattr(self._proxy, "_call_log", None),
-            session_call_log=getattr(self._proxy, "_session_call_log", None),
-        )
-        self._closed_chains[session_id] = self._audit_chain
+        async with self._proxy.session_rotation(
+            expected_session_id=session_id, drain_timeout=self._session_close_drain_s
+        ) as acquired:
+            if not acquired:
+                return JSONResponse(
+                    {
+                        "error": "session_not_found",
+                        "message": (
+                            f"No open session with id '{session_id}'. It may already be "
+                            "closed, or you passed the _cmcp.session_id label instead of "
+                            "the internal session id. Look up the internal id via "
+                            "GET /audit/export?session_id=<label>."
+                        ),
+                    },
+                    status_code=404,
+                )
 
-        # Rotate onto a fresh session so the gateway keeps serving.
-        new_session, new_chain = self._session_manager.create_session()
-        self._session = new_session
-        self._audit_chain = new_chain
-        self._audit = new_chain
-        self._proxy.rebind_session(new_session, new_chain)
+            pending = self._pending_close
+            if pending is not None and pending[0] != session_id:
+                raise RuntimeError(
+                    f"close of {session_id} reached commit while {pending[0]} is "
+                    "still awaiting recovery"
+                )
+            if pending is None:
+                try:
+                    claim = self._session_manager.close_session(
+                        session_id,
+                        self._session,
+                        self._audit_chain,
+                        call_log=getattr(self._proxy, "_call_log", None),
+                        session_call_log=getattr(self._proxy, "_session_call_log", None),
+                    )
+                finally:
+                    if self._session_manager.is_closing(session_id):
+                        self._proxy.mark_close_committed()
+                self._closed_chains[session_id] = self._audit_chain
+                new_session, new_chain = self._session_manager.create_session()
+                self._pending_close = (session_id, claim, new_session, new_chain)
+            else:
+                _, claim, new_session, new_chain = pending
+
+            # Cleanup/rebind must succeed before server pointers advance.
+            await self._proxy.rebind_session(new_session, new_chain)
+            self._pending_close = None
+            self._session = new_session
+            self._audit_chain = new_chain
+            self._audit = new_chain
         logger.info(
             "Session closed via API: closed=%s new=%s", session_id, new_session.session_id
         )
@@ -925,27 +1022,58 @@ class MCPServer:
             return JSONResponse(
                 {"error": f"session_id={session_id} not found"}, status_code=404
             )
-        # AUTH-002: lock guards against a concurrent tool-call coroutine modifying sensitivity.
-        async with self._session.mutation_lock:
-            # Capture the pre-reset sensitivity: reset() drops it back to
-            # "public", and the elevated value the session held at reset time
-            # is exactly the forensic detail the audit entry must preserve.
-            sensitivity_before = self._session.max_sensitivity
-            old_id, new_id = self._session.reset(
-                reason="operator reset via API",
-                authorized_by="api",
+        async with self._proxy.exclude_session_transition(
+            expected_session_id=session_id,
+            drain_timeout=self._session_close_drain_s,
+        ) as acquired:
+            if not acquired:
+                return JSONResponse(
+                    {"error": f"session_id={session_id} not found"}, status_code=404
+                )
+            # Re-read after acquiring: a close may have rotated the session
+            # while this request waited its turn. The proxy checks its session
+            # before draining so a stale reset cannot cancel successor calls.
+            if session_id != self._session.session_id:
+                return JSONResponse(
+                    {"error": f"session_id={session_id} not found"}, status_code=404
+                )
+            # #625: reset ends this session and opens a successor, so the
+            # session-scoped child, clients, and caches must not outlive it.
+            # Released before the reset is recorded, so a failed cleanup leaves
+            # the session as it was and the whole request retryable.
+            await self._proxy.aclose()
+            credential = (
+                "operator_token" if self._operator_token is not None else "bearer_token"
             )
-        self._audit_chain.append(
-            "session_reset",
-            call_id=None,
-            tool_name=None,
-            policy_decision="n/a",
-            session_sensitivity_before=sensitivity_before,
-            session_sensitivity_after=self._session.max_sensitivity,
-        )
+            old_id, new_id, closed = await self._session.apply_reset(
+                reason="operator reset via API",
+                authorized_by=credential,
+            )
+            sensitivity_before = closed.max_sensitivity
+            reset_count = self._session.reset_count
+            self._closed_sessions[closed.session_id] = closed
+            self._audit_chain.append(
+                "session_reset",
+                call_id=None,
+                tool_name=None,
+                policy_decision="n/a",
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+                detail={
+                    "closed_session_id": old_id,
+                    "successor_session_id": new_id,
+                    "reset_count": reset_count,
+                    "credential_verified": credential,
+                    "reason": "operator reset via API",
+                },
+            )
+            # Entries after the boundary belong to the successor.
+            self._audit_chain.rotate_session_id(new_id)
         return JSONResponse({
             "old_session_id": old_id,
             "new_session_id": new_id,
+            "closed_session_max_sensitivity": closed.max_sensitivity,
+            "reset_count": reset_count,
             "status": "reset",
             "attestation_stale": False,
         })

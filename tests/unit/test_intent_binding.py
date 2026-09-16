@@ -57,6 +57,11 @@ def _signed_manifest(intent: dict | None = None) -> tuple[dict, dict[str, bytes]
         "issuer": "spiffe://factory.example/manifest-authority",
         "crypto_profile": "standard",
         "artifacts": {
+            # agent-manifest 0.12.0 (GHSA-6hjj-gh3c-r6wv) enforces the
+            # full-binding requirement, so a manifest with no profile must
+            # carry system_prompt, policy_bundle and model_identity.
+            "system_prompt": {"hash": "sha256:" + "a" * 64},
+            "model_identity": {"version": "claude-3", "deployment_type": "api"},
             "policy_bundle": {"hash": POLICY_HASH, "policy_language": "cedar"},
             "tool_manifest": {"catalog_hash": CATALOG_HASH, "tools": []},
         },

@@ -1,0 +1,10 @@
+0x1500018:
+  name: 000bcf69802ad7625fffd515aecef934a1632ca6c7df36bf5a4e241d33701465a854
+  hash algorithm:
+    friendly: sha256
+    value: 0xB
+  attributes:
+    friendly: ownerwrite|nt=0x1|ownerread|written
+    value: 0x20020042
+  size: 32
+

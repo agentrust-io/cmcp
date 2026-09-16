@@ -15,10 +15,12 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
@@ -31,8 +33,16 @@ from cmcp_runtime.catalog.loader import (
 )
 from cmcp_runtime.catalog.scanner import CatalogScanner
 from cmcp_runtime.config import Config, DriftPolicy
-from cmcp_runtime.errors import PolicyDeny, UpstreamToolError, UpstreamUnavailable
+from cmcp_runtime.errors import (
+    PolicyDeny,
+    SessionCloseIncomplete,
+    SessionDrainIncomplete,
+    UpstreamToolError,
+    UpstreamUnavailable,
+)
+from cmcp_runtime.execution import valid_execution_id
 from cmcp_runtime.mcp import tls_pinning
+from cmcp_runtime.mcp.discovery import DiscoveryError, collect_tools
 from cmcp_runtime.mcp.stdio import StdioServer
 from cmcp_runtime.mcp.streamable_http import (
     build_request,
@@ -47,6 +57,7 @@ from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_runtime.session.state import SessionState, _max_sensitivity
 
 logger = logging.getLogger(__name__)
+
 
 _EXTERNAL_EVIDENCE_FIELDS: frozenset[str] = frozenset(
     {
@@ -91,12 +102,17 @@ class _CallFinalizationState:
     """Per-invocation facts needed for honest terminal finalization."""
 
     failure_stage: str = "call_entry"
+    # Session generation observed at call entry, so a response landing after an
+    # operator reset is not applied to the successor session.
+    reset_count: int | None = None
     effect_boundary_state: _EffectBoundaryState = _EffectBoundaryState.PRE_TRANSPORT
     request_payload_hash: str | None = None
     response_payload_hash: str | None = None
     server_identity: str | None = None
     external_execution_evidence: dict[str, str] | None = None
     terminal_entry_id: str | None = None
+    # Validated caller identity retained on the unavailable-feature refusal.
+    execution_id: str | None = None
 
     @property
     def terminal_disposition(self) -> str:
@@ -199,14 +215,23 @@ def _extract_external_execution_evidence(response_text: str) -> dict[str, str] |
     return {field: receipt[field] for field in sorted(_EXTERNAL_EVIDENCE_FIELDS)}
 
 
+# Default matches the existing upstream HTTP timeout.
+SESSION_CLOSE_DRAIN_SECONDS = 30.0
+
+# Cancellation is cooperative; failure after this grace keeps admission sealed.
+SESSION_CANCELLATION_GRACE_SECONDS = 5.0
+
+
+
 class CMCPProxy:
     """
     Enforces every tool call through the cMCP runtime gateway:
-      1. Checked against the attested catalog
-      2. Evaluated by the Cedar PolicyEvaluator
-      3. Checked for rate limits, dangerous parameters, and unsafe responses
-      4. Logged to the TEE-sealed AuditChain
-      5. Session state updated via inspection handoff
+      1. Execution-correlation requests validated or refused before discovery
+      2. Checked against the attested catalog
+      3. Evaluated by the Cedar PolicyEvaluator
+      4. Checked for rate limits, dangerous parameters, and unsafe responses
+      5. Logged to the TEE-sealed AuditChain
+      6. Session state updated via inspection handoff
 
     One CMCPProxy instance per gateway session.
     """
@@ -267,31 +292,311 @@ class CMCPProxy:
         # in memory would carry it from one agent's session into the next, and
         # the audit chain cannot see that happen (docs/spec/stdio-transport.md).
         self._stdio_servers: dict[tuple[str, ...], StdioServer] = {}
-        # Provenance outcome per server, decided once per session on first use.
-        # Cached because the answer cannot change within a session without the
-        # server being replaced underneath us, and re-listing tools on every call
-        # would make the check expensive enough to be turned off.
-        self._provenance: dict[tuple[str, ...], ProvenanceResult] = {}
+        self._reset_upstream_checks()
         # Servers already warned about unenforceable pinning (warn once each).
         self._tls_pin_warned: set[str] = set()
-        # #521: servers whose advertised tool definitions have been compared against
-        # the catalog. Cached per server for the same reason provenance is: one
-        # tools/list round trip per server per session is affordable, one per call
-        # is not, and a check expensive enough to hurt is a check that gets disabled.
-        self._drift_checked: set[tuple[str, ...]] = set()
         self._catalog_scanner = catalog_scanner
+        # #625: serialises first-use stdio spawns so two calls racing on the
+        # same server's first use cannot both spawn a child - see `_stdio_for`.
+        self._stdio_spawn_lock = asyncio.Lock()
 
-    def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
-        """
-        Point the proxy at a fresh session after the previous one was closed.
+        # Calls drain before signing; failed transitions may keep admission sealed.
+        self._lifecycle_condition = asyncio.Condition()
+        # Ownership ends on failure; admission may remain sealed for retry.
+        self._transition_lock = asyncio.Lock()
+        self._active_calls = 0
+        self._active_call_tasks: set[asyncio.Task[Any]] = set()
+        self._session_rotation_in_progress = False
+        self._session_rebound = False
+        self._close_committed = False
+        self._drain_incomplete = False
+        self._cleanup_incomplete = False
+        # The drain deadline the current transition runs under. A waiting call
+        # bounds itself by this, so raising the configured deadline does not
+        # start rejecting calls an ordinary close would have admitted.
+        self._transition_drain_s = SESSION_CLOSE_DRAIN_SECONDS
+        # No safe reconstruction is available for a terminal that failed to
+        # persist. Keep this separate from drain state: shutdown can still reap.
+        self._failed_terminal_call: str | None = None
+        self._shutting_down = False
 
-        Call logs are recreated for the new session id; catalog, policy
-        evaluator, and gateway are unchanged.
+    def _reset_upstream_checks(self) -> None:
+        # Drift and provenance share one completed paginated acquisition per
+        # server/authority per session, including an unchecked (None) outcome.
+        # These are first-contact observations, not continuous monitoring.
+        # Replace, rather than clear: an in-flight acquisition retains its old
+        # cache identity and must retry before returning into a new session.
+        self._advertised: dict[tuple[str, ...], list[dict[str, Any]] | None] = {}
+        self._discovery_locks: dict[tuple[str, ...], asyncio.Lock] = {}
+        self._provenance: dict[tuple[str, ...], ProvenanceResult] = {}
+        self._drift_checked: set[tuple[str, ...]] = set()
+
+    def _ensure_running(self) -> None:
+        if self._shutting_down:
+            raise UpstreamUnavailable("gateway is shutting down")
+
+    def _ensure_terminal_audit_complete(self) -> None:
+        if self._failed_terminal_call is not None:
+            raise SessionCloseIncomplete(
+                "A call's terminal audit write failed; signing or rotating this "
+                "session would omit an outcome. Operator investigation is required.",
+                detail=self._failed_terminal_call,
+            )
+
+    def _admission_wait_s(self) -> float:
+        """How long to wait out a transition: its own deadline, plus the grace."""
+        return self._transition_drain_s + SESSION_CANCELLATION_GRACE_SECONDS
+
+    def _raise_stuck_transition(self) -> NoReturn:
+        """Explain the transition a waiting call gave up on.
+
+        Waiting out a rotation is ordinary back-pressure; the successor admits
+        the call. Waiting on one that has already failed is not: only a close
+        retry or operator action lifts it, so the caller is told what to fix.
         """
+        if self._drain_incomplete:
+            raise SessionDrainIncomplete(
+                "calls from the closing session did not drain; a close retry "
+                "must finish draining before this gateway admits work again"
+            )
+        if self._close_committed:
+            raise SessionCloseIncomplete(
+                "the session was closed but no successor was adopted; retry "
+                "the close once the cause of the failure is cleared"
+            )
+        raise SessionCloseIncomplete(
+            f"a session transition did not complete within "
+            f"{self._admission_wait_s():g}s; the gateway is not admitting calls"
+        )
+
+    async def _enter_call(self) -> None:
+        async with self._lifecycle_condition:
+            # Only a transition in flight is worth waiting on, and waiting is
+            # the whole cost here: the deadline is set up per call otherwise.
+            if self._session_rotation_in_progress:
+                try:
+                    await asyncio.wait_for(
+                        self._lifecycle_condition.wait_for(
+                            lambda: self._shutting_down
+                            or self._failed_terminal_call is not None
+                            or not self._session_rotation_in_progress
+                        ),
+                        timeout=self._admission_wait_s(),
+                    )
+                except TimeoutError:
+                    self._raise_stuck_transition()
+            self._ensure_running()
+            self._ensure_terminal_audit_complete()
+            self._active_calls += 1
+            task = asyncio.current_task()
+            if task is not None:
+                self._active_call_tasks.add(task)
+
+    async def _leave_call(self) -> None:
+        async with self._lifecycle_condition:
+            self._active_calls -= 1
+            self._active_call_tasks.discard(asyncio.current_task())
+            if self._active_calls == 0 or self._failed_terminal_call is not None:
+                self._lifecycle_condition.notify_all()
+
+    async def _begin_session_rotation(
+        self, expected_session_id: str | None, *, drain_timeout: float
+    ) -> bool:
+        """Acquire admission exclusion; retry a failed drain without reopening it.
+
+        The caller owns _transition_lock. A committed close already drained;
+        an incomplete drain must still wait for the outstanding calls.
+        """
+        async with self._lifecycle_condition:
+            self._ensure_running()
+            if expected_session_id is not None and self._session.session_id != expected_session_id:
+                return False
+            if self._close_committed:
+                self._session_rotation_in_progress = True
+                return True
+            await self._seal_and_drain(drain_timeout)
+            return True
+
+    async def _seal_and_drain(self, drain_timeout: float) -> None:
+        """Block admission, then wait out the calls already admitted.
+
+        The caller owns _lifecycle_condition. A failure that needs operator
+        recovery keeps admission sealed; any other failure reopens it so one
+        failed transition does not take the gateway down with it.
+        """
+        self._session_rotation_in_progress = True
+        self._transition_drain_s = drain_timeout
+        try:
+            await self._drain_calls(drain_timeout)
+            self._ensure_terminal_audit_complete()
+        except BaseException:
+            if (
+                not self._drain_incomplete
+                and not self._cleanup_incomplete
+                and self._failed_terminal_call is None
+            ):
+                self._session_rotation_in_progress = False
+                self._lifecycle_condition.notify_all()
+            raise
+
+    async def _drain_calls(self, drain_timeout: float) -> None:
+        """Drain while holding the condition; wait releases it for call finalizers.
+
+        Once cancellation is requested, admission stays sealed on any failure.
+        A later transition can retry draining; only zero active calls clears
+        the incomplete state. Cancellation cannot forcibly stop a coroutine.
+        """
+        try:
+            await asyncio.wait_for(
+                self._lifecycle_condition.wait_for(lambda: self._active_calls == 0),
+                timeout=drain_timeout,
+            )
+        except TimeoutError:
+            self._drain_incomplete = True
+            for task in tuple(self._active_call_tasks):
+                task.cancel("session lifecycle drain deadline exceeded")
+            try:
+                await asyncio.wait_for(
+                    self._lifecycle_condition.wait_for(lambda: self._active_calls == 0),
+                    timeout=SESSION_CANCELLATION_GRACE_SECONDS,
+                )
+            except TimeoutError:
+                raise SessionDrainIncomplete(
+                    f"{self._active_calls} call(s) did not honor cancellation within "
+                    f"{SESSION_CANCELLATION_GRACE_SECONDS}s of the drain deadline",
+                    detail=str(self._active_calls),
+                ) from None
+        self._drain_incomplete = False
+
+    async def shutdown(self, *, drain_timeout: float = SESSION_CLOSE_DRAIN_SECONDS) -> None:
+        """Permanently reject admission, drain calls, then close owned resources.
+
+        Failed drain or cleanup is reported, not a successful shutdown. State
+        and resource ownership remain available for a shutdown retry. The spawn
+        lock also excludes a first-use start from the cleanup snapshot.
+        """
+        async with self._lifecycle_condition:
+            self._shutting_down = True
+            self._lifecycle_condition.notify_all()
+        async with self._transition_lock:
+            async with self._lifecycle_condition:
+                self._session_rotation_in_progress = True
+                await self._drain_calls(drain_timeout)
+            async with self._stdio_spawn_lock:
+                await self.aclose()
+
+    @asynccontextmanager
+    async def session_rotation(
+        self,
+        *,
+        expected_session_id: str | None = None,
+        drain_timeout: float = SESSION_CLOSE_DRAIN_SECONDS,
+    ) -> AsyncIterator[bool]:
+        """Serialize close attempts while blocking admission across retries.
+
+        Active calls drain before yielding. Once the caller marks irreversible
+        close work, failure keeps admission sealed, but releases transition
+        ownership so another close request can recover. A stale session ID
+        yields False. Only successful rebind reopens a closing session.
+        """
+        async with self._transition_lock:
+            acquired = await self._begin_session_rotation(
+                expected_session_id, drain_timeout=drain_timeout
+            )
+            if not acquired:
+                yield False
+                return
+            self._session_rebound = False
+            try:
+                yield True
+            finally:
+                async with self._lifecycle_condition:
+                    if (
+                        not self._shutting_down
+                        and not self._drain_incomplete
+                        and not self._cleanup_incomplete
+                        and self._failed_terminal_call is None
+                        and (self._session_rebound or not self._close_committed)
+                    ):
+                        self._session_rotation_in_progress = False
+                        self._lifecycle_condition.notify_all()
+
+    def mark_close_committed(self) -> None:
+        """Seal admission after irreversible close work, including partial failure.
+
+        The caller must hold session_rotation. This does not assert that a
+        signature exists; it prevents further mutation once close has started.
+        """
+        if not self._session_rotation_in_progress:
+            raise RuntimeError("mark_close_committed requires an active session_rotation")
+        self._close_committed = True
+
+    @asynccontextmanager
+    async def exclude_session_transition(
+        self,
+        *,
+        expected_session_id: str | None = None,
+        drain_timeout: float = SESSION_CLOSE_DRAIN_SECONDS,
+    ) -> AsyncIterator[bool]:
+        """Serialize reset against close, and drain before the caller's boundary.
+
+        Reset ends a session and opens a successor, so it releases the same
+        session-scoped resources close does (#625). Draining first is what
+        makes releasing them safe: an admitted call may still hold the child,
+        and closing it underneath that call would break it.
+
+        Reject a reset of a session awaiting close recovery. Waiting while
+        holding transition ownership would prevent that recovery from running.
+        """
+        async with self._transition_lock:
+            if (
+                expected_session_id is not None
+                and self._session.session_id != expected_session_id
+            ):
+                yield False
+                return
+            async with self._lifecycle_condition:
+                self._ensure_running()
+                self._ensure_terminal_audit_complete()
+                if self._drain_incomplete:
+                    if self._active_calls:
+                        raise SessionDrainIncomplete("session drain requires recovery")
+                    # A prior reset timed out, but every cancelled call has now
+                    # reached a terminal state. Retry the same reset safely.
+                    self._drain_incomplete = False
+                if self._close_committed:
+                    raise SessionCloseIncomplete("session close requires recovery")
+                await self._seal_and_drain(drain_timeout)
+            try:
+                yield True
+            finally:
+                async with self._lifecycle_condition:
+                    # Mirrors session_rotation: a failure needing operator
+                    # recovery keeps admission sealed rather than serving the
+                    # successor from a session that did not finish unwinding.
+                    if (
+                        not self._shutting_down
+                        and not self._drain_incomplete
+                        and not self._cleanup_incomplete
+                        and self._failed_terminal_call is None
+                    ):
+                        self._session_rotation_in_progress = False
+                        self._lifecycle_condition.notify_all()
+
+    async def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
+        """Close resources before adopting the successor inside session_rotation."""
+        if not self._session_rotation_in_progress:
+            raise RuntimeError("rebind_session requires an active session_rotation")
+        if self._session_rebound:
+            raise RuntimeError("session has already been rebound")
+        self._ensure_terminal_audit_complete()
+        await self.aclose()
         self._session = session
         self._audit = audit_chain
         self._call_log = CallLog(session_id=session.session_id)
         self._session_call_log = SessionCallLog(session_id=session.session_id)
+        self._session_rebound = True
+        self._close_committed = False
 
     def _warn_pin_unenforced(self, server_url: str, reason: str) -> None:
         """Log TLS_PIN_UNENFORCED once per server URL (#281, dev/demo paths)."""
@@ -317,24 +622,39 @@ class CMCPProxy:
           cannot be compared must never silently degrade to unpinned.
         - http: pinning is impossible without TLS; warn once per server
           (dev/demo only) and proceed.
+
+        Every branch keys the cached client on ``_server_execution_key(entry)``
+        (the same "security-relevant identity used to pool one upstream" that
+        ``_stdio_for`` keys its spawned children on), not only the pinned
+        branch. A cache keyed on the literal string ``"unpinned"`` would give
+        every plain-http and placeholder-pinned server in this session's
+        catalog the *same* ``httpx.AsyncClient`` - and therefore the same
+        cookie jar and connection-pool limits - regardless of how unrelated
+        those upstreams are. Two catalog entries that happen to share one real
+        pinned fingerprint correctly share a client: a matching pin *is* the
+        same verified peer. Two that merely share the fact that neither is
+        pinned are not the same peer, and must not share state meant to be
+        scoped to one.
         """
+        self._ensure_running()
         server_url = entry.server.url
         fingerprint = entry.server.tls_fingerprint
         scheme = httpx.URL(server_url).scheme.lower()
+        identity = _server_execution_key(entry)
         if scheme != "https":
             self._warn_pin_unenforced(
                 server_url,
                 "upstream is not https, TLS fingerprint pinning is impossible - "
                 "plain-http upstreams are for local dev/demo only",
             )
-            key = "unpinned"
+            key = f"unpinned:{identity}"
         elif fingerprint == tls_pinning.PLACEHOLDER_FINGERPRINT:
             self._warn_pin_unenforced(
                 server_url,
                 "catalog tls_fingerprint is the unpinned-dev placeholder - peer "
                 "identity is verified by CA trust only, not pinned to the catalog",
             )
-            key = "unpinned"
+            key = f"unpinned:{identity}"
         elif not tls_pinning.FINGERPRINT_PATTERN.match(fingerprint):
             raise UpstreamUnavailable(
                 f"Catalog tls_fingerprint for {server_url} is malformed - refusing to connect",
@@ -346,7 +666,7 @@ class CMCPProxy:
         client = self._http_clients.get(key)
         if client is None:
             timeout = httpx.Timeout(30.0)
-            if key == "unpinned":
+            if key.startswith("unpinned:"):
                 client = httpx.AsyncClient(
                     timeout=timeout, verify=tls_pinning.default_ssl_context()
                 )
@@ -358,10 +678,19 @@ class CMCPProxy:
         return client
 
     async def _stdio_for(self, entry: CatalogEntry) -> StdioServer:
-        """The child for this server, spawned on first use in this session."""
+        """Return the session-owned child, serializing first use with shutdown."""
+        self._ensure_running()
         key = _server_execution_key(entry)
         server = self._stdio_servers.get(key)
-        if server is None:
+        if server is not None:
+            return server
+        async with self._stdio_spawn_lock:
+            self._ensure_running()
+            # Re-check: a coroutine that waited for the lock may find another
+            # already finished spawning this key while it waited.
+            server = self._stdio_servers.get(key)
+            if server is not None:
+                return server
             if entry.server.spawn is None:
                 raise UpstreamUnavailable(
                     f"catalog entry {entry.tool_name!r} declares stdio transport with no "
@@ -373,39 +702,120 @@ class CMCPProxy:
             )
             await server.start()
             self._stdio_servers[key] = server
-        return server
+            return server
 
     async def aclose(self) -> None:
-        """Terminate spawned children. A session that ends leaves nothing running."""
-        for server in self._stdio_servers.values():
-            await server.close()
-        self._stdio_servers.clear()
+        """Close owned resources: children retryably, HTTP clients best-effort.
+
+        Callers must exclude admission and resource creation before cleanup.
+
+        A child that fails to close is retained and its failure propagates: the
+        process is still live, still owns the handle, and a retry can still reap
+        it. An HTTP client cannot offer the same guarantee. `AsyncClient` marks
+        itself closed and HTTPcore empties its pool before the underlying
+        streams are released, so a failed close leaves connections that no retry
+        reaches through any public API. Retaining such a client would advertise a
+        recovery that does not exist, so it is dropped and the failure logged.
+        Dropping it is what the successor needs anyway: it is the reuse, not the
+        socket, that #625 is about.
+        """
+        stdio_items = tuple(self._stdio_servers.items())
+        http_items = tuple(self._http_clients.items())
+        self._reset_upstream_checks()
+
+        if not stdio_items and not http_items:
+            self._cleanup_incomplete = False
+            return
+        try:
+            results = await asyncio.gather(
+                *(server.close() for _, server in stdio_items),
+                *(client.aclose() for _, client in http_items),
+                return_exceptions=True,
+            )
+        except BaseException:
+            self._cleanup_incomplete = True
+            raise
+        # Every close is attempted even if an earlier one raises (gather with
+        # return_exceptions=True), so one stuck child cannot leak the rest.
+        stdio_results = results[: len(stdio_items)]
+        http_results = results[len(stdio_items) :]
+        failures: list[BaseException] = []
+        for (stdio_key, _), result in zip(stdio_items, stdio_results, strict=True):
+            if isinstance(result, BaseException):
+                failures.append(result)
+            else:
+                del self._stdio_servers[stdio_key]
+        for (http_key, _), result in zip(http_items, http_results, strict=True):
+            del self._http_clients[http_key]
+            if isinstance(result, BaseException):
+                logger.error(
+                    "session-owned HTTP client for %s failed to close and was "
+                    "dropped; its connections may be leaked: %r",
+                    http_key,
+                    result,
+                )
+
+        # Only the first failure propagates; it is logged with how many others
+        # also failed so a partial-cleanup failure is not read as a single one.
+        if failures:
+            self._cleanup_incomplete = True
+            if len(failures) > 1:
+                logger.error(
+                    "%d session-owned children failed to close; raising the first",
+                    len(failures),
+                )
+            raise failures[0]
+        self._cleanup_incomplete = False
 
     async def _advertised_tools(self, entry: CatalogEntry) -> list[dict[str, Any]] | None:
-        """What the server offers *this gateway*, for the provenance comparison.
+        """One first-contact acquisition shared by drift and provenance checks.
 
         Returns ``None`` when the server will not say, which the caller records as
         ``unchecked`` rather than as a pass. Never falls back to the catalog's own
         approved definitions: comparing a record against our approval instead of
         against the server is the substitution that turns the check into theatre.
         """
+        key = _server_provenance_key(entry)
+        while True:
+            cache = self._advertised
+            lock = self._discovery_locks.setdefault(key, asyncio.Lock())
+            async with lock:
+                if cache is not self._advertised:
+                    continue
+                if key in cache:
+                    return cache[key]
+                advertised = await self._discover_tools(entry)
+                if cache is not self._advertised:
+                    continue
+                # Only completed acquisition outcomes are cached. In particular,
+                # cancellation propagates without storing partial data or None.
+                cache[key] = advertised
+                return advertised
+
+    async def _discover_tools(self, entry: CatalogEntry) -> list[dict[str, Any]] | None:
+        """Acquire the entire listing, or None on an ordinary acquisition failure."""
         if entry.server.is_stdio:
             return await (await self._stdio_for(entry)).list_tools()
-        try:
+
+        async def fetch_page(request_id: str, params: dict[str, Any]) -> dict[str, Any]:
+            payload, headers = build_request(request_id, "tools/list", params)
             client = self._client_for_upstream(entry)
-            payload, headers = build_request("provenance-tools-list", "tools/list", {})
             resp = await client.post(
                 entry.server.url,
                 json=payload,
                 headers=headers,
             )
             resp.raise_for_status()
-            result = parse_response(resp, "provenance-tools-list").get("result")
-        except Exception as exc:  # noqa: BLE001 - any failure means "could not check"
-            logger.warning("could not list tools for provenance check: %s", exc)
-            return None
-        tools = result.get("tools") if isinstance(result, dict) else None
-        return tools if isinstance(tools, list) else None
+            return parse_response(resp, request_id)
+
+        try:
+            return await collect_tools(fetch_page)
+        except DiscoveryError as exc:
+            logger.warning("tools discovery incomplete: %s", exc)
+        except Exception:  # noqa: BLE001 - any acquisition failure means "could not check"
+            # Upstream exceptions may contain response bodies or opaque cursors.
+            logger.warning("tools discovery incomplete: upstream request failed")
+        return None
 
     async def _check_upstream_drift(self, entry: CatalogEntry) -> bool:
         """Compare what a server advertises against what we approved (P4.2).
@@ -426,14 +836,17 @@ class CMCPProxy:
         key = _server_provenance_key(entry)
         if key in self._drift_checked:
             return self._session.catalog_drift
-        self._drift_checked.add(key)
-
         advertised = await self._advertised_tools(entry)
+        # Another caller may have completed the comparison while this one was
+        # waiting for discovery. An in-flight check is never marked completed.
+        if key in self._drift_checked:
+            return self._session.catalog_drift
         if advertised is None:
             logger.info(
                 "upstream drift: server=%s outcome=unchecked (server would not list tools)",
                 key,
             )
+            self._drift_checked.add(key)
             return self._session.catalog_drift
 
         by_name = {
@@ -456,6 +869,7 @@ class CMCPProxy:
 
         if not drifted:
             logger.info("upstream drift: server=%s outcome=match", key)
+            self._drift_checked.add(key)
             return self._session.catalog_drift
 
         fail_closed = self._config.catalog.drift_policy is DriftPolicy.FAIL_CLOSED
@@ -488,6 +902,7 @@ class CMCPProxy:
 
         if fail_closed:
             self._session.catalog_drift = True
+        self._drift_checked.add(key)
         return self._session.catalog_drift
 
     async def _check_provenance(self, entry: CatalogEntry) -> ProvenanceResult:
@@ -751,9 +1166,102 @@ class CMCPProxy:
         """Persist one terminal for this invocation, independent of call_id reuse."""
         if finalization.terminal_entry_id is not None:
             raise RuntimeError("terminal audit entry already persisted for this invocation")
+        # #565: every terminal for a correlated call carries its execution_id.
+        # Set from one place so no per-branch call site has to remember it.
+        fields.setdefault("execution_id", finalization.execution_id)
         entry = self._audit.append(entry_type, **fields)  # type: ignore[arg-type]
         finalization.terminal_entry_id = entry.entry_id
         finalization.effect_boundary_state = _EffectBoundaryState.TERMINAL_DURABLE
+
+    def _check_execution_available(
+        self,
+        finalization: _CallFinalizationState,
+        *,
+        execution_id: str | None,
+        call_id: str,
+        tool_name: str,
+        entry: CatalogEntry | None,
+        request_payload_hash: str,
+        sensitivity_before: str,
+        workflow_id: str | None,
+        t0: float,
+        called_at: datetime,
+    ) -> CallResult | None:
+        """Refuse requested execution correlation until its contract is implemented.
+
+        Omission preserves legacy calls. There is no runtime opt-in: action
+        binding and atomic terminal/audit persistence must both land first.
+        """
+        if execution_id is None:
+            return None
+        if not valid_execution_id(execution_id):
+            return self._refuse_execution(
+                finalization, entry, call_id, tool_name, request_payload_hash,
+                sensitivity_before, workflow_id, t0, called_at,
+                rule="execution:invalid_execution_id",
+                deny_reason="execution_invalid_execution_id",
+            )
+        finalization.execution_id = execution_id
+        return self._refuse_execution(
+            finalization, entry, call_id, tool_name, request_payload_hash,
+            sensitivity_before, workflow_id, t0, called_at,
+            rule="execution:unavailable",
+            deny_reason="execution_correlation_unavailable",
+        )
+
+    def _refuse_execution(
+        self,
+        finalization: _CallFinalizationState,
+        entry: CatalogEntry | None,
+        call_id: str,
+        tool_name: str,
+        request_payload_hash: str,
+        sensitivity_before: str,
+        workflow_id: str | None,
+        t0: float,
+        called_at: datetime,
+        *,
+        rule: str,
+        deny_reason: str,
+    ) -> CallResult:
+        """Audit and return the deny for an execution that must not reach upstream."""
+        import time
+
+        self._append_call_terminal(
+            finalization,
+            "tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            server_identity=entry.server.url if entry is not None else None,
+            policy_decision="deny",
+            policy_rule_matched=rule,
+            request_payload_hash=request_payload_hash,
+            session_sensitivity_before=sensitivity_before,
+            session_sensitivity_after=self._session.max_sensitivity,
+            workflow_id=workflow_id,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        self._record_call(
+            tool_name=tool_name,
+            called_at=called_at,
+            duration_ms=elapsed_ms,
+            allowed=False,
+            sensitivity_before=sensitivity_before,
+            stage_results={"execution": "deny"},
+            call_id=call_id,
+            catalog_entry=entry,
+            policy_decision="deny",
+        )
+        return CallResult(
+            call_id=call_id,
+            tool_name=tool_name,
+            allowed=False,
+            would_have_denied=False,
+            response=None,
+            deny_reason=deny_reason,
+            latency_us=int(elapsed_ms * 1000),
+            audit_entry_hash=self._audit.chain_tip,
+        )
 
     def _finalize_unexpected_call_failure(
         self,
@@ -797,6 +1305,10 @@ class CMCPProxy:
                 external_execution_evidence=(finalization.external_execution_evidence),
             )
         except (Exception, asyncio.CancelledError) as persistence_exc:
+            # A finished task is not proof of a recorded outcome. Retain the
+            # first failure before admission accounting can let close proceed.
+            if self._failed_terminal_call is None:
+                self._failed_terminal_call = call_id
             exc.add_note(
                 "terminal audit persistence failed with "
                 f"{type(persistence_exc).__name__} during "
@@ -811,29 +1323,37 @@ class CMCPProxy:
         arguments: dict[str, Any],
         workflow_id: str | None = None,
         declared_data_class: str | None = None,
+        execution_id: str | None = None,
     ) -> CallResult:
         """Run one call and guarantee one terminal on failure or cancellation."""
         finalization = _CallFinalizationState()
+        await self._enter_call()
         try:
-            return await self._call_tool_impl(
-                call_id,
-                tool_name,
-                arguments,
-                workflow_id,
-                declared_data_class,
-                _finalization=finalization,
-            )
-        except BaseException as exc:
-            if not isinstance(exc, (Exception, asyncio.CancelledError)):
+            try:
+                await self._session.hydrate()
+                finalization.reset_count = self._session.reset_count
+                return await self._call_tool_impl(
+                    call_id,
+                    tool_name,
+                    arguments,
+                    workflow_id,
+                    declared_data_class,
+                    execution_id=execution_id,
+                    _finalization=finalization,
+                )
+            except BaseException as exc:
+                if not isinstance(exc, (Exception, asyncio.CancelledError)):
+                    raise
+                self._finalize_unexpected_call_failure(
+                    finalization,
+                    exc,
+                    call_id=call_id,
+                    tool_name=tool_name,
+                    workflow_id=workflow_id,
+                )
                 raise
-            self._finalize_unexpected_call_failure(
-                finalization,
-                exc,
-                call_id=call_id,
-                tool_name=tool_name,
-                workflow_id=workflow_id,
-            )
-            raise
+        finally:
+            await self._leave_call()
 
     async def _call_tool_impl(
         self,
@@ -843,19 +1363,22 @@ class CMCPProxy:
         workflow_id: str | None = None,
         declared_data_class: str | None = None,
         *,
+        execution_id: str | None = None,
         _finalization: _CallFinalizationState,
     ) -> CallResult:
         """
         Execute one MCP tool call through the full enforcement pipeline.
 
         Pipeline:
-          1. Catalog lookup (fast-path deny if not in catalog)
-          2. Cedar policy evaluation
-          3. cMCP runtime enforcement (sanitization, rate limit, scan)
-          4. Forward to upstream
-          5. Audit chain write
-          6. Session state update
-          7. Call log record + suspicious-sequence check
+          1. Request serialization and execution-correlation validation/refusal
+          2. Health check
+          3. Catalog lookup (fast-path deny if not in catalog)
+          4. Cedar policy evaluation
+          5. cMCP runtime enforcement (sanitization, rate limit, scan)
+          6. Forward to upstream
+          7. Audit chain write
+          8. Session state update
+          9. Call log record + suspicious-sequence check
 
         declared_data_class (#479 piece 2): an optional class the caller declares
         for this specific call via _cmcp.data_class, raising this call's effective
@@ -874,7 +1397,38 @@ class CMCPProxy:
         sensitivity_before = self._session.max_sensitivity
         would_have_denied = False
 
-        # Step 0: health check (attestation staleness, catalog drift)
+        # Step 0: serialize the request before any early refusal so the audit
+        # entry can retain a stable request hash even when no catalog entry is
+        # available. JSON-RPC ingress already guarantees JSON-compatible args;
+        # direct callers still get the normal fault-finalization path if this
+        # serialization fails.
+        _finalization.failure_stage = "request_serialization"
+        _payload_bytes = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+        request_payload_hash = f"sha256:{hashlib.sha256(_payload_bytes).hexdigest()}"
+        _finalization.request_payload_hash = request_payload_hash
+
+        # Step 1: execution correlation is unavailable until binding and
+        # persistence contracts are complete; supplied IDs must be refused
+        # before health/catalog checks or any upstream discovery. The entry is
+        # not known yet, so the refusal carries request context and a null
+        # server. Omission returns immediately and preserves the normal path.
+        _finalization.failure_stage = "execution_admission"
+        execution_refusal = self._check_execution_available(
+            _finalization,
+            execution_id=execution_id,
+            call_id=call_id,
+            tool_name=tool_name,
+            entry=None,
+            request_payload_hash=request_payload_hash,
+            sensitivity_before=sensitivity_before,
+            workflow_id=workflow_id,
+            t0=t0,
+            called_at=called_at,
+        )
+        if execution_refusal is not None:
+            return execution_refusal
+
+        # Step 2: health check (attestation staleness, catalog drift)
         _finalization.failure_stage = "health_check"
         unhealthy_reason = self._check_health()
         if unhealthy_reason is not None:
@@ -889,12 +1443,7 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
-        _finalization.failure_stage = "request_serialization"
-        _payload_bytes = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
-        request_payload_hash = f"sha256:{hashlib.sha256(_payload_bytes).hexdigest()}"
-        _finalization.request_payload_hash = request_payload_hash
-
-        # Step 1: catalog lookup
+        # Step 3: catalog lookup
         _finalization.failure_stage = "catalog_lookup"
         entry = self._catalog.lookup(tool_name)
         if entry is None:
@@ -937,7 +1486,7 @@ class CMCPProxy:
 
         _finalization.server_identity = entry.server.url
 
-        # Step 1a (#521): does this server still offer what we approved? First
+        # Step 3a (#521): does this server still offer what we approved? First
         # contact with each server only, so the cost is one tools/list per server
         # per session. Placed after the catalog lookup because it needs the entry
         # to know which server to ask, and before the policy decision because a
@@ -979,7 +1528,7 @@ class CMCPProxy:
             else None
         )
 
-        # Step 1b: break-glass warning - log and audit every call via an exception entry
+        # Step 3b: break-glass warning - log and audit every call via an exception entry
         if entry.catalog_exception:
             logger.warning(
                 "BREAK_GLASS_ACTIVE: tool=%s call_id=%s server=%s",
@@ -998,7 +1547,7 @@ class CMCPProxy:
                 workflow_id=workflow_id,
             )
 
-        # Step 2: Cedar policy evaluation
+        # Step 4: Cedar policy evaluation
         _finalization.failure_stage = "policy_evaluation"
         cedar_context = self._build_cedar_context(
             tool_name, arguments, workflow_id, effective_data_class
@@ -1068,7 +1617,7 @@ class CMCPProxy:
             )
             raise
 
-        # Step 3a: native pre-call interception: per-agent rate limiting,
+        # Step 5a: native pre-call interception: per-agent rate limiting,
         # parameter sanitization, and allow/deny. Fail closed on internal errors.
         _finalization.failure_stage = "ingress_gateway"
         agt_allowed, agt_reason = self._mcp_gateway.intercept_tool_call(
@@ -1114,7 +1663,7 @@ class CMCPProxy:
                 audit_entry_hash=self._audit.chain_tip,
             )
 
-        # Step 3b: forward to the attested upstream MCP server.
+        # Step 5b: forward to the attested upstream MCP server.
         _finalization.failure_stage = "upstream_invocation"
         try:
             response_text = await self._forward_to_upstream(
@@ -1219,17 +1768,17 @@ class CMCPProxy:
         )
         injection_detected = bool(scan.threats)
         if not scan.allowed:
-            async with self._session.mutation_lock:
-                self._session.update_from_inspection(
-                    call_id=call_id,
-                    sensitivity_tags=(
-                        [entry.sensitivity_level, declared_data_class]
-                        if declared_data_class is not None
-                        else [entry.sensitivity_level]
-                    ),
-                    injection_detected=injection_detected,
-                    response_allowed=False,
-                )
+            await self._session.apply_inspection(
+                call_id=call_id,
+                sensitivity_tags=(
+                    [entry.sensitivity_level, declared_data_class]
+                    if declared_data_class is not None
+                    else [entry.sensitivity_level]
+                ),
+                injection_detected=injection_detected,
+                for_reset_count=_finalization.reset_count,
+                response_allowed=False,
+            )
             threat_categories = ",".join(
                 sorted({str(t.get("category", "unknown")) for t in scan.threats})
             )
@@ -1299,12 +1848,18 @@ class CMCPProxy:
         )
         injection_threshold = None
         _finalization.failure_stage = "session_update"
-        async with self._session.mutation_lock:
-            self._session.update_from_inspection(
-                call_id=call_id,
-                sensitivity_tags=response_sensitivity,
-                injection_detected=injection_detected,
-                response_allowed=True,
+        applied = await self._session.apply_inspection(
+            call_id=call_id,
+            sensitivity_tags=response_sensitivity,
+            injection_detected=injection_detected,
+            response_allowed=True,
+            for_reset_count=_finalization.reset_count,
+        )
+        if not applied:
+            logger.warning(
+                "SESSION_RESET_RACE: response for call_id=%s dropped from session "
+                "state; the session it was issued under was closed by a reset",
+                call_id,
             )
 
         # Step 5: egress Cedar policy check

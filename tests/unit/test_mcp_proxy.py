@@ -62,6 +62,68 @@ def test_server_cache_keys_bind_actual_identity_not_display_label():
     assert _server_provenance_key(first) != _server_provenance_key(second)
 
 
+def _make_unpinned_entry(tool_name: str, url: str) -> CatalogEntry:
+    """An entry with no real TLS pin -- the placeholder, dev-mode value."""
+    from cmcp_runtime.mcp import tls_pinning
+
+    entry = _make_entry(tool_name)
+    entry.server.url = url
+    entry.server.tls_fingerprint = tls_pinning.PLACEHOLDER_FINGERPRINT
+    return entry
+
+
+def test_unpinned_upstreams_do_not_share_an_http_client():
+    """Two distinct, unpinned upstream servers must not be pooled behind the
+    same httpx.AsyncClient: that client carries a cookie jar and connection
+    limits, and two catalog entries that merely agree on having no real pin
+    are not the same peer. _server_execution_key already exists for exactly
+    this ("the security-relevant identity used to pool one upstream") and
+    _stdio_for already keys spawned children on it; _client_for_upstream must
+    key on it too, not on the constant string "unpinned"."""
+    entry_a = _make_unpinned_entry("a.tool", "https://server-a.example.com/mcp")
+    entry_b = _make_unpinned_entry("b.tool", "https://server-b.example.com/mcp")
+    catalog = ToolCatalog(
+        entries={"a.tool": entry_a, "b.tool": entry_b}, catalog_hash="sha256:" + "1" * 64
+    )
+    proxy, _, _ = _make_proxy(catalog=catalog)
+
+    client_a = proxy._client_for_upstream(entry_a)
+    client_b = proxy._client_for_upstream(entry_b)
+
+    assert client_a is not client_b
+    assert client_a.cookies is not client_b.cookies
+
+
+def test_same_unpinned_upstream_still_reuses_its_client():
+    """Two tools on the *same* unpinned server correctly share one client -
+    this is pooling by server identity, not a blanket per-tool client."""
+    entry_a1 = _make_unpinned_entry("a1.tool", "https://server-a.example.com/mcp")
+    entry_a2 = _make_unpinned_entry("a2.tool", "https://server-a.example.com/mcp")
+    catalog = ToolCatalog(
+        entries={"a1.tool": entry_a1, "a2.tool": entry_a2}, catalog_hash="sha256:" + "1" * 64
+    )
+    proxy, _, _ = _make_proxy(catalog=catalog)
+
+    assert proxy._client_for_upstream(entry_a1) is proxy._client_for_upstream(entry_a2)
+
+
+def test_different_servers_sharing_one_real_pin_still_share_a_client():
+    """The pinned branch is unchanged: a matching TLS fingerprint *is* the
+    same verified peer, so sharing a client there is correct, not a leak."""
+    entry_p1 = _make_entry("p1.tool")
+    entry_p1.server.url = "https://pinned-1.example.com/mcp"
+    entry_p1.server.tls_fingerprint = "SHA256:" + "A" * 43 + "B"
+    entry_p2 = _make_entry("p2.tool")
+    entry_p2.server.url = "https://pinned-2.example.com/mcp"
+    entry_p2.server.tls_fingerprint = entry_p1.server.tls_fingerprint
+    catalog = ToolCatalog(
+        entries={"p1.tool": entry_p1, "p2.tool": entry_p2}, catalog_hash="sha256:" + "1" * 64
+    )
+    proxy, _, _ = _make_proxy(catalog=catalog)
+
+    assert proxy._client_for_upstream(entry_p1) is proxy._client_for_upstream(entry_p2)
+
+
 def test_same_server_identity_is_reused_across_tools():
     first = _make_entry("first.tool")
     second = _make_entry("second.tool")
@@ -666,3 +728,66 @@ async def test_float_arguments_do_not_fail_policy_evaluation():
     result = await proxy.call_tool("c1", "test.tool", {"risk_score": 72.3})
     assert result.allowed is True
     assert captured["arguments"] == {"risk_score": "72.3"}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_use_spawns_exactly_one_stdio_child(monkeypatch):
+    import asyncio
+
+    from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
+    from cmcp_runtime.mcp import proxy as proxy_module
+    from cmcp_runtime.mcp.stdio import StdioSpawn
+
+    entry = CatalogEntry(
+        tool_name="stdio.tool",
+        server=ServerIdentity(
+            display_name="stdio test server",
+            url="",
+            tls_fingerprint="",
+            spiffe_id=None,
+            transport="stdio",
+            rotation_mode="key-pinned",
+            spawn=StdioSpawn(
+                command="unused", args=(), binary_digest=None, measure_target="unused"
+            ),
+        ),
+        approved_definition=ApprovedDefinition(
+            description="stdio test tool", input_schema={}, output_schema=None
+        ),
+        definition_hash="sha256:" + "0" * 64,
+        compliance_domain="public",
+        requires_baa=False,
+        sensitivity_level="public",
+        added_at="2026-09-12T00:00:00Z",
+        approved_by="test",
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    spawned = []
+
+    class SlowFakeStdioServer:
+        def __init__(self, *args, **kwargs):
+            spawned.append(self)
+
+        async def start(self):
+            started.set()
+            await release.wait()
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(proxy_module, "StdioServer", SlowFakeStdioServer)
+    proxy, _, _ = _make_proxy()
+
+    task_a = asyncio.create_task(proxy._stdio_for(entry))
+    await started.wait()
+    task_b = asyncio.create_task(proxy._stdio_for(entry))
+    await asyncio.sleep(0)  # let task_b reach the lock and block on it
+
+    release.set()
+    server_a, server_b = await asyncio.gather(task_a, task_b)
+
+    assert len(spawned) == 1, f"expected exactly one spawn, got {len(spawned)}"
+    assert server_a is server_b
+    assert proxy._stdio_servers[_server_execution_key(entry)] is server_a

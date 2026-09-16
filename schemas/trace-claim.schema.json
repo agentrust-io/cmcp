@@ -235,6 +235,21 @@
             "tool_catalog_hash": {
               "type": "string",
               "pattern": "^sha(256|384):[0-9a-f]+"
+            },
+            "intent_hash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "description": "AARM R2: digest of the issuer-signed declared intent (agent-manifest spec 3.9). Absent when the bound manifest declares no intent."
+            },
+            "agent_key_thumbprint": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "description": "RFC 7638 JWK thumbprint of the agent's own signing key (#425), distinct from issuer_key_id. Only ever set when subject_source names a live-authenticated source."
+            },
+            "enforcement_mode": {
+              "type": "string",
+              "enum": ["enforcing", "advisory", "silent"],
+              "description": "The Agent Manifest binding's enforcement mode at session creation, distinct from trace.policy.enforcement_mode."
             }
           }
         },

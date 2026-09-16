@@ -25,6 +25,10 @@ cMCP compares what each upstream server advertises against the approved catalog 
 
 Separately, the approved description rather than the live one is what the gateway serves to the agent on `tools/list`, so a mutated description does not reach the model through cMCP even in the windows above. That is a structural property of proxying an approved catalog, not a detection result, and it does not extend to the tool's behaviour once called.
 
+HTTP and stdio discovery exhaust `tools/list` pagination before comparing either drift or provenance. A later-page failure, malformed discovery shape, duplicate tool name, repeated/cyclic cursor, or continuation beyond 1,000 pages makes the entire acquisition unchecked; no partial list is compared. Cursors are passed back unchanged, including an empty string. This bound limits page count, not total elapsed time or response bytes, and pagination does not establish an atomic snapshot of a changing server. This is acquisition validation, not full MCP schema validation or a new approval/hash policy. The unchecked-call behavior above is unchanged.
+
+Drift and provenance share the completed first-contact acquisition for the same server and publisher authority within a session, rather than independently walking all pages. An unchecked acquisition is also cached until the next session. Cancellation leaves no cached acquisition; existing stdio child-close behavior is unchanged, not an automatic child restart. Close/reset drains admitted calls before cleanup invalidates both comparisons and the shared acquisition, even if resource cleanup subsequently fails. This avoids duplicate discovery work; it does not add continuous monitoring or make the listing an atomic snapshot.
+
 **Phase 2 completeness: server-side attestation**
 Phase 1 attests the gateway boundary. It does not attest what happens on the other side of that boundary. The `tool_transcript.hash` field in the TRACE Claim records a hash of the audit chain tip, but the tool transcript binding that ties a specific tool execution to a specific response is Phase 2 work. Phase 1 partially addresses P1.4 (transitive trust into upstream dependencies) and P4.1 (typosquatted packages added to catalog) -- both are fully closed by Phase 2. Any compliance claim that relies on server-side proof must wait for Phase 2.
 
@@ -67,6 +71,15 @@ The TEE prevents plaintext from leaving the enclave to any destination not cover
 **Tool name collision via malicious catalog entries**
 The catalog binds each tool name to a specific upstream server identity, which prevents routing ambiguity for approved servers. It does not prevent a typosquatted or look-alike package from being added to the catalog in the first place. Catalog approval is human-gated. The gateway trusts the catalog; it cannot detect that a catalog entry was added via a compromised reviewer or a social engineering attack.
 
+**Session cleanup is bounded by cooperation and by time**
+Session-scoped resources, meaning the stdio child, the pooled HTTP clients, and the provenance and drift caches, are released on every path that ends a session: `POST /sessions/{id}/close`, `POST /sessions/{id}/reset`, and graceful shutdown. None of those paths released anything before this was implemented, so the first three limits below are what remains rather than what was added. The last two are deliberate trades the behaviour introduces.
+
+- **A pooled HTTP client that fails to close leaks its connections.** `AsyncClient` marks itself closed, and HTTPcore empties its pool, before the underlying streams are released, so nothing a retry could reach survives a failed close. The client is dropped so the successor cannot reuse it, and the failure is logged. A child process that fails to close is retained instead, and a close retry can still reap it.
+- **Graceful shutdown can outlast a deployment's termination grace period.** It waits for any in-flight close, then drains again on the same budget, so with the defaults cleanup can begin as late as seventy seconds in. A shorter grace period ends in SIGKILL and none of this runs. Size the grace period above twice `CMCP_SESSION_CLOSE_DRAIN_SECONDS`, or lower that deadline.
+- **Cancellation is cooperative, so a failed drain does not prove a call stopped.** Close requests cancellation at the deadline and allows a further five seconds to unwind. A call that does not honour it leaves the drain incomplete, which seals admission rather than signing a claim that omits an outcome.
+- **A failed terminal audit write leaves the session unavailable, with no repair.** A deliberate trade: it blocks signing, rotation, reset, and further admission for that session, because the alternative is a signed claim missing a call the gateway made. Restoring the writer does not reconstruct the missing outcome, and none is provided. Recovery is a new session.
+- **A close that trips the kill switch leaves the gateway with no live session.** Also deliberate. The claim for the closed session is signed and retrievable, but no successor can be created until an operator unblocks that agent identity. This is the kill switch working as specified, at the cost of availability.
+
 ## What Level 0 (CMCP_DEV_MODE) does not provide
 
 `CMCP_DEV_MODE=1` uses a software-only TEE provider. It is suitable for development, testing, and demo scenarios. It does not satisfy production governance requirements because:
@@ -92,7 +105,7 @@ hardware-backed (issue #370). What that check covers differs by platform:
   operator pins via `trusted_tpm_ca_pem`. Absent signature or chain material
   degrades to `unverified`; supplied material that fails is fatal.
 
-Two gaps are worth stating plainly for the TPM path:
+Three gaps are worth stating plainly for the TPM path:
 
 - **The attestation key is not bound to a specific TPM.** A verified AK chain
   proves the key was certified under a CA you pinned. It does not prove the key
@@ -106,9 +119,23 @@ Two gaps are worth stating plainly for the TPM path:
   rejected as `CLAIM_MALFORMED` before platform verification runs. Signed
   evidence therefore travels as `gateway.attestation_evidence`, a cmcp-owned
   field. The verifier still reads `trace.runtime` as a fallback so older claims
-  keep working, but that path cannot pass schema validation. **The SEV-SNP
-  `cert_chain` path has not been migrated and remains subject to this**, so its
-  VCEK chain verification does not engage for a schema-valid claim.
+  keep working, but that path cannot pass schema validation. All current
+  platform branches read the envelope, including the SNP VCEK chain. SNP,
+  Azure CVM and TDX compare their evidence binding against the 64-byte value
+  already carried as `trace.runtime.nonce`; missing or malformed nonces cannot
+  disable that check. **TDX DCAP quote collection and transport remain absent**:
+  the current provider collects a TDREPORT, and the claim models do not carry
+  `raw_quote`. TDX claims therefore remain partially verified without a verified
+  quote signature. The standalone quote-verification API is a separate path.
+- **The gateway NV-certify pair is not an ordinary TRACE-claim property.** TPM
+  startup collects a bracketing pair, and the standalone appraisal accepts it
+  only with a verifier-owned root, nonce, exact NV Name and range, and expected
+  gateway digest. The current claim schema does not carry the pair and
+  `verify_trace_claim` does not invoke that appraisal. Policy reload also does not
+  replace the startup pair. Even under direct appraisal, the deterministic TPM
+  Name identifies the public template rather than a unique index incarnation, so
+  it does not prove that owner authorization never redefined the index or that the
+  signed pre-value has an approved history.
 
 ## Platform state is not appraised
 

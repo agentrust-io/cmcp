@@ -41,3 +41,13 @@ Maintainers who are no longer active may move to emeritus status. Emeritus maint
 ## Changes to This File
 
 Changes to MAINTAINERS.md must be approved by at least one existing maintainer.
+
+## Repository Maintainers
+
+| Name | GitHub | Appointment |
+|---|---|---|
+| Carlos Hernandez | [@carloshvp](https://github.com/carloshvp) | [Project Lead announcement](https://github.com/orgs/agentrust-io/discussions/20) |
+| Zoheb | [@zohebk8s](https://github.com/zohebk8s) | [Project Lead announcement](https://github.com/orgs/agentrust-io/discussions/31) |
+| Dipika Ranabhat | [@qubeena07](https://github.com/qubeena07) | [Project Lead announcement](https://github.com/orgs/agentrust-io/discussions/32) |
+
+These appointments cover this repository. CODEOWNERS determines which paths each reviewer can approve for protected merges.

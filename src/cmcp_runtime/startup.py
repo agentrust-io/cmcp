@@ -32,6 +32,7 @@ from cmcp_runtime.errors import (
     PolicyHashMismatch,
 )
 from cmcp_runtime.policy.bundle import PolicyStore, load_policy_bundle
+from cmcp_runtime.session.store import SqliteSessionStateStore
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 from cmcp_runtime.tee.detect import detect_provider
 from cmcp_runtime.tee.measurement import (
@@ -80,6 +81,9 @@ class RuntimeContext:
     # and still enforces via digest comparison.
     catalog_scanner: CatalogScanner | None = None
     audit_store: SqliteAuditStore | None = None
+    #: Shared, persistent home for the accumulated session-sensitivity value.
+    #: None means the value lives in this process only.
+    session_state_store: SqliteSessionStateStore | None = None
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
     agent_manifest: AgentManifestBinding | None = None
@@ -240,9 +244,11 @@ def _extend_measurement(
 
     Returns ``(extend, evidence)``. ``evidence`` is the signed ``TPM2_NV_Certify``
     pair, or None when the platform provisions no certified attestation key to sign
-    with: the extend still happens and is still a local integrity control, but it is
-    not remote-verifiable, so it is not presented as evidence. Both are None on a
-    platform with no TPM, where #552's ``report_data`` binding does this job instead.
+    with. The pair is retained in ``RuntimeContext`` for direct appraisal, but the
+    current TRACE schema does not transport it and ``verify_trace_claim`` does not
+    invoke its verifier; do not describe ordinary claims as carrying this property.
+    Both are None on a platform with no TPM, where #552's ``report_data`` binding
+    does this job instead.
     """
     if tee_provider.provider_name() != "tpm" or measurement is None:
         return None, None
@@ -391,8 +397,8 @@ def run_startup(config_path: str) -> RuntimeContext:
     # On the TPM tier the measurement is committed by an NV extend index instead,
     # certified either side of the extend so it is signed evidence rather than a
     # self-reported number. PCRs 0-7 cover firmware and the bootloader only, so
-    # without this the TPM enforced nothing about the gateway itself and a swapped
-    # policy bundle measured identically.
+    # without this the TPM authenticated no commitment to the gateway itself and a
+    # swapped policy bundle measured identically.
     extend_result, measurement_evidence = _extend_measurement(
         config, tee_provider, measurement, nonce
     )
@@ -436,6 +442,19 @@ def run_startup(config_path: str) -> RuntimeContext:
             "CMCP_BEARER_TOKEN env var is not set. "
             "Set it to a secret token that agent hosts must present in the "
             "Authorization header. Set CMCP_DEV_MODE=1 only in development.",
+        )
+        sys.exit(1)
+
+    # A session reset lowers accumulated session sensitivity. Requiring a
+    # separate credential for it keeps the reset out of reach of a holder of the
+    # tool-invocation token, which is the whole point of the monotonic state.
+    if config.operator_token is None and not config.dev_mode:
+        _fatal(
+            "OPERATOR_TOKEN_REQUIRED",
+            "CMCP_OPERATOR_TOKEN env var is not set. "
+            "Set it to a secret token, distinct from CMCP_BEARER_TOKEN, that "
+            "operators must present to the session reset and catalog exception "
+            "routes. Set CMCP_DEV_MODE=1 only in development.",
         )
         sys.exit(1)
 
@@ -550,6 +569,7 @@ def run_startup(config_path: str) -> RuntimeContext:
             config.catalog_path,
             expected_hash=catalog_expected_hash,
             extra_sensitivity_levels=frozenset(config.sensitivity.vocabulary),
+            extra_compliance_domains=frozenset(config.sensitivity.compliance_domains),
         )
     except CatalogHashMismatch as exc:
         _fatal(

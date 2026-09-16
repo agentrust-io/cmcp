@@ -57,6 +57,13 @@ def _signed_manifest(
         "issuer": "spiffe://factory.example/signing-authority/development",
         "crypto_profile": "standard",
         "artifacts": {
+            # agent-manifest 0.12.0 (GHSA-6hjj-gh3c-r6wv) enforces the
+            # full-binding requirement independently of the model validator, so
+            # a manifest with no profile must carry all three required
+            # artifacts. This fixture previously omitted two and still verified,
+            # because a nested omission was suppressing the check.
+            "system_prompt": {"hash": "sha256:" + "a" * 64},
+            "model_identity": {"version": "claude-3", "deployment_type": "api"},
             "policy_bundle": {
                 "hash": policy_hash,
                 "policy_language": "cedar",

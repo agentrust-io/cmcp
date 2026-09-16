@@ -1,0 +1,53 @@
+name: Documentation checks
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'overrides/**'
+      - 'mkdocs.yml'
+      - 'hooks/**'
+      - 'requirements-docs.txt'
+      - 'scripts/check_docs_quickstart.py'
+      - '.github/workflows/docs-check.yml'
+permissions:
+  contents: read
+jobs:
+  docs-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      # The runtime dependencies too: this job imports the package, and the
+      # docs lock alone does not carry httpx and friends.
+      - run: python -m pip install --require-hashes -r requirements/docs.txt
+      - run: python -m pip install --require-hashes -r requirements/dev.txt
+      - run: python -m pip install --no-deps -e .
+      - run: python -m mkdocs build --strict
+      - run: python scripts/check_docs_quickstart.py
+
+  published-quickstart:
+    # Readers install the release from PyPI, not this checkout, so the page also
+    # runs against the exact version it pins. An unreleased change cannot pass here
+    # by accident, and a stale pin fails.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      # Deliberately the plain install the page tells readers to run, with the pin
+      # read from the page, so the job tests what a reader gets.
+      - name: Install the cmcp-runtime release the quickstart pins
+        run: |
+          pin=$(grep -oE 'cmcp-runtime==[0-9][0-9a-z.]*' docs/quickstart.md | head -1)
+          python -m venv "$RUNNER_TEMP/published"
+          "$RUNNER_TEMP/published/bin/python" -m pip install "$pin"
+      - run: '"$RUNNER_TEMP/published/bin/python" scripts/check_docs_quickstart.py --published'

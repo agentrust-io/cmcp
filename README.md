@@ -48,7 +48,7 @@ The control plane that governs tool calls must run where it cannot be reached by
 
 Hardware-attested policy enforcement for MCP tool calls. Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine running inside a Trusted Execution Environment (TEE). The policy bundle hash is measured into the hardware attestation report before any code runs.
 
-Unlike tunnel-based connectivity solutions, the cMCP Runtime processes tool-call payloads inside the TEE. The connectivity provider sees ciphertext, not plaintext. The only thing that leaves the enclave is the signed TRACE claim.
+In a hardware deployment, the cMCP Runtime processes tool-call payloads inside the TEE. What the host and connectivity provider can read also depends on the egress policy, and the upstream tool server is a separate component outside the TEE. Software mode (`CMCP_DEV_MODE`) provides no hardware isolation. [LIMITATIONS.md](LIMITATIONS.md) lists what cMCP does not prevent.
 
 ---
 

@@ -27,7 +27,7 @@ from cmcp_runtime.audit.trace_claim import (
     generate_trace_claim,
 )
 from cmcp_runtime.config import KillSwitchConfig, SensitivityConfig
-from cmcp_runtime.errors import KillSwitchTripped, TeeFault
+from cmcp_runtime.errors import KillSwitchTripped, SessionCloseIncomplete, TeeFault
 from cmcp_runtime.kill_switch import KillSwitchEvaluator
 from cmcp_runtime.observability.otel import otel_sink_from_env
 from cmcp_runtime.policy.decisions import claim_value
@@ -68,6 +68,7 @@ class SessionManager:
         self._ctx = ctx
         # Stores signed claim dicts keyed by session_id, populated on close.
         self._closed_claims: dict[str, dict[str, Any]] = {}
+        self._closing_sessions: set[str] = set()
         self._last_claim_hash: str | None = None
         ks_cfg = getattr(ctx.config, "kill_switch", None)
         if not isinstance(ks_cfg, KillSwitchConfig):
@@ -116,7 +117,11 @@ class SessionManager:
             )
 
         session_id = str(uuid4())
-        state = SessionState(session_id=session_id, sensitivity_order=self._sensitivity_order)
+        state = SessionState(
+            session_id=session_id,
+            sensitivity_order=self._sensitivity_order,
+            state_store=getattr(self._ctx, "session_state_store", None),
+        )
         chain = AuditChain(
             session_id=session_id,
             store=self._ctx.audit_store,
@@ -166,6 +171,31 @@ class SessionManager:
         logger.info("Session created: session_id=%s chain_root=%s...", session_id, chain_root[:16])
         return state, chain
 
+    def is_closing(self, session_id: str) -> bool:
+        """Whether close has begun irreversible audit/claim bookkeeping."""
+        return session_id in self._closing_sessions
+
+    def _already_closing_claim(self, session_id: str) -> dict[str, Any] | None:
+        """Return a completed claim or reject retry of partial bookkeeping.
+
+        Deliberately does not consult the chain: closing state is independent
+        of the mutable audit tail, so a later audit entry can never make a
+        partially executed close look like a new one.
+        """
+        if session_id not in self._closing_sessions:
+            return None
+        cached = self._closed_claims.get(session_id)
+        if cached is not None:
+            return cached
+        raise SessionCloseIncomplete(
+            f"session {session_id} already has a session_end entry from a "
+            "previous close_session() call that did not reach a stored claim. "
+            "Retrying would risk double-counting kill-switch accounting and "
+            "consuming another claim-sequence number for a close that already "
+            "partially ran.",
+            detail=session_id,
+        )
+
     def close_session(
         self,
         session_id: str,
@@ -181,7 +211,16 @@ class SessionManager:
         3. Sign it with ctx.signing_key.
         4. Store the signed claim JSON, keyed by session_id.
         5. Return the signed claim dict.
+
+        Repeated calls return the stored claim. If an earlier attempt began
+        irreversible bookkeeping but failed before storing a claim, reject it
+        explicitly: repeating accounting or signing would corrupt claim history.
+        The caller must keep that session closed to further mutations.
         """
+        already_closing = self._already_closing_claim(session_id)
+        if already_closing is not None:
+            return already_closing
+        self._closing_sessions.add(session_id)
         chain.append(
             "session_end",
             session_sensitivity_before=state.max_sensitivity,

@@ -30,7 +30,7 @@ from cmcp_verify import verify_trace_claim, ApprovedHashes
 
 ## Obtain the approved hashes
 
-The approved hashes are the SHA-256 values printed by the gateway at startup:
+The expected hashes must come from artifacts your verifier trusts. The [quickstart](../quickstart.md#confirm-your-setup) computes them from local input files before startup. Gateway logs also print hashes, but those logs alone do not establish approval:
 
 ```
 [cmcp] policy bundle loaded: sha256:abc123...
@@ -43,32 +43,27 @@ In production, these values come from your deployment pipeline: not from the ope
 
 ## Call verify_trace_claim
 
+Save this as `inspect_claim.py` beside the quickstart's `claim.json` and `approved-hashes.json`, then run `python inspect_claim.py`:
+
 ```python
 import json
+from pathlib import Path
 from cmcp_verify import verify_trace_claim, ApprovedHashes
 
-with open("claim.json") as f:
-    claim = json.load(f)
-
-approved = ApprovedHashes(
-    policy_bundle_hash="sha256:abc123...",
-    tool_catalog_hash="sha256:def456...",
-)
-
+claim = json.loads(Path("claim.json").read_text())
+hashes = json.loads(Path("approved-hashes.json").read_text())
+approved = ApprovedHashes(**hashes)
 result = verify_trace_claim(claim, approved)
 
-print(f"Status:           {result.status.value}")
-print(f"Verified fields:  {result.verified_fields}")
-print(f"Unverified fields:{result.unverified_fields}")
-print(f"Attestation age:  {result.attestation_age_seconds}s")
-print(f"Attestation fresh:{result.is_attestation_fresh}")
-if result.failure_reason:
-    print(f"Failure reason:   {result.failure_reason}")
-if result.details:
-    print(f"Details:          {result.details}")
+print(f"Status: {result.status.value}")
+print(f"Verified fields: {result.verified_fields}")
+print(f"Unverified fields: {result.unverified_fields}")
+print(f"Details: {result.details}")
 ```
 
-The function also accepts optional parameters:
+This inspection script prints the result; it is not an acceptance gate. The software quickstart should report `partially_verified`. Use the consuming-job example below when evidence is required before processing output.
+
+Integration sketch: the function also accepts optional parameters. Replace the key placeholder with a verifier-approved key before running:
 
 ```python
 result = verify_trace_claim(
@@ -137,7 +132,7 @@ Attestation fresh:True
 Details:          {'hardware_attestation': 'software-only mode - not hardware-backed'}
 ```
 
-`hardware_attestation` is in `unverified_fields` but no `failure_reason` is set for it in isolation: the status rolls up to `partially_verified` because other fields were verified. On a real TEE host, `hardware_attestation` moves to `verified_fields` and status becomes `verified`.
+`hardware_attestation` is in `unverified_fields` but no `failure_reason` is set for it in isolation: the status rolls up to `partially_verified` because other fields were verified. A hardware deployment reaches `verified` only when the required checks pass; moving the process to a TEE alone is insufficient.
 
 `unverified` (with no verified fields at all) means the claim is either malformed, signature-invalid, or the hashes do not match. Treat this as a hard rejection.
 
@@ -145,44 +140,33 @@ Details:          {'hardware_attestation': 'software-only mode - not hardware-ba
 
 ## Integrate verification at job start
 
-The right integration point is before your pipeline processes any agent output. Verify the TRACE claim at the start of the consuming job, before reading `tool_transcript` or acting on results:
+If a consuming job requires fully verified evidence, reject **every** other status before processing agent output. `partially_verified` can include failures beyond missing hardware; freshness alone is not an acceptance rule.
+
+Save the following as `accept_claim.py`. It uses the same two files as the inspection example. Supply `approved-hashes.json` through your deployment's trusted artifact channel. This is a result gate; configure any additional platform trust inputs required by your deployment when calling the verifier.
 
 ```python
 import json
-import sys
+from pathlib import Path
 from cmcp_verify import verify_trace_claim, ApprovedHashes
 
-def load_approved_hashes() -> ApprovedHashes:
-    # Fetch from your secrets manager / artifact registry
-    return ApprovedHashes(
-        policy_bundle_hash=get_secret("cmcp/policy-bundle-hash"),
-        tool_catalog_hash=get_secret("cmcp/catalog-hash"),
-    )
 
-def verify_session_claim(claim_path: str) -> None:
-    with open(claim_path) as f:
-        claim = json.load(f)
+def verify_session_claim(claim_path, approved_path):
+    claim = json.loads(Path(claim_path).read_text())
+    hashes = json.loads(Path(approved_path).read_text())
+    result = verify_trace_claim(claim, ApprovedHashes(**hashes))
+    if result.status.value != "verified":
+        raise SystemExit(
+            f"CLAIM REJECTED: {result.status.value}; "
+            f"failed or unchecked: {result.unverified_fields}"
+        )
+    return claim
 
-    result = verify_trace_claim(claim, load_approved_hashes())
 
-    if result.status.value == "unverified":
-        print(f"CLAIM REJECTED: {result.failure_reason}", file=sys.stderr)
-        sys.exit(1)
-
-    if result.status.value == "partially_verified":
-        # Accept in staging; reject in production if hardware attestation is required
-        if not result.is_attestation_fresh:
-            print(f"CLAIM STALE: age={result.attestation_age_seconds}s", file=sys.stderr)
-            sys.exit(1)
-        print(f"WARNING: partially verified: {result.unverified_fields}")
-
+if __name__ == "__main__":
+    claim = verify_session_claim("claim.json", "approved-hashes.json")
     print(f"Claim verified. Tools called: {claim['gateway']['call_summary']['tools_invoked']}")
 ```
 
----
+Run `python accept_claim.py`. It must reject the software quickstart record with a nonzero exit and `CLAIM REJECTED: partially_verified`. A development workflow that permits software evidence needs an explicit, narrower acceptance policy and must preserve that distinction in its output.
 
-## Summary
-
-You called `verify_trace_claim` with `ApprovedHashes` sourced from your deployment pipeline (not from the operator), read `VerificationResult` fields to distinguish full verification from partial (dev-mode) verification, and integrated the check at pipeline entry. A claim that returns `unverified` must be rejected before any downstream processing uses the session output.
-
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): the policy bundle hash you verify here is the hash of the Cedar bundle loaded at runtime. [TEE attestation](./tee-attestation.md): switching from software-only to a real TEE makes `hardware_attestation` move from `unverified_fields` to `verified_fields`.
+Next: [Cedar policy walkthrough](cedar-policy-walkthrough.md), [TEE attestation](tee-attestation.md), and [verification library reference](../spec/verification-library.md).

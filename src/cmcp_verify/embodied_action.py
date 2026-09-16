@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+from cmcp_runtime.catalog.approval import CatalogApprovalError
+from cmcp_runtime.catalog.approval import canonical_json as _rfc8785_canonical_json
 
 EMBODIED_ACTION_PROFILE = "cmcp.embodied_action_evidence.v0"
 
@@ -61,14 +63,17 @@ class EmbodiedActionEvidenceResult:
 
 
 def canonical_json_bytes(value: dict[str, Any]) -> bytes:
-    """Return the canonical JSON byte form used by cMCP evidence hashes."""
+    """Return the canonical JSON byte form used by cMCP evidence hashes.
 
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode()
+    docs/spec/embodied-action-evidence.md requires RFC 8785/JCS canonicalization
+    (UTF-8 output, member order by UTF-16 code unit) so an external verifier
+    reproduces the same bytes -- and the same hash -- from the same payload.
+    This delegates to the JCS implementation already used for catalog-approval
+    records (cmcp_runtime.catalog.approval.canonical_json) rather than keeping a
+    second, non-JCS serializer whose output silently diverges outside ASCII.
+    """
+
+    return _rfc8785_canonical_json(value)
 
 
 def hash_embodied_action_payload(payload: dict[str, Any], *, algorithm: str = "sha256") -> str:
@@ -184,17 +189,36 @@ def verify_embodied_action_evidence(
         verified_fields.append("external_execution_evidence.linked_call_id")
 
     evidence_hash = evidence.get("evidence_hash")
-    if not isinstance(evidence_hash, str) or not _verify_hash_value(evidence_hash, detached_payload):
-        failures.append("external_execution_evidence evidence_hash does not match detached payload")
+    try:
+        hash_matches = isinstance(evidence_hash, str) and _verify_hash_value(evidence_hash, detached_payload)
+    except CatalogApprovalError as exc:
+        # The detached payload is attacker-influenced (it comes from an
+        # external controller/issuer), so a value the JCS canonicalizer
+        # refuses a float, an out-of-range integer, an unpaired surrogate
+        # must end verification the same way a hash mismatch does: a
+        # recorded failure, not an unhandled exception.
+        failures.append(f"detached payload could not be canonicalized for hash verification: {exc}")
     else:
-        verified_fields.append("external_execution_evidence.evidence_hash")
+        if hash_matches:
+            verified_fields.append("external_execution_evidence.evidence_hash")
+        else:
+            failures.append("external_execution_evidence evidence_hash does not match detached payload")
 
     if all(isinstance(detached_payload.get(field), str) for field in _ACTION_REF_FIELDS):
-        expected_action_ref = compute_action_ref(detached_payload)
-        if detached_payload.get("action_ref") != expected_action_ref:
-            failures.append("action_ref does not match canonical action preimage")
+        # isinstance(str) doesn't rule out a lone surrogate (e.g. "\ud800"),
+        # which is a valid Python str but not valid UTF-8 -- canonical_json
+        # refuses it the same way it refuses a float. Same treatment as the
+        # evidence_hash check above: a recorded failure, not an unhandled
+        # exception, for input the caller doesn't control.
+        try:
+            expected_action_ref = compute_action_ref(detached_payload)
+        except CatalogApprovalError as exc:
+            failures.append(f"action_ref preimage could not be canonicalized: {exc}")
         else:
-            verified_fields.append("action_ref")
+            if detached_payload.get("action_ref") != expected_action_ref:
+                failures.append("action_ref does not match canonical action preimage")
+            else:
+                verified_fields.append("action_ref")
     else:
         failures.append("action_ref preimage fields must be strings")
 

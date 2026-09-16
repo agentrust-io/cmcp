@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cmcp_runtime.errors import ConfigError, UpstreamToolError, UpstreamUnavailable
+from cmcp_runtime.mcp.discovery import DiscoveryError, collect_tools
 
 logger = logging.getLogger(__name__)
 
@@ -244,14 +245,21 @@ class StdioServer:
         is one whose provenance could not be checked, and the two are recorded
         differently.
         """
+        async def fetch_page(request_id: str, params: dict[str, Any]) -> dict[str, Any]:
+            return await self._request(request_id, "tools/list", params)
+
         try:
-            body = await self._request("provenance-tools-list", "tools/list", {})
-        except (UpstreamUnavailable, UpstreamToolError) as exc:
-            logger.warning("could not list tools for provenance check: %s", exc)
-            return None
-        result = body.get("result")
-        tools = result.get("tools") if isinstance(result, dict) else None
-        return tools if isinstance(tools, list) else None
+            return await collect_tools(fetch_page)
+        except asyncio.CancelledError:
+            # An interrupted read can leave a late reply in the pipe. Do not
+            # let a later tool call consume it as that call's response.
+            await self.close()
+            raise
+        except DiscoveryError as exc:
+            logger.warning("tools discovery incomplete: %s", exc)
+        except (UpstreamUnavailable, UpstreamToolError):
+            logger.warning("tools discovery incomplete: upstream request failed")
+        return None
 
     async def call(self, call_id: str, tool_name: str, arguments: dict[str, Any]) -> str:
         """One JSON-RPC ``tools/call`` over the child's stdin/stdout."""
@@ -366,8 +374,11 @@ class StdioServer:
             )
 
     async def close(self) -> None:
-        proc, self._proc = self._proc, None
-        if proc is None or proc.returncode is not None:
+        proc = self._proc
+        if proc is None:
+            return
+        if proc.returncode is not None:
+            self._proc = None
             return
         try:
             if proc.stdin is not None:
@@ -378,7 +389,9 @@ class StdioServer:
             proc.kill()
             await proc.wait()
         except ProcessLookupError:
-            pass
+            await proc.wait()
+        # Cancellation or failure above retains ownership for a later retry.
+        self._proc = None
 
 
 def _text_content(result: Any) -> str:

@@ -1,0 +1,104 @@
+{
+  "profile": "cmcp.execution-action-binding-vectors/1",
+  "contract": "docs/spec/execution-action-binding.md",
+  "vectors": [
+    {
+      "id": "EAB-001-ascii-sha256",
+      "preimage": {
+        "domain": "cmcp.execution-action-binding",
+        "version": 1,
+        "agent_id": "spiffe://agent.example/payments/prod",
+        "action_type": "transfer",
+        "action_scope": "account:merchant-7",
+        "action_timestamp": "2026-09-10T16:30:00Z"
+      },
+      "jcs_utf8": "{\"action_scope\":\"account:merchant-7\",\"action_timestamp\":\"2026-09-10T16:30:00Z\",\"action_type\":\"transfer\",\"agent_id\":\"spiffe://agent.example/payments/prod\",\"domain\":\"cmcp.execution-action-binding\",\"version\":1}",
+      "algorithm": "sha256",
+      "binding": "sha256:305b05b249b159fa9dea8cbbfaa0c19b71aa867a6da718693c1c7d4b83f52fe4",
+      "expected": "accept"
+    },
+    {
+      "id": "EAB-002-nonascii-sha256",
+      "preimage": {
+        "domain": "cmcp.execution-action-binding",
+        "version": 1,
+        "agent_id": "spiffe://agent.example/payments/prod",
+        "action_type": "transfer",
+        "action_scope": "工具/merchant-7",
+        "action_timestamp": "2026-09-10T16:30:00Z"
+      },
+      "jcs_utf8": "{\"action_scope\":\"工具/merchant-7\",\"action_timestamp\":\"2026-09-10T16:30:00Z\",\"action_type\":\"transfer\",\"agent_id\":\"spiffe://agent.example/payments/prod\",\"domain\":\"cmcp.execution-action-binding\",\"version\":1}",
+      "algorithm": "sha256",
+      "binding": "sha256:6c6a43dd37e7762b65063a24fcbf77bb914f95e1ab976405e3e2cafa54b1d08a",
+      "expected": "accept"
+    },
+    {
+      "id": "EAB-003-domain-separation",
+      "preimage": {
+        "domain": "cmcp.other-binding",
+        "version": 1,
+        "agent_id": "spiffe://agent.example/payments/prod",
+        "action_type": "transfer",
+        "action_scope": "account:merchant-7",
+        "action_timestamp": "2026-09-10T16:30:00Z"
+      },
+      "jcs_utf8": "{\"action_scope\":\"account:merchant-7\",\"action_timestamp\":\"2026-09-10T16:30:00Z\",\"action_type\":\"transfer\",\"agent_id\":\"spiffe://agent.example/payments/prod\",\"domain\":\"cmcp.other-binding\",\"version\":1}",
+      "algorithm": "sha256",
+      "binding": "sha256:c9fc3b387ec2cf3fc981210a81d6dee3544e272a49c53f836abc726bbfac655a",
+      "expected": "reject_as_v1_execution_action_binding"
+    },
+    {
+      "id": "EAB-004-version-separation",
+      "preimage": {
+        "domain": "cmcp.execution-action-binding",
+        "version": 2,
+        "agent_id": "spiffe://agent.example/payments/prod",
+        "action_type": "transfer",
+        "action_scope": "account:merchant-7",
+        "action_timestamp": "2026-09-10T16:30:00Z"
+      },
+      "jcs_utf8": "{\"action_scope\":\"account:merchant-7\",\"action_timestamp\":\"2026-09-10T16:30:00Z\",\"action_type\":\"transfer\",\"agent_id\":\"spiffe://agent.example/payments/prod\",\"domain\":\"cmcp.execution-action-binding\",\"version\":2}",
+      "algorithm": "sha256",
+      "binding": "sha256:c737be0ffa196bbaba266b9d8a375c6b42c76d6f8d47155965cf7111f4bb4010",
+      "expected": "reject_as_v1_execution_action_binding"
+    },
+    {
+      "id": "EAB-005-ascii-sha384",
+      "preimage": {
+        "domain": "cmcp.execution-action-binding",
+        "version": 1,
+        "agent_id": "spiffe://agent.example/payments/prod",
+        "action_type": "transfer",
+        "action_scope": "account:merchant-7",
+        "action_timestamp": "2026-09-10T16:30:00Z"
+      },
+      "jcs_utf8": "{\"action_scope\":\"account:merchant-7\",\"action_timestamp\":\"2026-09-10T16:30:00Z\",\"action_type\":\"transfer\",\"agent_id\":\"spiffe://agent.example/payments/prod\",\"domain\":\"cmcp.execution-action-binding\",\"version\":1}",
+      "algorithm": "sha384",
+      "binding": "sha384:14e4e39e8eaaccd693e4120e6df5baaf2a351d4f74d0648ad586232403569d3b7313cb54b5517de7777565633bf30021",
+      "expected": "accept"
+    },
+    {
+      "id": "EAB-006-unsupported-algorithm",
+      "preimage": {
+        "domain": "cmcp.execution-action-binding",
+        "version": 1,
+        "agent_id": "spiffe://agent.example/payments/prod",
+        "action_type": "transfer",
+        "action_scope": "account:merchant-7",
+        "action_timestamp": "2026-09-10T16:30:00Z"
+      },
+      "algorithm": "sha512",
+      "expected": "reject_unsupported_algorithm"
+    }
+  ],
+  "semantic_adjudication_witnesses": [
+    {
+      "id": "EAB-S001-json-number-equivalence",
+      "request_a": {"x": 1},
+      "request_b": {"x": 1.0},
+      "rfc8785_relation": "same_canonical_number_representation",
+      "observed_downstream_relation": "may_differ_under_existing_cMCP_consumers",
+      "required_disposition": "adjudicate_against_governing_schema_or_policy_before_action_binding"
+    }
+  ]
+}

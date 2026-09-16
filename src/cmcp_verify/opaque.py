@@ -15,10 +15,36 @@ _OPAQUE_API_KEY_ENV = "OPAQUE_API_KEY"
 _OPAQUE_TIMEOUT_SECONDS = 10
 
 
+# HW-008: header names whose values never reach a log. Matched as substrings
+# against the lower-cased header name, so x-api-key, proxy-authorization and
+# set-cookie are all covered without enumerating every vendor spelling.
+_SENSITIVE_HEADER_PARTS = (
+    "authorization",
+    "auth",
+    "api-key",
+    "apikey",
+    "cookie",
+    "token",
+    "secret",
+    "password",
+    "credential",
+    "signature",
+)
+
+
 def _redact_auth_headers(headers: dict[str, str]) -> dict[str, str]:
-    """HW-008: return a copy of headers with Authorization value replaced by [REDACTED]."""
+    """HW-008: return a copy of headers with every credential-bearing value redacted.
+
+    Redacting only Authorization was too narrow: the same call is configured with
+    OPAQUE_API_KEY, and a deployment that carries it in x-api-key or a cookie would
+    have logged it in clear. Redaction is now deny-by-default over a name match.
+    """
     return {
-        k: "[REDACTED]" if k.lower() == "authorization" else v
+        k: (
+            "[REDACTED]"
+            if any(part in k.lower() for part in _SENSITIVE_HEADER_PARTS)
+            else v
+        )
         for k, v in headers.items()
     }
 
@@ -50,11 +76,12 @@ def verify_opaque_measurement(
     header. The header value is never logged -- _redact_auth_headers() strips it
     before any debug output (HW-008).
     """
-    result = OpaqueVerificationResult(verified=True)
+    # Fail closed by default. Positive verification credit is granted only after
+    # the managed verifier explicitly confirms both required success predicates.
+    result = OpaqueVerificationResult(verified=False)
 
     endpoint = opaque_endpoint or os.environ.get(_OPAQUE_ENDPOINT_ENV)
     if not endpoint:
-        result.verified = False
         result.failure_reason = "opaque_endpoint_not_configured"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["hint"] = (
@@ -64,7 +91,6 @@ def verify_opaque_measurement(
 
     if raw_evidence is None:
         # Fail closed: an attestation claim with no evidence cannot verify.
-        result.verified = False
         result.failure_reason = "no_raw_evidence"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["opaque_endpoint"] = endpoint
@@ -101,12 +127,21 @@ def verify_opaque_measurement(
         with urllib.request.urlopen(req, timeout=_OPAQUE_TIMEOUT_SECONDS) as resp:  # nosec B310 - req is a Request object with explicit HTTPS endpoint
             body = json.loads(resp.read().decode())
 
-        if body.get("verified") is True:
+        if not isinstance(body, dict):
+            result.failure_reason = "opaque_invalid_response"
+            result.unverified_fields.append("opaque_managed_attestation")
+            result.details["opaque_response_type"] = type(body).__name__
+        elif body.get("verified") is True and body.get("measurement_matched") is True:
+            result.verified = True
             result.verified_fields.append("opaque_managed_attestation")
             result.details["opaque_endpoint"] = endpoint
         else:
-            result.verified = False
-            result.failure_reason = body.get("failure_reason", "opaque_verification_failed")
+            failure_reason = body.get("failure_reason")
+            result.failure_reason = (
+                failure_reason
+                if isinstance(failure_reason, str) and failure_reason
+                else "opaque_verification_failed"
+            )
             result.unverified_fields.append("opaque_managed_attestation")
             result.details["opaque_response"] = str(body.get("details", ""))
 
@@ -119,6 +154,7 @@ def verify_opaque_measurement(
             type(exc).__name__,
             _redact_auth_headers(request_headers),
         )
+        result.failure_reason = "opaque_verification_error"
         result.unverified_fields.append("opaque_managed_attestation")
         result.details["opaque_endpoint"] = endpoint
         result.details["opaque_error"] = type(exc).__name__

@@ -7,7 +7,215 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A response arriving during an operator reset raised the successor session.**
+  The per-session mutation lock serialised a reset and a response elevation but
+  did not order them, so whichever coroutine acquired it second won. A response
+  in flight when the reset landed was applied to the successor, which had just
+  been initialised to `public`, and recorded the pre-reset `call_id` as the call
+  that raised it. The successor exists to start at the minimum level, so this
+  carried the closed session's sensitivity across the boundary the reset drew.
+  `update_from_inspection()` now takes the `reset_count` observed at call entry
+  and drops a response whose generation no longer matches, logging
+  `SESSION_RESET_RACE`. The discriminator is `reset_count` rather than
+  `session_id` because `upgrade_attestation()` rotates the identifier while
+  deliberately continuing the same session, so a call in flight across an
+  attestation upgrade must still apply. The previous concurrency test asserted
+  only that `max_sensitivity` remained a member of `SENSITIVITY_ORDER`, which
+  every value satisfies.
+
+- **The reset route accepted the tool-invocation token.** `POST
+  /sessions/{id}/reset` is not reachable as an MCP tool, but it sat behind the
+  same single `CMCP_BEARER_TOKEN` as `POST /mcp`, so an agent host holding its
+  own tool-invocation credential could clear accumulated session sensitivity.
+  The operator interface (session reset and catalog exception) now takes
+  `CMCP_OPERATOR_TOKEN`, which must differ from `CMCP_BEARER_TOKEN` and is
+  required outside `CMCP_DEV_MODE=1` (`OPERATOR_TOKEN_REQUIRED`). Where it is
+  unset those routes still fall back to the bearer token, so an existing
+  single-token deployment keeps working until it sets the new variable.
+
+- **Session close retained stdio children and per-session upstream caches.**
+  (`#625`) `rebind_session()` rotated the audit chain and call logs but never
+  called `aclose()`, so the stdio child, pooled HTTP clients, and the
+  provenance/drift-checked caches all survived a close and were reused by the
+  next session - the exact cross-session contamination `docs/spec/stdio-transport.md`
+  names as the reason children are scoped to one session rather than pooled.
+  Close now serializes session transitions, drains admitted calls before
+  signing, cleans up resources before rebinding, and preserves claim and
+  resource ownership across retryable failures. Partial claim failures keep
+  admission sealed and are reported for operator investigation. A failed
+  cancellation drain also keeps admission sealed until a close retry can
+  drain the remaining work. Graceful shutdown rejects new work and resource
+  acquisition, drains active calls, and coordinates spawning with cleanup;
+  an incomplete drain is reported as failure. Concurrent first-use stdio
+  spawning is serialized to avoid creating an untracked second child.
+  Cancellation during session hydration is finalized before signing; a failed
+  terminal audit write prevents signing or rotating an incomplete claim.
+  `POST /sessions/{id}/reset` retires a session id and opens a successor, so it
+  leaked the same resources for the same reason; it now drains admitted calls
+  and releases them before recording the boundary, which also leaves a failed
+  reset retryable with the session untouched. A reset naming an already-rotated
+  session is rejected before draining, so it cannot cancel the successor's
+  in-flight calls. A child that fails to close is retained for retry; a pooled
+  HTTP client that fails to close is dropped and logged instead, because an
+  `AsyncClient` marks itself closed and HTTPcore empties its pool before the
+  streams are released, leaving nothing a retry could reach. A call arriving
+  during a transition still waits for the successor, but the wait is bounded:
+  a close that cannot resolve, such as one whose successor creation keeps
+  failing, now answers callers with the reason instead of blocking them
+  indefinitely.
+
+### Added
+
+- **The accumulated session-sensitivity value can now live in a shared,
+  persistent store** (`session_state_path`). Without one it is held in the
+  gateway process, so it is lost on restart while the session identifier the
+  agent host holds is still live, and where several instances serve one session
+  the ratchet holds per instance rather than per session: an agent that reads
+  sensitive data through one instance and egresses through another is evaluated
+  by an instance that never saw the read. `SqliteSessionStateStore` serialises
+  the read-modify-write with `BEGIN IMMEDIATE`, which takes SQLite's RESERVED
+  lock and so spans processes; an `asyncio.Lock` cannot, being invisible to every
+  other instance. A gateway now hydrates the session's stored value at call entry,
+  before the pre-call policy evaluation reads it. A reset also advances the closed
+  session's generation in the store, so an instance still holding the old
+  identifier stops applying responses to it. Unset is the default and preserves
+  the previous single-instance behaviour exactly.
+
 ### Changed
+
+- The reset audit entry now identifies the session boundary rather than only the
+  sensitivity transition: `detail` carries the closed session identifier, the
+  successor identifier, the resulting reset counter, and which credential was
+  verified. `detail` is inside the canonical body, so those fields are covered by
+  the entry hash.
+
+- **The audit chain no longer attributes post-reset entries to the closed
+  session.** `AuditChain.rotate_session_id()` moves attribution to the successor
+  after the boundary entry is written, so the reset entry belongs to the session
+  that reached the recorded value and later entries belong to the successor.
+  Previously every entry after a reset carried the closed session's identifier
+  and the successor's identifier appeared nowhere in the chain.
+
+- A reset now preserves the closed session's final state as a distinct
+  `ClosedSessionRecord` instead of overwriting it, and
+  `POST /sessions/{id}/reset` returns `closed_session_max_sensitivity` and
+  `reset_count`.
+
+## [0.5.0] - 2026-09-05
+
+### Security
+
+- **Cross-boundary compliance recording was dead for HIPAA PHI, PCI data and
+  MNPI.** `call_log._HIGH_SENSITIVITY_DOMAINS`, which decides whether a call
+  leaving a domain is recorded as a boundary crossing in the TRACE claim, was the
+  literal `{"pii", "phi", "pci", "restricted"}`, while the catalog schema
+  permitted `{hipaa_phi, pci_data, mnpi, pii, internal, external, public}`. The
+  two overlapped on `pii` alone: `phi`, `pci` and `restricted` could never appear
+  as a `compliance_domain`, and the three most regulated domains the field can
+  express never matched. A session that read HIPAA PHI and then called an
+  external tool recorded no crossing. The set is now derived from a single
+  `COMPLIANCE_DOMAINS` vocabulary beside `SENSITIVITY_ORDER`; the legacy
+  spellings stay in it so no deployment regresses.
+
+- **Policy bundle hash now uses RFC 8785** (GHSA-wh6r-6j4v-p4p6).
+  `docs/spec/cedar-policy.md` §1 defines `canonical_json` as RFC 8785 and the
+  implementation used `json.dumps(sort_keys=True, ensure_ascii=True)`. The two
+  agree for ASCII-only, integer-only bundles and diverge on non-ASCII strings and
+  float-typed numbers, so an independent implementation following the spec could
+  not reproduce this gateway's startup gate. **Breaking for bundles carrying
+  non-ASCII text or float-typed numbers:** those change hash and need re-pinning.
+  ASCII-only bundles are byte-identical.
+
+- **`_redact_auth_headers` is deny-by-default.** It redacted only
+  `Authorization`, while the same request is configured with `OPAQUE_API_KEY`, so
+  a deployment carrying it in `x-api-key` or a cookie logged it in clear on the
+  debug path.
+
+- **Least-privilege CI.** All 24 third-party action references pin a commit SHA
+  rather than a mutable tag, including the release-path steps that hold registry
+  credentials, signing keys and `id-token: write`. Four workflows gained a
+  top-level `permissions:` floor, and four `${{ }}` interpolations moved out of
+  `run:` blocks into `env:`.
+
+### Added
+
+- **`cert-pinned` rotation mode is reachable.** `server.rotation_mode` has always
+  been read by the loader and used by the proxy, and
+  `docs/spec/tool-identity.md` documents `"rotation_mode": "cert-pinned"` as the
+  catalog field an operator sets. The catalog schema declared the `server` block
+  `additionalProperties: false` and never listed it, so a catalog following the
+  documentation was rejected at load and every deployment ran the weaker
+  `key-pinned` default with no way to opt out.
+
+- **`compliance_domain` is deployment extensible.** It was a closed seven-value
+  enum, so a deployment with its own classification could not express it and the
+  catalog would not load. Validation moves to load time against the built-in
+  vocabulary plus `sensitivity.compliance_domains` in config, mirroring what
+  `sensitivity_level` already does since #479. A deployment adding a domain declares
+  whether it is regulated. Additive only: a config key colliding with a built-in
+  is rejected.
+
+- `rfc8785` is a declared dependency rather than a transitive one.
+
+### Fixed
+
+- **Exhaust upstream `tools/list` pagination before drift and provenance
+  comparisons** (#631). HTTP and stdio share bounded acquisition: later-page
+  failures, malformed or ambiguous listings, and cursor cycles are unchecked,
+  never a comparison against a partial catalog. Existing drift policy and
+  unchecked-call behavior are unchanged. Observed by solloek369-arch on #566
+  and confirmed in #631 by Imran Siddique.
+  Drift and provenance now share one completed discovery acquisition per
+  server/authority per session, including unchecked outcomes, avoiding a second
+  full pagination walk on cold calls with provenance configured. Concurrent
+  readers wait for completion; cancelled reads are not cached.
+  Session rebinding resets acquisition and comparison caches together. The
+  duplicate-fetch cost was identified by qubeena07 during review of #633.
+
+- TLS pinning test fixtures set `minimum_version = TLSv1_2`; the server was built
+  with `PROTOCOL_TLS_SERVER` and no floor, leaving TLSv1 and TLSv1.1 reachable in
+  the test that asserts the gateway's transport rules.
+
+
+### Security
+
+- Bind SNP, Azure CVM and TDX evidence to the claim's existing
+  `trace.runtime.nonce` (#595). These branches previously read a `report_data`
+  field forbidden by the runtime schema, passing `None` to an optional binding
+  check. A valid report for a different key or audit root could therefore receive
+  hardware-verification credit on the SNP and Azure paths. The verifier now
+  requires the canonical 64-byte nonce and checks it against the report (or the
+  AK-signed quote on Azure). TDX TDREPORT-only claims remain partially verified;
+  this does not add DCAP quote collection or transport.
+
+## [0.4.1] - 2026-09-02
+
+**Anyone running 0.4.0 should upgrade.** On 0.4.0 `verify_gateway_measurement()` could return
+`verified=True` for a correctly signed TPM2_NV_Certify pair that does not refer to cMCP's configured
+`TPM_NT_EXTEND` object or its complete 32-byte range (GHSA-943q-hvhp-mrx2). The verifier compared the
+two signed TPM Names only with each other and never against trusted verifier policy, so an accepted AK
+could certify attacker-arranged values from an ordinary NV object and receive an authorization-grade
+verdict. No signature forgery was required. Reported and fixed by
+[Noah Ingwers](https://github.com/noah-ing).
+
+The appraisal API is intentionally breaking: callers that omit the full `GatewayNvAppraisalPolicy` now
+fail closed.
+
+### Changed
+
+- TPM NV-certify wire parsing now delegates to Agent Manifest 0.11.2 instead of
+  maintaining a second `TPMS_ATTEST`/`TPMS_NV_CERTIFY_INFO` parser in cMCP.
+  The public `parse_nv_certify` return shape and `ValueError` contract remain
+  intact. The shared parser also makes cMCP accept valid size-prefixed
+  `TPM2B_ATTEST` transport framing, reject undeclared bytes after `nvContents`,
+  and verify AK signatures over the canonical inner `TPMS_ATTEST` rather than
+  over the transport length prefix. A genuine swtpm-produced two-certify
+  reference pair exercises Agent Manifest's configured-root chain helper plus
+  the signature, transcript, explicitly authorized test Name/range, and
+  extend-relation path. The synthetic fixture CA is test trust only and makes no
+  full-PKIX, hardware-provenance, or vendor-enrollment claim.
 
 - Removed AGT/`agent_os` from the production dependency graph. cMCP now owns the
   runtime call and response enforcement path; AGT remains isolated to CI and
@@ -21,6 +229,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed verification results instead of raising `TypeError`. Hash-chain checks
   remain active, and receipt verification remains opt-in (#593).
 
+- **Gateway NV appraisal accepted an evidence-selected NV object and certified
+  range as the configured gateway measurement.** `verify_gateway_measurement`
+  authenticated the AK chain, both signatures, phase bindings, and
+  `post = SHA256(pre || digest)`, but only required the two signed Names to equal
+  each other. It did not compare either Name or signed offset/extent with trusted
+  verifier policy, and a collector-claimed digest could produce `verified=True`
+  when no expected digest was supplied. An accepted AK could therefore certify
+  attacker-arranged values from an ordinary or otherwise unapproved NV object and
+  receive an authorization-grade verdict without proving use of cMCP's configured
+  `TPM_NT_EXTEND` public template.
+
+  Appraisal now requires a complete `GatewayNvAppraisalPolicy` supplied by the
+  verifier: the exact signed TPM Name, offset zero, 32-byte extent, and expected
+  gateway digest. Both attestations and the envelope copy must match that policy;
+  digest-only legacy calls fail closed. The producer also validates the complete
+  public area and TPM-returned Name before any read, extend, or certify; a newly
+  defined object is checked in its unwritten state and again after `WRITTEN` is
+  set. Unexpected existing objects are never silently redefined, and only an
+  actual `TPM_RC_NV_UNINITIALIZED` read maps to the initial zero value.
+
+  The API change is intentionally breaking for callers that omitted the full
+  policy. A genuine swtpm corpus covers the canonical production object, a
+  correctly signed same-handle ordinary object with an arranged byte relation,
+  and a correctly signed partial range. This fixes the standalone primitive; the
+  startup pair is still not carried by the TRACE schema or appraised by
+  `verify_trace_claim`, so it is not an end-to-end runtime-claim guarantee.
+
+**`CMCPProxy._client_for_upstream` pooled every unpinned upstream server in a session behind one shared `httpx.AsyncClient` (#281).** The pinned branch already keys its cached client on the fingerprint (a matching pin *is* the same verified peer, so sharing there is correct), but both unpinned branches plain `http://` and the `PLACEHOLDER_FINGERPRINT` dev-mode pin collapsed to the single literal key `"unpinned"`, regardless of which server the entry actually pointed at. A gateway session whose catalog lists two or more unrelated unpinned upstreams (the supported, if discouraged, dev/demo path this same method's docstring describes) got one `httpx.AsyncClient` for all of them: one cookie jar, and one shared pool of `max_connections`/`max_keepalive_connections`, across servers whose only thing in common was that neither presented a real pin.
+
 - **`POST /mcp` `tools/call` 500'd on a non-string `name`, and silently accepted a non-object `arguments`.** `_handle_tool_call` read `tool_name: str = params.get("name", "").lower()` and `arguments: dict[str, Any] = params.get("arguments", {})`: the `.get(field, default)` default only covers a genuinely *absent* field, so a caller-supplied `name` that is present but not a string (an int, a list, a bool, `null`) reached `.lower()` and raised an unhandled `AttributeError`, caught only by the outermost `_unhandled_error_handler` and logged as `UNHANDLED_EXCEPTION`/`INTERNAL_ERROR` for what is ordinary client input validation, not an internal failure. `arguments` had the matching gap on the other side: `_arg_shape_violation` (the #518/#562 depth/key-count/string-length gate) only recognizes `dict`, `list` and `str`, so a scalar `arguments` (an int, for instance) silently returned "no violation" and reached `call_tool` with a shape its own type annotation says cannot occur.
 
 Both fields are exactly as caller-controlled as `_cmcp` a few lines below, already guarded with "A malformed `_cmcp` (string, list, number) must not 500 the call path" `name` and `arguments` were the two places that same reasoning wasn't applied. Both now return the same `-32602 Invalid params` JSON-RPC error the adjacent depth/key/string-length and non-dict-`params` checks already return, before `call_tool` is ever reached.
@@ -29,7 +266,7 @@ Both fields are exactly as caller-controlled as `_cmcp` a few lines below, alrea
 
   The stated reason was that "SEV-SNP and TDX commit their own binding through the report's fields". That is true and it is not equivalent. Those fields carry the **launch** measurement, which is fixed at boot and does not move when the Cedar bundle reloads mid-session through `PolicyEvaluator._maybe_reload()`. So on exactly the platforms whose whole premise is hardware-rooted policy enforcement, nothing signed said which policy was running.
 
-  No new commitment scheme was invented. `make_measurement_bound_nonce(tee_public_key, measurement_digest)` puts the already-validated digest into the second half of the attestation nonce, in the same 64-byte layout `make_audit_bound_nonce` already uses: `jwk_thumbprint(pubkey) (32) || measurement_digest (32)`. `gateway_measurement().digest` is a raw 32-byte SHA-256, so it drops in unreshaped and a verifier compares it against a digest it recomputes rather than against a hash of one. The `tpm` provider is deliberately not in the set: its NV index keeps an append-only history that `report_data` cannot.
+  No new commitment scheme was invented. `make_measurement_bound_nonce(tee_public_key, measurement_digest)` puts the already-validated digest into the second half of the attestation nonce, in the same 64-byte layout `make_audit_bound_nonce` already uses: `jwk_thumbprint(pubkey) (32) || measurement_digest (32)`. `gateway_measurement().digest` is a raw 32-byte SHA-256, so it drops in unreshaped and a verifier compares it against a digest it recomputes rather than against a hash of one. The `tpm` provider is deliberately not in that report-data set: it has a separate NV-extend/certify path whose evidence remains startup-scoped, is not refreshed on policy reload, and is not carried by ordinary TRACE claims.
 
   This replaces the 32 random salt bytes on those providers, and freshness survives the change for a reason worth stating rather than assuming: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config.
 
@@ -253,7 +490,7 @@ Five changes below the headline TPM fix, each one a case where cMCP reported mor
 
 - **Hardware validation for the gateway measurement NV extend index (#432, #451).** The TPM calls in `cmcp_runtime.tee.measurement` were written against the documented tpm2-pytss API without ever executing against a TPM. All of them work on a real Azure Trusted Launch vTPM: `nv_define_space` with `TPMA_NV.parse(...) | (TPM2_NT.EXTEND << 4)` created a genuine extend index (`TPM_NT = 4` read back from the public area), `nv_extend` accumulated as `H(old || data)` across calls, an existing index was reused rather than redefined, and **a plain `nv_write` to the index was refused by the TPM**, which is the check the tamper-evidence argument actually rests on. Recorded in `docs/testing/hardware-validation.md`.
 
-- **The gateway is now measured into a TPM NV extend index at startup (#432).** PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and the bootloader, and there was no `PCR_Extend` anywhere in the codebase, so replacing the policy bundle or the gateway itself produced an identical measurement and the TPM enforced nothing about the thing the TPM path exists to protect. `cmcp_runtime.tee.measurement` digests the installed distributions' recorded per-file hashes (pip's `RECORD`), the policy bundle bytes, and the resolved configuration with secrets excluded, then extends that digest into NV `0x01500432` before the gateway serves traffic. `RuntimeContext` carries the result.
+- **The gateway is now measured into a TPM NV extend index at startup (#432).** PCRs 0 through 7 cover firmware, option ROMs, boot configuration, and the bootloader, and there was no `PCR_Extend` anywhere in the codebase, so replacing the policy bundle or the gateway itself produced an identical measurement and the TPM authenticated no commitment to the thing the TPM path exists to measure. `cmcp_runtime.tee.measurement` digests the installed distributions' recorded per-file hashes (pip's `RECORD`), the policy bundle bytes, and the resolved configuration with secrets excluded, then extends that digest into NV `0x01500432` before the gateway serves traffic. `RuntimeContext` carries the result.
 
   An NV index with `TPM_NT_EXTEND` rather than an application PCR, per the decision on #432: PCR 23 and PCR 16 are both resettable from locality 0, so an adversary with local code execution could reset and re-extend a chosen value, which is exactly the adversary this tier addresses. Extend writes are one-way (`new = H(old || data)`), so forgery needs a preimage, which is what carries the security argument rather than the write policy the original proposal called for.
 
@@ -329,7 +566,9 @@ Five changes below the headline TPM fix, each one a case where cMCP reported mor
 - `cmcp-verify` standalone verifier for validating TRACE Claims offline
 - Audit chain with Ed25519 signing for tamper-evident log integrity
 
-[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/agentrust-io/cmcp/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/agentrust-io/cmcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentrust-io/cmcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentrust-io/cmcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/agentrust-io/cmcp/releases/tag/v0.1.0

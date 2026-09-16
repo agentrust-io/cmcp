@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 from cmcp_runtime.errors import ConfigError
-from cmcp_runtime.session.state import SENSITIVITY_ORDER
+from cmcp_runtime.session.state import COMPLIANCE_DOMAINS, SENSITIVITY_ORDER
 
 # TEE-002: read exactly once at import time so the value is immutable for the
 # lifetime of the process. No code may call os.environ.get("CMCP_DEV_MODE")
@@ -81,6 +81,14 @@ class SensitivityConfig:
 
     vocabulary: dict[str, int] = field(default_factory=dict)
 
+    #: Deployment supplied additions to the built in compliance-domain
+    #: vocabulary, name -> regulated. Same additive contract as vocabulary: a
+    #: key must not collide with a built in COMPLIANCE_DOMAINS name. regulated
+    #: True means a call leaving the domain is recorded as a compliance
+    #: boundary crossing, so the deployment has to say, because nothing else
+    #: can know what its own classification means.
+    compliance_domains: dict[str, bool] = field(default_factory=dict)
+
 
 @dataclass
 class AttestationConfig:
@@ -124,8 +132,21 @@ class Config:
     max_response_size_bytes: int = 2 * 1024 * 1024  # 2MB
     policy_reload_interval_seconds: int = 0  # 0 = disabled (POLICY-001)
     audit_db_path: str = "audit.db"  # AUDIT-001: durable audit chain storage
+    #: Path to the shared session-state database. Unset keeps the accumulated
+    #: session-sensitivity value in the gateway process, which is correct for a
+    #: single instance and loses the value on restart. Set it to a path on a
+    #: volume every instance shares to make the ratchet hold per session across
+    #: instances and survive a restart. See ``session/store.py``.
+    session_state_path: str | None = None
     dev_mode: bool = False
     bearer_token: str | None = None
+    #: Credential for the operator interface (session reset, catalog exception).
+    #: Held separately from ``bearer_token`` so that the credential authorizing a
+    #: reset is not the credential an agent host already holds to invoke tools.
+    #: A reset lowers accumulated session sensitivity, so an agent able to
+    #: present its own tool-invocation token to the reset route could clear the
+    #: state that monotonicity exists to keep.
+    operator_token: str | None = None
     #: AARM R6. A named conformance profile tightens defaults that stay
     #: permissive for developers. None is the default, and nothing changes.
     #: "aarm" requires an Agent Manifest binding, because R6 says every receipt
@@ -168,7 +189,7 @@ _KNOWN_KILL_SWITCH_KEYS = {
     "deny_rate_threshold",
     "min_calls",
 }
-_KNOWN_SENSITIVITY_KEYS = {"vocabulary"}
+_KNOWN_SENSITIVITY_KEYS = {"vocabulary", "compliance_domains"}
 _KNOWN_ATTEST_KEYS = {
     "provider",
     "enforcement_mode",
@@ -352,6 +373,30 @@ def load_config(path: str) -> Config:
             )
         sensitivity_vocabulary[label] = rank
 
+    domains_raw = sens_raw.get("compliance_domains", {})
+    if domains_raw is None:
+        domains_raw = {}
+    if not isinstance(domains_raw, dict):
+        raise ConfigError("sensitivity.compliance_domains must be a mapping")
+    compliance_domains: dict[str, bool] = {}
+    for label, regulated in domains_raw.items():
+        if not isinstance(label, str) or not label:
+            raise ConfigError(
+                "sensitivity.compliance_domains keys must be non empty strings"
+            )
+        if label in COMPLIANCE_DOMAINS:
+            raise ConfigError(
+                f"sensitivity.compliance_domains key '{label}' collides with a built "
+                "in compliance domain. Custom domains may only add to the built in "
+                "set, never rename or replace one."
+            )
+        if not isinstance(regulated, bool):
+            raise ConfigError(
+                f"sensitivity.compliance_domains['{label}'] must be true or false, "
+                "saying whether leaving this domain is a compliance boundary crossing"
+            )
+        compliance_domains[label] = regulated
+
     try:
         provider = TEEProvider(attest_raw.get("provider", "auto"))
     except ValueError as err:
@@ -414,6 +459,14 @@ def load_config(path: str) -> Config:
 
     dev_mode = DEV_MODE  # TEE-002: use the frozen constant, never re-read from env
     bearer_token = os.environ.get("CMCP_BEARER_TOKEN") or None
+    operator_token = os.environ.get("CMCP_OPERATOR_TOKEN") or None
+
+    if operator_token is not None and operator_token == bearer_token:
+        raise ConfigError(
+            "CMCP_OPERATOR_TOKEN must differ from CMCP_BEARER_TOKEN. The operator "
+            "credential authorizes a session-sensitivity reset and must not be "
+            "reachable by a holder of the tool-invocation credential."
+        )
 
     default_listen_addr = (
         "127.0.0.1:8443"
@@ -433,6 +486,9 @@ def load_config(path: str) -> Config:
     policy_bundle_path = raw.get("policy_bundle_path", "policy/")
     catalog_path = raw.get("catalog_path", "catalog.json")
     audit_db_path = raw.get("audit_db_path", "audit.db")
+    session_state_path = raw.get("session_state_path") or None
+    if session_state_path is not None:
+        _check_no_traversal("session_state_path", session_state_path)
     _check_no_traversal("policy_bundle_path", policy_bundle_path)
     _check_no_traversal("catalog_path", catalog_path)
     _check_no_traversal("audit_db_path", audit_db_path)
@@ -487,7 +543,10 @@ def load_config(path: str) -> Config:
             deny_rate_threshold=float(ks_threshold),
             min_calls=ks_min_calls,
         ),
-        sensitivity=SensitivityConfig(vocabulary=sensitivity_vocabulary),
+        sensitivity=SensitivityConfig(
+            vocabulary=sensitivity_vocabulary,
+            compliance_domains=compliance_domains,
+        ),
         catalog=CatalogConfig(drift_policy=drift_policy),
         policy_bundle_path=policy_bundle_path,
         catalog_path=catalog_path,
@@ -498,4 +557,6 @@ def load_config(path: str) -> Config:
         conformance_profile=profile,
         dev_mode=dev_mode,
         bearer_token=bearer_token,
+        operator_token=operator_token,
+        session_state_path=session_state_path,
     )

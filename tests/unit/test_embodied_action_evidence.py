@@ -15,6 +15,7 @@ from cmcp_verify import (
     hash_embodied_action_payload,
     verify_embodied_action_evidence,
 )
+from cmcp_verify.embodied_action import canonical_json_bytes
 
 _FIXTURE = (
     Path(__file__).parent.parent
@@ -415,6 +416,62 @@ def test_physical_completion_claim_fails_closed():
     assert any("physical completion" in failure for failure in result.failures)
 
 
+# -- canonical_json_bytes: RFC 8785/JCS compliance (agentrust-io/cmcp#588) ------
+
+
+def test_canonical_json_bytes_emits_utf8_not_ascii_escapes():
+    # RFC 8785 requires UTF-8 output; \uXXXX-escaping non-ASCII characters (the
+    # old behavior) gives a different byte string -- and a different hash --
+    # than a JCS-compliant producer would emit for the identical value.
+    result = canonical_json_bytes({"action_scope": "robot-cell-caf\u00e9"})
+    assert "robot-cell-caf\u00e9".encode("utf-8") in result
+    assert b"\\u00e9" not in result
+
+
+def test_canonical_json_bytes_orders_keys_by_utf16_code_unit():
+    # A supplementary-plane character's UTF-16 lead surrogate can sort before a
+    # high-BMP character that is nonetheless a larger Unicode code point --
+    # Python's default `sorted()` (code-point order) gets this backwards.
+    result = canonical_json_bytes({"\U0001f600": 1, "\uffff": 2})
+    assert result.index("\U0001f600".encode()) < result.index("\uffff".encode())
+
+
+def test_canonical_json_bytes_rejects_float_fields():
+    # Every required field in the embodied-action profile is a string (spec
+    # explicitly steers producers away from numeric timestamps); a float
+    # reaching the preimage is refused rather than silently serialized in a
+    # way a JCS-compliant verifier might not reproduce byte-for-byte.
+    with pytest.raises(ValueError, match="floating point"):
+        canonical_json_bytes({"action_timestamp": 1750868200.0})
+
+
+def test_action_ref_matches_independent_jcs_reference_hash():
+    # A hand-computed RFC 8785 reference for the exact v0.1 action_ref preimage
+    # shape, so this fails if the JCS wiring silently regresses even when
+    # every existing fixture-based test still passes (they don't cover
+    # non-ASCII field values). Keys are written here in the RFC 8785 §3.2.3
+    # (UTF-16 code-unit) order by hand, and the value is UTF-8-encoded
+    # directly, rather than calling the function under test.
+    import hashlib
+
+    preimage_text = (
+        '{"action_scope":"cell-7","action_timestamp":'
+        '"2026-06-25T16:30:00Z","action_type":"m\u00e9tro",'
+        '"agent_id":"agent-1"}'
+    )
+    expected = "sha256:" + hashlib.sha256(preimage_text.encode("utf-8")).hexdigest()
+
+    from cmcp_verify.embodied_action import compute_action_ref
+
+    actual = compute_action_ref({
+        "agent_id": "agent-1",
+        "action_type": "m\u00e9tro",
+        "action_scope": "cell-7",
+        "action_timestamp": "2026-06-25T16:30:00Z",
+    })
+    assert actual == expected
+
+
 def test_gateway_self_report_is_verified_but_warned():
     fixture = copy.deepcopy(_fixture())
     payload = fixture["detached_payload"]
@@ -429,3 +486,48 @@ def test_gateway_self_report_is_verified_but_warned():
 
     assert result.verified, result.failures
     assert any("self-report" in warning for warning in result.warnings)
+
+
+def test_verify_fails_closed_on_a_float_it_cannot_canonicalize():
+    # A payload the JCS canonicalizer refuses (a float anywhere in the open-
+    # ended detached payload, e.g. an approval_context risk score) must end
+    # verification as a recorded failure, like any other hash mismatch --
+    # not as an unhandled CatalogApprovalError propagating out of a function
+    # whose whole job is to turn untrusted external input into a structured
+    # result. Caught in review before merge (agentrust-io/cmcp PR review).
+    fixture = copy.deepcopy(_fixture())
+    payload = fixture["detached_payload"]
+    payload["approval_context"] = {"risk_score": 0.25}
+
+    result = verify_embodied_action_evidence(
+        fixture["audit_entry"],
+        payload,
+        fixture["trace_claim"],
+    )
+
+    assert not result.verified
+    assert any(
+        "could not be canonicalized" in failure for failure in result.failures
+    )
+
+def test_verify_fails_closed_on_a_lone_surrogate_in_the_action_ref_preimage():
+    # isinstance(str) does not rule out a lone surrogate (e.g. "\ud800") --
+    # it is a valid Python str but not valid UTF-8, so it passes the
+    # _ACTION_REF_FIELDS type guard and then makes canonical_json refuse it
+    # inside compute_action_ref. Same treatment as the evidence_hash path
+    # above: a recorded failure, not an unhandled exception. Flagged in
+    # review as the one call site the first round of fixes missed.
+    fixture = copy.deepcopy(_fixture())
+    payload = fixture["detached_payload"]
+    payload["agent_id"] = "\ud800"
+
+    result = verify_embodied_action_evidence(
+        fixture["audit_entry"],
+        payload,
+        fixture["trace_claim"],
+    )
+
+    assert not result.verified
+    assert any(
+        "could not be canonicalized" in failure for failure in result.failures
+    )

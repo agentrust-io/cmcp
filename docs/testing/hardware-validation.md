@@ -314,12 +314,14 @@ a TPM. All of them work:
 
 Not covered by this run: the index value still travels as an ordinary NV read,
 which no signature covers, so it is a local integrity control and not yet
-remote-verifiable evidence. `TPM2_NV_Certify` is the remaining half of #432.
+remote-verifiable evidence. A later run exercised `TPM2_NV_Certify` directly, but
+the current TRACE schema and verifier still do not carry or appraise that startup
+pair as part of an ordinary claim.
 
 ## TPM2_NV_Certify for the gateway measurement, Azure Trusted Launch vTPM, 2026-08-01
 
-`Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by
-#461). This run **found two defects in code that had already merged**, which is the
+`Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by #461).
+This run **found two defects in code that had already merged**, which is the
 argument for running it.
 
 **Defect 1: the call was wrong and could never have worked.** `ESAPI.nv_certify`
@@ -340,16 +342,23 @@ With both fixed, the following hold on hardware:
   `TPMT_SIGNATURE`. A NULL scheme resolves to the key's own, RSASSA/SHA-256 here.
 - **The platform AK at `0x81000003` can sign an NV certify.** This was an open
   question, since it is a restricted signing key; the answer is yes.
-- **`parse_nv_certify`'s field offsets are correct against a real blob.** This was
-  the highest-risk item, as the offsets came from the TCG structures spec and had
-  never met real bytes. `indexName`, `offset` and `nvContents` all parse, and
-  `nvContents` equals the value returned by `TPM2_NV_Read`.
+- **The signed NV field layout was checked against a real blob.** This was the
+  highest-risk item, as the offsets came from the TCG structures spec and had
+  never met real bytes. `indexName`, `offset` and `nvContents` all parsed, and
+  `nvContents` equalled the value returned by `TPM2_NV_Read`. That run exercised
+  cMCP's then-local parser. cMCP's public `parse_nv_certify` adapter now delegates
+  wire parsing to `agent_manifest.parse_tpm_nv_certify`; the committed swtpm
+  reference pair independently exercises that current boundary without adding a
+  hardware-provenance claim.
 - The extend relation holds on hardware across two consecutive starts: run 1
   provisioned the index and run 2 reused it, with run 2's `pre` equal to run 1's
   `post`, which is the accumulation the two-certify design exists to handle.
-- `verify_gateway_measurement` passes all seven appraisal steps, and rejects both a
-  wrong expected digest (`gateway_digest_mismatch`) and a replayed nonce
-  (`pre_binding_mismatch`) on genuine evidence.
+- The standalone `verify_gateway_measurement` path accepts the genuine pair only
+  with a verifier-supplied AK root, transcript nonce, exact authorized NV Name and
+  certified range, and expected gateway digest. It rejects a wrong expected digest,
+  replayed nonce, unapproved signed Name, or altered range. This is direct
+  primitive/fixture appraisal, not evidence that `verify_trace_claim` currently
+  transports or invokes the NV path.
 
 One limit on this run: the VM drew the `Global Virtual TPM CA - 03` hierarchy, whose
 AK certificate has no AIA, so the chain is the leaf alone. The verification above

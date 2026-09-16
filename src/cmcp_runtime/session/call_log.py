@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from cmcp_runtime.session.state import effective_compliance_domains
+
 
 @dataclass
 class CallRecord:
@@ -79,9 +81,30 @@ class CallLog:
 #: Sentinel for the compliance_domain of calls where no catalog entry exists.
 _UNKNOWN_DOMAIN = "unknown"
 
-#: High-sensitivity compliance domains that trigger cross-boundary event recording
-#: when a call transitions away from them.
-_HIGH_SENSITIVITY_DOMAINS: frozenset[str] = frozenset({"pii", "phi", "pci", "restricted"})
+#: Compliance domains that trigger cross-boundary event recording when a call
+#: transitions away from them.
+#:
+#: Derived from COMPLIANCE_DOMAINS rather than written out here. The hardcoded
+#: set this replaces was {"pii", "phi", "pci", "restricted"}, and the catalog
+#: schema permits {hipaa_phi, pci_data, mnpi, pii, internal, external, public}.
+#: The two overlapped on "pii" alone: "phi", "pci" and "restricted" could never
+#: appear as a compliance_domain, and hipaa_phi, pci_data and mnpi never matched.
+#: So the control was silently dead for the three most regulated domains the
+#: field can express, which are the reason the field exists. The legacy spellings
+#: stay in the set so a deployment that somehow carried one keeps its behaviour.
+_LEGACY_HIGH_SENSITIVITY_DOMAINS: frozenset[str] = frozenset({"phi", "pci", "restricted"})
+
+
+def high_sensitivity_domains(extra: dict[str, bool] | None = None) -> frozenset[str]:
+    """Regulated domains, from the shared vocabulary plus deployment additions."""
+    domains = effective_compliance_domains(extra)
+    return frozenset(
+        {name for name, regulated in domains.items() if regulated}
+        | _LEGACY_HIGH_SENSITIVITY_DOMAINS
+    )
+
+
+_HIGH_SENSITIVITY_DOMAINS: frozenset[str] = high_sensitivity_domains()
 
 
 @dataclass
@@ -120,9 +143,18 @@ class SessionCallLog:
         "A -> B means B was called immediately after A within this session."
     )
 
-    def __init__(self, session_id: str) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        *,
+        extra_compliance_domains: dict[str, bool] | None = None,
+    ) -> None:
         self._session_id = session_id
         self._entries: list[CallLogEntry] = []
+        # A deployment that declares its own regulated domain gets cross-boundary
+        # recording for it too. Defaults to the built in set, so callers that do
+        # not configure anything behave exactly as before.
+        self._high_sensitivity_domains = high_sensitivity_domains(extra_compliance_domains)
 
     @property
     def entries(self) -> list[CallLogEntry]:
@@ -209,7 +241,7 @@ class SessionCallLog:
             prev = self._entries[i - 1]
             curr = self._entries[i]
             if (
-                prev.compliance_domain in _HIGH_SENSITIVITY_DOMAINS
+                prev.compliance_domain in self._high_sensitivity_domains
                 and curr.compliance_domain != prev.compliance_domain
             ):
                 cross_boundary.append(

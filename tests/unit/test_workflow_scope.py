@@ -154,7 +154,10 @@ async def test_server_extracts_workflow_id_from_cmcp_params():
     original = proxy.call_tool
     captured: dict = {}
 
-    async def _spy(call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None):
+    async def _spy(
+        call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None,
+        execution_id=None,
+    ):
         captured["workflow_id"] = workflow_id
         return await original(
             call_id,
@@ -195,7 +198,10 @@ async def test_server_extracts_data_class_from_cmcp_params():
     original = proxy.call_tool
     captured: dict = {}
 
-    async def _spy(call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None):
+    async def _spy(
+        call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None,
+        execution_id=None,
+    ):
         captured["declared_data_class"] = declared_data_class
         return await original(
             call_id,
@@ -236,7 +242,10 @@ async def test_server_malformed_data_class_does_not_fail_call():
     original = proxy.call_tool
     captured: dict = {}
 
-    async def _spy(call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None):
+    async def _spy(
+        call_id, tool_name, arguments, *, workflow_id=None, declared_data_class=None,
+        execution_id=None,
+    ):
         captured["declared_data_class"] = declared_data_class
         return await original(
             call_id,

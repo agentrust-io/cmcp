@@ -82,6 +82,16 @@ def test_health_exempt_from_auth(ctx):
     assert client.get("/health").status_code != 401
 
 
+def test_production_build_does_not_open_execution_registry(ctx, monkeypatch):
+    """The unfinished state store must stay disconnected from production startup."""
+    def unexpected_registry(*args, **kwargs):
+        pytest.fail("production constructed the non-operational execution registry")
+
+    monkeypatch.setattr("cmcp_runtime.execution.ExecutionRegistry", unexpected_registry)
+    monkeypatch.setattr("cmcp_runtime.execution.registry.ExecutionRegistry", unexpected_registry)
+    build_server(ctx)
+
+
 def test_audit_chain_persists_to_store(ctx, tmp_path):
     """AUDIT-001: the session_start entry must land in the SQLite DB."""
     build_server(ctx)

@@ -59,7 +59,7 @@ Use of "cMCP-compatible" to describe a gateway deployment requires that the impl
 
 cMCP builds on and does not replace:
 
-- **MCP (Model Context Protocol, Anthropic)**: the underlying tool-call protocol that cMCP extends with attestation
+- **MCP (Model Context Protocol, Agentic AI Foundation)**: the underlying tool-call protocol that cMCP extends with attestation
 - **TRACE** ([agentrust-io/trace-spec](https://github.com/agentrust-io/trace-spec)): governance record emitted per attested tool call
 - **Agent Manifest** ([agentrust-io/agent-manifest](https://github.com/agentrust-io/agent-manifest)): agent identity bound at tool-call time
 - **SPIFFE / SPIRE**: workload identity for gateway and agent services

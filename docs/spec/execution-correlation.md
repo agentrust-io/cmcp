@@ -177,3 +177,33 @@ coverage. This design does not invent version negotiation behavior.
 
 **TRACE records remain joinable offline.** The audit entry carries the join key.
 The Claim binds the chain and does not duplicate its identifiers.
+
+## Non-operational foundation (#606)
+
+The standalone `ExecutionRegistry` provides reservation, classification and
+recovery primitives for future integration. Its opaque binding inputs are test
+inputs, not an adopted action-identity contract. The gateway does not construct,
+recover, admit through, or finalize this registry. There is no runtime opt-in.
+
+The typed audit field and ingress validation are present. A valid supplied
+`execution_id` is refused with `execution_correlation_unavailable` before
+health/catalog checks, upstream discovery, or tool invocation, and the refusal retains
+the request hash, call identity, workflow, tool name, and asserted identifier.
+Malformed values, including explicit null, are refused with
+`execution_invalid_execution_id` and are not copied into audit identity. Only
+omission preserves the legacy call path.
+No same-operation, replay-enforcement or exactly-once guarantee is provided by
+this foundation in the running gateway.
+
+Activation requires both:
+
+1. An adopted action preimage and canonicalization contract (#588), integrated
+   with admission and its interoperability and semantic-admissibility vectors.
+2. Terminal execution state and terminal audit evidence committed consistently
+   at one durable transaction boundary, with crash/recovery evidence meeting the
+   agreed requirement. Independent audit and registry commits are not sufficient.
+
+The standalone registry tests exercise local storage primitives only. They do
+not establish integrated audit consistency. #565 remains open until integration
+and its acceptance evidence are complete; completing #588 alone cannot activate
+this feature.

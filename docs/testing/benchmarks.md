@@ -2,9 +2,9 @@
 
 ## Latest results
 
-Benchmark results are committed to [`benchmarks/`](https://github.com/agentrust-io/cmcp/tree/main/benchmarks) by the nightly CI workflow after each run on TEE hardware. Each result file covers one provider and reports p50/p95/p99 latency in microseconds.
+The main-branch CI benchmark runs in `software-only` mode on a standard Ubuntu runner. It uploads a `benchmark-results` workflow artifact; it does not commit nightly hardware measurements to the repository. See the [CI workflow](https://github.com/agentrust-io/cmcp/blob/main/.github/workflows/ci.yml).
 
-The directory is currently empty: results will appear after the first scheduled CI run on production TEE hardware. TEE hardware benchmarks are run on Azure DCasv5 (SEV-SNP) and GCP C3 Confidential VM (TDX).
+The committed `benchmarks/` directory currently contains only its placeholder. The latency figures below are targets and estimates, not measured results or service guarantees. For recorded hardware validation, see [hardware runs](hardware-validation.md); those reports have their own scope and do not establish these latency targets.
 
 ---
 
@@ -26,9 +26,9 @@ Attestation is a startup cost, not a per-call cost. It is not included in the pe
 | TEE Provider    | Target     | Notes                                              |
 |-----------------|------------|----------------------------------------------------|
 | TPM             | < 500ms    | Hardware I/O bound; TPM attestation is slow        |
-| SEV-SNP         | < 100ms    | Azure DCasv5, AWS C6a Nitro                        |
+| SEV-SNP         | < 100ms    | Provider-specific deployment; verify the actual attestation profile                        |
 | TDX             | < 100ms    | Azure DCedsv5, GCP C3                              |
-| OPAQUE Managed  | < 50ms     | OPAQUE Managed Runtime, highest assurance          |
+| OPAQUE Managed  | < 50ms     | Configured managed runtime; assurance depends on verified evidence          |
 
 ### Per-Call Runtime Overhead
 

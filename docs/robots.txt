@@ -1,12 +1,10 @@
-# cMCP documentation - crawling policy
-# Search and answer engines, including AI crawlers, are welcome.
+# cmcp.agentrust-io.com: search and answer-engine crawlers are welcome.
 
 User-agent: *
 Allow: /
-# Cloudflare email-obfuscation endpoint: not real pages, only 404s to crawlers
+# Cloudflare email-obfuscation endpoint: not a page
 Disallow: /cdn-cgi/
 
-# AI and answer-engine crawlers (explicitly welcomed)
 User-agent: GPTBot
 Allow: /
 
@@ -19,13 +17,16 @@ Allow: /
 User-agent: ClaudeBot
 Allow: /
 
-User-agent: anthropic-ai
+User-agent: Claude-SearchBot
 Allow: /
 
-User-agent: Claude-Web
+User-agent: Claude-User
 Allow: /
 
 User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
 Allow: /
 
 User-agent: Google-Extended

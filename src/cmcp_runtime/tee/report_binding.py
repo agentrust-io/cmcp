@@ -64,11 +64,14 @@ logger = logging.getLogger(__name__)
 # Providers whose hardware report commits a boot-time launch measurement and offers
 # no append-only index of its own, so the gateway measurement goes into report_data.
 #
-# "tpm" is absent because it has the NV extend index, which is strictly better here:
-# it keeps history, so staleness is visible as a broken chain rather than only as a
-# mismatch. "opaque" is absent because its provider raises rather than producing a
-# report, and "software-only" is absent because there is no hardware to commit to
-# -- the round trip is still exercised there through SoftwareOnlyProvider in tests.
+# "tpm" is absent because this report-data mechanism is not its measurement path.
+# TPM startup separately collects an NV-certify pair, but the current reload path
+# does not extend/re-certify that index and the ordinary TRACE schema does not carry
+# the pair. A False return for TPM therefore means "not handled by this mechanism";
+# it must not be read as evidence that the startup pair is current after a reload.
+# "opaque" is absent because its provider raises rather than producing a report,
+# and "software-only" is absent because there is no hardware to commit to -- the
+# round trip is still exercised there through SoftwareOnlyProvider in tests.
 MEASUREMENT_BOUND_PROVIDERS: frozenset[str] = frozenset({
     "sev-snp",
     "azure-cvm-sev-snp",

@@ -285,6 +285,20 @@ def _verify_with_sdk(
                 else None
             ),
             trusted_keys=_trusted_keys_for_sdk(trusted_keys),
+            # The gateway performs a deliberately scoped appraisal. It holds the
+            # running policy bundle and tool catalog and verifies those two
+            # bindings; it does not hold the agent's system prompt or model
+            # identity and never claims to. Leaving strict on makes the SDK
+            # return INCOMPLETE for every well-formed full-binding manifest,
+            # because those artifacts are bound and this verifier has no runtime
+            # hash to check them against, which would make the gateway unable to
+            # accept a correct manifest.
+            #
+            # Nothing is skipped as a result: _raise_for_sdk_result still
+            # requires policy_bundle and tool_manifest to be MATCH under
+            # require_runtime_artifacts, and the SDK attaches a warning naming
+            # every binding it did not verify.
+            strict_artifact_verification=False,
         ),
         agent_manifest_sdk.RevocationStore(),
     )

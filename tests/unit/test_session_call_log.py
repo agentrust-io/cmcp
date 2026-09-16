@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+import pytest
+
 from cmcp_runtime.session.call_log import SessionCallLog
 
 # ---------------------------------------------------------------------------
@@ -317,3 +319,57 @@ def test_trace_claim_call_graph_summary_from_session_call_log():
     # Temporal adjacency note must appear
     assert "edges_represent" in cg
     assert "temporal adjacency" in cg["edges_represent"].lower()
+
+
+# ---------------------------------------------------------------------------
+# The cross-boundary control had drifted away from the vocabulary it guards.
+#
+# _HIGH_SENSITIVITY_DOMAINS was the literal {"pii", "phi", "pci", "restricted"}
+# while the catalog schema permitted {hipaa_phi, pci_data, mnpi, pii, internal,
+# external, public}. The two sets overlapped on "pii" alone: "phi", "pci" and
+# "restricted" could never appear as a compliance_domain, and hipaa_phi,
+# pci_data and mnpi never matched. So the control was silently dead for the
+# three most regulated domains the field can express.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("domain", ["hipaa_phi", "pci_data", "mnpi", "pii"])
+def test_leaving_a_regulated_domain_is_a_cross_boundary_event(domain):
+    log = SessionCallLog("sess-001")
+    log.record_call("c1", _entry("t1", domain), "allow")
+    log.record_call("c2", _entry("t2", "external"), "allow")
+
+    events = log.get_call_graph_summary()["cross_boundary_events"]
+
+    assert len(events) == 1
+    assert events[0]["from_domain"] == domain
+    assert events[0]["to_domain"] == "external"
+
+
+def test_legacy_domain_spellings_keep_working():
+    """phi/pci/restricted stay in the set so no deployment regresses."""
+    for domain in ["phi", "pci", "restricted"]:
+        log = SessionCallLog("sess-001")
+        log.record_call("c1", _entry("t1", domain), "allow")
+        log.record_call("c2", _entry("t2", "external"), "allow")
+
+        assert len(log.get_call_graph_summary()["cross_boundary_events"]) == 1
+
+
+def test_a_deployment_declared_regulated_domain_triggers_events():
+    log = SessionCallLog("sess-001", extra_compliance_domains={"uae_ncsp": True})
+    log.record_call("c1", _entry("t1", "uae_ncsp"), "allow")
+    log.record_call("c2", _entry("t2", "external"), "allow")
+
+    events = log.get_call_graph_summary()["cross_boundary_events"]
+
+    assert len(events) == 1
+    assert events[0]["from_domain"] == "uae_ncsp"
+
+
+def test_a_deployment_declared_unregulated_domain_does_not():
+    """The deployment says what its own classification means; false is honoured."""
+    log = SessionCallLog("sess-001", extra_compliance_domains={"marketing": False})
+    log.record_call("c1", _entry("t1", "marketing"), "allow")
+    log.record_call("c2", _entry("t2", "external"), "allow")
+
+    assert log.get_call_graph_summary()["cross_boundary_events"] == []

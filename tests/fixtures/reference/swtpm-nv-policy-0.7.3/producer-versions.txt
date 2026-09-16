@@ -1,0 +1,7 @@
+TPM emulator version 0.7.3, Copyright (c) 2014-2021 IBM Corp.
+tool="tpm2_startup" version="5.6" tctis="libtss2-tctildr" tcti-default=tcti-device
+base=ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 linux/arm64
+swtpm=0.7.3-0ubuntu5.24.04.1
+tpm2-tools=5.6-1build4
+libtss2-tcti-swtpm0t64=4.0.1-7.1ubuntu5.1
+openssl=3.0.13-0ubuntu3.15

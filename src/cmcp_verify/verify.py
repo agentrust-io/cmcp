@@ -192,6 +192,20 @@ def _jwk_x_to_hex(x_b64: str) -> str | None:
         return None
 
 
+def _platform_report_data(nonce: Any) -> str | None:
+    """Recover the producer's 64-byte report_data from canonical TRACE nonce.
+
+    A missing/invalid expectation must never become None at a platform verifier:
+    those lower-level APIs interpret None as skipping the binding check.
+    """
+    if not isinstance(nonce, str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", nonce):
+        return None
+    raw = base64.b64decode(nonce + "==", altchars=b"-_", validate=True)
+    if len(raw) != 64 or base64.urlsafe_b64encode(raw).rstrip(b"=").decode() != nonce:
+        return None
+    return raw.hex()
+
+
 def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
     """Verify the Ed25519 signature using the JWK public key in trace.cnf.jwk.x."""
     try:
@@ -517,13 +531,29 @@ def _coerce_measurement_digest(value: str | bytes) -> bytes | None:
         return None
 
 
-def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None]:
+def _validation_error_path(exc: ValidationError) -> str:
+    """Return the most specific non-missing schema location for diagnostics."""
+    errors = exc.errors()
+    for error in errors:
+        if error["type"] == "missing":
+            continue
+        loc = error["loc"]
+        if loc:
+            return ".".join(str(part) for part in loc)
+    for error in errors:
+        loc = error["loc"]
+        if loc:
+            return ".".join(str(part) for part in loc)
+    return "claim"
+
+
+def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None, str | None]:
     """Validate claim structure using the RuntimeClaim Pydantic model."""
     try:
         RuntimeClaim.model_validate(claim)
-        return True, None
+        return True, None, None
     except ValidationError as exc:
-        return False, str(exc)
+        return False, str(exc), _validation_error_path(exc)
 
 
 @dataclass
@@ -865,14 +895,24 @@ def verify_trace_claim(
     failure: VerificationError | None = None
     details: dict[str, str] = {}
 
-    # Step 1: Schema validation
-    schema_ok, schema_err = _validate_schema(claim_json)
-    if schema_ok:
-        verified.append("schema")
-    else:
-        unverified.append("schema")
-        failure = VerificationError.CLAIM_MALFORMED
-        details["schema_error"] = schema_err or "schema validation failed"
+    # Step 1: Schema establishment. Structural malformation wins and stops
+    # interpretation: without a valid shape the verifier has not established the
+    # bytes or fields to which a signature/key-binding verdict would refer.
+    schema_ok, schema_err, malformed_field = _validate_schema(claim_json)
+    if not schema_ok:
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIED,
+            verified_fields=[],
+            unverified_fields=["schema"],
+            failure_reason=VerificationError.CLAIM_MALFORMED,
+            attestation_age_seconds=-1,
+            is_attestation_fresh=False,
+            details={
+                "schema_error": schema_err or "schema validation failed",
+                "malformed_field": malformed_field or "claim",
+            },
+        )
+    verified.append("schema")
 
     # Step 2: Signature
     sig_ok, sig_err = _verify_signature(claim_json)
@@ -1097,10 +1137,21 @@ def verify_trace_claim(
 
     # Step 8: Platform-specific attestation
     platform = _runtime.get("platform", "")
+    # _build_runtime serializes AttestationReportInfo.report_data as nonce.
+    # Compare that same value with the signed evidence, rather than reading a
+    # report_data field that canonical RuntimeInfo forbids (#595).
+    report_data_hex = _platform_report_data(_runtime.get("nonce"))
 
     if _is_sw_only:
         unverified.append("hardware_attestation")
         details["hardware_attestation"] = "software-only mode - not hardware-backed"
+    elif platform in ("azure-cvm-sev-snp", "amd-sev-snp", "intel-tdx") and report_data_hex is None:
+        unverified.append("hardware_attestation")
+        failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
+        details["hardware_attestation"] = (
+            "trace.runtime.nonce must encode exactly 64 bytes as canonical unpadded "
+            "base64url; platform report binding cannot be checked"
+        )
     elif platform == "tpm2":
         from cmcp_verify.tpm import (
             verify_ak_ek_chain,
@@ -1225,11 +1276,11 @@ def verify_trace_claim(
         # the ARK is pinned out of band. Hardware-validated on live Azure SEV-SNP.
         from cmcp_verify.azure_cvm import verify_azure_cvm_measurement
 
-        raw_bytes = base64.b64decode(_runtime["raw_evidence"])
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         azure_result = verify_azure_cvm_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
-            report_data_hex=_runtime.get("report_data"),
+            report_data_hex=report_data_hex,
             trusted_ark_pem=trusted_ark_pem,
         )
         chain_ok = "vcek_cert_chain" not in azure_result.unverified_fields
@@ -1252,14 +1303,11 @@ def verify_trace_claim(
     elif platform == "amd-sev-snp":
         from cmcp_verify.sev_snp import verify_sev_snp_measurement
 
-        raw_ev = _runtime.get("raw_evidence")
-        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
-        report_data_hex = _runtime.get("report_data")
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         # VCEK/ASK/ARK chain travels with the claim (passport model); the ARK is
         # pinned by the operator out of band. Both are needed for issue #370
         # report-signature + chain verification; absent either, it stays unverified.
-        _chain_b64 = _runtime.get("cert_chain")
-        cert_chain_pem = base64.b64decode(_chain_b64) if _chain_b64 else None
+        cert_chain_pem = _evidence_field(claim_json, _runtime, "cert_chain")
         snp_result = verify_sev_snp_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,
@@ -1291,9 +1339,7 @@ def verify_trace_claim(
     elif platform == "intel-tdx":
         from cmcp_verify.tdx import verify_tdx_measurement
 
-        raw_ev = _runtime.get("raw_evidence")
-        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
-        report_data_hex = _runtime.get("report_data")
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         # The DCAP quote (with its embedded PCK cert chain) travels with the claim
         # (passport model); the Intel SGX/TDX root CA is pinned by the operator out
         # of band. Both are needed for issue #370 quote-signature verification;
@@ -1333,8 +1379,7 @@ def verify_trace_claim(
     elif platform in ("opaque", "opaque-managed"):
         from cmcp_verify.opaque import verify_opaque_measurement
 
-        raw_ev = _runtime.get("raw_evidence")
-        raw_bytes = base64.b64decode(raw_ev) if raw_ev else None
+        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
         opaque_result = verify_opaque_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,

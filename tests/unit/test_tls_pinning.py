@@ -130,6 +130,9 @@ def tls_material(tmp_path_factory):
 def tls_server(tls_material):
     server = _QuietHTTPServer(("127.0.0.1", 0), _MockMCPHandler)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # PROTOCOL_TLS_SERVER leaves TLSv1 and TLSv1.1 reachable. The pinning tests
+    # should exercise the same floor the gateway enforces, not a weaker one.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(tls_material["cert_file"], tls_material["key_file"])
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

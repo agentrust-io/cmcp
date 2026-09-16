@@ -194,6 +194,8 @@ This binding answers "who acted" for the session. It does not replace `trace.sub
 
 Offline verifiers SHOULD cross-check `gateway.agent_identity` against the signed manifest and trusted issuer key. This keeps the runtime boundary check and the evidence artifact self-checking.
 
+`gateway.agent_identity` MAY also carry `intent_hash` (AARM R2: a digest of the issuer-signed declared intent, agent-manifest spec §3.9) and `enforcement_mode` (the Agent Manifest binding's enforcement mode at session creation, distinct from `trace.policy.enforcement_mode`). Both are populated whenever the bound manifest supplies them, which is the common case once `agent_manifest` is configured.
+
 `gateway.agent_identity` MAY also carry `agent_key_thumbprint`: an RFC 7638 JWK thumbprint of the agent's own
 signing key, rendered as `sha256:<hex>`, distinct from `issuer_key_id` (the key that signed the manifest).
 It is optional and is omitted from every claim the current runtime can produce, since no code path here has
@@ -210,4 +212,4 @@ The following fields from session state are included in the TRACE attestation re
 |-------|------|-------------|
 | `session_max_sensitivity` | string | The highest `max_sensitivity` value reached during the session. |
 | `session_reset_count` | integer | Number of times `POST /session/reset` was called during the session lifetime. Normally `0`; a non-zero value warrants review. |
-| `agent_identity` | object | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, subject source, issuer key ID, policy hash, catalog hash, and an optional `agent_key_thumbprint`. Present only when `agent_manifest` is configured and verified. |
+| `agent_identity` | object | Optional Agent Manifest binding: manifest ID, bound agent ID, authenticated subject, subject source, issuer key ID, policy hash, catalog hash, and the optional `intent_hash`, `agent_key_thumbprint`, and `enforcement_mode`. Present only when `agent_manifest` is configured and verified. |

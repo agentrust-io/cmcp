@@ -130,6 +130,24 @@ class TeeFault(CMCPError):
     http_status = 500
 
 
+class SessionCloseIncomplete(CMCPError):
+    """Terminal audit or close bookkeeping failed without a safe recovery.
+
+    Repeating accounting/signing is unsafe; operator investigation is required."""
+
+    code = "SESSION_CLOSE_INCOMPLETE"
+    http_status = 500
+
+
+class SessionDrainIncomplete(CMCPError):
+    """Calls remain active after the drain deadline and cancellation grace.
+
+    Admission stays sealed; a transition retry must finish draining first."""
+
+    code = "SESSION_DRAIN_INCOMPLETE"
+    http_status = 503
+
+
 class UpstreamUnavailable(CMCPError):
     code = "UPSTREAM_UNAVAILABLE"
     http_status = 502

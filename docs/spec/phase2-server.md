@@ -1,4 +1,8 @@
-﻿# Phase 2 cMCP Server Specification
+﻿---
+description: "Phase 2 measures the provider's MCP server binary, tool surface and egress inside a TEE, so a client can verify the server as well as the gateway."
+---
+
+# Phase 2 cMCP Server Specification
 
 ---
 Status: Draft v0.1

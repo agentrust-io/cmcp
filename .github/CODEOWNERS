@@ -1,14 +1,14 @@
 # Default owners for all files
-* @agentrust-io/maintainers
+* @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07
 
 # Security-sensitive paths require security-reviewers sign-off
-src/cmcp_runtime/audit/ @agentrust-io/security-reviewers @agentrust-io/maintainers
-src/cmcp_runtime/tee/ @agentrust-io/security-reviewers @agentrust-io/maintainers
-src/cmcp_runtime/policy/ @agentrust-io/security-reviewers @agentrust-io/maintainers
-src/cmcp_verify/ @agentrust-io/security-reviewers @agentrust-io/maintainers
+src/cmcp_runtime/audit/ @agentrust-io/security-reviewers @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07
+src/cmcp_runtime/tee/ @agentrust-io/security-reviewers @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07
+src/cmcp_runtime/policy/ @agentrust-io/security-reviewers @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07
+src/cmcp_verify/ @agentrust-io/security-reviewers @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07
 
 # CI/CD workflow changes
-.github/workflows/ @agentrust-io/maintainers
+.github/workflows/ @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07
 
 # Package configuration
-pyproject.toml @agentrust-io/maintainers
+pyproject.toml @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07

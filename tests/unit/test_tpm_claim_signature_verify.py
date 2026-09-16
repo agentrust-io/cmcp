@@ -185,6 +185,7 @@ def _make_tpm2_claim(
     raw_evidence: bytes | None = None,
     quote_signature: bytes | None = None,
     cert_chain: bytes | None = None,
+    ek_cert_chain: bytes | None = None,
 ) -> dict:
     """A fully valid tpm2 claim: key-bound, chain-root-bound, correctly signed.
 
@@ -215,6 +216,7 @@ def _make_tpm2_claim(
             raw_evidence=_b64(raw_evidence) if raw_evidence is not None else None,
             quote_signature=_b64(quote_signature) if quote_signature is not None else None,
             cert_chain=_b64(cert_chain) if cert_chain is not None else None,
+            ek_cert_chain=_b64(ek_cert_chain) if ek_cert_chain is not None else None,
         ),
         policy_bundle=PolicyBundleInfo(
             hash=POLICY_HASH, enforcement_mode="enforcing", policy_version="1.0.0"
@@ -257,6 +259,7 @@ def _claim_for(
     *,
     tamper_attest: bool = False,
     omit: str | None = None,
+    ek_cert_chain: bytes | None = None,
 ) -> dict:
     """Build a signed claim carrying evidence through the producer path.
 
@@ -278,6 +281,7 @@ def _claim_for(
         raw_evidence=attest,
         quote_signature=None if omit == "quote_signature" else signature,
         cert_chain=None if omit == "cert_chain" else chain_pem,
+        ek_cert_chain=ek_cert_chain,
     )
 
 
@@ -421,10 +425,11 @@ def test_a_separately_supplied_ek_chain_is_verified() -> None:
     assert established == ["ak_cert_chain", "ek_cert_chain"]
 
     # And end to end through the claim path.
-    claim = _claim_for(_pem(ak_cert) + _pem(ca_cert), ak_key)
-    claim["trace"]["runtime"]["ek_cert_chain"] = base64.b64encode(
-        _pem(ek_cert) + _pem(ca_cert)
-    ).decode()
+    claim = _claim_for(
+        _pem(ak_cert) + _pem(ca_cert),
+        ak_key,
+        ek_cert_chain=_pem(ek_cert) + _pem(ca_cert),
+    )
     result = verify_trace_claim(claim, _approved(), trusted_tpm_ca_pem=_pem(ca_cert))
     assert "ek_cert_chain" in result.verified_fields
     assert "ek_cert_chain" not in result.unverified_fields

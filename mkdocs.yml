@@ -1,5 +1,5 @@
 site_name: cMCP
-site_description: "The secure, confidential way to run MCP: hardware-attested, TEE-enforced tool-call policy for the Model Context Protocol, with signed TRACE receipts."
+site_description: "Check routed MCP tool calls against Cedar policy and sign TRACE session records. Start in software mode; evaluate hardware provenance separately."
 site_url: https://cmcp.agentrust-io.com
 repo_url: https://github.com/agentrust-io/cmcp
 repo_name: agentrust-io/cmcp
@@ -56,44 +56,56 @@ theme:
     - content.code.copy
     - content.tabs.link
     - toc.follow
-    - header.autohide
   icon:
     repo: fontawesome/brands/github
+
+hooks:
+  # Per-page meta descriptions; see the module docstring.
+  - hooks/seo.py
 
 plugins:
   - search
   - llmstxt:
       full_output: llms-full.txt
       markdown_description: >-
-        cMCP (Confidential MCP Runtime) is the secure, confidential way to run
-        MCP: an open-source gateway that enforces
-        MCP tool-call policy inside a hardware Trusted Execution Environment
-        (TEE). Every tool call is intercepted, evaluated against a Cedar policy
-        bundle, and enforced by a policy engine the governed process cannot
-        reach. The Cedar bundle hash is measured into the hardware attestation
-        report before any code runs, and each session produces a signed,
-        hardware-attested TRACE Claim that a verifier checks without trusting the
-        operator. Supports TPM, AMD SEV-SNP, Intel TDX, and OPAQUE providers,
-        with enforcing, advisory, and silent modes. If you are looking for a
-        secure version of MCP, this is the AgenTrust runtime for it.
+        cMCP is an open-source gateway for MCP tool-call policy enforcement.
+        It evaluates routed calls against Cedar policy and signs session records.
+        Software mode demonstrates policy and signature checks without hardware
+        provenance. Hardware deployments require provider-specific attestation
+        verification, trusted inputs, and a deployment that prevents gateway bypass.
+        The agent, model, and upstream tool server remain separate components.
+        Part of AgenTrust, open specifications for verifiable AI: https://agentrust-io.com.
       sections:
-        Getting started:
+        Get started:
           - index.md
           - quickstart.md
           - concepts.md
           - configuration.md
+          - spec-index.md
         Specification:
           - SPEC.md
           - spec/cedar-policy.md
+          - spec/session-policy.md
+          - spec/tool-identity.md
+          - spec/transport.md
+          - spec/proxy-security.md
           - spec/attestation.md
-          - spec/threat-model.md
           - spec/verification-library.md
           - spec/embodied-action-evidence.md
-        Tutorials:
+          - spec/error-codes.md
+          - spec/threat-model.md
+        Guides:
+          - tutorials/existing-mcp-clients.md
           - tutorials/connecting-agent-frameworks.md
           - tutorials/cedar-policy-walkthrough.md
           - tutorials/verifying-a-trace-claim.md
           - tutorials/tee-attestation.md
+          - tutorials/deploy-azure.md
+          - tutorials/deploy-gcp.md
+          - testing/hardware-validation.md
+        Project:
+          - limitations.md
+          - sponsors.md
   - minify:
       minify_html: true
   - mkdocstrings:
@@ -148,62 +160,71 @@ extra_css:
   # Shared AgenTrust editorial design system. Deliberately the only stylesheet:
   # a local override here is how this site drifted to the Material default
   # violet last time. Change the shared file instead.
-  - https://agentrust-io.com/design-system.css
+  # The ?v= matches CSS_VERSION in agentrust-io.github.io tools/site_header.py. Browsers keep these files for hours, so bump it there and here together.
+  - https://agentrust-io.com/design-system.css?v=22
 
 nav:
   - Home: index.md
-  - Quick Start: quickstart.md
-  - Specification index: spec-index.md
-  - How It Works: concepts.md
-  - Configuration: configuration.md
-  - Tutorials:
-      - Try it from an existing MCP client: tutorials/existing-mcp-clients.md
-      - Connecting agent frameworks: tutorials/connecting-agent-frameworks.md
-      - Tool catalog authoring: tutorials/tool-catalog-authoring.md
-      - Cedar policy walkthrough: tutorials/cedar-policy-walkthrough.md
-      - Advisory mode debugging: tutorials/advisory-mode-debugging.md
-      - TLS pinning: tutorials/tls-pinning.md
-      - Verify a TRACE claim: tutorials/verifying-a-trace-claim.md
-      - TEE attestation: tutorials/tee-attestation.md
-      - Deploy on Azure: tutorials/deploy-azure.md
-      - Deploy on GCP: tutorials/deploy-gcp.md
-      - Multi-tenant deployment: tutorials/multi-tenant-config.md
-      - Response inspection: tutorials/response-inspection.md
-      - AGT SRE kill switch: tutorials/kill-switch.md
+  - Get started:
+      - Quick start: quickstart.md
+      - How it works: concepts.md
+      - Configuration: configuration.md
+      - Specification index: spec-index.md
   - Specification:
       - Overview: SPEC.md
-      - Component Model: spec/component-model.md
-      - Cedar Policy: spec/cedar-policy.md
-      - Attestation: spec/attestation.md
-      - Transport: spec/transport.md
-      - stdio Transport: spec/stdio-transport.md
-      - Session Policy: spec/session-policy.md
-      - Tool Identity: spec/tool-identity.md
-      - Catalog Lifecycle: spec/catalog-lifecycle.md
-      - Catalog Approval Provenance: spec/catalog-approval-provenance.md
-      - Response Inspection: spec/response-inspection.md
-      - Call Graph: spec/call-graph.md
-      - Proxy Security: spec/proxy-security.md
-      - Verification Library: spec/verification-library.md
-      - Embodied Action Evidence: spec/embodied-action-evidence.md
-      - Error Codes: spec/error-codes.md
-      - Failure Modes: spec/failure-modes.md
-      - Threat Model: spec/threat-model.md
-      - TPM Security Model: spec/tpm-security-model.md
-      - Policy Hot-Reload: spec/policy-hot-reload.md
-      - Phase 2 Server: spec/phase2-server.md
-  - Testing:
-      - Benchmarks: testing/benchmarks.md
-      - Soak Test: testing/soak-test.md
-      - Hardware Validation: testing/hardware-validation.md
+      - Policy and identity:
+          - Component model: spec/component-model.md
+          - Cedar policy: spec/cedar-policy.md
+          - Session policy: spec/session-policy.md
+          - Policy hot-reload: spec/policy-hot-reload.md
+          - Tool identity: spec/tool-identity.md
+          - Catalog lifecycle: spec/catalog-lifecycle.md
+          - Catalog approval provenance: spec/catalog-approval-provenance.md
+      - Transport and proxy:
+          - Transport: spec/transport.md
+          - stdio transport: spec/stdio-transport.md
+          - Proxy security: spec/proxy-security.md
+          - Response inspection: spec/response-inspection.md
+          - Call graph: spec/call-graph.md
+          - Phase 2 server: spec/phase2-server.md
+      - Attestation and evidence:
+          - Attestation: spec/attestation.md
+          - TPM security model: spec/tpm-security-model.md
+          - Verification library: spec/verification-library.md
+          - Embodied action evidence: spec/embodied-action-evidence.md
+      - Errors and threats:
+          - Error codes: spec/error-codes.md
+          - Failure modes: spec/failure-modes.md
+          - Threat model: spec/threat-model.md
+  - Guides:
+      - Tutorials:
+          - Try it from an existing MCP client: tutorials/existing-mcp-clients.md
+          - Connecting agent frameworks: tutorials/connecting-agent-frameworks.md
+          - Tool catalog authoring: tutorials/tool-catalog-authoring.md
+          - Cedar policy walkthrough: tutorials/cedar-policy-walkthrough.md
+          - Advisory mode debugging: tutorials/advisory-mode-debugging.md
+          - TLS pinning: tutorials/tls-pinning.md
+          - Verify a TRACE claim: tutorials/verifying-a-trace-claim.md
+          - TEE attestation: tutorials/tee-attestation.md
+          - Response inspection tutorial: tutorials/response-inspection.md
+          - AGT SRE kill switch: tutorials/kill-switch.md
+      - Deployment:
+          - Deploy on Azure: tutorials/deploy-azure.md
+          - Deploy on GCP: tutorials/deploy-gcp.md
+          - Multi-tenant deployment: tutorials/multi-tenant-config.md
+      - Testing:
+          - Benchmarks: testing/benchmarks.md
+          - Soak test: testing/soak-test.md
+          - Hardware validation: testing/hardware-validation.md
   - Project:
       - Limitations: limitations.md
-      - Sponsors: sponsors.md
-      - Changelog: https://github.com/agentrust-io/cmcp/blob/main/CHANGELOG.md
-      - Contributing: https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md
-      - Governance: https://github.com/agentrust-io/cmcp/blob/main/GOVERNANCE.md
       - Roadmap: https://github.com/agentrust-io/cmcp/blob/main/ROADMAP.md
+      - Governance: https://github.com/agentrust-io/cmcp/blob/main/GOVERNANCE.md
+      - Sponsors: sponsors.md
+      - Contributing: https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md
+      - Changelog: https://github.com/agentrust-io/cmcp/blob/main/CHANGELOG.md
 
 extra_javascript:
   # Shared cross-project top navigation (TRACE / Manifest / cMCP / cA2A / ...)
-  - https://agentrust-io.com/supernav.js
+  # The ?v= matches CSS_VERSION in agentrust-io.github.io tools/site_header.py. Browsers keep these files for hours, so bump it there and here together.
+  - https://agentrust-io.com/supernav.js?v=22

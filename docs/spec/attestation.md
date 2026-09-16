@@ -284,6 +284,14 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || random_salt (32 bytes)
 - `random_salt`: 32 random bytes generated once per enclave startup, so two enclave instances produce distinct nonces even with the same key (e.g. blue-green deploy). On SEV-SNP, TDX and Azure CVM this half carries the gateway measurement instead; see §3.3.2.
 - The 64-byte value is passed as the `report_data` / `user_data` / `reportdata` / `qualifying_data` field when requesting the hardware attestation report. The field name varies by provider; the semantic is the same: a caller-supplied value included in the signed measurement.
 
+In a canonical TRACE Claim this value is serialized as `trace.runtime.nonce`
+(unpadded base64url), not as a separate `trace.runtime.report_data` field.
+SNP, Azure CVM and TDX verification decode that exact 64-byte nonce and compare
+it with the platform evidence. An absent or malformed nonce fails hardware
+appraisal rather than skipping the binding check. On Azure the comparison is
+against the AK-signed quote's `extraData`, which commits `SHA-256(nonce)`;
+the paravisor controls the SNP report's own `REPORT_DATA`.
+
 Verifier check (key binding, CRYPTO-001):
 
 ```
@@ -304,9 +312,9 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || gateway_measurement.digest 
 
 `gateway_measurement.digest` is the SHA-256 over the installed code, the policy bundle and the effective configuration defined for the TPM tier (see `docs/spec/tpm-security-model.md`). It is already a raw 32-byte SHA-256, so it occupies the second half unreshaped and a verifier compares it against a digest it recomputes, not against a hash of one.
 
-**Why the launch measurement is not sufficient.** `SNP_REPORT.measurement` and TDX's `MRTD` are fixed at boot. They do not move when the Cedar bundle reloads mid-session, so without this binding the policy actually in force is committed to nothing. The TPM tier solves the same problem with a `TPM_NT_EXTEND` NV index; these platforms have no such index.
+**Why the launch measurement is not sufficient.** `SNP_REPORT.measurement` and TDX's `MRTD` are fixed at boot. They do not move when the Cedar bundle reloads mid-session, so without this binding the policy actually in force is committed to nothing. TPM startup uses a separate `TPM_NT_EXTEND` NV path; these platforms have no such index. That comparison is architectural, not a claim of current parity: the TPM pair is startup-scoped today and is neither refreshed on reload nor carried in ordinary TRACE claims.
 
-**Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3, because its measurement is committed by the NV index instead, which keeps an append-only history that `report_data` does not.
+**Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3 and collects its NV pair separately. The pair's pre-value may reflect an append-only history within one index incarnation, but a stateless verifier does not approve that history or rule out owner-authorized redefinition.
 
 **Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config.
 

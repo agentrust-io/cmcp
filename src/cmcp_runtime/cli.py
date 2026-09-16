@@ -95,6 +95,7 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
         audit_chain=audit_chain,
         session=session,
         bearer_token=ctx.config.bearer_token,
+        operator_token=ctx.config.operator_token,
     )
 
 

@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from cmcp_runtime import __version__
+
 PROTOCOL_VERSION = "2026-07-28"
 _META_VERSION = "io.modelcontextprotocol/protocolVersion"
 _META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
@@ -40,7 +42,7 @@ def build_request(
     body_params = dict(params)
     body_params["_meta"] = {
         _META_VERSION: PROTOCOL_VERSION,
-        _META_CLIENT_INFO: {"name": "cmcp-runtime", "version": "0.4.0"},
+        _META_CLIENT_INFO: {"name": "cmcp-runtime", "version": __version__},
         _META_CLIENT_CAPABILITIES: {},
     }
     body = {
