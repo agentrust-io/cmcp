@@ -27,6 +27,7 @@ from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
 from cmcp_runtime.audit.trace_claim import RuntimeClaim
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
+from cmcp_verify.platform_policy import SnpPlatformPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -806,6 +807,7 @@ def verify_trace_claim(
     trusted_intel_root_pem: bytes | None = None,
     trusted_tpm_ca_pem: bytes | None = None,
     expected_gateway_measurement: str | bytes | None = None,
+    snp_platform_policy: SnpPlatformPolicy | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -827,6 +829,11 @@ def verify_trace_claim(
         because the expected value has to come from the verifier rather than the
         claim. See _check_measurement_binding for which report carries it.
     8. Platform-specific attestation verification (dispatched per-platform)
+
+    ``snp_platform_policy`` is a verifier-owned policy over authenticated SNP
+    PLATFORM_INFO (native SNP or Azure CVM). Supplying it requires a valid report
+    signature and pinned chain; a non-SNP/software claim cannot satisfy it. It
+    does not appraise guest policy, TCB versions, revocation, or GPU state.
 
     Returns VerificationResult with status and details.
 
@@ -1237,6 +1244,7 @@ def verify_trace_claim(
             raw_evidence=raw_bytes,
             report_data_hex=report_data_hex,
             trusted_ark_pem=trusted_ark_pem,
+            platform_policy=snp_platform_policy,
         )
         chain_ok = "vcek_cert_chain" not in azure_result.unverified_fields
         if azure_result.verified and chain_ok:
@@ -1269,6 +1277,7 @@ def verify_trace_claim(
             report_data_hex=report_data_hex,
             cert_chain_pem=cert_chain_pem,
             trusted_ark_pem=trusted_ark_pem,
+            platform_policy=snp_platform_policy,
         )
         # The VCEK chain is the SNP hardware root of trust. Even when the report
         # parses and the measurement matches, a claim whose chain is unverified
@@ -1360,6 +1369,14 @@ def verify_trace_claim(
         failure = failure or VerificationError.UNSUPPORTED_PROVIDER
 
     # Determine overall status
+    if snp_platform_policy is not None and "platform_state" not in verified:
+        # A different platform, dev-mode marker, missing evidence, or failed
+        # authentication must not silently bypass a relying party's SNP floor.
+        failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
+        if "platform_state" not in unverified:
+            unverified.append("platform_state")
+        details.setdefault("platform_policy", "required authenticated SNP platform state not established")
+
     if failure is None:
         # Fail closed: a claim with no hardware-backed attestation (software-only
         # or any non-hardware-backed path) is never fully VERIFIED, even when it is

@@ -25,10 +25,17 @@ import json
 import struct
 from dataclasses import dataclass, field
 
-from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN, load_snp_cert_chain, parse_snp_report
+from agent_manifest import (
+    SNP_OFFSETS,
+    SNP_REPORT_LEN,
+    SnpVerificationError,
+    load_snp_cert_chain,
+    parse_snp_report,
+)
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from cmcp_verify.platform_policy import SnpPlatformPolicy
 from cmcp_verify.sev_snp import verify_snp_report_signature, verify_vcek_chain
 
 _SNP_REPORT_SIZE = SNP_REPORT_LEN
@@ -117,6 +124,8 @@ def verify_azure_cvm_measurement(
     raw_evidence: bytes | None,
     report_data_hex: str | None = None,
     trusted_ark_pem: bytes | None = None,
+    *,
+    platform_policy: SnpPlatformPolicy | None = None,
 ) -> AzureCVMVerificationResult:
     """Verify Azure CVM (vTPM-rooted SEV-SNP) attestation evidence. Fail-closed."""
     result = AzureCVMVerificationResult(verified=True)
@@ -214,6 +223,10 @@ def verify_azure_cvm_measurement(
     if not chain_pem or trusted_ark_pem is None:
         result.unverified_fields.append("vcek_cert_chain")
         result.details["vcek_chain"] = "cert chain and/or pinned ARK not supplied"
+        if platform_policy is not None:
+            result.verified = False
+            result.failure_reason = "platform_policy_requires_authenticated_evidence"
+            result.unverified_fields.append("platform_state")
         return result
     try:
         from cryptography import x509
@@ -247,4 +260,15 @@ def verify_azure_cvm_measurement(
 
     result.verified_fields.append("vcek_cert_chain")
     result.verified_fields.append("report_signature")
+    if platform_policy is not None:
+        result.details["platform_info"] = f"0x{report.platform_info:x}"
+        try:
+            platform_policy.appraise(report.platform_info)
+        except SnpVerificationError as exc:
+            result.verified = False
+            result.failure_reason = "platform_policy_failed"
+            result.unverified_fields.append("platform_state")
+            result.details["platform_policy"] = str(exc)
+            return result
+        result.verified_fields.append("platform_state")
     return result

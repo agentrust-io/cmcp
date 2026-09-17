@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Add verifier-owned SNP platform policy to native and Azure verification and
+  the public TRACE verifier. Explicit requirements fail closed without signed
+  SNP evidence. The optional policy covers PLATFORM_INFO, not guest DEBUG,
+  firmware TCB currency, or runtime admission.
+
 - **A response arriving during an operator reset raised the successor session.**
   The per-session mutation lock serialised a reset and a response elevation but
   did not order them, so whichever coroutine acquired it second won. A response

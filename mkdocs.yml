@@ -189,6 +189,7 @@ nav:
           - Phase 2 server: spec/phase2-server.md
       - Attestation and evidence:
           - Attestation: spec/attestation.md
+          - SNP platform policy: spec/platform-policy.md
           - TPM security model: spec/tpm-security-model.md
           - Verification library: spec/verification-library.md
           - Embodied action evidence: spec/embodied-action-evidence.md

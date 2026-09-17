@@ -137,7 +137,7 @@ Three gaps are worth stating plainly for the TPM path:
   it does not prove that owner authorization never redefined the index or that the
   signed pre-value has an approved history.
 
-## Platform state is not appraised
+## Platform-state appraisal is opt-in
 
 <!-- The marked block below is shared verbatim with trace-spec and ca2a.
      trace-spec/LIMITATIONS.md is the source and the limitations-parity
@@ -167,9 +167,19 @@ ceiling while four of its seven fields are enforced as minimums. Worth reading b
 writing any policy over these bits.
 <!-- shared:platform-state-appraisal end -->
 
-**In cMCP.** [`agent-manifest`](https://manifest.agentrust-io.com/limitations/) parses these fields and can
-enforce a policy over them as of 2026-08-20. cMCP does not yet call that appraisal, so
-cMCP does not assert it for you.
+**In cMCP.** The Python verifier accepts an explicit `SnpPlatformPolicy` through
+`verify_trace_claim(..., snp_platform_policy=...)`. Both native SNP and Azure CVM
+paths authenticate the SNP report before invoking the shared `agent-manifest`
+appraisal. Missing trust roots or evidence, a violated policy, and non-SNP or
+software evidence cannot satisfy this requirement. Successful appraisal adds
+`platform_state` to `verified_fields` and the signed raw value to `details`.
+
+Without an explicit policy, no platform state is asserted. This is a
+relying-party verification API, not a gateway startup or remote-tool admission
+control. It does not appraise the separate SNP guest `POLICY` (including debug),
+TCB versions, revocation, or GPU state. See [the verifier guide](docs/spec/platform-policy.md)
+for the exact scope and an example. The new paths are tested using synthetic
+signed reports; these tests do not establish live hardware protection.
 
 ## What cMCP does not do
 

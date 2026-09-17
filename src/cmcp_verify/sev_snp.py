@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from agent_manifest import (
     SIG_ALGO_ECDSA_P384_SHA384,
     SNP_REPORT_LEN,
+    SnpVerificationError,
     load_snp_cert_chain,
     parse_snp_report,
     verify_snp_signature,
@@ -27,6 +28,8 @@ from agent_manifest import (
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding
+
+from cmcp_verify.platform_policy import SnpPlatformPolicy
 
 # The SNP report is signed over its leading bytes; the 512-byte signature field
 # occupies the tail. sizeof(report) == 0x4A0, signature == 0x200, so the signed
@@ -112,6 +115,8 @@ def verify_sev_snp_measurement(
     report_data_hex: str | None = None,
     cert_chain_pem: bytes | None = None,
     trusted_ark_pem: bytes | None = None,
+    *,
+    platform_policy: SnpPlatformPolicy | None = None,
 ) -> SNPVerificationResult:
     """
     Verify an AMD SEV-SNP attestation measurement.
@@ -127,6 +132,9 @@ def verify_sev_snp_measurement(
     VCEK -> ASK -> ARK chain are verified and a failure is FATAL (fail closed).
     When the chain is not supplied, signature verification is reported as an
     unverified field rather than silently passing.
+
+    An explicit platform_policy instead fails when that authentication is
+    unavailable, and appraises PLATFORM_INFO only after chain/signature checks.
     """
     result = SNPVerificationResult(verified=True)
 
@@ -226,6 +234,10 @@ def verify_sev_snp_measurement(
     if cert_chain_pem is None or trusted_ark_pem is None:
         result.unverified_fields.append("vcek_cert_chain")
         result.details["vcek_chain"] = "cert chain and/or pinned ARK not supplied"
+        if platform_policy is not None:
+            result.verified = False
+            result.failure_reason = "platform_policy_requires_authenticated_evidence"
+            result.unverified_fields.append("platform_state")
         return result
 
     try:
@@ -259,4 +271,15 @@ def verify_sev_snp_measurement(
 
     result.verified_fields.append("vcek_cert_chain")
     result.verified_fields.append("report_signature")
+    if platform_policy is not None:
+        result.details["platform_info"] = f"0x{report.platform_info:x}"
+        try:
+            platform_policy.appraise(report.platform_info)
+        except SnpVerificationError as exc:
+            result.verified = False
+            result.failure_reason = "platform_policy_failed"
+            result.unverified_fields.append("platform_state")
+            result.details["platform_policy"] = str(exc)
+            return result
+        result.verified_fields.append("platform_state")
     return result

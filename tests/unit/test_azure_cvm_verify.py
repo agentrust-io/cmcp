@@ -84,7 +84,7 @@ def _runtime_data(ak_pub: rsa.RSAPublicKey) -> bytes:
 
 
 def _signed_snp(
-    vcek_key, runtime: bytes, measurement_bytes: bytes = b"\x11" * 48
+    vcek_key, runtime: bytes, measurement_bytes: bytes = b"\x11" * 48, platform_info: int = 0
 ) -> tuple[bytes, str]:
     buf = bytearray(_REPORT_SIZE)
     buf[0x00:0x04] = (2).to_bytes(4, "little")
@@ -92,6 +92,7 @@ def _signed_snp(
     buf[_MEAS_OFFSET : _MEAS_OFFSET + 48] = measurement_bytes[:48]
     # paravisor binding: REPORT_DATA[:32] == sha256(runtime_data)
     buf[_RD_OFFSET : _RD_OFFSET + 32] = hashlib.sha256(runtime).digest()
+    buf[0x40:0x48] = platform_info.to_bytes(8, "little")
     signed_region = bytes(buf[:_SNP_SIG_OFFSET])
     der = vcek_key.sign(signed_region, ec.ECDSA(hashes.SHA384()))
     r, s = decode_dss_signature(der)
@@ -118,11 +119,11 @@ def _tpmt_signature(ak_key: rsa.RSAPrivateKey, quote_msg: bytes) -> bytes:
     return struct.pack(">H", 0x0014) + struct.pack(">H", 0x000B) + struct.pack(">H", len(sig)) + sig
 
 
-def _build_evidence(nonce: bytes, *, include_chain: bool = True, ak_key=None, quote_extra=None):
+def _build_evidence(nonce: bytes, *, include_chain: bool = True, ak_key=None, quote_extra=None, platform_info: int = 0):
     chain_pem, ark_pem, vcek_key = _synthetic_chain()
     ak_key = ak_key or rsa.generate_private_key(public_exponent=65537, key_size=2048)
     runtime = _runtime_data(ak_key.public_key())
-    snp, measurement = _signed_snp(vcek_key, runtime)
+    snp, measurement = _signed_snp(vcek_key, runtime, platform_info=platform_info)
     quote_msg = _tpm2b_attest(
         quote_extra if quote_extra is not None else hashlib.sha256(nonce).digest()
     )

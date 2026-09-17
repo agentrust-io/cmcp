@@ -8,6 +8,7 @@ from cmcp_verify.embodied_action import (
     hash_embodied_action_payload,
     verify_embodied_action_evidence,
 )
+from cmcp_verify.platform_policy import SnpPlatformPolicy
 from cmcp_verify.verify import (
     ApprovedHashes,
     AuditBundleResult,
@@ -25,6 +26,7 @@ __all__ = [
     "EMBODIED_ACTION_PROFILE",
     "EmbodiedActionEvidenceResult",
     "ReceiptState",
+    "SnpPlatformPolicy",
     "VerificationError",
     "VerificationResult",
     "VerificationStatus",
