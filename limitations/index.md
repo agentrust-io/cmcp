@@ -88,7 +88,7 @@ Three gaps are worth stating plainly for the TPM path:
 - **Evidence rides in the cmcp envelope, not the TRACE runtime block.** `RuntimeInfo` in `agentrust-trace` is `extra="forbid"`, so a claim carrying `raw_evidence` / `quote_signature` / `cert_chain` under `trace.runtime` is rejected as `CLAIM_MALFORMED` before platform verification runs. Signed evidence therefore travels as `gateway.attestation_evidence`, a cmcp-owned field. The verifier still reads `trace.runtime` as a fallback so older claims keep working, but that path cannot pass schema validation. All current platform branches read the envelope, including the SNP VCEK chain. SNP, Azure CVM and TDX compare their evidence binding against the 64-byte value already carried as `trace.runtime.nonce`; missing or malformed nonces cannot disable that check. **TDX DCAP quote collection and transport remain absent**: the current provider collects a TDREPORT, and the claim models do not carry `raw_quote`. TDX claims therefore remain partially verified without a verified quote signature. The standalone quote-verification API is a separate path.
 - **The gateway NV-certify pair is not an ordinary TRACE-claim property.** TPM startup collects a bracketing pair, and the standalone appraisal accepts it only with a verifier-owned root, nonce, exact NV Name and range, and expected gateway digest. The current claim schema does not carry the pair and `verify_trace_claim` does not invoke that appraisal. Policy reload also does not replace the startup pair. Even under direct appraisal, the deterministic TPM Name identifies the public template rather than a unique index incarnation, so it does not prove that owner authorization never redefined the index or that the signed pre-value has an approved history.
 
-## Platform state is not appraised
+## Platform-state appraisal is opt-in
 
 The SEV-SNP path here establishes that a report is authentic and which workload it describes: report signature, the VCEK to ASK to ARK chain with the ARK pinned by the operator, and measurement binding. Those are the right four checks and they are not in dispute.
 
@@ -98,7 +98,9 @@ The practical consequence: a report from a machine with SMT enabled and the alia
 
 Related: [google/go-sev-guest#195](https://github.com/google/go-sev-guest/issues/195), where the reference verifier's own platform-info policy field is documented as a ceiling while four of its seven fields are enforced as minimums. Worth reading before writing any policy over these bits.
 
-**In cMCP.** [`agent-manifest`](https://manifest.agentrust-io.com/limitations/) parses these fields and can enforce a policy over them as of 2026-08-20. cMCP does not yet call that appraisal, so cMCP does not assert it for you.
+**In cMCP.** The Python verifier accepts an explicit `SnpPlatformPolicy` through `verify_trace_claim(..., snp_platform_policy=...)`. Both native SNP and Azure CVM paths authenticate the SNP report before invoking the shared `agent-manifest` appraisal. Missing trust roots or evidence, a violated policy, and non-SNP or software evidence cannot satisfy this requirement. Successful appraisal adds `platform_state` to `verified_fields` and the signed raw value to `details`.
+
+Without an explicit policy, no platform state is asserted. This is a relying-party verification API, not a gateway startup or remote-tool admission control. It does not appraise the separate SNP guest `POLICY` (including debug), TCB versions, revocation, or GPU state. See [the verifier guide](https://cmcp.agentrust-io.com/spec/platform-policy/) for the exact scope and an example. The new paths are tested using synthetic signed reports; these tests do not establish live hardware protection.
 
 ## What cMCP does not do
 
