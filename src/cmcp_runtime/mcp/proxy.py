@@ -54,7 +54,7 @@ from cmcp_runtime.policy.evaluator import PolicyEvaluator
 from cmcp_runtime.provenance import ProvenanceResult, check_server_provenance
 from cmcp_runtime.runtime_gateway import GovernancePolicy, MCPGateway, MCPResponseScanner
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
-from cmcp_runtime.session.state import SessionState, _max_sensitivity
+from cmcp_runtime.session.state import SessionState, _max_sensitivity, effective_sensitivity_order
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +252,12 @@ class CMCPProxy:
         catalog_scanner: CatalogScanner | None = None,
     ) -> None:
         self._catalog = catalog
+        # Capture operator policy once. Per-call arguments cannot replace it,
+        # and changing the Config object later cannot disable this gate.
+        self._sink_policy = config.sink_policy
+        self._sink_order = effective_sensitivity_order(config.sensitivity.vocabulary)
+        if self._sink_policy is not None:
+            self._sink_policy.validate(self._sink_order)
         self._policy = policy_evaluator
         self._session = session
         self._audit = audit_chain
@@ -699,6 +705,7 @@ class CMCPProxy:
             server = StdioServer(
                 entry.server.spawn,
                 allow_unmeasured=self._config.attestation.allow_unmeasured_spawn,
+                log_stderr=self._sink_policy is None,
             )
             await server.start()
             self._stdio_servers[key] = server
@@ -1486,6 +1493,41 @@ class CMCPProxy:
 
         _finalization.server_identity = entry.server.url
 
+        # Sink admission precedes even discovery: stdio discovery starts a
+        # child inside the gateway isolation domain. Recheck at Cedar admission
+        # below after discovery awaits in case session classification increased.
+        if self._sink_policy is not None:
+            _finalization.failure_stage = "sink_admission"
+            try:
+                self._sink_policy.require(
+                    tool=tool_name,
+                    labels=(sensitivity_before, self._session.max_sensitivity,
+                            entry.sensitivity_level, *(() if declared_data_class is None
+                                                       else (declared_data_class,))),
+                    order=self._sink_order,
+                )
+            except PolicyDeny as exc:
+                self._append_call_terminal(
+                    _finalization, "tool_call", call_id=call_id, tool_name=tool_name,
+                    server_identity=entry.server.url, policy_decision="deny",
+                    policy_rule_matched=str(exc), request_payload_hash=request_payload_hash,
+                    session_sensitivity_before=sensitivity_before,
+                    session_sensitivity_after=self._session.max_sensitivity,
+                    workflow_id=workflow_id,
+                )
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                self._record_call(
+                    tool_name=tool_name, called_at=called_at, duration_ms=elapsed_ms,
+                    allowed=False, sensitivity_before=sensitivity_before,
+                    stage_results={"sink_policy": "deny"}, call_id=call_id,
+                    catalog_entry=entry, policy_decision="deny",
+                )
+                return CallResult(
+                    call_id=call_id, tool_name=tool_name, allowed=False,
+                    would_have_denied=False, response=None, deny_reason=str(exc),
+                    latency_us=int(elapsed_ms * 1000), audit_entry_hash=self._audit.chain_tip,
+                )
+
         # Step 3a (#521): does this server still offer what we approved? First
         # contact with each server only, so the cost is one tools/list per server
         # per session. Placed after the catalog lookup because it needs the entry
@@ -1555,6 +1597,14 @@ class CMCPProxy:
         policy_rule: str | None = None
         ingress_advice: dict[str, str] = {}
         try:
+            if self._sink_policy is not None:
+                self._sink_policy.require(
+                    tool=tool_name,
+                    labels=(sensitivity_before, self._session.max_sensitivity,
+                            entry.sensitivity_level, *(() if declared_data_class is None
+                                                       else (declared_data_class,))),
+                    order=self._sink_order,
+                )
             decision = self._policy.evaluate(cedar_context)
             policy_rule = decision.rule_matched
             would_have_denied = decision.would_have_denied
@@ -1607,7 +1657,7 @@ class CMCPProxy:
             # POLICY-003: Cedar backend raised an unexpected exception (e.g. malformed
             # policy). Write a fault audit entry so the incident is traceable, then
             # re-raise so server.py can return a generic 500.
-            logger.error("CEDAR_FAULT: tool=%s error=%s", tool_name, exc, exc_info=True)
+            logger.error("CEDAR_FAULT: tool=%s exception_type=%s", tool_name, type(exc).__name__)
             self._finalize_unexpected_call_failure(
                 _finalization,
                 exc,
@@ -1675,7 +1725,8 @@ class CMCPProxy:
             )
             _finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
         except (UpstreamUnavailable, UpstreamToolError) as exc:
-            logger.warning("Upstream call failed: tool=%s error=%s", tool_name, exc)
+            # An upstream error message can contain the complete private input.
+            logger.warning("Upstream call failed: tool=%s code=%s", tool_name, exc.code)
             self._append_call_terminal(
                 _finalization,
                 "fault",
@@ -1865,6 +1916,14 @@ class CMCPProxy:
         # Step 5: egress Cedar policy check
         _finalization.failure_stage = "egress_policy"
         try:
+            if self._sink_policy is not None:
+                self._sink_policy.require(
+                    tool=None,
+                    labels=(sensitivity_before, self._session.max_sensitivity,
+                            entry.sensitivity_level, *(() if declared_data_class is None
+                                                       else (declared_data_class,))),
+                    order=self._sink_order,
+                )
             egress_decision = self._policy.authorize_egress(
                 tool_name, response_bytes, self._session, workflow_id=workflow_id
             )

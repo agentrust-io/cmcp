@@ -13,6 +13,7 @@ import yaml
 
 from cmcp_runtime.errors import ConfigError
 from cmcp_runtime.session.state import COMPLIANCE_DOMAINS, SENSITIVITY_ORDER
+from cmcp_runtime.sink_policy import SinkPolicy
 
 # TEE-002: read exactly once at import time so the value is immutable for the
 # lifetime of the process. No code may call os.environ.get("CMCP_DEV_MODE")
@@ -153,9 +154,11 @@ class Config:
     #: MUST be bound to an agent identity while the developer default leaves
     #: binding optional. Naming the profile is what lets both be true.
     conformance_profile: str | None = None
+    sink_policy: SinkPolicy | None = None
 
 
 _KNOWN_TOP_KEYS = {
+    "sink_policy",
     "attestation",
     "agent_manifest",
     "catalog",
@@ -522,7 +525,18 @@ def load_config(path: str) -> Config:
             f"{sorted(_KNOWN_CONFORMANCE_PROFILES)}, got {profile!r}"
         )
 
+    sink_policy = None
+    if "sink_policy" in raw:
+        sink_raw = raw["sink_policy"]
+        if not isinstance(sink_raw, dict) or set(sink_raw) != {
+            "tool_max_sensitivity", "response_max_sensitivity",
+        }:
+            raise ConfigError("sink_policy requires exactly tool_max_sensitivity and response_max_sensitivity")
+        sink_policy = SinkPolicy(**sink_raw)
+        sink_policy.validate({**sensitivity_vocabulary, **SENSITIVITY_ORDER})
+
     return Config(
+        sink_policy=sink_policy,
         attestation=AttestationConfig(
             provider=provider,
             enforcement_mode=enforcement_mode,

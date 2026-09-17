@@ -154,10 +154,12 @@ class StdioServer:
         *,
         allow_unmeasured: bool = False,
         env: dict[str, str] | None = None,
+        log_stderr: bool = True,
     ) -> None:
         self._spawn = spawn
         self._allow_unmeasured = allow_unmeasured
         self._env = env
+        self._log_stderr = log_stderr
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._stderr_bytes = 0
@@ -365,6 +367,9 @@ class StdioServer:
             return
         if data:
             self._stderr_bytes += len(data)
+            if not self._log_stderr:
+                logger.warning("stdio server stderr suppressed (%d bytes)", len(data))
+                return
             # Logged, never recorded: diagnostics carry payloads and the audit
             # chain is meant to be shareable.
             logger.warning(

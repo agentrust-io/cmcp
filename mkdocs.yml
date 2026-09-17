@@ -176,6 +176,7 @@ nav:
           - Component model: spec/component-model.md
           - Cedar policy: spec/cedar-policy.md
           - Session policy: spec/session-policy.md
+          - Sink sensitivity ceilings: spec/sink-policy.md
           - Policy hot-reload: spec/policy-hot-reload.md
           - Tool identity: spec/tool-identity.md
           - Catalog lifecycle: spec/catalog-lifecycle.md

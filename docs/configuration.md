@@ -180,6 +180,11 @@ catalog_path: ./catalog.json
 
 ## Production hardening checklist
 
+An optional `sink_policy` sets hard per-tool and caller-response sensitivity
+ceilings, including when Cedar uses advisory mode. It also suppresses captured
+stdio stderr content. See [sink sensitivity ceilings](spec/sink-policy.md) for
+configuration, classification assumptions, and the remaining audit/log limits.
+
 - Set `attestation.enforcement_mode` to `enforcing`. Advisory mode provides no blocking protection against policy violations.
 - Set `CMCP_CATALOG_HASH` to the SHA-256 of the approved `catalog.json`. The gateway fails closed at startup if this is unset in non-dev mode, but setting it explicitly pins the approved catalog hash and prevents silent substitution.
 - Configure `agent_manifest.path`, `agent_manifest.trust_anchor_path`, and `agent_manifest.authenticated_subject` for agents with signed manifests. The runtime will refuse to start if the signed manifest does not bind the authenticated agent subject to the loaded policy bundle and catalog hashes.

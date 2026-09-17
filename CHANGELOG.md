@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Add optional operator-owned tool and caller-response sensitivity ceilings.
+  They enforce accumulated/catalog/declared classification independently of
+  Cedar mode, before discovery and dispatch and before response release. Strict
+  sink policy suppresses captured stdio stderr content; upstream error logs no
+  longer echo tool messages. This is conservative label enforcement, not semantic
+  information-flow verification or automatic declassification.
+
 - Add verifier-owned SNP platform policy to native and Azure verification and
   the public TRACE verifier. Explicit requirements fail closed without signed
   SNP evidence. The optional policy covers PLATFORM_INFO, not guest DEBUG,
