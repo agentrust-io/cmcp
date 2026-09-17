@@ -177,7 +177,7 @@ software evidence cannot satisfy this requirement. Successful appraisal adds
 Without an explicit policy, no platform state is asserted. This is a
 relying-party verification API, not a gateway startup or remote-tool admission
 control. It does not appraise the separate SNP guest `POLICY` (including debug),
-TCB versions, revocation, or GPU state. See [the verifier guide](docs/spec/platform-policy.md)
+TCB versions, revocation, or GPU state. See [the verifier guide](https://cmcp.agentrust-io.com/spec/platform-policy/)
 for the exact scope and an example. The new paths are tested using synthetic
 signed reports; these tests do not establish live hardware protection.
 
