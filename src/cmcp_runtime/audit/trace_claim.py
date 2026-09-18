@@ -425,11 +425,24 @@ def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
     return RuntimeInfo(platform=platform, measurement=measurement, nonce=nonce)  # type: ignore[arg-type]
 
 
+_ENFORCEMENT_MODE_MAP = {"enforcing": "enforce", "advisory": "advisory", "silent": "silent"}
+
+
 def _build_policy(bundle: PolicyBundleInfo) -> PolicyInfo:
-    mode_map = {"enforcing": "enforce", "advisory": "advisory", "silent": "silent"}
+    # Every mode the claim can carry asserts that something evaluated the policy.
+    # An unrecognised value is refused rather than signed as one of them, the
+    # same way _build_runtime refuses an unknown provider (AUDIT-003).
+    mode = _ENFORCEMENT_MODE_MAP.get(bundle.enforcement_mode)
+    if mode is None:
+        raise ValueError(
+            f"Enforcement mode {bundle.enforcement_mode!r} is not in the allowed set "
+            f"{sorted(_ENFORCEMENT_MODE_MAP)}. "
+            "Rejecting claim construction rather than signing a policy posture "
+            "that was never evaluated."
+        )
     return PolicyInfo(
         bundle_hash=bundle.hash,
-        enforcement_mode=mode_map.get(bundle.enforcement_mode, "advisory"),  # type: ignore[arg-type]
+        enforcement_mode=mode,  # type: ignore[arg-type]
         version=bundle.policy_version,
     )
 
