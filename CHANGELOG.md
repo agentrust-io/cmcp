@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Distinct tool names could share one Cedar policy identity.** The policy
+  backend names a call's action by joining the underscore-separated parts of the
+  tool name, so `read_file`, `read__file`, `_read_file` and `read_file_` all
+  became `Action::"ReadFile"`, and a permit or forbid written for one applied to
+  the others. The catalog loader checked only literal duplicates and uppercase
+  names. It now refuses a catalog in which two entries derive the same action
+  (`CATALOG_TOOL_NAME_COLLISION`), using the same derivation the backend uses,
+  now shared in `cmcp_runtime.policy.action_name`. The derivation itself is
+  unchanged, so existing policies keep their action names. Reported by
+  @saintmalik in #655.
+
 - **Nothing in a claim showed whether the kill switch was armed, and a refusal
   left no evidence.** A claim with `kill_switch_triggered: false` read the same
   whether the switch was enabled and did not trip or was never enabled, and a
