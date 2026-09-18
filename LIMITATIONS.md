@@ -198,6 +198,26 @@ TCB versions, revocation, or GPU state. See [the verifier guide](https://cmcp.ag
 for the exact scope and an example. The new paths are tested using synthetic
 signed reports; these tests do not establish live hardware protection.
 
+## Policy signing key revocation
+
+A policy signing key can be revoked on a running gateway only when
+`CMCP_POLICY_SUCCESSOR_SIGNING_KEY` was pinned at startup and
+`policy_reload_interval_seconds` is above `0`. After a revocation the gateway
+refuses every tool call until a bundle signed by the successor is installed; that
+refusal is deliberate, and it applies in advisory and silent modes too.
+
+- **One step per startup.** After the successor is promoted there is no further
+  successor until a restart, so a second compromise in that window can only be
+  answered by self-revocation (every call refused) and a restart.
+- **Revocation state is in memory.** A restart rebuilds it from
+  `CMCP_POLICY_SIGNING_KEY`, `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` and
+  `signing-key-revocations.json`. If the statement file is removed and the old key
+  is still configured, the restarted gateway trusts the old key again.
+- **No fleet distribution.** Each gateway reads the statement from its own bundle
+  directory. Nothing pushes it, and verifiers are not sent a revocation list; they
+  see `gateway.policy_signing` in the claims the gateway signs.
+- **No expiry.** Keys are trusted until revoked.
+
 ## What cMCP does not do
 
 - **cMCP is not a WAF.** It does not inspect HTTP traffic for SQL injection, XSS, or other web application attack patterns. It operates at the MCP tool call layer, not the HTTP layer.

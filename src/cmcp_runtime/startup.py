@@ -30,9 +30,11 @@ from cmcp_runtime.errors import (
     CatalogToolNameCollision,
     ConfigError,
     PolicyHashMismatch,
+    PolicySignatureInvalid,
+    PolicySigningKeyRevoked,
 )
 from cmcp_runtime.kill_switch import KillSwitchBlockStore
-from cmcp_runtime.policy.bundle import PolicyStore, load_policy_bundle
+from cmcp_runtime.policy.bundle import PolicySigningKeys, PolicyStore, load_policy_bundle
 from cmcp_runtime.session.store import SqliteSessionStateStore
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 from cmcp_runtime.tee.detect import detect_provider
@@ -110,7 +112,7 @@ def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
     return hashlib.sha256(canonical).digest()
 
 
-def _decode_ed25519_public_key(value: str) -> bytes:
+def _decode_ed25519_public_key(value: str, name: str = "CMCP_POLICY_SIGNING_KEY") -> bytes:
     """Decode a raw Ed25519 public key given as base64url or hex.
 
     Both spellings are accepted because operators paste whichever their tooling
@@ -130,12 +132,11 @@ def _decode_ed25519_public_key(value: str) -> bytes:
             raw = base64.urlsafe_b64decode(text + ("=" * padding if padding != 4 else ""))
         except (binascii.Error, ValueError) as exc:
             raise ConfigError(
-                "CMCP_POLICY_SIGNING_KEY must be a raw Ed25519 public key in "
-                "base64url or hex"
+                f"{name} must be a raw Ed25519 public key in base64url or hex"
             ) from exc
     if len(raw) != 32:
         raise ConfigError(
-            "CMCP_POLICY_SIGNING_KEY must decode to exactly 32 bytes "
+            f"{name} must decode to exactly 32 bytes "
             f"(an Ed25519 public key); got {len(raw)}"
         )
     return raw
@@ -480,12 +481,43 @@ def run_startup(config_path: str) -> RuntimeContext:
     # policy change: a hash pins one artifact, a key approves any artifact the
     # authority signs. See docs/spec/policy-hot-reload.md.
     policy_signing_key: bytes | None = None
+    policy_signing_keys: PolicySigningKeys | None = None
     raw_signing_key = os.environ.get("CMCP_POLICY_SIGNING_KEY")
+    raw_successor_key = os.environ.get("CMCP_POLICY_SUCCESSOR_SIGNING_KEY")
+    if raw_successor_key and not raw_signing_key:
+        _fatal(
+            "POLICY_SIGNING_KEY_INVALID",
+            "CMCP_POLICY_SUCCESSOR_SIGNING_KEY is set without CMCP_POLICY_SIGNING_KEY; "
+            "a successor only means something next to a current key",
+            action="startup_aborted",
+        )
+        sys.exit(1)
     if raw_signing_key:
         try:
             policy_signing_key = _decode_ed25519_public_key(raw_signing_key)
+            successor = (
+                _decode_ed25519_public_key(
+                    raw_successor_key, "CMCP_POLICY_SUCCESSOR_SIGNING_KEY"
+                )
+                if raw_successor_key
+                else None
+            )
+            policy_signing_keys = PolicySigningKeys(policy_signing_key, successor)
         except ConfigError as exc:
             _fatal("POLICY_SIGNING_KEY_INVALID", str(exc), action="startup_aborted")
+            sys.exit(1)
+        # A revocation already on disk applies before the first load, so a
+        # restart cannot quietly re-trust a key the running gateway had revoked
+        # while the statement is still there.
+        policy_signing_keys.apply_file(config.policy_bundle_path)
+        policy_signing_key = policy_signing_keys.current
+        if policy_signing_key is None:
+            _fatal(
+                "POLICY_SIGNING_KEY_REVOKED",
+                "every pinned policy signing key is revoked by "
+                "signing-key-revocations.json; pin a new CMCP_POLICY_SIGNING_KEY",
+                action="startup_aborted",
+            )
             sys.exit(1)
 
     # POLICY-003: a pinned hash and automatic reload cannot both be satisfied.
@@ -526,7 +558,24 @@ def run_startup(config_path: str) -> RuntimeContext:
             config.policy_bundle_path,
             expected_hash=policy_expected_hash,
             signing_key=policy_signing_key,
+            revoked_keys=policy_signing_keys.revoked if policy_signing_keys else (),
         )
+    except PolicySigningKeyRevoked as exc:
+        _fatal(
+            "POLICY_SIGNING_KEY_REVOKED",
+            str(exc),
+            detail=exc.detail or "",
+            action="startup_aborted",
+        )
+        sys.exit(1)
+    except PolicySignatureInvalid as exc:
+        _fatal(
+            "POLICY_SIGNATURE_INVALID",
+            str(exc),
+            detail=exc.detail or "",
+            action="startup_aborted",
+        )
+        sys.exit(1)
     except PolicyHashMismatch as exc:
         _fatal(
             "POLICY_HASH_MISMATCH",
@@ -546,7 +595,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         bundle_path=config.policy_bundle_path,
         reload_interval_seconds=config.policy_reload_interval_seconds,
         expected_hash=policy_expected_hash,
-        signing_key=policy_signing_key,
+        signing_keys=policy_signing_keys,
     )
     if config.policy_reload_interval_seconds > 0:
         logger.info(

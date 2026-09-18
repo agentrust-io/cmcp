@@ -275,3 +275,50 @@ def test_unsigned_reload_does_not_enforce_monotonicity(bundle_dir: Path) -> None
     (bundle_dir / "allow-all.cedar").write_text("forbid(principal, action, resource);")
     assert _reload_now(store) is True
     assert store.bundle.manifest.version == "1.0.0"
+
+
+# --------------------------------------------------------------------------
+# Both pins together, which is the shape production runs
+# --------------------------------------------------------------------------
+
+
+def _store_with_both_pins(bundle_dir: Path, public: bytes) -> PolicyStore:
+    pinned = load_policy_bundle(str(bundle_dir), None, public).bundle_hash
+    return PolicyStore(
+        bundle=load_policy_bundle(str(bundle_dir), pinned, public),
+        bundle_path=str(bundle_dir),
+        reload_interval_seconds=1,
+        expected_hash=pinned,
+        signing_key=public,
+    )
+
+
+def test_a_signed_newer_bundle_installs_when_a_hash_is_also_pinned(bundle_dir: Path) -> None:
+    """Outside dev mode CMCP_POLICY_HASH is required, so hash plus key is the only
+    production shape that can reload. The reload used to re-check the startup hash,
+    which refused every bundle that changed, so reload was inert there. The key
+    authorises change; the hash fixes only the artifact the process started with."""
+    private, public = _keypair()
+    _sign(bundle_dir, private)
+    store = _store_with_both_pins(bundle_dir, public)
+
+    (bundle_dir / "allow-all.cedar").write_text("forbid(principal, action, resource);")
+    _write_manifest(bundle_dir, version="1.0.1")
+    _sign(bundle_dir, private)
+
+    assert _reload_now(store) is True
+    assert store.bundle.manifest.version == "1.0.1"
+
+
+def test_with_both_pins_an_unsigned_change_is_still_refused(bundle_dir: Path) -> None:
+    """Dropping the hash re-check on reload must not open an unsigned path."""
+    private, public = _keypair()
+    _sign(bundle_dir, private)
+    store = _store_with_both_pins(bundle_dir, public)
+    original_hash = store.bundle.bundle_hash
+
+    (bundle_dir / "allow-all.cedar").write_text("forbid(principal, action, resource);")
+    _write_manifest(bundle_dir, version="1.0.1")  # drops the signature
+
+    assert _reload_now(store) is False
+    assert store.bundle.bundle_hash == original_hash

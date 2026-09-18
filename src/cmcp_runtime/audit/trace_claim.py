@@ -6,7 +6,7 @@ import base64
 import hashlib
 import importlib.metadata
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
@@ -67,6 +67,11 @@ class PolicyBundleInfo:
     hash: str
     enforcement_mode: str
     policy_version: str
+    #: Key id (``sha256:<hex>`` of the raw Ed25519 public key) the policy in force
+    #: verified under, or None where no policy signing key is pinned.
+    signing_key_id: str | None = None
+    #: Policy signing keys revoked in this gateway process, in the order revoked.
+    revoked_signing_key_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -179,6 +184,24 @@ class AgentIdentityOut(BaseModel):
     intent_hash: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
     agent_key_thumbprint: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
     enforcement_mode: str | None = None
+
+
+_KEY_ID = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+
+
+class PolicySigningOut(BaseModel):
+    """gateway.policy_signing: which policy signing key the policy in force at
+    claim time verified under, and which keys this gateway process has revoked.
+
+    Emitted only where a policy signing key is pinned. With ``key_id`` in
+    ``revoked_key_ids`` the claim records a session whose tool calls were refused
+    because the policy in force had lost its signer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key_id: _KEY_ID | None = None
+    revoked_key_ids: list[_KEY_ID] = Field(default_factory=list)
 
 
 class ToolTranscriptEntry(BaseModel):
@@ -298,6 +321,7 @@ class GatewayAddenda(BaseModel):
     kill_switch_triggered: bool = False
     kill_switch: KillSwitchState | None = None
     attestation_evidence: AttestationEvidence | None = None
+    policy_signing: PolicySigningOut | None = None
 
 
 class RuntimeClaim(BaseModel):
@@ -407,6 +431,17 @@ def _build_policy(bundle: PolicyBundleInfo) -> PolicyInfo:
         bundle_hash=bundle.hash,
         enforcement_mode=mode_map.get(bundle.enforcement_mode, "advisory"),  # type: ignore[arg-type]
         version=bundle.policy_version,
+    )
+
+
+def _build_policy_signing(bundle: PolicyBundleInfo) -> PolicySigningOut | None:
+    """None where no policy signing key is pinned, which keeps those claims
+    byte-identical to what they were before this field existed."""
+    if bundle.signing_key_id is None and not bundle.revoked_signing_key_ids:
+        return None
+    return PolicySigningOut(
+        key_id=bundle.signing_key_id,
+        revoked_key_ids=list(bundle.revoked_signing_key_ids),
     )
 
 
@@ -523,6 +558,7 @@ def generate_trace_claim(
         kill_switch_triggered=kill_switch_triggered,
         kill_switch=kill_switch,
         attestation_evidence=_build_evidence(attestation_report),
+        policy_signing=_build_policy_signing(policy_bundle),
         call_log_summary=call_log_summary,
         agent_identity=(
             AgentIdentityOut(
