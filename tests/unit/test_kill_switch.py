@@ -48,6 +48,8 @@ def _make_ctx(*, ks_config: KillSwitchConfig | None = None, agent_manifest: Agen
     policy_bundle = MagicMock()
     policy_bundle.bundle.bundle_hash = "sha256:" + "a" * 64
     policy_bundle.bundle.manifest.version = "1.0.0"
+    policy_bundle.bundle.signing_key_id = None
+    policy_bundle.revoked_key_ids = []
 
     catalog = MagicMock()
     catalog.catalog_hash = "sha256:" + "b" * 64
