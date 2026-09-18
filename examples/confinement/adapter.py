@@ -26,6 +26,37 @@ class Refused(RuntimeError):
     """Fixed messages only: untrusted bytes must not reach host diagnostics."""
 
 
+class LeaseWatchdog:
+    """Separate process; contains only a container identifier, never plaintext."""
+
+    def __init__(self, command):
+        self.command = command
+        self.process = None
+
+    async def start(self):
+        self.process = await asyncio.create_subprocess_exec(
+            sys.executable, "-I", str(Path(__file__).with_name("watchdog.py")),
+            *self.command,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        )
+        if await asyncio.wait_for(self.process.stdout.readline(), 5) != b"ready\n":
+            raise Refused("watchdog admission failed")
+
+    async def pulse(self):
+        while True:
+            if self.process.returncode is not None:
+                raise Refused("watchdog unavailable")
+            self.process.stdin.write(b".")
+            await self.process.stdin.drain()
+            await asyncio.sleep(0.25)
+
+    async def close(self):
+        if self.process is not None:
+            self.process.stdin.close()
+            await asyncio.wait_for(self.process.communicate(), 18)
+
+
 def check_core_pattern(pattern: str) -> None:
     # RLIMIT_CORE is ignored for piped kernel core handlers (core(5)).
     if not pattern.strip() or pattern.lstrip().startswith("|"):
@@ -139,6 +170,8 @@ class DockerSandbox:
             stderr=asyncio.subprocess.PIPE, limit=MAX_FRAME,
         )
         stats = {"allowed": 0, "denied": 0, "stderr_bytes": 0}
+        watchdog = LeaseWatchdog([*self.command, "stop", "--time", "0", self.name])
+        self._watchdog = watchdog
 
         async def drain() -> None:
             while chunk := await process.stderr.read(4096):
@@ -169,9 +202,20 @@ class DockerSandbox:
             if process.returncode:
                 raise Refused("agent failed")
 
-        tasks = [asyncio.create_task(exchange()), asyncio.create_task(drain())]
+        tasks = []
+        work = None
         try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout)
+            # Attach is running but no plaintext has been supplied. Arm the
+            # independent watcher before admitting the initial frame.
+            await watchdog.start()
+            tasks = [asyncio.create_task(exchange()), asyncio.create_task(drain()),
+                     asyncio.create_task(watchdog.pulse())]
+            work = asyncio.gather(*tasks[:2])
+            done, _ = await asyncio.wait([work, tasks[2]], timeout=timeout,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if work not in done:
+                raise Refused("watchdog failed or session expired")
+            await work
             return stats
         except Exception:
             # Do not expose parser values, exception messages, or agent output.
@@ -180,6 +224,8 @@ class DockerSandbox:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if work is not None:
+                await asyncio.gather(work, return_exceptions=True)
             # Kill the container, not merely its attached CLI process.
             try:
                 # Also stop if the attach client failed while the container
@@ -192,6 +238,7 @@ class DockerSandbox:
                 # remaining pipe buffers: wait() alone can deadlock on a full
                 # asyncio pipe after an output-flood rejection.
                 await process.communicate()
+                await watchdog.close()
 
 
 def decode_request(line: bytes, operations: Mapping[str, str]) -> tuple[str, dict]:

@@ -98,6 +98,63 @@ work. Restart, malformed stdout, attempted policy replacement, unavailable
 gateway, oversized stdout, stderr flood, crash and timeout cases test bounded
 failure and termination. No real secrets or external recipients are used.
 
+## Bridge failure and live policy restrictions
+
+Before plaintext admission, the running container gets a separate host watchdog.
+The bridge sends a payload-free heartbeat every 250 ms over a private inherited
+pipe. EOF or a two-second missed-heartbeat lease makes the watchdog stop the
+container. The watchdog runs in a separate process session, so a killed or paused
+bridge cannot prevent that cleanup. A watchdog failure also terminates the
+bridge exchange. The bound is the lease plus Docker stop latency; a responsive
+trusted host/daemon is required. The watcher retries a failed stop up to three
+times with a five-second timeout per attempt.
+
+The watcher is armed after attaching to the container and before supplying its
+initial frame. A bridge crash before that point can leave an empty container;
+the adapter does not provide a host-wide orphan collector. Simultaneous loss of
+the bridge and watchdog, a dead Docker daemon or a host crash requires external
+supervision. Container isolation remains in place independently of either
+process. The watcher contains the container identifier, not the agent payload.
+
+`examples/confinement/lifecycle.py` adds a trusted operator `PolicyGate` around
+the cMCP dispatch callback. It can revoke or restore originally approved tools
+without replacing the gateway, resetting sensitivity or expanding its original
+sink ceilings. A monotonically increasing revision and an async lock serialize
+the cutover with actual dispatch. An update is acknowledged only after earlier
+admitted calls finish. Calls queued behind that update see the new restriction.
+An invalid or rolled-back update closes future admission until a valid newer
+revision arrives. This operator API is not exposed to agent frames.
+
+Cutover cannot undo an earlier tool side effect. The reference supports this
+restrictive overlay, not arbitrary hot replacement of catalogs, classifiers,
+Cedar bundles or sink ceilings. A new deployment configuration still requires
+a new session. Revision state is process-local and is not rollback-resistant
+storage.
+
+Hosted lifecycle tests kill and pause a real bridge after an independent tool
+sink observes its canary, kill the watchdog separately, and inspect Docker from
+another process. A synthetic mutation disables the watcher and requires the
+adversarial container to survive bridge death, demonstrating why the watcher is
+needed. Live policy tests include an in-flight call, a queued call, revocation,
+restoration and invalid/stale revisions; the Docker fixture also exercises
+revocation/restoration without a session reset.
+
+## Audit and telemetry probes
+
+The confinement job installs the hash-pinned optional SDK from
+`requirements/confinement.txt`. Its tests send synthetic payloads through the
+real gateway and stdio upstream, then inspect persisted SQLite audit entries,
+in-memory chain entries, real SDK-exported spans and Python logs. Success,
+payload-bearing upstream errors, malformed stdout and stderr echoing all have
+positive tool-delivery controls. Payload hashes and fixed decision metadata
+remain present; literal canary payloads must be absent from these observed sinks.
+
+Two regression tests cover audit-observer and OTel export exceptions containing
+private data. Failure diagnostics now omit observer representations and
+tracebacks. The tests reproduced both leaks before that change. An arbitrary
+plugin can still write its own logs, and metadata/hashes may themselves be
+sensitive; these probes do not certify all collectors, exporters or encodings.
+
 ## Limits and remaining issue work
 
 The trusted boundary includes the host kernel, Docker daemon and local socket,
@@ -118,12 +175,11 @@ Canary observations cover these probes, not all encodings, kernel interfaces or
 covert channels. Timing, traffic shape, resource contention, shared hardware and
 other side channels remain untested. Crash tests verify termination and configured
 hard limits; they do not scan host crash services or prove memory erasure.
-Abrupt loss of the host bridge is not a full supervisor/recovery protocol: the
-container retains its isolation and limits, but needs external reaping if the
-bridge cannot execute cleanup. Live operator-policy replacement is unsupported;
-stop the old session and construct a new one. Broader audit/export adversarial
-coverage, host lifecycle supervision and deployment-specific custody evidence
-remain tracked in #659 rather than implied by a passing reference run.
+The watchdog covers loss of the bridge while the watcher and daemon survive;
+it is not a host-wide supervisor/recovery protocol. Live restrictions preserve
+the existing gateway state, but arbitrary policy replacement remains unsupported.
+Broader exporter/plugin adversarial coverage, host-wide recovery and
+deployment-specific custody evidence remain outside this reference claim.
 
 Docker behavior references:
 [container execution](https://docs.docker.com/engine/containers/run/) and

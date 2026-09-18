@@ -158,7 +158,8 @@ class OtelAuditExporter:
             self._export(tracer, entry)
         except Exception:  # pragma: no cover - defensive
             if not self._warned:
-                logger.debug("OTel audit export failed; further failures are silent", exc_info=True)
+                # Exporter failures can embed private input in exception text.
+                logger.debug("OTel audit export failed; further failures are silent")
                 self._warned = True
 
     def _export(self, tracer: Any, entry: AuditEntry) -> None:

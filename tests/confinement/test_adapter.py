@@ -64,6 +64,20 @@ async def test_output_flood_cleanup_drains_real_child_pipes(monkeypatch):
     # the hosted suite separately verifies that the container is stopped.
     monkeypatch.setattr("examples.confinement.adapter.shutil.which", lambda name: sys.executable)
     monkeypatch.setattr("examples.confinement.adapter.host_preflight", lambda: None)
+    class NoWatchdog:
+        def __init__(self, command):
+            pass
+
+        async def start(self):
+            pass
+
+        async def pulse(self):
+            await asyncio.Future()
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("examples.confinement.adapter.LeaseWatchdog", NoWatchdog)
     sandbox = DockerSandbox("sha256:" + "a" * 64)
     sandbox.command = [sys.executable, "-c",
                        "import sys,time; sys.stdin.readline(); "
