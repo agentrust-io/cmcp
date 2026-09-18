@@ -1,4 +1,4 @@
-"""AGT SRE kill switch evaluator: implements issue #341."""
+"""Kill switch: per-identity deny-rate evaluation and durable blocks (issue #341)."""
 
 from __future__ import annotations
 
@@ -94,9 +94,9 @@ class KillSwitchEvaluator:
     When a registered agent identity exceeds `deny_rate_threshold` policy
     denies over the rolling `window_seconds` window (with at least `min_calls`
     events), the identity is flagged. The TRACE claim for the session that
-    trips the threshold carries `kill_switch_triggered=true`: hardware-attested
-    evidence of automated enforcement. Subsequent `create_session()` calls for
-    the same agent identity raise `KillSwitchTripped`.
+    trips the threshold carries `kill_switch_triggered=true`. Subsequent
+    `create_session()` calls for the same agent identity raise
+    `KillSwitchTripped`.
 
     Blocks are held in a `KillSwitchBlockStore` when one is supplied, which is
     how the running gateway is wired, so a block survives a restart and lasts

@@ -141,6 +141,8 @@ class SessionState:
     A TRACE claim must report drift in both cases.
     """
     kill_switch_triggered: bool = False
+    #: "deny_rate" or "operator" once the switch has tripped in this session.
+    kill_switch_trigger: str | None = None
     #: Tool calls the kill switch has already counted, so a call observed as it
     #: completes is not counted a second time when the session closes.
     kill_switch_observed_calls: set[str] = field(

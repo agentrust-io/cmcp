@@ -258,6 +258,25 @@ class AttestationEvidence(BaseModel):
     ek_cert_chain: str | None = None  # EK's own path to the manufacturer CA
 
 
+class KillSwitchState(BaseModel):
+    """What the kill switch was set to do for this session, and what it did.
+
+    Present only when the kill switch is enabled, so claims from gateways
+    without it are byte-identical to what they were before this field existed.
+    A verifier that requires an armed kill switch checks for its presence.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    window_seconds: int
+    deny_rate_threshold: float
+    min_calls: int
+    #: What stopped the session: "deny_rate" when the threshold was crossed,
+    #: "operator" when an operator tripped it. None when it did not trip.
+    trigger: Literal["deny_rate", "operator"] | None = None
+
+
 class GatewayAddenda(BaseModel):
     """cmcp-specific fields outside the canonical TRACE spec."""
 
@@ -277,6 +296,7 @@ class GatewayAddenda(BaseModel):
     call_log_summary: CallLogSummary | None = None
     agent_identity: AgentIdentityOut | None = None
     kill_switch_triggered: bool = False
+    kill_switch: KillSwitchState | None = None
     attestation_evidence: AttestationEvidence | None = None
 
 
@@ -296,6 +316,10 @@ class RuntimeClaim(BaseModel):
 
 def _to_dict(claim: RuntimeClaim) -> dict[str, Any]:
     return claim.model_dump(exclude_none=True)
+
+
+#: ``type`` of the signed receipt a gateway returns when the kill switch refuses a call.
+REFUSAL_RECEIPT_TYPE = "cmcp.kill-switch.refusal/v1"
 
 
 def canonical_json(claim_dict: dict[str, Any]) -> bytes:
@@ -435,6 +459,7 @@ def generate_trace_claim(
     sequence_number: int = 1,
     prev_claim_hash: str | None = None,
     kill_switch_triggered: bool = False,
+    kill_switch: KillSwitchState | None = None,
     do_sign: bool = True,
 ) -> RuntimeClaim:
     """Generate a RuntimeClaim from session data, validate it via Pydantic, and optionally sign it.
@@ -496,6 +521,7 @@ def generate_trace_claim(
         attestation_stale=attestation_stale,
         catalog_exceptions=catalog_exceptions or [],
         kill_switch_triggered=kill_switch_triggered,
+        kill_switch=kill_switch,
         attestation_evidence=_build_evidence(attestation_report),
         call_log_summary=call_log_summary,
         agent_identity=(

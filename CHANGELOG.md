@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Nothing in a claim showed whether the kill switch was armed, and a refusal
+  left no evidence.** A claim with `kill_switch_triggered: false` read the same
+  whether the switch was enabled and did not trip or was never enabled, and a
+  call refused by a tripped gateway produced nothing a verifier could check.
+  Claims from a gateway with the switch enabled now carry a `gateway.kill_switch`
+  block with its settings and, when it tripped, `trigger` (`deny_rate` or
+  `operator`); claims from gateways without it are unchanged. Each refused call
+  returns a receipt signed with the claim signing key and bound to the closed
+  session's claim by digest, and `cmcp_verify.verify_kill_switch_refusal` checks
+  one against the other. `kill_switch.enabled` with no Agent Manifest now stops
+  startup (`KILL_SWITCH_REQUIRES_IDENTITY`): the switch blocks an identity, and
+  without one it stopped nothing while appearing armed. The tutorial no longer
+  claims evidence is verifiable by any regulator or that no other gateway can
+  produce it, and says what the evidence does not cover.
+
 - **The kill switch only acted when a session closed.** The deny rate was
   evaluated in `close_session`, so an agent the switch should have stopped kept
   calling for as long as its client kept the session open. Each call is now

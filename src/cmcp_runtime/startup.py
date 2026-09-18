@@ -642,6 +642,24 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
 
+    # The kill switch blocks an agent identity. Enabled with no Agent Manifest it
+    # has nothing to block, so it would look armed while stopping nothing.
+    if config.kill_switch.enabled and (
+        config.agent_manifest.path is None
+        or config.agent_manifest.trust_anchor_path is None
+    ):
+        _fatal(
+            "KILL_SWITCH_REQUIRES_IDENTITY",
+            "kill_switch.enabled requires an Agent Manifest binding: the kill switch "
+            "blocks an agent identity, and without one it would stop nothing.",
+            detail=(
+                "set agent_manifest.path and agent_manifest.trust_anchor_path, "
+                "or set kill_switch.enabled to false"
+            ),
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
     if config.agent_manifest.path is not None and config.agent_manifest.trust_anchor_path is not None:
         try:
             loaded = load_agent_manifest_document(config.agent_manifest.path)

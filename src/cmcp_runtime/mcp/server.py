@@ -182,15 +182,20 @@ def _negotiate_protocol_version(params: dict[str, Any]) -> str:
     return _LEGACY_PROTOCOL_VERSIONS[0]
 
 
-def _kill_switch_response(rpc_id: Any, agent_id: str | None) -> JSONResponse:
+def _kill_switch_response(
+    rpc_id: Any, agent_id: str | None, receipt: dict[str, Any] | None = None
+) -> JSONResponse:
     """JSON-RPC refusal for a call arriving while the kill switch holds the gateway stopped."""
+    data: dict[str, Any] = {"error_code": "KILL_SWITCH_TRIPPED", "agent_id": agent_id}
+    if receipt is not None:
+        data["receipt"] = receipt
     return JSONResponse(
         {
             "jsonrpc": "2.0",
             "error": {
                 "code": -32000,
                 "message": "Agent identity blocked by the kill switch",
-                "data": {"error_code": "KILL_SWITCH_TRIPPED", "agent_id": agent_id},
+                "data": data,
             },
             "id": rpc_id,
         },
@@ -726,7 +731,22 @@ class MCPServer:
                 execution_id=execution_id,
             )
         except KillSwitchTripped as exc:
-            return _kill_switch_response(rpc_id, exc.detail)
+            receipt = None
+            if (
+                self._session_manager is not None
+                and self._session is not None
+                and exc.detail is not None
+            ):
+                receipt = self._session_manager.refusal_receipt(
+                    exc.detail, self._session.session_id
+                )
+            logger.warning(
+                "KILL_SWITCH_REFUSED: agent_id=%s tool=%s session=%s",
+                exc.detail,
+                tool_name,
+                self._session.session_id if self._session is not None else None,
+            )
+            return _kill_switch_response(rpc_id, exc.detail, receipt)
         except Exception as exc:
             logger.error("TEE_FAULT during call_tool: call_id=%s error=%s", call_id, exc)
             await self._observe_for_kill_switch(call_id)

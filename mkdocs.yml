@@ -209,7 +209,7 @@ nav:
           - Verify a TRACE claim: tutorials/verifying-a-trace-claim.md
           - TEE attestation: tutorials/tee-attestation.md
           - Response inspection tutorial: tutorials/response-inspection.md
-          - AGT SRE kill switch: tutorials/kill-switch.md
+          - Kill switch: tutorials/kill-switch.md
       - Deployment:
           - Deploy on Azure: tutorials/deploy-azure.md
           - Deploy on GCP: tutorials/deploy-gcp.md

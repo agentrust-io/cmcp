@@ -10,20 +10,23 @@ import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from cmcp_runtime.agent_manifest import AgentManifestBinding
 from cmcp_runtime.audit.chain import AuditChain, AuditEntry
 from cmcp_runtime.audit.trace_claim import (
+    REFUSAL_RECEIPT_TYPE,
     AgentIdentityInfo,
     AttestationReportInfo,
     CallGraphSummary,
     CallLogSummary,
     CallSummary,
+    KillSwitchState,
     PolicyBundleInfo,
     ToolCatalogInfo,
     ToolTranscriptEntry,
+    canonical_json,
     generate_trace_claim,
 )
 from cmcp_runtime.config import KillSwitchConfig, SensitivityConfig
@@ -430,6 +433,7 @@ class SessionManager:
             )
             if self._kill_switch.evaluate(ks_binding.agent_id):
                 state.kill_switch_triggered = True
+                state.kill_switch_trigger = "deny_rate"
                 chain.append(
                     "break_glass_used",
                     detail={
@@ -490,6 +494,7 @@ class SessionManager:
             sequence_number=_CLAIM_SEQUENCE,
             prev_claim_hash=self._last_claim_hash,
             kill_switch_triggered=state.kill_switch_triggered,
+            kill_switch=self._kill_switch_state(state),
             do_sign=True,
         )
 
@@ -504,6 +509,48 @@ class SessionManager:
         self._closed_claims[session_id] = claim_dict
         logger.info("Session closed: session_id=%s sequence_number=%d", session_id, _CLAIM_SEQUENCE)
         return claim_dict
+
+    def _kill_switch_state(self, state: SessionState) -> KillSwitchState | None:
+        ks_cfg = getattr(self._ctx.config, "kill_switch", None)
+        if not isinstance(ks_cfg, KillSwitchConfig) or not ks_cfg.enabled:
+            return None
+        trigger: Literal["deny_rate", "operator"] | None = None
+        if state.kill_switch_triggered and state.kill_switch_trigger == "deny_rate":
+            trigger = "deny_rate"
+        elif state.kill_switch_triggered and state.kill_switch_trigger == "operator":
+            trigger = "operator"
+        return KillSwitchState(
+            enabled=True,
+            window_seconds=ks_cfg.window_seconds,
+            deny_rate_threshold=ks_cfg.deny_rate_threshold,
+            min_calls=ks_cfg.min_calls,
+            trigger=trigger,
+        )
+
+    def refusal_receipt(self, agent_id: str, session_id: str) -> dict[str, Any]:
+        """A signed statement that this gateway refused a call because of the kill switch.
+
+        Signed with the key that signs the gateway's claims, over the same
+        canonical JSON, so ``cmcp_verify.verify_kill_switch_refusal`` can tie it
+        to the claim of the session the trip closed. ``claim_digest`` is present
+        when that claim has been signed; it is absent when the identity was
+        blocked before this gateway started and its session is still open.
+        """
+        body: dict[str, Any] = {
+            "type": REFUSAL_RECEIPT_TYPE,
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "refused_at": datetime.now(UTC).isoformat(),
+            "gateway_key": base64.urlsafe_b64encode(
+                self._ctx.signing_key.public_key_bytes
+            ).rstrip(b"=").decode(),
+        }
+        claim = self._closed_claims.get(session_id)
+        if claim is not None:
+            body["claim_digest"] = "sha256:" + hashlib.sha256(canonical_json(claim)).hexdigest()
+        signature = self._ctx.signing_key.sign(canonical_json(body))
+        body["signature"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+        return body
 
     @property
     def kill_switch_enabled(self) -> bool:
@@ -554,6 +601,7 @@ class SessionManager:
         if not self._kill_switch.evaluate(binding.agent_id):
             return False
         state.kill_switch_triggered = True
+        state.kill_switch_trigger = "deny_rate"
         chain.append(
             "break_glass_used",
             detail={
@@ -585,6 +633,7 @@ class SessionManager:
             return None
         self._kill_switch.block(binding.agent_id, reason="operator")
         state.kill_switch_triggered = True
+        state.kill_switch_trigger = "operator"
         chain.append(
             "break_glass_used",
             detail={
