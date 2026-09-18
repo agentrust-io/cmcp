@@ -371,8 +371,15 @@ class PolicyStore:
             # Stamped before the attempt, so an exception cannot skip it.
             self._last_reload_at = time.monotonic()
             try:
+                # With a key pinned, the key authorises what changes after startup,
+                # and the pinned hash has done its job: it fixed the artifact the
+                # process started with. Re-checking it here refuses every bundle
+                # that actually changed, which made reload inert in the one shape
+                # production runs (a hash is required outside dev mode).
                 new_bundle = load_policy_bundle(
-                    self._bundle_path, self._expected_hash, self._signing_key
+                    self._bundle_path,
+                    None if self._signing_key is not None else self._expected_hash,
+                    self._signing_key,
                 )
                 if new_bundle.bundle_hash != self._bundle.bundle_hash:
                     self._check_not_a_downgrade(new_bundle)
