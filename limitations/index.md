@@ -2,6 +2,12 @@
 
 This document describes what cMCP does not prevent, where its guarantees end, and what operators and verifiers must address through separate controls.
 
+## Optional sink sensitivity ceilings
+
+The optional `sink_policy` enforces operator-configured ceilings for tools and caller responses, using the accumulated session classification, catalog floor, and caller-declared class. It cannot discover unlabelled secrets, track exact data dependencies, or establish safe declassification of a summary. Equal-ranked labels are equivalent for this gate, not isolated compartments. Permitted remote tools still need their own confidentiality protections.
+
+With this option, gateway-created stdio servers suppress captured stderr content. Other application/third-party logs, direct agent egress, and audit metadata remain outside that control. Audit payload hashes can reveal predictable values through guessing and do not make an audit bundle safe to publish. The startup sink policy is immutable per proxy but is not separately bound into a remote attestation claim. Protect and review deployment configuration and operator reset authority.
+
 ## What cMCP does not prevent
 
 **Prompt injection into Cedar policy** Cedar policy evaluation is only as correct as the policy the operator wrote and approved. cMCP measures the policy bundle hash into the TEE attestation report, which proves the policy that ran is the policy that was approved. It does not evaluate whether that policy achieves the intended security outcome. A policy that contains `permit(principal, action, resource);` without conditions permits every tool call. Policy correctness is the operator's responsibility; policy review is a separate control.
