@@ -79,7 +79,8 @@ python -m pytest tests/confinement -v --tb=short
 Without that environment variable, the OS-independent parser/profile tests and
 real gateway delivery tests still run; Docker tests are explicitly skipped.
 `.github/workflows/confinement.yml` runs the Docker suite and retains test results,
-kernel version and Docker version as `confinement-evidence`.
+numeric sink observations, kernel version and Docker version as
+`confinement-evidence`. No canary payloads enter that observation artifact.
 
 Observers live outside the agent. TCP listeners count direct IPv4, IPv6 and
 child-process delivery; a local UDP listener receives a DNS question without

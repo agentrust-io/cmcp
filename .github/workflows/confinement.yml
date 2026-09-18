@@ -29,6 +29,9 @@ jobs:
           docker build --iidfile /tmp/cmcp-confinement-image examples/confinement
           echo "CMCP_CONFINEMENT_IMAGE=$(cat /tmp/cmcp-confinement-image)" >> "$GITHUB_ENV"
       - name: Exercise isolation and causal mutations
+        shell: bash
+        env:
+          CMCP_CONFINEMENT_EVIDENCE: confinement-evidence/observations.jsonl
         # This changes ONLY the disposable hosted runner. The adapter refuses
         # piped core handlers; it never changes an operator's host policy.
         run: |

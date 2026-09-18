@@ -5,6 +5,7 @@ from copy import deepcopy
 
 import pytest
 from examples.confinement.adapter import (
+    DockerSandbox,
     Refused,
     check_core_pattern,
     create_arguments,
@@ -42,6 +43,18 @@ def test_valid_alias_and_non_json():
     assert decode_request(b'{"operation":"ok","arguments":{"x":1}}', {"ok": "trusted.tool"}) == ("trusted.tool", {"x": 1})
     with pytest.raises(Refused, match="^invalid agent request$"):
         decode_request(b"private plaintext\n", {})
+
+
+async def test_used_container_cannot_receive_a_second_session(monkeypatch):
+    monkeypatch.setattr("examples.confinement.adapter.shutil.which", lambda name: "/usr/bin/docker")
+    sandbox = DockerSandbox("sha256:" + "a" * 64)
+    sandbox._used = True
+
+    async def dispatch(tool, arguments):
+        pytest.fail("must refuse before dispatch")
+
+    with pytest.raises(Refused, match="fresh container"):
+        await sandbox.execute({}, dispatch, {})
 
 
 def valid_inspect():

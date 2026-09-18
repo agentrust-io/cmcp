@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -114,6 +115,11 @@ async def run_case(tmp_path, monkeypatch, *, mutation=None, mode="normal", unava
             except adapter.Refused:
                 refused, stats = True, {}
             observation = await capture(sandbox, received, sink, canary)
+            if report := os.environ.get("CMCP_CONFINEMENT_EVIDENCE"):
+                with Path(report).open("a", encoding="utf-8") as artifact:
+                    artifact.write(json.dumps({"mutation": mutation, "mode": mode,
+                                               "unavailable": unavailable, "refused": refused,
+                                               "stats": stats, "observed": observation}) + "\n")
             return observation, stats, refused
     finally:
         await proxy.aclose()
