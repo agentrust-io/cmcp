@@ -1,0 +1,47 @@
+name: Confinement reference
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install --no-deps -e .
+      - name: Check reference adapter and fixtures
+        run: ruff check examples/confinement tests/confinement
+      - name: Build adversarial fixture
+        run: |
+          docker build --iidfile /tmp/cmcp-confinement-image examples/confinement
+          echo "CMCP_CONFINEMENT_IMAGE=$(cat /tmp/cmcp-confinement-image)" >> "$GITHUB_ENV"
+      - name: Exercise isolation and causal mutations
+        # This changes ONLY the disposable hosted runner. The adapter refuses
+        # piped core handlers; it never changes an operator's host policy.
+        run: |
+          original=$(cat /proc/sys/kernel/core_pattern)
+          trap 'sudo sysctl -w "kernel.core_pattern=$original"' EXIT
+          sudo sysctl -w kernel.core_pattern=core
+          mkdir -p confinement-evidence
+          docker version > confinement-evidence/docker-version.txt
+          uname -a > confinement-evidence/kernel.txt
+          python -m pytest tests/confinement -v --tb=short --junitxml=confinement-evidence/results.xml 2>&1 | tee confinement-evidence/tests.txt
+      - name: Retain reproducible evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: confinement-evidence
+          path: confinement-evidence/

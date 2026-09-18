@@ -257,6 +257,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and response SLAs. Se
 |---|---|
 | [docs/quickstart.md](docs/quickstart.md) | From zero to first TRACE Claim in under 30 minutes |
 | [docs/configuration.md](docs/configuration.md) | Full config reference with all fields and defaults |
+| [docs/confinement.md](docs/confinement.md) | Experimental Linux agent sandbox, bypass tests and trust assumptions |
 | [docs/SPEC.md](docs/SPEC.md) | Product specification: problem taxonomy, architecture, coverage matrix |
 | [docs/spec/threat-model.md](docs/spec/threat-model.md) | STRIDE analysis, adversary model, residual risks |
 | [docs/spec/cedar-policy.md](docs/spec/cedar-policy.md) | Cedar policy language reference and schema |
