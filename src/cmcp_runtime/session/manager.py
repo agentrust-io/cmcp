@@ -300,11 +300,15 @@ class SessionManager:
             cert_chain=_b64(report.attestation_key_chain_pem),
         )
 
-        bundle = ctx.policy_bundle
+        # One read of the store, so hash, version and signer describe the same
+        # bundle even if a reload swaps it while this claim is being built.
+        active_bundle = ctx.policy_bundle.bundle
         policy_info = PolicyBundleInfo(
-            hash=bundle.bundle.bundle_hash,
+            hash=active_bundle.bundle_hash,
             enforcement_mode=str(ctx.config.attestation.enforcement_mode),
-            policy_version=bundle.bundle.manifest.version,
+            policy_version=active_bundle.manifest.version,
+            signing_key_id=active_bundle.signing_key_id,
+            revoked_signing_key_ids=ctx.policy_bundle.revoked_key_ids,
         )
 
         catalog = ctx.catalog

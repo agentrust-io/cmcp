@@ -85,6 +85,31 @@ class PolicyDeny(CMCPError):
         self.aarm_decision = decision_for_deny(self.advice)
 
 
+class PolicySigningKeyRevoked(PolicyDeny):
+    """The policy in force, or a bundle offered to replace it, is signed by a
+    revoked policy signing key.
+
+    Raised in two places. On load, a bundle whose signature verifies only under a
+    revoked key is refused. On evaluation, a policy that was installed under a key
+    revoked since then is no longer trusted, so every tool call is refused until a
+    bundle signed by a still-trusted key is installed. That second case is why this
+    is a :class:`PolicyDeny`: the proxy already records and returns a deny for it.
+    It applies in every enforcement mode, because advisory and silent modes decide
+    what to do with a Cedar decision, and here there is no trusted policy to decide.
+    """
+
+    code = "POLICY_SIGNING_KEY_REVOKED"
+    http_status = 403
+
+
+class PolicyKeyRevocationInvalid(CMCPError):
+    """A policy signing key revocation statement was refused: malformed, not
+    signed by a key allowed to issue it, or naming a key it may not revoke."""
+
+    code = "POLICY_KEY_REVOCATION_INVALID"
+    http_status = 500
+
+
 class CatalogToolNameCollision(CMCPError):
     code = "CATALOG_TOOL_NAME_COLLISION"
     http_status = 500
