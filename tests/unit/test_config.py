@@ -91,6 +91,18 @@ def test_unknown_key_raises(config_file):
         load_config(path)
 
 
+def test_session_state_path_is_accepted(config_file):
+    """#653: the documented key must not be rejected as unknown."""
+    path = config_file("""
+        attestation:
+          provider: tpm
+          enforcement_mode: advisory
+        session_state_path: /etc/cmcp/session-state.db
+    """)
+    cfg = load_config(path)
+    assert cfg.session_state_path == "/etc/cmcp/session-state.db"
+
+
 def test_catalog_reload_knob_is_reserved_and_requires_restart(config_file):
     """#495: adding a parser field alone must not enable catalog mutation."""
     path = config_file("catalog_reload_interval_seconds: 60\n")

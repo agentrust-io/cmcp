@@ -93,7 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the pre-call policy evaluation reads it. A reset also advances the closed
   session's generation in the store, so an instance still holding the old
   identifier stops applying responses to it. Unset is the default and preserves
-  the previous single-instance behaviour exactly.
+  the previous single-instance behaviour exactly. `session_state_path` is
+  accepted at config load and the store is opened and wired into the gateway
+  at startup (`#653`); an unopenable path fails startup closed
+  (`SESSION_STATE_STORE_UNAVAILABLE`) rather than starting silently without
+  the persistence the operator configured.
 
 ### Changed
 
