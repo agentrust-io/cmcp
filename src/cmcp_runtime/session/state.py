@@ -141,6 +141,11 @@ class SessionState:
     A TRACE claim must report drift in both cases.
     """
     kill_switch_triggered: bool = False
+    #: Tool calls the kill switch has already counted, so a call observed as it
+    #: completes is not counted a second time when the session closes.
+    kill_switch_observed_calls: set[str] = field(
+        default_factory=set, repr=False, compare=False
+    )
     # #479: the effective vocabulary this session ranks tags against. Defaults to
     # the built in table; SessionManager passes the deployment's configured one.
     sensitivity_order: dict[str, int] = field(

@@ -57,7 +57,7 @@ _AUTH_EXEMPT_PATHS = {"/health", "/readyz"}
 # reset lowers accumulated session sensitivity, so the credential that authorizes
 # one must not be the credential an agent host already holds.
 _OPERATOR_PATH_RE = re.compile(
-    r"^/(?:sessions/[^/]+/reset|catalog/exception|kill-switch/unblock)$"
+    r"^/(?:sessions/[^/]+/reset|catalog/exception|kill-switch/(?:unblock|trip))$"
 )
 
 # DOS-001: default ceiling on a single request body. Overridable per
@@ -444,6 +444,7 @@ class MCPServer:
                 ),
                 Route("/catalog/exception", self._catalog_exception, methods=["POST"]),
                 Route("/kill-switch/unblock", self._kill_switch_unblock, methods=["POST"]),
+                Route("/kill-switch/trip", self._kill_switch_trip, methods=["POST"]),
             ],
             middleware=middleware,
             exception_handlers={Exception: _unhandled_error_handler},
@@ -728,6 +729,7 @@ class MCPServer:
             return _kill_switch_response(rpc_id, exc.detail)
         except Exception as exc:
             logger.error("TEE_FAULT during call_tool: call_id=%s error=%s", call_id, exc)
+            await self._observe_for_kill_switch(call_id)
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
@@ -741,6 +743,7 @@ class MCPServer:
                 status_code=500,
             )
 
+        await self._observe_for_kill_switch(call_id)
         if not result.allowed:
             return self._deny_response(rpc_id, call_id, result)
 
@@ -764,6 +767,23 @@ class MCPServer:
                 "_cmcp": cmcp_meta,
             },
         })
+
+    async def _observe_for_kill_switch(self, call_id: str) -> None:
+        """Count a completed call toward the kill switch, and stop the session at a trip."""
+        if (
+            self._session_manager is None
+            or self._session is None
+            or self._audit_chain is None
+        ):
+            return
+        session = self._session
+        if not self._session_manager.observe_call(session, self._audit_chain, call_id):
+            return
+        blocked = self._session_manager.blocked_identity()
+        if blocked is not None:
+            # Refuse new calls from this moment, before the close begins.
+            self._proxy.mark_halted(blocked)
+        await self._seal_after_trip(session.session_id)
 
     async def _handle_tools_list(self, rpc_id: Any) -> Response:
         """Return the attested tool catalog as MCP tools list."""
@@ -888,7 +908,10 @@ class MCPServer:
             )
         session_id: str = request.path_params["session_id"]
         halted = self._proxy.halted_identity
-        if halted is not None:
+        # Once the trip has closed the session there is nothing left to close.
+        # A halted gateway whose session is still open (blocked at start, or a
+        # seal that failed) can still have it closed and its claim signed.
+        if halted is not None and self._session.session_id in self._closed_chains:
             return _kill_switch_conflict(halted)
         if session_id != self._session.session_id:
             return JSONResponse(
@@ -921,61 +944,96 @@ class MCPServer:
                     status_code=404,
                 )
 
-            pending = self._pending_close
-            new_session: SessionState | None
-            new_chain: AuditChain | None
-            if pending is not None and pending[0] != session_id:
-                raise RuntimeError(
-                    f"close of {session_id} reached commit while {pending[0]} is "
-                    "still awaiting recovery"
-                )
-            if pending is None:
-                try:
-                    claim = self._session_manager.close_session(
-                        session_id,
-                        self._session,
-                        self._audit_chain,
-                        call_log=getattr(self._proxy, "_call_log", None),
-                        session_call_log=getattr(self._proxy, "_session_call_log", None),
-                    )
-                finally:
-                    if self._session_manager.is_closing(session_id):
-                        self._proxy.mark_close_committed()
-                self._closed_chains[session_id] = self._audit_chain
-                # A close can trip the kill switch. The blocked identity gets no
-                # successor: the claim is still returned, and the gateway stops
-                # serving calls until an operator lifts the block.
-                if self._session_manager.blocked_identity() is None:
-                    new_session, new_chain = self._session_manager.create_session()
-                    self._pending_close = (session_id, claim, new_session, new_chain)
-                else:
-                    new_session, new_chain = None, None
-                    self._pending_close = (session_id, claim, None, None)
-            else:
-                _, claim, new_session, new_chain = pending
-
-            if new_session is None or new_chain is None:
-                blocked = self._session_manager.blocked_identity() or "unknown"
-                await self._proxy.halt_session(blocked)
-                self._pending_close = None
-                logger.warning(
-                    "KILL_SWITCH_HALTED: session=%s closed with no successor; "
-                    "agent_id=%s is blocked until an operator unblocks it",
-                    session_id,
-                    blocked,
-                )
-                return JSONResponse(claim)
-
-            # Cleanup/rebind must succeed before server pointers advance.
-            await self._proxy.rebind_session(new_session, new_chain)
-            self._pending_close = None
-            self._session = new_session
-            self._audit_chain = new_chain
-            self._audit = new_chain
+            claim = await self._commit_close(session_id)
         logger.info(
-            "Session closed via API: closed=%s new=%s", session_id, new_session.session_id
+            "Session closed via API: closed=%s now=%s", session_id, self._session.session_id
         )
         return JSONResponse(claim)
+
+    async def _commit_close(self, session_id: str) -> dict[str, Any]:
+        """Sign the session's claim, then rotate onto a successor or halt.
+
+        The caller holds ``session_rotation`` for ``session_id``. A close can
+        trip the kill switch, and a close can be how a trip is carried out. In
+        both cases the blocked identity gets no successor: the claim is still
+        returned, and the gateway serves no calls until an operator lifts the
+        block.
+        """
+        assert self._session_manager is not None
+        assert self._session is not None and self._audit_chain is not None
+        pending = self._pending_close
+        new_session: SessionState | None
+        new_chain: AuditChain | None
+        if pending is not None and pending[0] != session_id:
+            raise RuntimeError(
+                f"close of {session_id} reached commit while {pending[0]} is "
+                "still awaiting recovery"
+            )
+        if pending is None:
+            try:
+                claim = self._session_manager.close_session(
+                    session_id,
+                    self._session,
+                    self._audit_chain,
+                    call_log=getattr(self._proxy, "_call_log", None),
+                    session_call_log=getattr(self._proxy, "_session_call_log", None),
+                )
+            finally:
+                if self._session_manager.is_closing(session_id):
+                    self._proxy.mark_close_committed()
+            self._closed_chains[session_id] = self._audit_chain
+            if self._session_manager.blocked_identity() is None:
+                new_session, new_chain = self._session_manager.create_session()
+                self._pending_close = (session_id, claim, new_session, new_chain)
+            else:
+                new_session, new_chain = None, None
+                self._pending_close = (session_id, claim, None, None)
+        else:
+            _, claim, new_session, new_chain = pending
+
+        if new_session is None or new_chain is None:
+            blocked = self._session_manager.blocked_identity() or "unknown"
+            await self._proxy.halt_session(blocked)
+            self._pending_close = None
+            logger.warning(
+                "KILL_SWITCH_HALTED: session=%s closed with no successor; "
+                "agent_id=%s is blocked until an operator unblocks it",
+                session_id,
+                blocked,
+            )
+            return claim
+
+        # Cleanup/rebind must succeed before server pointers advance.
+        await self._proxy.rebind_session(new_session, new_chain)
+        self._pending_close = None
+        self._session = new_session
+        self._audit_chain = new_chain
+        self._audit = new_chain
+        return claim
+
+    async def _seal_after_trip(self, session_id: str) -> None:
+        """Close the session the kill switch just tripped in, now rather than at client close.
+
+        Admission is already refused (the caller marked the proxy halted), so
+        the only calls the close waits for are ones admitted before the trip;
+        they finish or are cancelled at the drain deadline. A failure here is
+        logged and leaves admission refused: the session can still be closed
+        with POST /sessions/{id}/close, which is how the operator recovers it.
+        """
+        try:
+            async with self._proxy.session_rotation(
+                expected_session_id=session_id, drain_timeout=self._session_close_drain_s
+            ) as acquired:
+                if acquired:
+                    await self._commit_close(session_id)
+        except Exception as exc:
+            logger.error(
+                "KILL_SWITCH_SEAL_FAILED: session=%s error=%s; admission stays refused "
+                "and the session can be closed via POST /sessions/%s/close",
+                session_id,
+                exc,
+                session_id,
+            )
 
     async def _catalog_exception(self, request: Request) -> Response:
         """POST /catalog/exception - add a break-glass catalog exception at runtime.
@@ -1080,6 +1138,92 @@ class MCPServer:
             },
             status_code=201,
         )
+
+    async def _kill_switch_trip(self, request: Request) -> Response:
+        """POST /kill-switch/trip - operator-only: stop the bound agent identity now.
+
+        Body: {"reason": str, "authorized_by": str}. Blocks the identity in the
+        durable store, records the trip in the live session's audit chain, then
+        closes that session and returns its signed claim. From the moment the
+        trip starts no new call is admitted; calls already running finish or
+        are cancelled at the close drain deadline. The block lasts until
+        POST /kill-switch/unblock.
+        """
+        if (
+            self._session_manager is None
+            or self._audit_chain is None
+            or self._session is None
+        ):
+            return JSONResponse(
+                {"error": "session management not configured"}, status_code=501
+            )
+        if not self._session_manager.kill_switch_enabled:
+            return JSONResponse(
+                {
+                    "error": "the kill switch is not enabled on this gateway",
+                    "error_code": "KILL_SWITCH_DISABLED",
+                },
+                status_code=409,
+            )
+        try:
+            data = json.loads(await request.body())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JSONResponse(
+                {"error": "invalid JSON body", "error_code": "PARSE_ERROR"},
+                status_code=400,
+            )
+        if not isinstance(data, dict):
+            return JSONResponse(
+                {"error": "body must be a JSON object", "error_code": "PARSE_ERROR"},
+                status_code=400,
+            )
+        fields: dict[str, str] = {}
+        for name in ("reason", "authorized_by"):
+            value = data.get(name)
+            if not isinstance(value, str) or not value:
+                return JSONResponse(
+                    {"error": f"'{name}' is required", "error_code": "MISSING_FIELD"},
+                    status_code=422,
+                )
+            fields[name] = value
+        halted = self._proxy.halted_identity
+        if halted is not None and self._session.session_id in self._closed_chains:
+            return _kill_switch_conflict(halted)
+
+        credential = (
+            "operator_token" if self._operator_token is not None else "bearer_token"
+        )
+        session_id = self._session.session_id
+        async with self._proxy.session_rotation(
+            expected_session_id=session_id, drain_timeout=self._session_close_drain_s
+        ) as acquired:
+            if not acquired:
+                return JSONResponse({"error": "session rotated, retry"}, status_code=409)
+            agent_id = self._session_manager.trip_identity(
+                self._session,
+                self._audit_chain,
+                reason=fields["reason"],
+                authorized_by=fields["authorized_by"],
+                credential=credential,
+            )
+            if agent_id is None:
+                return JSONResponse(
+                    {
+                        "error": "no agent identity is bound to this gateway",
+                        "error_code": "NO_AGENT_IDENTITY",
+                    },
+                    status_code=409,
+                )
+            claim = await self._commit_close(session_id)
+
+        logger.warning(
+            "KILL_SWITCH_OPERATOR_TRIP: agent_id=%s authorized_by=%r reason=%r session=%s",
+            agent_id,
+            fields["authorized_by"],
+            fields["reason"],
+            session_id,
+        )
+        return JSONResponse({"status": "tripped", "agent_id": agent_id, "claim": claim})
 
     async def _kill_switch_unblock(self, request: Request) -> Response:
         """POST /kill-switch/unblock - operator-only: lift a kill switch block.

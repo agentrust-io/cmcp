@@ -416,15 +416,19 @@ class SessionManager:
         ks_binding = getattr(ctx, "agent_manifest", None)
         if not isinstance(ks_binding, AgentManifestBinding):
             ks_binding = None
-        kill_switch_triggered = False
-        if ks_binding is not None:
+        if ks_binding is not None and not state.kill_switch_triggered:
+            # Calls observed as they completed were counted then; count the rest.
+            unobserved = [
+                e for e in tool_calls if e.call_id not in state.kill_switch_observed_calls
+            ]
             self._kill_switch.record_calls(
                 ks_binding.agent_id,
-                allowed=tool_calls_allowed,
-                denied=tool_calls_denied,
+                allowed=sum(1 for e in unobserved if e.policy_decision == "allow"),
+                denied=sum(
+                    1 for e in unobserved if e.policy_decision in ("deny", "advisory_deny")
+                ),
             )
-            kill_switch_triggered = self._kill_switch.evaluate(ks_binding.agent_id)
-            if kill_switch_triggered:
+            if self._kill_switch.evaluate(ks_binding.agent_id):
                 state.kill_switch_triggered = True
                 chain.append(
                     "break_glass_used",
@@ -485,7 +489,7 @@ class SessionManager:
             agent_identity=agent_identity,
             sequence_number=_CLAIM_SEQUENCE,
             prev_claim_hash=self._last_claim_hash,
-            kill_switch_triggered=kill_switch_triggered,
+            kill_switch_triggered=state.kill_switch_triggered,
             do_sign=True,
         )
 
@@ -501,6 +505,11 @@ class SessionManager:
         logger.info("Session closed: session_id=%s sequence_number=%d", session_id, _CLAIM_SEQUENCE)
         return claim_dict
 
+    @property
+    def kill_switch_enabled(self) -> bool:
+        ks_cfg = getattr(self._ctx.config, "kill_switch", None)
+        return isinstance(ks_cfg, KillSwitchConfig) and ks_cfg.enabled
+
     def blocked_identity(self) -> str | None:
         """The bound agent identity when the kill switch has blocked it, else None.
 
@@ -513,6 +522,80 @@ class SessionManager:
         ):
             return binding.agent_id
         return None
+
+    def observe_call(self, state: SessionState, chain: AuditChain, call_id: str) -> bool:
+        """Count one completed call toward the kill switch; True when it trips the switch.
+
+        Called as each call completes, so a session is stopped at the call that
+        crosses the threshold rather than when it eventually closes. Counts the
+        call by the decision recorded in its audit entry, with the same rule
+        the close-time count uses: allow is allowed, deny and advisory_deny are
+        denied, anything else is not counted.
+        """
+        binding = getattr(self._ctx, "agent_manifest", None)
+        if not isinstance(binding, AgentManifestBinding) or state.kill_switch_triggered:
+            return False
+        entry = next(
+            (
+                e
+                for e in reversed(chain.entries)
+                if e.entry_type == "tool_call" and e.call_id == call_id
+            ),
+            None,
+        )
+        if entry is None or call_id in state.kill_switch_observed_calls:
+            return False
+        state.kill_switch_observed_calls.add(call_id)
+        self._kill_switch.record_calls(
+            binding.agent_id,
+            allowed=1 if entry.policy_decision == "allow" else 0,
+            denied=1 if entry.policy_decision in ("deny", "advisory_deny") else 0,
+        )
+        if not self._kill_switch.evaluate(binding.agent_id):
+            return False
+        state.kill_switch_triggered = True
+        chain.append(
+            "break_glass_used",
+            detail={
+                "reason": "kill_switch_triggered",
+                "agent_id": binding.agent_id,
+                "deny_rate_window_seconds": self._ctx.config.kill_switch.window_seconds,
+                "tripping_call_id": call_id,
+            },
+        )
+        logger.warning(
+            "Kill switch triggered mid-session: agent_id=%s call_id=%s. "
+            "The session is sealed now and future sessions are rejected.",
+            binding.agent_id,
+            call_id,
+        )
+        return True
+
+    def trip_identity(
+        self, state: SessionState, chain: AuditChain, *, reason: str, authorized_by: str,
+        credential: str,
+    ) -> str | None:
+        """Block the bound identity on operator instruction and record it in the session.
+
+        Returns the blocked identity, or None when no Agent Manifest is bound
+        (there is no identity to block).
+        """
+        binding = getattr(self._ctx, "agent_manifest", None)
+        if not isinstance(binding, AgentManifestBinding):
+            return None
+        self._kill_switch.block(binding.agent_id, reason="operator")
+        state.kill_switch_triggered = True
+        chain.append(
+            "break_glass_used",
+            detail={
+                "reason": "kill_switch_operator_trip",
+                "agent_id": binding.agent_id,
+                "operator_reason": reason,
+                "authorized_by": authorized_by,
+                "credential_verified": credential,
+            },
+        )
+        return binding.agent_id
 
     def unblock_identity(self, agent_id: str) -> bool:
         """Lift the kill switch block on an identity. False when it was not blocked."""

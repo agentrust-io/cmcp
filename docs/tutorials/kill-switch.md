@@ -23,11 +23,11 @@ An [Agent Manifest](../spec/component-model.md) must be bound to the gateway so 
 
 In a production deployment an agent can go rogue: a bug, a prompt injection, or a misconfiguration causes it to request tool calls that policy forbids. Without automated remediation, the agent keeps running: accumulating denies in the audit chain but never stopping.
 
-The kill switch closes this gap. cMCP tracks policy decisions per agent identity in a rolling time window. When the deny rate crosses a configurable threshold with enough samples, the runtime:
+The kill switch closes this gap. cMCP tracks policy decisions per agent identity in a rolling time window, and evaluates it as each call completes. When the deny rate crosses a configurable threshold with enough samples, the runtime stops the session at the call that crossed it:
 
-1. Marks the closing TRACE claim with `gateway.kill_switch_triggered: true`: hardware-attested evidence of automated enforcement, verifiable offline by any regulator
-2. Blocks all subsequent `create_session()` calls from that agent identity with a `KILL_SWITCH_TRIPPED (403)` response
-3. Appends a `break_glass_used` audit entry to the chain recording the trigger event
+1. Closes the session at once, without waiting for the client, and signs its TRACE claim with `gateway.kill_switch_triggered: true`: hardware-attested evidence of automated enforcement, verifiable offline by any regulator
+2. Refuses every later call, and every new session, from that agent identity with `KILL_SWITCH_TRIPPED (403)`
+3. Appends a `break_glass_used` audit entry recording the trip and the call that caused it (`tripping_call_id`)
 
 No other MCP gateway can produce this artifact. The operator or the sovereign oversight body receives a TEE-signed record proving the agent was automatically stopped.
 
@@ -82,7 +82,7 @@ export CMCP_BEARER_TOKEN="$(openssl rand -hex 32)"
 cmcp start --config cmcp-config.yaml
 ```
 
-Run a session where the agent makes mostly denied calls. When the session closes, cMCP evaluates the rolling window and: if the threshold is exceeded: marks the claim:
+Run a session where the agent makes mostly denied calls. cMCP evaluates the rolling window as each call completes. At the call that crosses the threshold it closes the session and signs the claim, which is then available at `GET /sessions/{session_id}/trace-claim`:
 
 ```json
 {
@@ -157,6 +157,20 @@ curl -X POST https://localhost:8443/kill-switch/unblock \
 ```
 
 All three fields are required. The block is removed from the audit database and the gateway resumes, on a new session when the trip closed the old one. The unblock is recorded as a `break_glass_used` entry with `reason: kill_switch_unblocked` in the audit chain of the session that resumes service, carrying `authorized_by`, the operator's reason, and which credential was verified. An identity that is not blocked returns `404 NOT_BLOCKED`.
+
+## Trip the switch by hand
+
+An operator can stop the bound agent identity without waiting for its deny rate. `POST /kill-switch/trip` is an operator route and requires the kill switch to be enabled.
+
+```bash
+curl -X POST https://localhost:8443/kill-switch/trip \
+  -H "Authorization: Bearer $CMCP_OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "exfiltration attempt reported by the SOC",
+       "authorized_by": "oncall@example.com"}'
+```
+
+The identity is blocked in the audit database, a `break_glass_used` entry with `reason: kill_switch_operator_trip` records who tripped it and why, and the live session is closed. The response carries that session's signed claim. From the moment the trip starts no new call is admitted. Calls already running are drained the same way as on any close: they finish, or are cancelled at `CMCP_SESSION_CLOSE_DRAIN_SECONDS`. A gateway with no Agent Manifest bound has no identity to block and returns `409 NO_AGENT_IDENTITY`; a gateway with the kill switch disabled returns `409 KILL_SWITCH_DISABLED`.
 
 ---
 

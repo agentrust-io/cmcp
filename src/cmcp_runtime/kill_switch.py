@@ -163,6 +163,10 @@ class KillSwitchEvaluator:
         self._blocked.discard(agent_id)
         return was_blocked
 
+    def block(self, agent_id: str, *, reason: str) -> None:
+        """Block an identity on operator instruction, whatever its deny rate."""
+        self._block(agent_id, reason=reason)
+
     def _block(self, agent_id: str, *, reason: str) -> None:
         if self._store is not None:
             self._store.block(agent_id, reason=reason)

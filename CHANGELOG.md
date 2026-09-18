@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The kill switch only acted when a session closed.** The deny rate was
+  evaluated in `close_session`, so an agent the switch should have stopped kept
+  calling for as long as its client kept the session open. Each call is now
+  counted as it completes, and the call that crosses the threshold closes the
+  session at once, signs its claim with `kill_switch_triggered: true`, and
+  records `tripping_call_id`. Calls counted this way are not counted again at
+  close. Operators can also trip the switch directly with
+  `POST /kill-switch/trip`, which requires `reason` and `authorized_by`, blocks
+  the bound identity, records the trip, and returns the closed session's claim.
+
 - **The kill switch did not survive a restart, and the close that tripped it
   failed.** Blocked identities were held in an in-memory set, so any restart
   lifted every block. Over HTTP, a close that tripped the switch raised
