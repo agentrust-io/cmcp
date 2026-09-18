@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The kill switch did not survive a restart, and the close that tripped it
+  failed.** Blocked identities were held in an in-memory set, so any restart
+  lifted every block. Over HTTP, a close that tripped the switch raised
+  `KillSwitchTripped` while creating the successor session: the caller got a
+  generic `500 INTERNAL_ERROR` instead of the claim, and later tool calls waited
+  on a rotation that could never finish instead of receiving the documented
+  `403 KILL_SWITCH_TRIPPED`. Blocks now live in the audit database, the tripping
+  close returns its signed claim, and every later call is refused at once. A
+  gateway that starts with its identity blocked comes up halted rather than
+  failing to start, and `/readyz` reports it. The tutorial described a
+  `DELETE /admin/kill-switch/...` endpoint that did not exist; the operator route
+  is now `POST /kill-switch/unblock`, which requires `agent_id`, `reason` and
+  `authorized_by` and records the unblock in the audit chain.
+
 - Add optional operator-owned tool and caller-response sensitivity ceilings.
   They enforce accumulated/catalog/declared classification independently of
   Cedar mode, before discovery and dispatch and before response release. Strict

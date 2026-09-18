@@ -91,6 +91,7 @@ def _make_proxy(*, allowed: bool = True) -> MagicMock:
     # Session transitions release session-scoped resources (#625); the real
     # aclose() is a coroutine, so an auto-specced MagicMock will not do.
     proxy.aclose = AsyncMock()
+    proxy.halted_identity = None  # kill switch not holding the gateway
 
     if allowed:
         # Return allowed for known tools; denied for unknown tools (catalog miss).

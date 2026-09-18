@@ -28,7 +28,7 @@ from cmcp_runtime.audit.trace_claim import (
 )
 from cmcp_runtime.config import KillSwitchConfig, SensitivityConfig
 from cmcp_runtime.errors import KillSwitchTripped, SessionCloseIncomplete, TeeFault
-from cmcp_runtime.kill_switch import KillSwitchEvaluator
+from cmcp_runtime.kill_switch import KillSwitchBlockStore, KillSwitchEvaluator
 from cmcp_runtime.observability.otel import otel_sink_from_env
 from cmcp_runtime.policy.decisions import claim_value
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
@@ -73,7 +73,11 @@ class SessionManager:
         ks_cfg = getattr(ctx.config, "kill_switch", None)
         if not isinstance(ks_cfg, KillSwitchConfig):
             ks_cfg = KillSwitchConfig()  # disabled by default if not configured
-        self._kill_switch = KillSwitchEvaluator(ks_cfg)
+        ks_store = getattr(ctx, "kill_switch_store", None)
+        self._kill_switch = KillSwitchEvaluator(
+            ks_cfg,
+            store=ks_store if isinstance(ks_store, KillSwitchBlockStore) else None,
+        )
         sens_cfg = getattr(ctx.config, "sensitivity", None)
         vocabulary = sens_cfg.vocabulary if isinstance(sens_cfg, SensitivityConfig) else {}
         # #479: computed once so every session in this process shares one
@@ -108,14 +112,38 @@ class SessionManager:
         security guarantee is limited to what a software TEE provides.
         """
         # Kill switch: reject sessions for blocked agent identities before allocating resources.
-        binding = getattr(self._ctx, "agent_manifest", None)
-        if isinstance(binding, AgentManifestBinding) and self._kill_switch.is_blocked(binding.agent_id):
+        blocked = self.blocked_identity()
+        if blocked is not None:
             raise KillSwitchTripped(
-                f"Session rejected: agent identity {binding.agent_id!r} has tripped the "
+                f"Session rejected: agent identity {blocked!r} has tripped the "
                 "kill switch. Contact the platform operator to unblock.",
-                detail=binding.agent_id,
+                detail=blocked,
             )
+        return self._open_session()
 
+    def open_blocked_session(self) -> tuple[SessionState, AuditChain]:
+        """Open the startup session for an identity that is already blocked.
+
+        A gateway whose identity was blocked before it started still needs a
+        session to hold its evidence, but must not serve from it. The caller
+        halts admission; this records, as the first entry after session_start,
+        that the block was in force when the session opened. Refuses when the
+        identity is not blocked, so it cannot become a way around the check.
+        """
+        blocked = self.blocked_identity()
+        if blocked is None:
+            raise RuntimeError("open_blocked_session requires a blocked identity")
+        state, chain = self._open_session()
+        chain.append(
+            "break_glass_used",
+            detail={
+                "reason": "kill_switch_block_active_at_start",
+                "agent_id": blocked,
+            },
+        )
+        return state, chain
+
+    def _open_session(self) -> tuple[SessionState, AuditChain]:
         session_id = str(uuid4())
         state = SessionState(
             session_id=session_id,
@@ -472,6 +500,23 @@ class SessionManager:
         self._closed_claims[session_id] = claim_dict
         logger.info("Session closed: session_id=%s sequence_number=%d", session_id, _CLAIM_SEQUENCE)
         return claim_dict
+
+    def blocked_identity(self) -> str | None:
+        """The bound agent identity when the kill switch has blocked it, else None.
+
+        Anonymous gateways (no Agent Manifest) have no identity to block and
+        always return None.
+        """
+        binding = getattr(self._ctx, "agent_manifest", None)
+        if isinstance(binding, AgentManifestBinding) and self._kill_switch.is_blocked(
+            binding.agent_id
+        ):
+            return binding.agent_id
+        return None
+
+    def unblock_identity(self, agent_id: str) -> bool:
+        """Lift the kill switch block on an identity. False when it was not blocked."""
+        return self._kill_switch.unblock(agent_id)
 
     def get_trace_claim(self, session_id: str) -> dict[str, Any] | None:
         """Return the signed TRACE Claim for a closed session."""

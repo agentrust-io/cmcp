@@ -135,18 +135,28 @@ A verifier running offline: with no connection to the cMCP gateway or to OPAQUE:
 
 ---
 
+## What a tripped gateway does
+
+The session whose close tripped the switch still returns its signed claim. After that the gateway serves nothing: every `tools/call` is refused at once with `KILL_SWITCH_TRIPPED (403)`, session close and reset return `409`, and `GET /readyz` reports `not_ready` with a `kill_switch` check naming the blocked identity.
+
+The block is stored in the audit database (`audit_db_path`), so restarting the gateway does not lift it. A gateway that starts while its identity is blocked comes up, so the unblock endpoint is reachable, but serves no calls. The first entry after `session_start` in its audit chain is a `break_glass_used` entry with `reason: kill_switch_block_active_at_start`. If the audit database cannot be opened, the gateway does not start.
+
+The rolling window of recent decisions is not stored. After a restart it starts empty, which can delay a trip but cannot lift a block.
+
 ## Unblock an agent identity
 
-The kill switch is a process-lifetime block: it persists as long as the gateway process is running. To unblock, restart the gateway. This clears all in-memory state including the blocked identity set and the rolling window.
-
-For a manual operator override without restart, cMCP exposes an operator endpoint (requires `CMCP_BEARER_TOKEN`):
+Only an operator can lift a block. `POST /kill-switch/unblock` is an operator route: it accepts only `CMCP_OPERATOR_TOKEN` when one is configured.
 
 ```bash
-curl -X DELETE https://localhost:8443/admin/kill-switch/spiffe%3A%2F%2Fexample.com%2Fagent%2Fprocurement-bot \
-  -H "Authorization: Bearer $CMCP_BEARER_TOKEN"
+curl -X POST https://localhost:8443/kill-switch/unblock \
+  -H "Authorization: Bearer $CMCP_OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "spiffe://example.com/agent/procurement-bot",
+       "reason": "deny spike traced to a policy typo, fixed in bundle 42",
+       "authorized_by": "oncall@example.com"}'
 ```
 
-This calls `KillSwitchEvaluator.unblock()`: clearing the block flag and all rolling window events for that identity. The action is logged to the audit chain.
+All three fields are required. The block is removed from the audit database and the gateway resumes, on a new session when the trip closed the old one. The unblock is recorded as a `break_glass_used` entry with `reason: kill_switch_unblocked` in the audit chain of the session that resumes service, carrying `authorized_by`, the operator's reason, and which credential was verified. An identity that is not blocked returns `404 NOT_BLOCKED`.
 
 ---
 

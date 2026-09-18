@@ -286,8 +286,18 @@ def _make_ready_server() -> MCPServer:
     proxy._catalog.entries = {"test.tool": MagicMock()}
     proxy._policy = MagicMock()  # policy present
     proxy._check_health.return_value = None  # attestation healthy
+    proxy.halted_identity = None  # kill switch not holding the gateway
     with patch("cmcp_runtime.mcp.server.StatelessKernel"):
         return MCPServer(proxy, bearer_token="secret")
+
+
+def test_readyz_not_ready_while_kill_switch_holds_gateway():
+    server = _make_ready_server()
+    server._proxy.halted_identity = "spiffe://example.com/agent/rogue"
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.get("/readyz")
+    assert resp.status_code == 503
+    assert resp.json()["checks"]["kill_switch"].startswith("failed:")
 
 
 def test_readyz_returns_200_when_healthy():

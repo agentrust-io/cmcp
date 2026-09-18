@@ -31,6 +31,7 @@ from cmcp_runtime.errors import (
     ConfigError,
     PolicyHashMismatch,
 )
+from cmcp_runtime.kill_switch import KillSwitchBlockStore
 from cmcp_runtime.policy.bundle import PolicyStore, load_policy_bundle
 from cmcp_runtime.session.store import SqliteSessionStateStore
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
@@ -84,6 +85,8 @@ class RuntimeContext:
     #: Shared, persistent home for the accumulated session-sensitivity value.
     #: None means the value lives in this process only.
     session_state_store: SqliteSessionStateStore | None = None
+    #: Durable kill switch blocks. None when the kill switch is disabled.
+    kill_switch_store: KillSwitchBlockStore | None = None
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
     agent_manifest: AgentManifestBinding | None = None
@@ -704,6 +707,21 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
 
+    # Step 5f: kill switch blocks live beside the audit chain so they survive a
+    # restart. A gateway that cannot read its blocks cannot tell whether the
+    # identity it is about to serve was stopped, so it does not start.
+    kill_switch_store: KillSwitchBlockStore | None = None
+    if config.kill_switch.enabled:
+        try:
+            kill_switch_store = KillSwitchBlockStore(_Path(config.audit_db_path))
+        except Exception as exc:
+            _fatal(
+                "KILL_SWITCH_STORE_UNAVAILABLE",
+                f"Cannot open kill switch block store at '{config.audit_db_path}': {exc}",
+                action="startup_aborted",
+            )
+            sys.exit(1)
+
     return RuntimeContext(
         config=config,
         tee_provider=tee_provider,
@@ -713,6 +731,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         catalog=catalog,
         catalog_scanner=catalog_scanner,
         audit_store=audit_store,
+        kill_switch_store=kill_switch_store,
         spiffe=spiffe_result,
         nras_appraisal=nras_appraisal,
         agent_manifest=agent_manifest,
