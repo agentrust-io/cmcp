@@ -57,6 +57,8 @@ def _ctx(store: KillSwitchBlockStore) -> RuntimeContext:
     report.raw_evidence = None
 
     bundle = MagicMock()
+    bundle.signing_key_id = None
+    bundle.revoked_signing_key_ids = ()
     bundle.bundle_hash = "sha256:" + "0" * 64
     bundle.policy_files = {"allow.cedar": "permit (principal, action, resource);"}
     bundle.manifest = MagicMock()

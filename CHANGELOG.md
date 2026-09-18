@@ -23,6 +23,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is now `POST /kill-switch/unblock`, which requires `agent_id`, `reason` and
   `authorized_by` and records the unblock in the audit chain.
 
+- **A compromised policy signing key could not be revoked without a restart.**
+  Hot reload accepted any bundle signed by `CMCP_POLICY_SIGNING_KEY` with a higher
+  version, and the only way to stop trusting that key was new config plus a
+  restart, so until every gateway restarted the key's holder could keep installing
+  policy on it. `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` now pins a second key at
+  startup. A statement in `signing-key-revocations.json`, signed by the successor
+  or the current key, revokes the current key on the next reload and promotes the
+  successor. The policy in force is then untrusted and every tool call is refused
+  with `POLICY_SIGNING_KEY_REVOKED`, in every enforcement mode, until a
+  successor-signed bundle with a higher version is installed. A bundle signed by
+  the revoked key is refused with the same code. Revocation is one-way within the
+  process: no statement un-revokes, a stolen current key cannot revoke the
+  successor, and bad statements are logged (`POLICY_KEY_REVOCATION_INVALID`) and
+  skipped without blocking the reload. TRACE claims gain an optional
+  `gateway.policy_signing` object recording the key the policy in force verified
+  under and the keys revoked. Startup also now reports a bundle signature failure
+  as a `POLICY_SIGNATURE_INVALID` FATAL entry and exit 1, where the exception
+  previously propagated out of `run_startup`.
+
+- **Signed policy reload never installed a changed bundle when a hash was also
+  pinned.** `PolicyStore.reload_if_stale` passed the startup `CMCP_POLICY_HASH` to
+  every reload, so with a hash and a signing key both pinned (the documented
+  production shape, and the only one outside dev mode, where a hash is required)
+  a correctly signed newer bundle failed with `PolicyHashMismatch` and the old
+  policy stayed in force. With a key pinned, the key now authorises reloads and
+  the hash is checked on the startup load.
+
 - Add optional operator-owned tool and caller-response sensitivity ceilings.
   They enforce accumulated/catalog/declared classification independently of
   Cedar mode, before discovery and dispatch and before response release. Strict

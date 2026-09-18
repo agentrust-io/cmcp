@@ -41,6 +41,8 @@ def claim_and_bundle(tmp_path):
     bundle_mock.manifest.version = "test-v1"
     policy_store = MagicMock(spec=PolicyStore)
     policy_store.bundle = bundle_mock
+    bundle_mock.signing_key_id = None
+    policy_store.revoked_key_ids = []
 
     catalog = MagicMock()
     catalog.entries = {}

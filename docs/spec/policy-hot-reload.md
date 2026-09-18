@@ -1,7 +1,7 @@
 # Policy Hot-Reload
 
-**Document status:** Implemented (option A, signing key). Revocation is
-deliberately out of scope; see the limit stated below  
+**Document status:** Implemented (option A, signing key), with revocation of
+the policy signing key without a restart; see "Revocation without a restart"  
 **Applies to:** cMCP Runtime gateway (`PolicyStore`, `startup`)  
 **Related config:** `policy_reload_interval_seconds`
 
@@ -18,8 +18,8 @@ with the measurements, because the shape of that mistake is worth keeping.
 rather than an artifact hash (option A, built). The guaranteed-inert configuration
 is refused at startup, a failing reload no longer re-reads the bundle on every
 request, and a signed bundle whose version increases is installed without a
-restart. Revocation is not implemented and that limit is stated rather than
-implied.
+restart. A compromised signing key can be revoked on a running gateway through
+the same reload path, provided a successor key was pinned at startup.
 
 The rest of this document is the analysis that got there, kept because the
 diagnosis matters more than the fix: a status file said "not yet" while the code
@@ -225,9 +225,12 @@ What it means concretely:
   bundle is a downgrade attack: an attacker who can write the bundle directory
   replays yesterday's more permissive policy, and every signature still checks out.
 - `CMCP_POLICY_HASH` keeps its current meaning and stays the right choice for a
-  deployment that wants exactly one policy for the life of the process. It is a
-  pin on an artifact, so it remains incompatible with reload — the two are
-  alternatives, not layers, and configuring both is refused at startup (see below).
+  deployment that wants exactly one policy for the life of the process. A hash
+  alone cannot authorise reload, so a hash with an interval and no key is refused
+  at startup (see below). With both pinned, the hash is checked on the startup
+  load and the key authorises every reload. (Until this was corrected the reload
+  also re-checked the startup hash, which refused every changed bundle in the one
+  shape production runs, since a hash is required outside dev mode.)
 - Evidence: a TRACE claim records the bundle hash it evaluated under **plus** the
   signer identity and the bundle version, so a verifier can answer both "what
   policy ran" and "who authorised it" for a process whose policy changed mid-life.
@@ -245,8 +248,8 @@ policy_reload_interval_seconds: 60
 | Signature covers | The **bundle hash**, domain-separated: `sha256(cmcp-policy-bundle-v1\|<bundle_hash>)`. Reuses the hash the gateway already computes and measures. |
 | Where the signature lives | `signature` in `manifest.json`, base64url. It is **excluded from the hashed manifest**, because it cannot be inside the pre-image it signs. Same idiom the delegation credential uses. Every bundle hash issued before signing existed is unchanged, since stripping an absent key is a no-op. |
 | Monotonic version | Enforced on reload when a key is pinned. Versions are compared as tuples of integers, so `1.10.0` beats `1.9.0`; an unorderable version is refused **at load**, not at the first reload. |
-| Key rotation | Restart only. Rotation is rarer than policy change, and this is a deliberate choice rather than an omission. |
-| Revocation | **Not implemented.** See the limit below. |
+| Hash and key both pinned | The hash is checked on the startup load only. Reloads are authorised by the key. |
+| Key rotation and revocation | One step without a restart, to a successor key pinned at startup. See below. |
 | In-flight sessions | The new bundle applies from the next evaluation, including for sessions already open. |
 | Unsigned bundles | Still valid when no key is pinned. Signing is opt-in; a deployment pinning a hash needs none of it. |
 | Unsigned bundle *with* a key pinned | Refused. Having asked for signed policy, being handed unsigned policy is a refusal, not a downgrade to the unsigned path. |
@@ -261,18 +264,52 @@ mean "the authority's *current* intent". `test_a_replayed_older_signed_bundle_is
 constructs exactly that attack and fails if the check is removed, which was
 verified by removing it.
 
-### The limit: no revocation
+### Revocation without a restart
 
-A compromised signing key stops being trusted by changing
-`CMCP_POLICY_SIGNING_KEY` and restarting. There is no revocation list, no key set,
-and no expiry.
+Before this, a compromised signing key stopped being trusted only by changing
+`CMCP_POLICY_SIGNING_KEY` and restarting, and until each gateway restarted the
+holder of the key could keep installing signed bundles on it.
 
-Stated plainly because it bounds what this buys: **faster policy change, not
-faster key change.** A deployment whose threat model includes a compromised policy
-signing key needing revocation inside a fleet-restart window is not served by
-this, and should keep pinning a hash. Adding revocation later is compatible with
-what is built — it constrains which keys are acceptable, and does not change the
-signature or the version rule.
+**Keys.** `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` pins a second public key at startup.
+It signs no bundle while the current key is trusted. A key id is
+`sha256:<hex>` of the 32 raw public key bytes.
+
+**Statement.** `signing-key-revocations.json` in the bundle directory holds a JSON
+array of statements:
+
+```json
+[{"revoked_key_id": "sha256:<hex>", "signature": "<base64url Ed25519>"}]
+```
+
+The signature covers `cmcp-policy-key-revocation-v1|<revoked_key_id>`, a
+different domain from the bundle signature, so neither can be replayed as the
+other. The file is outside the bundle hash, so adding it does not change the
+measured policy.
+
+| Rule | Behaviour |
+|---|---|
+| What can be revoked | Only the current key. A statement naming the successor, or any other key, is refused (`POLICY_KEY_REVOCATION_INVALID`), so a stolen current key cannot remove the recovery path. |
+| Who can sign it | The successor, or the current key itself. Self-revocation gives a thief nothing: it hands policy to the successor, or leaves no trusted key. |
+| Effect | The current key is revoked and the successor becomes the key bundles must be signed by. With no successor pinned, no key remains and every reload is refused until a restart with a new key. |
+| When | At the start of every reload attempt, before the bundle is read, and once at startup before the first load. Reload must be on for it to take effect without a restart. |
+| Bad statements | Logged and skipped. The rest of the file and the bundle reload still proceed, because anyone who can write the directory can write a bad statement. |
+| Monotonic | A revoked key is never trusted again in the process. There is no un-revoke statement, removing the file changes nothing at runtime, replaying an applied statement is a no-op, and the successor is promoted at most once. |
+| Policy in force | It was signed by the revoked key, so it is not trusted. **Fail closed:** every tool call is refused with `POLICY_SIGNING_KEY_REVOKED`, in enforce, advisory and silent modes alike, and recorded as a deny in the audit chain. Advisory and silent decide what to do with a Cedar decision; a policy whose only authority is a revoked key does not produce one worth acting on. |
+| Recovery | A bundle signed by the successor with a version above the running one. The version floor is not reset by a revocation, so if the revoked key was used to push a high version, the replacement must exceed it. |
+| A bundle signed by the revoked key | Refused on reload and at startup with `POLICY_SIGNING_KEY_REVOKED`, not reported as an ordinary bad signature. |
+| Evidence | Logged as `POLICY_SIGNING_KEY_REVOKED` with the revoked key, the signer and the key now trusted. Each TRACE claim carries `gateway.policy_signing` with `key_id` (the key the policy in force at claim time verified under) and `revoked_key_ids`. A `key_id` inside `revoked_key_ids` marks a session whose calls were refused for this reason. The field is optional and absent where no key is pinned. |
+
+**What remains out of scope.** One successor per startup: after a rotation there
+is no pinned successor until the next restart, so a second compromise before then
+can only be answered by self-revocation (fail closed) and a restart. Revocation
+state is in memory. A restart rebuilds it from the environment plus the statement
+file on disk, so an operator should move `CMCP_POLICY_SIGNING_KEY` to the successor
+before restarting; if the file is deleted and the old key is still configured, the
+restart trusts it again. There is no expiry, no list of revoked keys distributed
+to verifiers, and no mechanism that pushes a statement to a fleet: each gateway
+reads its own bundle directory. The claim records the key for the policy in force
+when the claim is built, not for each call, which is the same granularity as the
+existing `trace.policy.bundle_hash`.
 
 ### In-flight sessions
 
@@ -287,12 +324,10 @@ session-facing notification was considered and is not built.
 Both stood on their own, independent of the direction, and both have landed:
 
 1. **A configuration that cannot work does not start.** `CMCP_POLICY_HASH`
-   together with `policy_reload_interval_seconds > 0` now aborts startup
-   (`POLICY_RELOAD_PINNED_HASH`). Under option A the two remain alternatives
-   rather than layers, so this refusal is durable rather than a stopgap: a pin on
-   an exact artifact and a policy that may change are contradictory whatever the
-   reload path is authorised by. Dev mode pins no hash and is unaffected, which is
-   the one configuration where reload actually works and is tested as such.
+   together with `policy_reload_interval_seconds > 0` and no signing key aborts
+   startup (`POLICY_RELOAD_PINNED_HASH`): a pin on an exact artifact cannot
+   authorise a policy that changes. With a key also pinned, the hash is checked on
+   the startup load only and the key authorises reloads; both shapes are tested.
 2. **The interval is honoured on failure.** `_last_reload_at` is stamped *before*
    the attempt, so an exception cannot skip it. A failing reload now costs one
    attempt per interval instead of one full bundle read plus hash per request.
@@ -312,5 +347,4 @@ the reads.
 - Catalog hot-reload. `CMCP_CATALOG_HASH` has exactly the same pin, and
   `load_catalog` the same shape, so whatever is decided here should be applied
   there deliberately rather than by copy. It is not analysed in this document.
-- Revocation of a policy signing key, which is a real gap rather than a
-  non-goal: see "The limit: no revocation" above.
+- The limits of revocation listed under "Revocation without a restart" above.
