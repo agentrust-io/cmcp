@@ -41,7 +41,7 @@ jobs:
           mkdir -p confinement-evidence
           docker version > confinement-evidence/docker-version.txt
           uname -a > confinement-evidence/kernel.txt
-          python -m pytest tests/confinement -v --tb=short --junitxml=confinement-evidence/results.xml 2>&1 | tee confinement-evidence/tests.txt
+          timeout 180s python -m pytest tests/confinement -v --tb=short -o faulthandler_timeout=30 --junitxml=confinement-evidence/results.xml 2>&1 | tee confinement-evidence/tests.txt
       - name: Retain reproducible evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

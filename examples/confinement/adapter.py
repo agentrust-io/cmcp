@@ -188,7 +188,10 @@ class DockerSandbox:
             finally:
                 if process.returncode is None:
                     process.kill()
-                await process.wait()
+                # Readers were cancelled above. Drain the killed attach client's
+                # remaining pipe buffers: wait() alone can deadlock on a full
+                # asyncio pipe after an output-flood rejection.
+                await process.communicate()
 
 
 def decode_request(line: bytes, operations: Mapping[str, str]) -> tuple[str, dict]:
