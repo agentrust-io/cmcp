@@ -1,6 +1,8 @@
 """Contract tests run on every OS; actual Docker evidence is in test_linux.py."""
 
+import asyncio
 import json
+import sys
 from copy import deepcopy
 
 import pytest
@@ -55,6 +57,27 @@ async def test_used_container_cannot_receive_a_second_session(monkeypatch):
 
     with pytest.raises(Refused, match="fresh container"):
         await sandbox.execute({}, dispatch, {})
+
+
+async def test_output_flood_cleanup_drains_real_child_pipes(monkeypatch):
+    # Unit seam replaces Docker only. A real process fills the actual pipes;
+    # the hosted suite separately verifies that the container is stopped.
+    monkeypatch.setattr("examples.confinement.adapter.shutil.which", lambda name: sys.executable)
+    monkeypatch.setattr("examples.confinement.adapter.host_preflight", lambda: None)
+    sandbox = DockerSandbox("sha256:" + "a" * 64)
+    sandbox.command = [sys.executable, "-c",
+                       "import sys,time; sys.stdin.readline(); "
+                       "sys.stderr.write('x'*2000000); sys.stderr.flush(); time.sleep(60)"]
+
+    async def docker(*args):
+        return json.dumps([valid_inspect()]).encode()
+
+    async def dispatch(tool, arguments):
+        pytest.fail("flood must never reach dispatch")
+
+    sandbox.docker = docker
+    with pytest.raises(Refused, match="agent exchange failed"):
+        await asyncio.wait_for(sandbox.execute({}, dispatch, {}, timeout=1), 5)
 
 
 def valid_inspect():
