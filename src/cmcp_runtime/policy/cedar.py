@@ -15,6 +15,8 @@ from typing import Any
 
 import cedarpy
 
+from cmcp_runtime.policy.action_name import cedar_action_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +54,7 @@ class CedarBackend:
             resource = f'Resource::"{resource}"'
 
         tool_name = str(context.get("tool_name", "unknown"))
-        action_name = "".join(part.capitalize() for part in tool_name.split("_"))
+        action_name = cedar_action_name(tool_name)
         return {
             "principal": agent_id,
             "action": f'Action::"{action_name}"',

@@ -120,6 +120,8 @@ Duplicate tool name in catalog: "salesforce.query" is registered by two differen
 Each tool name must map to exactly one upstream server.
 ```
 
+The same rule applies to the Cedar action a tool name maps to. The policy backend names a call's action by joining the underscore-separated parts of the tool name, each capitalised, so `read_file`, `read__file`, `_read_file` and `read_file_` are distinct tool names that all map to `Action::"ReadFile"`. Two such entries would share one policy identity, and a permit or forbid written for one would apply to the other, so the runtime refuses to start on them as it does on a literal duplicate.
+
 The runtime does not attempt to resolve the collision. It fails closed: no tools are available until the collision is resolved.
 
 **Resolution**: namespace the tool names. Example:

@@ -18,6 +18,7 @@ from cmcp_runtime.errors import (
     ToolNotInCatalog,
 )
 from cmcp_runtime.mcp.stdio import StdioSpawn
+from cmcp_runtime.policy.action_name import cedar_action_name
 from cmcp_runtime.session.state import COMPLIANCE_DOMAINS, SENSITIVITY_ORDER
 
 _PACKAGED_ENTRY_SCHEMA_PATH = (
@@ -252,6 +253,8 @@ def load_catalog(
 
     entry_schema = _load_entry_schema()
     entries: dict[str, CatalogEntry] = {}
+    # #655: Cedar action name -> the tool_name that claimed it first.
+    actions: dict[str, str] = {}
 
     for raw in raw_list:
         if not isinstance(raw, dict):
@@ -288,6 +291,16 @@ def load_catalog(
                 f"Duplicate tool_name '{tool_name}': gateway will not start",
                 detail="Each tool_name must map to exactly one upstream server",
             )
+        # #655: distinct names can derive the same Cedar action, which would give
+        # two tools one policy identity. Fail closed, as for a literal duplicate.
+        action = cedar_action_name(tool_name)
+        if action in actions:
+            raise CatalogToolNameCollision(
+                f"tool_name '{tool_name}' and '{actions[action]}' both map to Cedar "
+                f'action Action::"{action}": gateway will not start',
+                detail="Each tool must have its own policy identity",
+            )
+        actions[action] = tool_name
 
         raw_server = raw["server"]
         raw_spawn = raw_server.get("spawn")
