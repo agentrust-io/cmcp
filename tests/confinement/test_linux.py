@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 from examples.confinement import adapter
+from examples.confinement.lifecycle import PolicyGate
 
 from tests.confinement.gateway import make_gateway
 
@@ -82,6 +83,19 @@ async def run_case(tmp_path, monkeypatch, *, mutation=None, mode="normal", unava
     sink = tmp_path / (uuid4().hex + ".jsonl")
     canary = "canary-" + uuid4().hex
     proxy, dispatch = make_gateway(sink, public_ceiling="confidential" if mutation == "sink" else "public")
+    if mode == "policy":
+        gate = PolicyGate(dispatch, {"permitted.tool", "public.tool"})
+        calls = 0
+
+        async def dispatch(tool, arguments):
+            nonlocal calls
+            result = await gate(tool, arguments)
+            calls += 1
+            if calls == 1:
+                await gate.replace(1, set())
+            elif calls == 2:
+                await gate.replace(2, {"permitted.tool", "public.tool"})
+            return result
     if unavailable:
         async def dispatch(tool, arguments):
             raise ConnectionError("gateway unavailable")
@@ -135,6 +149,14 @@ async def test_confinement_and_fresh_restart(tmp_path, monkeypatch):
         assert observation["core_limits"] == [[0, 0]]
         assert stats["allowed"] == 1 and stats["denied"] == 1
         assert stats["stderr_bytes"] > 0
+
+
+async def test_live_operator_policy_restricts_and_restores_without_label_reset(tmp_path, monkeypatch):
+    observation, stats, refused = await run_case(tmp_path, monkeypatch, mode="policy")
+    assert not refused
+    require_confinement(observation)
+    assert observation["permitted"] == 2
+    assert stats["allowed"] == 2 and stats["denied"] == 2
 
 
 @pytest.mark.parametrize("mutation", ["network", "filesystem", "logging", "sink"])

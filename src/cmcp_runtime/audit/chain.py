@@ -294,7 +294,8 @@ class AuditChain:
             try:
                 sink(entry)
             except Exception:
-                logger.debug("Audit sink %r failed", sink, exc_info=True)
+                # Sink repr and exception text may contain private payloads.
+                logger.debug("Audit sink failed; entry remains durable")
 
     @property
     def chain_root(self) -> str:

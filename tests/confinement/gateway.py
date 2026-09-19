@@ -20,7 +20,7 @@ from cmcp_runtime.session.state import SessionState
 from cmcp_runtime.sink_policy import SinkPolicy
 
 
-def make_gateway(sink: Path, *, public_ceiling="public"):
+def make_gateway(sink: Path, *, public_ceiling="public", audit_store=None, audit_sinks=None):
     upstream = Path(__file__).with_name("upstream.py").resolve()
     spawn = StdioSpawn(sys.executable, (str(upstream), str(sink)),
                        measure_executable(str(upstream)), str(upstream))
@@ -33,7 +33,7 @@ def make_gateway(sink: Path, *, public_ceiling="public"):
         "permitted.tool": "confidential", "public.tool": public_ceiling,
     }, "confidential"))
     session = SessionState(uuid4().hex, max_sensitivity="confidential")
-    audit = AuditChain(session.session_id)
+    audit = AuditChain(session.session_id, store=audit_store, sinks=audit_sinks)
     bundle = PolicyBundle(
         PolicyManifest("1.0.0", "2026-09-18T00:00:00Z", "fixture", "fixture"),
         {"allow.cedar": "permit(principal, action, resource);"}, '{"cMCP": {}}',
