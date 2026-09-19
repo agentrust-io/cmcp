@@ -235,6 +235,15 @@ def test_missing_file():
 
 # ── CONF-004: path traversal rejection ───────────────────────────────────────
 
+@pytest.mark.parametrize("field_name", ["policy_bundle_path", "catalog_path", "audit_db_path"])
+@pytest.mark.parametrize("yaml_value", ["123", "false", "[]", "{}"])
+def test_path_settings_reject_non_string_values(config_file, field_name, yaml_value):
+    """#673: path settings must fail through ConfigError, never leak a raw TypeError."""
+    path = config_file(f"{field_name}: {yaml_value}\n")
+    with pytest.raises(ConfigError, match=rf"{field_name} must be a string"):
+        load_config(path)
+
+
 def test_policy_bundle_path_traversal_rejected(config_file):
     """CONF-004: '..' components in policy_bundle_path must be rejected."""
     path = config_file("policy_bundle_path: ../../etc/passwd\n")
