@@ -259,7 +259,10 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def _check_no_traversal(field_name: str, path_str: str) -> None:
-    """Reject paths that contain '..' components to prevent directory traversal (CONF-004)."""
+    """Reject non-string paths and '..' components (CONF-004)."""
+    if not isinstance(path_str, str):
+        raise ConfigError(f"{field_name} must be a string")
+
     for part in PurePosixPath(path_str).parts:
         if part == "..":
             raise ConfigError(
