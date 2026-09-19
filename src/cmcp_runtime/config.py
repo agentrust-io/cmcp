@@ -171,6 +171,7 @@ _KNOWN_TOP_KEYS = {
     "policy_reload_interval_seconds",
     "audit_db_path",
     "conformance_profile",
+    "session_state_path",
 }
 
 # #495: catalog identity and routing are immutable for the process lifetime.
