@@ -19,7 +19,12 @@ def main():
     sys.stdout.buffer.flush()
     while True:
         ready, _, _ = select.select([sys.stdin.fileno()], [], [], LEASE_SECONDS)
-        if not ready or os.read(sys.stdin.fileno(), 4096) == b"":
+        if not ready or os.read(sys.stdin.fileno(), 1) != b".":
+            break
+        try:
+            sys.stdout.buffer.write(b".")
+            sys.stdout.buffer.flush()
+        except OSError:
             break
     # A surviving, responsive host/daemon is required. Retry transient failure;
     # never log Docker output (nor accept payloads on this channel).

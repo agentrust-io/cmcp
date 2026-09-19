@@ -123,3 +123,22 @@ def test_inspection_refuses_weakened_profile(section, key, value):
     mutant[section][key] = value
     with pytest.raises(Refused):
         verify_container(mutant)
+
+
+@pytest.mark.parametrize("reply", [None, b"bad\n"])
+async def test_watchdog_requires_bounded_ack_even_when_pipe_drains(reply):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from examples.confinement.adapter import LeaseWatchdog
+
+    reader = asyncio.StreamReader()
+    if reply is not None:
+        reader.feed_data(reply)
+    writer = SimpleNamespace(write=Mock(), drain=AsyncMock())
+    watcher = LeaseWatchdog([])
+    watcher.process = SimpleNamespace(returncode=None, stdin=writer, stdout=reader)
+    with pytest.raises(Refused, match="watchdog"):
+        await asyncio.wait_for(watcher.pulse(), 2)
+    writer.write.assert_called_once_with(b".")
+    writer.drain.assert_awaited_once()

@@ -47,14 +47,26 @@ class LeaseWatchdog:
         while True:
             if self.process.returncode is not None:
                 raise Refused("watchdog unavailable")
-            self.process.stdin.write(b".")
-            await self.process.stdin.drain()
+            try:
+                # Drain alone only proves pipe capacity, not supervisor liveness.
+                async with asyncio.timeout(1):
+                    self.process.stdin.write(b".")
+                    await self.process.stdin.drain()
+                    if await self.process.stdout.readexactly(1) != b".":
+                        raise Refused("watchdog invalid acknowledgement")
+            except (TimeoutError, OSError, asyncio.IncompleteReadError) as exc:
+                raise Refused("watchdog acknowledgement unavailable") from exc
             await asyncio.sleep(0.25)
 
     async def close(self):
         if self.process is not None:
             self.process.stdin.close()
-            await asyncio.wait_for(self.process.communicate(), 18)
+            try:
+                await asyncio.wait_for(self.process.communicate(), 18)
+            except TimeoutError:
+                self.process.kill()
+                await self.process.communicate()
+                raise Refused("watchdog cleanup timed out") from None
 
 
 def check_core_pattern(pattern: str) -> None:

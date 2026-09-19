@@ -132,10 +132,14 @@ a new session. Revision state is process-local and is not rollback-resistant
 storage.
 
 Hosted lifecycle tests kill and pause a real bridge after an independent tool
-sink observes its canary, kill the watchdog separately, and inspect Docker from
+sink observes its canary, kill or pause the watchdog separately, and inspect Docker from
 another process. A synthetic mutation disables the watcher and requires the
 adversarial container to survive bridge death, demonstrating why the watcher is
-needed. Live policy tests include an in-flight call, a queued call, revocation,
+needed. Each pulse requires an acknowledgment within one second, including
+the pipe write and drain. A paused watchdog therefore causes the surviving
+bridge to stop the container. A second mutation removes this acknowledgment
+check and requires the container to survive a paused watcher. Simultaneous
+loss of both processes remains outside this guarantee. Live policy tests include an in-flight call, a queued call, revocation,
 restoration and invalid/stale revisions; the Docker fixture also exercises
 revocation/restoration without a session reset.
 

@@ -28,9 +28,23 @@ class NoWatchdog:
         pass
 
 
+class UnacknowledgedWatchdog(adapter.LeaseWatchdog):
+    """Test-only mutation that mistakes successful pipe writes for liveness."""
+
+    async def pulse(self):
+        while True:
+            if self.process.returncode is not None:
+                raise adapter.Refused("watchdog unavailable")
+            self.process.stdin.write(b".")
+            await self.process.stdin.drain()
+            await asyncio.sleep(0.25)
+
+
 async def main():
     if sys.argv[3] == "unguarded":
         adapter.LeaseWatchdog = NoWatchdog
+    elif sys.argv[3] == "watchdog-pause-unguarded":
+        adapter.LeaseWatchdog = UnacknowledgedWatchdog
     root = Path(sys.argv[2])
     sandbox = adapter.DockerSandbox(sys.argv[1])
     proxy, dispatch = make_gateway(root / "sink.jsonl")

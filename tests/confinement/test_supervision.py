@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,7 +24,8 @@ async def running(observer, container):
     return container.encode() in value.splitlines()
 
 
-@pytest.mark.parametrize("failure", ["kill", "pause", "watchdog", "unguarded"])
+@pytest.mark.parametrize("failure", ["kill", "pause", "watchdog", "unguarded",
+                                     "watchdog-pause", "watchdog-pause-unguarded"])
 async def test_independent_lease_stops_container_after_bridge_failure(tmp_path, failure):
     image = os.environ["CMCP_CONFINEMENT_IMAGE"]
     observer = DockerSandbox(image)
@@ -52,14 +54,16 @@ async def test_independent_lease_stops_container_after_bridge_failure(tmp_path, 
             assert canary in (tmp_path / "sink.jsonl").read_text()
             if failure == "watchdog":
                 os.kill(metadata["watchdog"], signal.SIGKILL)
+            elif failure.startswith("watchdog-pause"):
+                os.kill(metadata["watchdog"], signal.SIGSTOP)
             elif failure == "pause":
                 os.kill(bridge.pid, signal.SIGSTOP)
             else:
                 bridge.kill()
-            if failure == "unguarded":
+            if failure in {"unguarded", "watchdog-pause-unguarded"}:
                 await asyncio.sleep(3)
                 stopped = not await running(observer, container)
-                assert not stopped, "removing watchdog must expose the surviving container"
+                assert not stopped, "removing supervision must expose the surviving container"
                 with pytest.raises(AssertionError):
                     assert stopped
             else:
@@ -77,6 +81,9 @@ async def test_independent_lease_stops_container_after_bridge_failure(tmp_path, 
                 bridge.kill()
             await bridge.wait()
             if metadata is not None:
+                if failure.startswith("watchdog-pause"):
+                    with suppress(ProcessLookupError):
+                        os.kill(metadata["watchdog"], signal.SIGKILL)
                 containers = await observer.docker("ps", "--all", "--format", "{{.Names}}")
                 if metadata["container"].encode() in containers.splitlines():
                     await observer.docker("rm", "--force", metadata["container"])
