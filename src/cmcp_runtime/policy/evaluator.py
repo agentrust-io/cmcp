@@ -185,8 +185,16 @@ class PolicyEvaluator:
         Raises PolicyDeny if enforcement_mode is ENFORCING and Cedar denies.
         In ADVISORY mode, always returns allowed=True but sets would_have_denied.
         In SILENT mode, always returns allowed=True with no logging.
+        Raises PolicySigningKeyRevoked (a PolicyDeny) in every mode when the policy
+        in force is signed by a revoked policy signing key.
         """
         self._maybe_reload()
+        # Fail closed on a policy whose signing key has been revoked, in every
+        # enforcement mode: advisory and silent decide what to do with a Cedar
+        # decision, and a policy nobody trusted can still be holding is not one.
+        # PolicySigningKeyRevoked is a PolicyDeny, so the proxy records the call
+        # as denied with this code in the audit chain.
+        self._store.require_trusted()
         result = self._backend.evaluate(context)
         allowed_by_cedar = result.allowed
         evaluation_ms = result.evaluation_ms or 0.0

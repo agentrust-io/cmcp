@@ -44,6 +44,8 @@ def ctx(tmp_path) -> RuntimeContext:
     bundle.policy_files = {"allow.cedar": "permit (principal, action, resource);"}
     policy_store = MagicMock(spec=PolicyStore)
     policy_store.bundle = bundle
+    bundle.signing_key_id = None
+    policy_store.revoked_key_ids = []
     policy_store.reload_if_stale = MagicMock()
 
     catalog = MagicMock()

@@ -9,6 +9,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Distinct tool names could share one Cedar policy identity.** The policy
+  backend names a call's action by joining the underscore-separated parts of the
+  tool name, so `read_file`, `read__file`, `_read_file` and `read_file_` all
+  became `Action::"ReadFile"`, and a permit or forbid written for one applied to
+  the others. The catalog loader checked only literal duplicates and uppercase
+  names. It now refuses a catalog in which two entries derive the same action
+  (`CATALOG_TOOL_NAME_COLLISION`), using the same derivation the backend uses,
+  now shared in `cmcp_runtime.policy.action_name`. The derivation itself is
+  unchanged, so existing policies keep their action names. Reported by
+  @saintmalik in #655.
+
+- **Nothing in a claim showed whether the kill switch was armed, and a refusal
+  left no evidence.** A claim with `kill_switch_triggered: false` read the same
+  whether the switch was enabled and did not trip or was never enabled, and a
+  call refused by a tripped gateway produced nothing a verifier could check.
+  Claims from a gateway with the switch enabled now carry a `gateway.kill_switch`
+  block with its settings and, when it tripped, `trigger` (`deny_rate` or
+  `operator`); claims from gateways without it are unchanged. Each refused call
+  returns a receipt signed with the claim signing key and bound to the closed
+  session's claim by digest, and `cmcp_verify.verify_kill_switch_refusal` checks
+  one against the other. `kill_switch.enabled` with no Agent Manifest now stops
+  startup (`KILL_SWITCH_REQUIRES_IDENTITY`): the switch blocks an identity, and
+  without one it stopped nothing while appearing armed. The tutorial no longer
+  claims evidence is verifiable by any regulator or that no other gateway can
+  produce it, and says what the evidence does not cover.
+
+- **The kill switch only acted when a session closed.** The deny rate was
+  evaluated in `close_session`, so an agent the switch should have stopped kept
+  calling for as long as its client kept the session open. Each call is now
+  counted as it completes, and the call that crosses the threshold closes the
+  session at once, signs its claim with `kill_switch_triggered: true`, and
+  records `tripping_call_id`. Calls counted this way are not counted again at
+  close. Operators can also trip the switch directly with
+  `POST /kill-switch/trip`, which requires `reason` and `authorized_by`, blocks
+  the bound identity, records the trip, and returns the closed session's claim.
+
+- **The kill switch did not survive a restart, and the close that tripped it
+  failed.** Blocked identities were held in an in-memory set, so any restart
+  lifted every block. Over HTTP, a close that tripped the switch raised
+  `KillSwitchTripped` while creating the successor session: the caller got a
+  generic `500 INTERNAL_ERROR` instead of the claim, and later tool calls waited
+  on a rotation that could never finish instead of receiving the documented
+  `403 KILL_SWITCH_TRIPPED`. Blocks now live in the audit database, the tripping
+  close returns its signed claim, and every later call is refused at once. A
+  gateway that starts with its identity blocked comes up halted rather than
+  failing to start, and `/readyz` reports it. The tutorial described a
+  `DELETE /admin/kill-switch/...` endpoint that did not exist; the operator route
+  is now `POST /kill-switch/unblock`, which requires `agent_id`, `reason` and
+  `authorized_by` and records the unblock in the audit chain.
+
+- **A compromised policy signing key could not be revoked without a restart.**
+  Hot reload accepted any bundle signed by `CMCP_POLICY_SIGNING_KEY` with a higher
+  version, and the only way to stop trusting that key was new config plus a
+  restart, so until every gateway restarted the key's holder could keep installing
+  policy on it. `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` now pins a second key at
+  startup. A statement in `signing-key-revocations.json`, signed by the successor
+  or the current key, revokes the current key on the next reload and promotes the
+  successor. The policy in force is then untrusted and every tool call is refused
+  with `POLICY_SIGNING_KEY_REVOKED`, in every enforcement mode, until a
+  successor-signed bundle with a higher version is installed. A bundle signed by
+  the revoked key is refused with the same code. Revocation is one-way within the
+  process: no statement un-revokes, a stolen current key cannot revoke the
+  successor, and bad statements are logged (`POLICY_KEY_REVOCATION_INVALID`) and
+  skipped without blocking the reload. TRACE claims gain an optional
+  `gateway.policy_signing` object recording the key the policy in force verified
+  under and the keys revoked. Startup also now reports a bundle signature failure
+  as a `POLICY_SIGNATURE_INVALID` FATAL entry and exit 1, where the exception
+  previously propagated out of `run_startup`.
+
+- **Signed policy reload never installed a changed bundle when a hash was also
+  pinned.** `PolicyStore.reload_if_stale` passed the startup `CMCP_POLICY_HASH` to
+  every reload, so with a hash and a signing key both pinned (the documented
+  production shape, and the only one outside dev mode, where a hash is required)
+  a correctly signed newer bundle failed with `PolicyHashMismatch` and the old
+  policy stayed in force. With a key pinned, the key now authorises reloads and
+  the hash is checked on the startup load.
+
 - Add optional operator-owned tool and caller-response sensitivity ceilings.
   They enforce accumulated/catalog/declared classification independently of
   Cedar mode, before discovery and dispatch and before response release. Strict

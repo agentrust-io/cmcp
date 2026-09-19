@@ -30,8 +30,11 @@ from cmcp_runtime.errors import (
     CatalogToolNameCollision,
     ConfigError,
     PolicyHashMismatch,
+    PolicySignatureInvalid,
+    PolicySigningKeyRevoked,
 )
-from cmcp_runtime.policy.bundle import PolicyStore, load_policy_bundle
+from cmcp_runtime.kill_switch import KillSwitchBlockStore
+from cmcp_runtime.policy.bundle import PolicySigningKeys, PolicyStore, load_policy_bundle
 from cmcp_runtime.session.store import SqliteSessionStateStore
 from cmcp_runtime.tee.base import AttestationReport, TEEProvider
 from cmcp_runtime.tee.detect import detect_provider
@@ -84,6 +87,8 @@ class RuntimeContext:
     #: Shared, persistent home for the accumulated session-sensitivity value.
     #: None means the value lives in this process only.
     session_state_store: SqliteSessionStateStore | None = None
+    #: Durable kill switch blocks. None when the kill switch is disabled.
+    kill_switch_store: KillSwitchBlockStore | None = None
     spiffe: SpiffeClientResult | None = None
     nras_appraisal: AppraisalResult | None = None
     agent_manifest: AgentManifestBinding | None = None
@@ -107,7 +112,7 @@ def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
     return hashlib.sha256(canonical).digest()
 
 
-def _decode_ed25519_public_key(value: str) -> bytes:
+def _decode_ed25519_public_key(value: str, name: str = "CMCP_POLICY_SIGNING_KEY") -> bytes:
     """Decode a raw Ed25519 public key given as base64url or hex.
 
     Both spellings are accepted because operators paste whichever their tooling
@@ -127,12 +132,11 @@ def _decode_ed25519_public_key(value: str) -> bytes:
             raw = base64.urlsafe_b64decode(text + ("=" * padding if padding != 4 else ""))
         except (binascii.Error, ValueError) as exc:
             raise ConfigError(
-                "CMCP_POLICY_SIGNING_KEY must be a raw Ed25519 public key in "
-                "base64url or hex"
+                f"{name} must be a raw Ed25519 public key in base64url or hex"
             ) from exc
     if len(raw) != 32:
         raise ConfigError(
-            "CMCP_POLICY_SIGNING_KEY must decode to exactly 32 bytes "
+            f"{name} must decode to exactly 32 bytes "
             f"(an Ed25519 public key); got {len(raw)}"
         )
     return raw
@@ -498,12 +502,43 @@ def run_startup(config_path: str) -> RuntimeContext:
     # policy change: a hash pins one artifact, a key approves any artifact the
     # authority signs. See docs/spec/policy-hot-reload.md.
     policy_signing_key: bytes | None = None
+    policy_signing_keys: PolicySigningKeys | None = None
     raw_signing_key = os.environ.get("CMCP_POLICY_SIGNING_KEY")
+    raw_successor_key = os.environ.get("CMCP_POLICY_SUCCESSOR_SIGNING_KEY")
+    if raw_successor_key and not raw_signing_key:
+        _fatal(
+            "POLICY_SIGNING_KEY_INVALID",
+            "CMCP_POLICY_SUCCESSOR_SIGNING_KEY is set without CMCP_POLICY_SIGNING_KEY; "
+            "a successor only means something next to a current key",
+            action="startup_aborted",
+        )
+        sys.exit(1)
     if raw_signing_key:
         try:
             policy_signing_key = _decode_ed25519_public_key(raw_signing_key)
+            successor = (
+                _decode_ed25519_public_key(
+                    raw_successor_key, "CMCP_POLICY_SUCCESSOR_SIGNING_KEY"
+                )
+                if raw_successor_key
+                else None
+            )
+            policy_signing_keys = PolicySigningKeys(policy_signing_key, successor)
         except ConfigError as exc:
             _fatal("POLICY_SIGNING_KEY_INVALID", str(exc), action="startup_aborted")
+            sys.exit(1)
+        # A revocation already on disk applies before the first load, so a
+        # restart cannot quietly re-trust a key the running gateway had revoked
+        # while the statement is still there.
+        policy_signing_keys.apply_file(config.policy_bundle_path)
+        policy_signing_key = policy_signing_keys.current
+        if policy_signing_key is None:
+            _fatal(
+                "POLICY_SIGNING_KEY_REVOKED",
+                "every pinned policy signing key is revoked by "
+                "signing-key-revocations.json; pin a new CMCP_POLICY_SIGNING_KEY",
+                action="startup_aborted",
+            )
             sys.exit(1)
 
     # POLICY-003: a pinned hash and automatic reload cannot both be satisfied.
@@ -544,7 +579,24 @@ def run_startup(config_path: str) -> RuntimeContext:
             config.policy_bundle_path,
             expected_hash=policy_expected_hash,
             signing_key=policy_signing_key,
+            revoked_keys=policy_signing_keys.revoked if policy_signing_keys else (),
         )
+    except PolicySigningKeyRevoked as exc:
+        _fatal(
+            "POLICY_SIGNING_KEY_REVOKED",
+            str(exc),
+            detail=exc.detail or "",
+            action="startup_aborted",
+        )
+        sys.exit(1)
+    except PolicySignatureInvalid as exc:
+        _fatal(
+            "POLICY_SIGNATURE_INVALID",
+            str(exc),
+            detail=exc.detail or "",
+            action="startup_aborted",
+        )
+        sys.exit(1)
     except PolicyHashMismatch as exc:
         _fatal(
             "POLICY_HASH_MISMATCH",
@@ -564,7 +616,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         bundle_path=config.policy_bundle_path,
         reload_interval_seconds=config.policy_reload_interval_seconds,
         expected_hash=policy_expected_hash,
-        signing_key=policy_signing_key,
+        signing_keys=policy_signing_keys,
     )
     if config.policy_reload_interval_seconds > 0:
         logger.info(
@@ -660,6 +712,24 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
 
+    # The kill switch blocks an agent identity. Enabled with no Agent Manifest it
+    # has nothing to block, so it would look armed while stopping nothing.
+    if config.kill_switch.enabled and (
+        config.agent_manifest.path is None
+        or config.agent_manifest.trust_anchor_path is None
+    ):
+        _fatal(
+            "KILL_SWITCH_REQUIRES_IDENTITY",
+            "kill_switch.enabled requires an Agent Manifest binding: the kill switch "
+            "blocks an agent identity, and without one it would stop nothing.",
+            detail=(
+                "set agent_manifest.path and agent_manifest.trust_anchor_path, "
+                "or set kill_switch.enabled to false"
+            ),
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
     if config.agent_manifest.path is not None and config.agent_manifest.trust_anchor_path is not None:
         try:
             loaded = load_agent_manifest_document(config.agent_manifest.path)
@@ -725,7 +795,22 @@ def run_startup(config_path: str) -> RuntimeContext:
         )
         sys.exit(1)
 
-    # Step 5f: open the shared, persistent session-state store if configured.
+    # Step 5f: kill switch blocks live beside the audit chain so they survive a
+    # restart. A gateway that cannot read its blocks cannot tell whether the
+    # identity it is about to serve was stopped, so it does not start.
+    kill_switch_store: KillSwitchBlockStore | None = None
+    if config.kill_switch.enabled:
+        try:
+            kill_switch_store = KillSwitchBlockStore(_Path(config.audit_db_path))
+        except Exception as exc:
+            _fatal(
+                "KILL_SWITCH_STORE_UNAVAILABLE",
+                f"Cannot open kill switch block store at '{config.audit_db_path}': {exc}",
+                action="startup_aborted",
+            )
+            sys.exit(1)
+
+    # Step 5g: open the shared, persistent session-state store if configured.
     session_state_store = _open_session_state_store(config)
 
     return RuntimeContext(
@@ -737,6 +822,7 @@ def run_startup(config_path: str) -> RuntimeContext:
         catalog=catalog,
         catalog_scanner=catalog_scanner,
         audit_store=audit_store,
+        kill_switch_store=kill_switch_store,
         spiffe=spiffe_result,
         nras_appraisal=nras_appraisal,
         agent_manifest=agent_manifest,

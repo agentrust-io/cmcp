@@ -94,7 +94,8 @@ Session-scoped resources, meaning the stdio child, the pooled HTTP clients, and 
 - **Graceful shutdown can outlast a deployment's termination grace period.** It waits for any in-flight close, then drains again on the same budget, so with the defaults cleanup can begin as late as seventy seconds in. A shorter grace period ends in SIGKILL and none of this runs. Size the grace period above twice `CMCP_SESSION_CLOSE_DRAIN_SECONDS`, or lower that deadline.
 - **Cancellation is cooperative, so a failed drain does not prove a call stopped.** Close requests cancellation at the deadline and allows a further five seconds to unwind. A call that does not honour it leaves the drain incomplete, which seals admission rather than signing a claim that omits an outcome.
 - **A failed terminal audit write leaves the session unavailable, with no repair.** A deliberate trade: it blocks signing, rotation, reset, and further admission for that session, because the alternative is a signed claim missing a call the gateway made. Restoring the writer does not reconstruct the missing outcome, and none is provided. Recovery is a new session.
-- **A close that trips the kill switch leaves the gateway with no live session.** Also deliberate. The claim for the closed session is signed and retrievable, but no successor can be created until an operator unblocks that agent identity. This is the kill switch working as specified, at the cost of availability.
+- **A close that trips the kill switch leaves the gateway with no live session.** Also deliberate. The claim for the closed session is signed and returned, and every later call is refused with `KILL_SWITCH_TRIPPED` until an operator lifts the block with `POST /kill-switch/unblock`. The block is stored in the audit database, so a restart does not lift it, and a gateway that starts with its identity blocked serves nothing and reports not ready. This is the kill switch working as specified, at the cost of availability.
+- **A trip stops new calls at once but drains the ones already running.** When the deny rate crosses the threshold, or an operator trips the switch, no further call is admitted from that moment, and the session is closed without waiting for the client. Calls admitted before the trip are drained as on any close: they finish, or are cancelled at `CMCP_SESSION_CLOSE_DRAIN_SECONDS`, and cancellation is cooperative (see above). A call whose outcome is recorded after the trip is still in the claim.
 
 ## What Level 0 (CMCP_DEV_MODE) does not provide
 
@@ -196,6 +197,26 @@ control. It does not appraise the separate SNP guest `POLICY` (including debug),
 TCB versions, revocation, or GPU state. See [the verifier guide](https://cmcp.agentrust-io.com/spec/platform-policy/)
 for the exact scope and an example. The new paths are tested using synthetic
 signed reports; these tests do not establish live hardware protection.
+
+## Policy signing key revocation
+
+A policy signing key can be revoked on a running gateway only when
+`CMCP_POLICY_SUCCESSOR_SIGNING_KEY` was pinned at startup and
+`policy_reload_interval_seconds` is above `0`. After a revocation the gateway
+refuses every tool call until a bundle signed by the successor is installed; that
+refusal is deliberate, and it applies in advisory and silent modes too.
+
+- **One step per startup.** After the successor is promoted there is no further
+  successor until a restart, so a second compromise in that window can only be
+  answered by self-revocation (every call refused) and a restart.
+- **Revocation state is in memory.** A restart rebuilds it from
+  `CMCP_POLICY_SIGNING_KEY`, `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` and
+  `signing-key-revocations.json`. If the statement file is removed and the old key
+  is still configured, the restarted gateway trusts the old key again.
+- **No fleet distribution.** Each gateway reads the statement from its own bundle
+  directory. Nothing pushes it, and verifiers are not sent a revocation list; they
+  see `gateway.policy_signing` in the claims the gateway signs.
+- **No expiry.** Keys are trusted until revoked.
 
 ## What cMCP does not do
 

@@ -8,6 +8,7 @@ from cmcp_verify.embodied_action import (
     hash_embodied_action_payload,
     verify_embodied_action_evidence,
 )
+from cmcp_verify.kill_switch import KillSwitchRefusalResult, verify_kill_switch_refusal
 from cmcp_verify.platform_policy import SnpPlatformPolicy
 from cmcp_verify.verify import (
     ApprovedHashes,
@@ -25,6 +26,7 @@ __all__ = [
     "AuditBundleResult",
     "EMBODIED_ACTION_PROFILE",
     "EmbodiedActionEvidenceResult",
+    "KillSwitchRefusalResult",
     "ReceiptState",
     "SnpPlatformPolicy",
     "VerificationError",
@@ -34,5 +36,6 @@ __all__ = [
     "hash_embodied_action_payload",
     "verify_audit_bundle",
     "verify_embodied_action_evidence",
+    "verify_kill_switch_refusal",
     "verify_trace_claim",
 ]

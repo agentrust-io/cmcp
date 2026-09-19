@@ -34,6 +34,7 @@ from cmcp_runtime.catalog.loader import (
 from cmcp_runtime.catalog.scanner import CatalogScanner
 from cmcp_runtime.config import Config, DriftPolicy
 from cmcp_runtime.errors import (
+    KillSwitchTripped,
     PolicyDeny,
     SessionCloseIncomplete,
     SessionDrainIncomplete,
@@ -325,6 +326,10 @@ class CMCPProxy:
         # persist. Keep this separate from drain state: shutdown can still reap.
         self._failed_terminal_call: str | None = None
         self._shutting_down = False
+        # Set when the kill switch has stopped this gateway: the session it
+        # served is closed and no successor exists, so admission is refused
+        # rather than held open for a rotation that is never coming.
+        self._halted_identity: str | None = None
 
     def _reset_upstream_checks(self) -> None:
         # Drift and provenance share one completed paginated acquisition per
@@ -392,6 +397,7 @@ class CMCPProxy:
                 except TimeoutError:
                     self._raise_stuck_transition()
             self._ensure_running()
+            self._ensure_not_halted()
             self._ensure_terminal_audit_complete()
             self._active_calls += 1
             task = asyncio.current_task()
@@ -588,6 +594,56 @@ class CMCPProxy:
                     ):
                         self._session_rotation_in_progress = False
                         self._lifecycle_condition.notify_all()
+
+    def _ensure_not_halted(self) -> None:
+        if self._halted_identity is not None:
+            raise KillSwitchTripped(
+                f"Call rejected: agent identity {self._halted_identity!r} has tripped "
+                "the kill switch. Contact the platform operator to unblock.",
+                detail=self._halted_identity,
+            )
+
+    @property
+    def halted_identity(self) -> str | None:
+        """The blocked identity while the kill switch holds this gateway stopped."""
+        return self._halted_identity
+
+    async def halt_session(self, agent_id: str) -> None:
+        """End service of the closed session with no successor, inside session_rotation.
+
+        Releases the closed session's resources exactly as a rebind would, then
+        refuses admission until ``resume_session``. Marking the session as
+        rebound lets session_rotation reopen its barrier: calls that were
+        waiting on it are answered with KillSwitchTripped instead of waiting
+        for a successor that will not be created.
+        """
+        if not self._session_rotation_in_progress:
+            raise RuntimeError("halt_session requires an active session_rotation")
+        if self._session_rebound:
+            raise RuntimeError("session has already been rebound")
+        self._ensure_terminal_audit_complete()
+        await self.aclose()
+        self._halted_identity = agent_id
+        self._session_rebound = True
+        self._close_committed = False
+
+    def lift_halt(self) -> None:
+        """Resume admission on the current session, which was never closed.
+
+        Only for a gateway halted by ``mark_halted``: its session was opened
+        and never served. A gateway halted by ``halt_session`` has no open
+        session and resumes through ``resume_session`` instead.
+        """
+        self._halted_identity = None
+
+    def mark_halted(self, agent_id: str) -> None:
+        """Refuse admission from the start, for a gateway whose identity was blocked before it started."""
+        self._halted_identity = agent_id
+
+    async def resume_session(self, session: SessionState, audit_chain: AuditChain) -> None:
+        """Adopt a successor after an operator lifts the block, inside session_rotation."""
+        await self.rebind_session(session, audit_chain)
+        self._halted_identity = None
 
     async def rebind_session(self, session: SessionState, audit_chain: AuditChain) -> None:
         """Close resources before adopting the successor inside session_rotation."""

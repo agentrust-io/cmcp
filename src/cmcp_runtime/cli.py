@@ -65,7 +65,14 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
     # AUDIT-001/AUDIT-002: sessions MUST be created through SessionManager so the
     # chain is backed by the durable SQLite store and TEE-anchored at creation.
     session_manager = SessionManager(ctx)
-    session, audit_chain = session_manager.create_session()
+    # A block recorded before this process started is still in force. The
+    # gateway starts, so an operator can reach the unblock endpoint, but it
+    # serves no calls until the block is lifted.
+    blocked_at_start = session_manager.blocked_identity()
+    if blocked_at_start is None:
+        session, audit_chain = session_manager.create_session()
+    else:
+        session, audit_chain = session_manager.open_blocked_session()
     # #552: a policy hot-reload changes what the gateway is running, and on SEV-SNP,
     # TDX and Azure CVM that fact lives only in the current attestation report's
     # report_data. Wire the reload to a re-attestation so the committed measurement
@@ -89,6 +96,8 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
     )
     # AUTH-001: the token validated in run_startup must reach the server, otherwise
     # every protected endpoint is reachable unauthenticated.
+    if blocked_at_start is not None:
+        proxy.mark_halted(blocked_at_start)
     return MCPServer(
         proxy=proxy,
         session_manager=session_manager,
