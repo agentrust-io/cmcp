@@ -7,6 +7,7 @@ import json
 import pathlib
 
 import jsonschema
+import pytest
 
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
@@ -454,6 +455,30 @@ def test_build_runtime_all_known_providers_accepted():
             attestation_validity_seconds=86400,
         )
         _build_runtime(report)  # must not raise
+
+
+# ── #654: unknown enforcement mode rejected ─────────────────────────────────────
+
+
+@pytest.mark.parametrize("mode", ["enforce", "declared", "audit-only", "ENFORCING", "", "Enforcing"])
+def test_build_policy_unknown_enforcement_mode_raises(mode):
+    """#654: an unrecognised mode was signed as "advisory", asserting an evaluation."""
+    from cmcp_runtime.audit.trace_claim import PolicyBundleInfo, _build_policy
+
+    bundle = PolicyBundleInfo(hash="sha256:" + "a" * 64, enforcement_mode=mode, policy_version="1")
+    with pytest.raises(ValueError, match="not in the allowed set"):
+        _build_policy(bundle)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("enforcing", "enforce"), ("advisory", "advisory"), ("silent", "silent")],
+)
+def test_build_policy_known_enforcement_modes_map(mode, expected):
+    from cmcp_runtime.audit.trace_claim import PolicyBundleInfo, _build_policy
+
+    bundle = PolicyBundleInfo(hash="sha256:" + "a" * 64, enforcement_mode=mode, policy_version="1")
+    assert _build_policy(bundle).enforcement_mode == expected
 
 
 # ── tool_transcript entries (#126) ──────────────────────────────────────────────
