@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses the value, as `_build_runtime` already refuses an unknown provider.
   Reported by @saintmalik in #654.
 
+- Add an opt-in exact-output disclosure contract and library adapter. Independently
+  scoped owner signatures bind output bytes, source labels, workload, recipient,
+  purpose, policy and validity. Durable pre-delivery consumption rejects replay
+  and keeps failed delivery unknown. Existing gateway sink ceilings are unchanged;
+  transport binding, classification, storage and clocks remain trusted inputs.
+
 - **Distinct tool names could share one Cedar policy identity.** The policy
   backend names a call's action by joining the underscore-separated parts of the
   tool name, so `read_file`, `read__file`, `_read_file` and `read_file_` all
