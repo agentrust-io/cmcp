@@ -266,9 +266,41 @@
           "type": "array",
           "items": { "type": "object" }
         },
+        "policy_signing": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional. Present only where a policy signing key is pinned (CMCP_POLICY_SIGNING_KEY). key_id names the key the policy in force at claim time verified under; revoked_key_ids lists the policy signing keys this gateway process has revoked, in order. A key_id that appears in revoked_key_ids means the policy in force had lost its signer and tool calls were refused. Key ids are sha256 of the raw 32-byte Ed25519 public key.",
+          "properties": {
+            "key_id": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "revoked_key_ids": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+            }
+          }
+        },
         "kill_switch_triggered": {
           "type": "boolean",
-          "description": "True when the AGT SRE kill switch fired for this session's agent identity. Future sessions from the same identity will be rejected."
+          "description": "True when the kill switch stopped this session's agent identity. Later calls and sessions from the same identity are refused until an operator lifts the block."
+        },
+        "kill_switch": {
+          "type": "object",
+          "description": "The kill switch settings in force for this session, and what tripped it. Present only when the kill switch is enabled; absent means it was not armed.",
+          "additionalProperties": false,
+          "required": ["enabled", "window_seconds", "deny_rate_threshold", "min_calls"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "window_seconds": {"type": "integer", "minimum": 1},
+            "deny_rate_threshold": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "min_calls": {"type": "integer", "minimum": 1},
+            "trigger": {
+              "type": "string",
+              "enum": ["deny_rate", "operator"],
+              "description": "deny_rate when the threshold was crossed, operator when an operator tripped it. Absent when the switch did not trip."
+            }
+          }
         }
       }
     },

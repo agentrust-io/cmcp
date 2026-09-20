@@ -6,7 +6,7 @@ import base64
 import hashlib
 import importlib.metadata
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
@@ -67,6 +67,11 @@ class PolicyBundleInfo:
     hash: str
     enforcement_mode: str
     policy_version: str
+    #: Key id (``sha256:<hex>`` of the raw Ed25519 public key) the policy in force
+    #: verified under, or None where no policy signing key is pinned.
+    signing_key_id: str | None = None
+    #: Policy signing keys revoked in this gateway process, in the order revoked.
+    revoked_signing_key_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -181,6 +186,24 @@ class AgentIdentityOut(BaseModel):
     enforcement_mode: str | None = None
 
 
+_KEY_ID = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+
+
+class PolicySigningOut(BaseModel):
+    """gateway.policy_signing: which policy signing key the policy in force at
+    claim time verified under, and which keys this gateway process has revoked.
+
+    Emitted only where a policy signing key is pinned. With ``key_id`` in
+    ``revoked_key_ids`` the claim records a session whose tool calls were refused
+    because the policy in force had lost its signer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key_id: _KEY_ID | None = None
+    revoked_key_ids: list[_KEY_ID] = Field(default_factory=list)
+
+
 class ToolTranscriptEntry(BaseModel):
     """One privacy-preserving entry in the bound tool transcript (issue #126).
 
@@ -258,6 +281,25 @@ class AttestationEvidence(BaseModel):
     ek_cert_chain: str | None = None  # EK's own path to the manufacturer CA
 
 
+class KillSwitchState(BaseModel):
+    """What the kill switch was set to do for this session, and what it did.
+
+    Present only when the kill switch is enabled, so claims from gateways
+    without it are byte-identical to what they were before this field existed.
+    A verifier that requires an armed kill switch checks for its presence.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    window_seconds: int
+    deny_rate_threshold: float
+    min_calls: int
+    #: What stopped the session: "deny_rate" when the threshold was crossed,
+    #: "operator" when an operator tripped it. None when it did not trip.
+    trigger: Literal["deny_rate", "operator"] | None = None
+
+
 class GatewayAddenda(BaseModel):
     """cmcp-specific fields outside the canonical TRACE spec."""
 
@@ -277,7 +319,9 @@ class GatewayAddenda(BaseModel):
     call_log_summary: CallLogSummary | None = None
     agent_identity: AgentIdentityOut | None = None
     kill_switch_triggered: bool = False
+    kill_switch: KillSwitchState | None = None
     attestation_evidence: AttestationEvidence | None = None
+    policy_signing: PolicySigningOut | None = None
 
 
 class RuntimeClaim(BaseModel):
@@ -296,6 +340,10 @@ class RuntimeClaim(BaseModel):
 
 def _to_dict(claim: RuntimeClaim) -> dict[str, Any]:
     return claim.model_dump(exclude_none=True)
+
+
+#: ``type`` of the signed receipt a gateway returns when the kill switch refuses a call.
+REFUSAL_RECEIPT_TYPE = "cmcp.kill-switch.refusal/v1"
 
 
 def canonical_json(claim_dict: dict[str, Any]) -> bytes:
@@ -377,12 +425,36 @@ def _build_runtime(report: AttestationReportInfo) -> RuntimeInfo:
     return RuntimeInfo(platform=platform, measurement=measurement, nonce=nonce)  # type: ignore[arg-type]
 
 
+_ENFORCEMENT_MODE_MAP = {"enforcing": "enforce", "advisory": "advisory", "silent": "silent"}
+
+
 def _build_policy(bundle: PolicyBundleInfo) -> PolicyInfo:
-    mode_map = {"enforcing": "enforce", "advisory": "advisory", "silent": "silent"}
+    # Every mode the claim can carry asserts that something evaluated the policy.
+    # An unrecognised value is refused rather than signed as one of them, the
+    # same way _build_runtime refuses an unknown provider (AUDIT-003).
+    mode = _ENFORCEMENT_MODE_MAP.get(bundle.enforcement_mode)
+    if mode is None:
+        raise ValueError(
+            f"Enforcement mode {bundle.enforcement_mode!r} is not in the allowed set "
+            f"{sorted(_ENFORCEMENT_MODE_MAP)}. "
+            "Rejecting claim construction rather than signing a policy posture "
+            "that was never evaluated."
+        )
     return PolicyInfo(
         bundle_hash=bundle.hash,
-        enforcement_mode=mode_map.get(bundle.enforcement_mode, "advisory"),  # type: ignore[arg-type]
+        enforcement_mode=mode,  # type: ignore[arg-type]
         version=bundle.policy_version,
+    )
+
+
+def _build_policy_signing(bundle: PolicyBundleInfo) -> PolicySigningOut | None:
+    """None where no policy signing key is pinned, which keeps those claims
+    byte-identical to what they were before this field existed."""
+    if bundle.signing_key_id is None and not bundle.revoked_signing_key_ids:
+        return None
+    return PolicySigningOut(
+        key_id=bundle.signing_key_id,
+        revoked_key_ids=list(bundle.revoked_signing_key_ids),
     )
 
 
@@ -435,6 +507,7 @@ def generate_trace_claim(
     sequence_number: int = 1,
     prev_claim_hash: str | None = None,
     kill_switch_triggered: bool = False,
+    kill_switch: KillSwitchState | None = None,
     do_sign: bool = True,
 ) -> RuntimeClaim:
     """Generate a RuntimeClaim from session data, validate it via Pydantic, and optionally sign it.
@@ -496,7 +569,9 @@ def generate_trace_claim(
         attestation_stale=attestation_stale,
         catalog_exceptions=catalog_exceptions or [],
         kill_switch_triggered=kill_switch_triggered,
+        kill_switch=kill_switch,
         attestation_evidence=_build_evidence(attestation_report),
+        policy_signing=_build_policy_signing(policy_bundle),
         call_log_summary=call_log_summary,
         agent_identity=(
             AgentIdentityOut(

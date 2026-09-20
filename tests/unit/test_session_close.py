@@ -51,6 +51,8 @@ def server():
     bundle.manifest.version = "test-v1"
     policy_store = MagicMock(spec=PolicyStore)
     policy_store.bundle = bundle
+    bundle.signing_key_id = None
+    policy_store.revoked_key_ids = []
 
     catalog = MagicMock()
     catalog.entries = {}

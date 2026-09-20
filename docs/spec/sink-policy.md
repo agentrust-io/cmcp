@@ -68,3 +68,7 @@ remain outside the stderr control.
   and protection of the process/configuration remain deployment obligations.
   This gate does not establish a distributed total order over simultaneous
   calls or independently operated gateways.
+
+See [Exact-output disclosure authorization](disclosure-authorization.md) for a
+separate owner-approved library release path. It adds no exception to this
+gateway policy and does not lower accumulated session classifications.

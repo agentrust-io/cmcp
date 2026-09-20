@@ -70,9 +70,11 @@ CREATE TABLE IF NOT EXISTS closed_sessions (
 class StoredSensitivity:
     """The subset of session state that is shared and must survive a restart.
 
-    Deliberately narrow. Injection events, drift lists and the kill switch are
-    per-instance observations, and copying them between instances would present
-    one instance's observations as another's.
+    Deliberately narrow. Injection events, drift lists and the kill switch's
+    rolling window are per-instance observations, and copying them between
+    instances would present one instance's observations as another's. Kill
+    switch *blocks* are durable and shared, but live in their own store
+    (``cmcp_runtime.kill_switch.KillSwitchBlockStore``), not here.
     """
 
     max_sensitivity: str

@@ -80,7 +80,7 @@ The gateway and the server are now primary control surfaces, the only enforcemen
 
 ## 3. Solution: cMCP Runtime
 
-The cMCP Runtime intercepts every MCP tool call, evaluates it against a Cedar policy bundle, and enforces the result from inside a TEE. The policy bundle hash is measured into the hardware attestation report before any code runs. The audit chain is signed with a key that is hardware-sealed inside the enclave.
+The cMCP Runtime intercepts every MCP tool call, evaluates it against a Cedar policy bundle, and enforces the result from inside a TEE. Before it serves a single tool call, the runtime measures its installed code, policy bundle and config into the hardware attestation report, and re-attests whenever the bundle reloads. The audit chain is signed with a key that is hardware-sealed inside the enclave.
 
 The output is a TRACE Claim: a signed, hardware-attested artifact the enterprise hands to an auditor, regulator, or customer instead of a written response. The verifier does not need to trust the operator.
 

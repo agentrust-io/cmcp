@@ -46,7 +46,7 @@ None of that proves the policy engine itself was not compromised. Software-only 
 
 The control plane that governs tool calls must run where it cannot be reached by the process it governs.
 
-Hardware-attested policy enforcement for MCP tool calls. Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine running inside a Trusted Execution Environment (TEE). The policy bundle hash is measured into the hardware attestation report before any code runs.
+Hardware-attested policy enforcement for MCP tool calls. Every tool call is intercepted, evaluated against a Cedar policy bundle, and enforced by a policy engine running inside a Trusted Execution Environment (TEE). Before it serves a single tool call, the gateway measures its installed code, policy bundle and config into the hardware attestation report, and re-attests whenever the bundle reloads.
 
 In a hardware deployment, the cMCP Runtime processes tool-call payloads inside the TEE. What the host and connectivity provider can read also depends on the egress policy, and the upstream tool server is a separate component outside the TEE. Software mode (`CMCP_DEV_MODE`) provides no hardware isolation. [LIMITATIONS.md](LIMITATIONS.md) lists what cMCP does not prevent.
 
@@ -103,7 +103,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full walkthrough: Cedar pol
 ## How it works
 
 1. The agent sends every tool call to the cMCP Gateway instead of directly to MCP servers.
-2. At startup the gateway measures the Cedar policy bundle hash into the hardware attestation report. No code runs before this measurement.
+2. At startup, before it serves traffic, the gateway measures its installed code, Cedar policy bundle and config. On SEV-SNP, TDX and Azure CVM the digest is bound into `report_data`; on the TPM tier it is extended into a certified NV index. A policy reload triggers a fresh attestation.
 3. Each incoming tool call is evaluated by the Cedar policy engine running inside the TEE. The result is allow, deny, or redact. The call and its decision are appended to the hardware-sealed audit chain.
 4. At the end of the session the gateway produces a TRACE Claim: a signed, hardware-attested artifact that records which tools ran, which policy decided each call, and the full audit chain. A verifier checks this without trusting the operator.
 
@@ -273,7 +273,7 @@ cMCP (Confidential MCP Runtime) is an open-source gateway that enforces MCP tool
 
 ### How is cMCP different from software-only MCP governance?
 
-Software-only governance runs the policy engine in the same OS an operator or a supply-chain CVE can reach, so it cannot prove the policy that ran was the approved one or that the decision was not flipped in memory. cMCP runs the policy engine inside a TEE and measures the Cedar bundle hash into the hardware attestation report before any code runs, so the control plane cannot be reached by the process it governs.
+Software-only governance runs the policy engine in the same OS an operator or a supply-chain CVE can reach, so it cannot prove the policy that ran was the approved one or that the decision was not flipped in memory. cMCP runs the policy engine inside a TEE and measures its code and Cedar bundle into the hardware attestation report before it serves a single call, so the control plane cannot be reached by the process it governs.
 
 ### Do I need special hardware to try it?
 

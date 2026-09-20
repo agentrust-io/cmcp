@@ -128,6 +128,32 @@ def test_catalog_tool_name_collision_raises(catalog_file):
         load_catalog(catalog_file([ENTRY_1, duplicate]))
 
 
+@pytest.mark.parametrize("other", ["read__file", "_read_file", "read_file_", "read___file"])
+def test_catalog_refuses_tools_that_derive_the_same_cedar_action(catalog_file, other):
+    """#655: distinct names that map to one Cedar action share a policy identity."""
+    first = dict(ENTRY_1, tool_name="read_file")
+    second = dict(ENTRY_1, tool_name=other, server=ENTRY_2["server"])
+    with pytest.raises(CatalogToolNameCollision, match='Action::"ReadFile"'):
+        load_catalog(catalog_file([first, second]))
+
+
+def test_catalog_accepts_tools_with_distinct_cedar_actions(catalog_file):
+    first = dict(ENTRY_1, tool_name="read_file")
+    second = dict(ENTRY_1, tool_name="readfile", server=ENTRY_2["server"])
+    cat = load_catalog(catalog_file([first, second]))
+    assert set(cat.entries) == {"read_file", "readfile"}
+
+
+def test_backend_and_loader_derive_the_same_action():
+    """The loader's check is only sound if it uses the backend's mapping."""
+    from cmcp_runtime.policy.action_name import cedar_action_name
+    from cmcp_runtime.policy.cedar import CedarBackend
+
+    for name in ("read_file", "crm.query", "a_b_c", "_x_"):
+        request = CedarBackend.build_request({"tool_name": name})
+        assert request["action"] == f'Action::"{cedar_action_name(name)}"'
+
+
 def test_catalog_defaults_compliance_domain(catalog_file):
     entry = dict(ENTRY_1)
     del entry["compliance_domain"]
