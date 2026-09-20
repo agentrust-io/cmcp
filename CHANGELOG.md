@@ -327,6 +327,11 @@ fail closed.
 
 ### Fixed
 
+- `verify_audit_bundle()` now reports malformed `tool_name` values during claim
+  summary verification and malformed external-receipt `evidence_type` values as
+  failed verification results instead of raising `TypeError`. Hash-chain checks
+  remain active, and receipt verification remains opt-in (#593).
+
 - **Gateway NV appraisal accepted an evidence-selected NV object and certified
   range as the configured gateway measurement.** `verify_gateway_measurement`
   authenticated the AK chain, both signatures, phase bindings, and

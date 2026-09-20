@@ -570,6 +570,15 @@ def _external_evidence_failure(entry_index: int, reason: str) -> str:
     return f"entry {entry_index}: {_EXTERNAL_EVIDENCE_ERROR}: {reason}"
 
 
+def _audit_bundle_shape_failure(path: str, entry_count: int = 0) -> AuditBundleResult:
+    """Classify malformed external structure without interpreting its contents."""
+    return AuditBundleResult(
+        verified=False,
+        entry_count=entry_count,
+        failures=[f"{path} has invalid object or array shape"],
+    )
+
+
 def verify_audit_bundle(
     bundle_json: dict[str, Any],
     claim_json: dict[str, Any] | None = None,
@@ -591,8 +600,39 @@ def verify_audit_bundle(
        signature). This is opt-in: receipt-less entries and callers that do not
        supply keys are unaffected, so existing evidence keeps verifying.
     """
-    failures: list[str] = []
+    if not isinstance(bundle_json, dict):
+        return _audit_bundle_shape_failure("bundle")
+
     entries = bundle_json.get("entries", [])
+    if not isinstance(entries, list):
+        return _audit_bundle_shape_failure("bundle.entries")
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            return _audit_bundle_shape_failure(f"bundle.entries[{i}]", len(entries))
+
+    if claim_json is not None:
+        if not isinstance(claim_json, dict):
+            return _audit_bundle_shape_failure("claim", len(entries))
+        for path in (
+            ("gateway",),
+            ("gateway", "audit_chain"),
+            ("gateway", "call_summary"),
+            ("trace",),
+            ("trace", "tool_transcript"),
+            ("trace", "cnf"),
+            ("trace", "cnf", "jwk"),
+        ):
+            obj: Any = claim_json
+            for depth, name in enumerate(path):
+                if name not in obj:
+                    break
+                obj = obj[name]
+                if not isinstance(obj, dict):
+                    return _audit_bundle_shape_failure(
+                        "claim." + ".".join(path[: depth + 1]), len(entries)
+                    )
+
+    failures: list[str] = []
     if not entries:
         return AuditBundleResult(verified=False, entry_count=0, failures=["bundle has no entries"])
 
@@ -648,7 +688,7 @@ def verify_audit_bundle(
                 )
                 continue
             evidence_type = ev.get("evidence_type", "")
-            if evidence_type not in _EXTERNAL_EVIDENCE_TYPES:
+            if not isinstance(evidence_type, str) or evidence_type not in _EXTERNAL_EVIDENCE_TYPES:
                 failures.append(
                     _external_evidence_failure(i, f"unsupported evidence_type '{evidence_type}'")
                 )
@@ -695,6 +735,11 @@ def verify_audit_bundle(
         chain_tip = chain.get("tip")
 
         tool_calls = [entry for entry in entries if entry.get("entry_type") == "tool_call"]
+        for i, entry in enumerate(entries):
+            if entry.get("entry_type") == "tool_call":
+                tool_name = entry.get("tool_name")
+                if tool_name is not None and not isinstance(tool_name, str):
+                    failures.append(f"entry {i}: tool_name must be a string")
         bundle_has_tool_calls = bool(tool_calls)
         if bundle_has_tool_calls and not isinstance(transcript_hash, str):
             failures.append(
@@ -729,7 +774,7 @@ def verify_audit_bundle(
                 {
                     entry["tool_name"]
                     for entry in tool_calls
-                    if entry.get("tool_name") is not None
+                    if isinstance(entry.get("tool_name"), str)
                 }
             ),
         }
