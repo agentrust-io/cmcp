@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Accept emitted `gateway.call_log_summary` and call-graph `edges_represent`
+  fields in the TRACE claim schema. Both remain optional for older claims;
+  malformed values and undeclared properties remain rejected.
+
 ### Security
 
 - **An unrecognised enforcement mode was signed as `advisory`.** `_build_policy`
