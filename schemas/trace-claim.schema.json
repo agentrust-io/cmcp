@@ -172,6 +172,10 @@
               "additionalProperties": false,
               "required": ["compliance_domains_touched", "cross_boundary_events"],
               "properties": {
+                "edges_represent": {
+                  "type": "string",
+                  "description": "Meaning of recorded edges; temporal adjacency does not establish causality."
+                },
                 "compliance_domains_touched": {
                   "type": "array", "items": { "type": "string" }
                 },
@@ -180,6 +184,16 @@
                 }
               }
             }
+          }
+        },
+        "call_log_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total_calls", "tools_called", "suspicious_sequences_detected"],
+          "properties": {
+            "total_calls": { "type": "integer", "minimum": 0 },
+            "tools_called": { "type": "array", "items": { "type": "string" } },
+            "suspicious_sequences_detected": { "type": "integer", "minimum": 0 }
           }
         },
         "catalog": {
