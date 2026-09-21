@@ -69,10 +69,15 @@ with suppress(OSError):
 
 sys.stderr.write(canary + "\n")
 sys.stderr.flush()
-for operation in ("permitted", "public"):
+operations = ("permitted", "public") if mode != "policy" else ("permitted",) * 3 + ("public",)
+for operation in operations:
     sys.stdout.write(json.dumps({"operation": operation, "arguments": {
         "value": canary, "core_limit": resource.getrlimit(resource.RLIMIT_CORE),
     }}) + "\n")
     sys.stdout.flush()
     if not sys.stdin.readline():
+        if mode == "linger":
+            time.sleep(60)  # adversarial child ignores loss of its bridge
         sys.exit(2)
+if mode == "linger":
+    time.sleep(60)

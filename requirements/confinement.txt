@@ -1,0 +1,6 @@
+# Real optional OTel export in the confinement job; base dependencies stay pinned.
+-r dev.txt
+opentelemetry-sdk==1.44.0 \
+    --hash=sha256:df081c4c6bcfdb1211e3e86140376792643128a25f8d72d1d27675936e7e96ad
+opentelemetry-semantic-conventions==0.65b0 \
+    --hash=sha256:1cacde7b0ad306f84c5ef08c3dbe1bbaf20165bba6f8bff43b670e555a086bcb

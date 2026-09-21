@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Accept emitted `gateway.call_log_summary` and call-graph `edges_represent`
+  fields in the TRACE claim schema. Both remain optional for older claims;
+  malformed values and undeclared properties remain rejected.
+
 ### Security
+
+- **An unrecognised enforcement mode was signed as `advisory`.** `_build_policy`
+  fell back to `advisory` for any value outside `enforcing`, `advisory` and
+  `silent`, so a claim built from such a value asserted that the policy had been
+  evaluated. The gateway's own path passes a validated `EnforcementMode`, so this
+  was reachable only by callers building claims directly. Claim construction now
+  refuses the value, as `_build_runtime` already refuses an unknown provider.
+  Reported by @saintmalik in #654.
 
 - Add an opt-in exact-output disclosure contract and library adapter. Independently
   scoped owner signatures bind output bytes, source labels, workload, recipient,
