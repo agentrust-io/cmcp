@@ -4,6 +4,8 @@
 
 # cMCP: Confidential MCP Runtime
 
+Community updates and contributor highlights: [AgenTrust on LinkedIn](https://www.linkedin.com/company/agentrust-io/).
+
 ### Enforce MCP tool policy inside a TEE, where the agent it governs cannot reach it
 
 <p align="center">
