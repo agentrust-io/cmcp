@@ -17,6 +17,9 @@ permissions:
 
 jobs:
   test:
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -61,7 +64,9 @@ jobs:
       - name: Upload coverage report
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
-          fail_ci_if_error: false
+          use_oidc: true
+          files: coverage.xml
+          fail_ci_if_error: true
 
   governance:
     runs-on: ubuntu-latest
