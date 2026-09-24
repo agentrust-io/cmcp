@@ -86,3 +86,11 @@ Where the dispute involves the project lead, there is currently no external venu
 ## Amendments
 
 Changes to this document require an explicit vote (see above). Ratification by the Agentic AI Foundation becomes an additional requirement only once AAIF hosting is accepted; requiring it today would make this document unamendable, since there is no Foundation relationship to ratify through.
+
+## Disclosures
+
+Mohammed Zoheb Shaik (@zohebk8s) has disclosed that he builds Custodian, a key broker for model weights that uses the Weight Custody Manifest SDK as a dependency rather than a fork.
+
+He will note this interest on relevant proposals and reviews, recuse where Custodian's own design is the question, and update the disclosure if the interest changes materially. Custodian is neither endorsed by this project nor its reference implementation. This disclosure does not grant a project role or change existing decision rights or conflict-of-interest requirements.
+
+Source: [commercial-interest disclosure](https://github.com/agentrust-io/cmcp/issues/626).
