@@ -191,10 +191,11 @@ def verify_embodied_action_evidence(
     evidence_hash = evidence.get("evidence_hash")
     try:
         hash_matches = isinstance(evidence_hash, str) and _verify_hash_value(evidence_hash, detached_payload)
-    except CatalogApprovalError as exc:
+    except (CatalogApprovalError, RecursionError) as exc:
         # The detached payload is attacker-influenced (it comes from an
         # external controller/issuer), so a value the JCS canonicalizer
-        # refuses a float, an out-of-range integer, an unpaired surrogate
+        # refuses a float, an out-of-range integer, an unpaired surrogate,
+        # or an excessively nested or cyclic object
         # must end verification the same way a hash mismatch does: a
         # recorded failure, not an unhandled exception.
         failures.append(f"detached payload could not be canonicalized for hash verification: {exc}")
@@ -212,7 +213,7 @@ def verify_embodied_action_evidence(
         # exception, for input the caller doesn't control.
         try:
             expected_action_ref = compute_action_ref(detached_payload)
-        except CatalogApprovalError as exc:
+        except (CatalogApprovalError, RecursionError) as exc:
             failures.append(f"action_ref preimage could not be canonicalized: {exc}")
         else:
             if detached_payload.get("action_ref") != expected_action_ref:
