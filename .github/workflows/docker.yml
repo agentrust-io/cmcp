@@ -7,6 +7,9 @@ on:
   pull_request:
     paths:
       - "Dockerfile"
+      - "docker-compose.yml"
+      - "examples/minimal/**"
+      - "scripts/check_compose_storage.py"
       - ".dockerignore"
       - "pyproject.toml"
       - "src/**"
@@ -22,6 +25,20 @@ permissions:
   contents: read
 
 jobs:
+  compose-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the gateway
+        run: docker compose build gateway
+      - name: Write as the runtime user
+        run: docker compose run --rm --no-deps -T gateway python - write < scripts/check_compose_storage.py
+      - name: Read after container recreation
+        run: docker compose run --rm --no-deps -T gateway python - read < scripts/check_compose_storage.py
+      - name: Clean up test storage
+        if: always()
+        run: docker compose down --volumes
+
   signing-compatibility:
     runs-on: ubuntu-latest
     permissions:

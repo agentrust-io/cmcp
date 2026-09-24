@@ -7,15 +7,16 @@
 services:
   gateway:
     build: .
-    working_dir: /etc/cmcp
+    working_dir: /var/lib/cmcp
     ports:
       - "8443:8443"
     environment:
       CMCP_DEV_MODE: "1"
     volumes:
+      - gateway-data:/var/lib/cmcp
       - ./examples/minimal/cmcp-config.yaml:/etc/cmcp/cmcp-config.yaml:ro
-      - ./examples/minimal/policies:/etc/cmcp/policies:ro
-      - ./examples/minimal/catalog.json:/etc/cmcp/catalog.json:ro
+      - ./examples/minimal/policies:/var/lib/cmcp/policies:ro
+      - ./examples/minimal/catalog.json:/var/lib/cmcp/catalog.json:ro
     command: ["cmcp", "start", "--config", "/etc/cmcp/cmcp-config.yaml"]
 
   mock-mcp-server:
@@ -26,3 +27,8 @@ services:
     command: ["python", "/mock_upstream.py", "--port", "9001"]
     depends_on:
       - gateway
+
+# Docker initializes this volume from the image's cmcp-owned data directory.
+# `docker compose down` retains it; `down --volumes` deliberately deletes it.
+volumes:
+  gateway-data:
