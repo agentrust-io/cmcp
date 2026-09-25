@@ -897,7 +897,19 @@ class MCPServer:
                 status_code=400,
             )
         # Closed sessions keep their chain available for export after rotation.
-        chain = self._closed_chains.get(session_id, self._audit_chain)
+        # Anything else must name the live session. The bundle carries the
+        # requested id as its label, so serving the live chain under an id it
+        # does not belong to would hand out a bundle attributed to the wrong
+        # session. A session closed by a reset has no chain of its own: its
+        # entries continue in the live chain, exported under the current id
+        # with the session_reset entry marking the boundary.
+        chain = self._closed_chains.get(session_id)
+        if chain is None:
+            if self._session is None or session_id != self._session.session_id:
+                return JSONResponse(
+                    {"error": f"session_id={session_id} not found"}, status_code=404
+                )
+            chain = self._audit_chain
         try:
             bundle = self._session_manager.get_audit_bundle(session_id, chain)
         except ValueError as exc:

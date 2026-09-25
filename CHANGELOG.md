@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RECORD left alone no longer leaves the digest unchanged. A listed file that
   was deleted is marked `<missing>` in the digest. Digests of intact installs
   are unchanged.
+- `GET /audit/export` served the live chain under any `session_id` the caller
+  named, labelling the bundle with that id. It now serves a closed session's
+  chain under its own id and the live chain only under the current session id,
+  and returns 404 otherwise. The quickstart read the internal id by exporting
+  under the `_cmcp.session_id` label; it now reads it from the allowed call's
+  `result._cmcp.session_id`.
 - A bearer token containing non-ASCII characters returned 500 from the auth
   middleware; it now returns 401.
 - The container image and the ClusterFuzzLite build install dependencies from
