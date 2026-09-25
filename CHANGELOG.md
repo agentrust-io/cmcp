@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-25
+
 ### Added
 
 - `agent_manifest.revocation_list_path`: a JSON Lines revocation list in the
@@ -37,6 +39,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The container image and the ClusterFuzzLite build install dependencies from
   the new hash-pinned `requirements/runtime.txt`, and the base image is pinned
   by digest.
+
+- **Exhaust upstream `tools/list` pagination before drift and provenance
+  comparisons** (#631). HTTP and stdio share bounded acquisition: later-page
+  failures, malformed or ambiguous listings, and cursor cycles are unchecked,
+  never a comparison against a partial catalog. Existing drift policy and
+  unchecked-call behavior are unchanged. Observed by solloek369-arch on #566
+  and confirmed in #631 by Imran Siddique.
+  Drift and provenance now share one completed discovery acquisition per
+  server/authority per session, including unchecked outcomes, avoiding a second
+  full pagination walk on cold calls with provenance configured. Concurrent
+  readers wait for completion; cancelled reads are not cached.
+  Session rebinding resets acquisition and comparison caches together. The
+  duplicate-fetch cost was identified by qubeena07 during review of #633.
+
+- `verify_audit_bundle()` now reports malformed `tool_name` values during claim
+  summary verification and malformed external-receipt `evidence_type` values as
+  failed verification results instead of raising `TypeError`. Hash-chain checks
+  remain active, and receipt verification remains opt-in (#593, #597).
+
+- `verify_trace_claim()` stops at a schema failure and returns
+  `CLAIM_MALFORMED` with the offending `malformed_field`, instead of continuing
+  to signature and binding checks against a claim whose shape was never
+  established (#592, #596).
+
+- Embodied action evidence nested inside embodied action evidence is rejected
+  rather than verified recursively (#688).
+
+- The TRACE claim schema declares `intent_hash`, `agent_key_thumbprint` and
+  `enforcement_mode` under `gateway.agent_identity`. The runtime already emitted
+  them whenever an Agent Manifest binding was configured, so those claims failed
+  the schema they were signed against (#622, #632).
+
+- A non-string value for a path setting in config is reported as a
+  configuration error instead of raising a `TypeError` (#673, #674).
+
+- `docker-compose.yml` runs the gateway from `/var/lib/cmcp` on a named
+  `gateway-data` volume, so audit data survives `docker compose down`
+  (`down --volumes` still deletes it). CI checks the compose storage layout
+  (#686).
+
 - Accept emitted `gateway.call_log_summary` and call-graph `edges_represent`
   fields in the TRACE claim schema. Both remain optional for older claims;
   malformed values and undeclared properties remain rejected.
@@ -205,6 +247,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A reference for confining an agent that already holds plaintext on native
+  Linux (`docs/confinement.md`, `examples/confinement/`, #659). The agent runs in
+  a Docker container with no network, a read-only root filesystem and no
+  automatic restart, and reaches tools only through a host bridge to the
+  gateway. A separate host watchdog stops the container on EOF or a missed
+  two-second heartbeat. `tests/confinement/` carries the bypass harness and
+  validates the claims the confined gateway emits (#663).
+
+- `ExecutionRegistry`, a standalone SQLite state machine for execution
+  correlation (#565, #606). It is a foundation only: the gateway does not
+  construct or admit through it, and no replay or exactly-once guarantee is
+  provided in this release. See `docs/spec/execution-correlation.md`.
+
 - **Wire the configured session-state store into startup.** `session_state_path`
   is accepted at config load, checked for a non-blank string and traversal, and
   opened as a `SqliteSessionStateStore` before the gateway starts. An unopenable
@@ -216,6 +271,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-process default.
 
 ### Changed
+
+- A `tools/call` that supplies `_cmcp.execution_id` is now refused with
+  `execution_correlation_unavailable` before discovery or invocation, and a
+  malformed value (including explicit null) with
+  `execution_invalid_execution_id`. Omitting the field keeps the previous call
+  path (#606).
 
 - The reset audit entry now identifies the session boundary rather than only the
   sensitivity transition: `detail` carries the closed session identifier, the
@@ -293,19 +354,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Exhaust upstream `tools/list` pagination before drift and provenance
-  comparisons** (#631). HTTP and stdio share bounded acquisition: later-page
-  failures, malformed or ambiguous listings, and cursor cycles are unchecked,
-  never a comparison against a partial catalog. Existing drift policy and
-  unchecked-call behavior are unchanged. Observed by solloek369-arch on #566
-  and confirmed in #631 by Imran Siddique.
-  Drift and provenance now share one completed discovery acquisition per
-  server/authority per session, including unchecked outcomes, avoiding a second
-  full pagination walk on cold calls with provenance configured. Concurrent
-  readers wait for completion; cancelled reads are not cached.
-  Session rebinding resets acquisition and comparison caches together. The
-  duplicate-fetch cost was identified by qubeena07 during review of #633.
-
 - TLS pinning test fixtures set `minimum_version = TLSv1_2`; the server was built
   with `PROTOCOL_TLS_SERVER` and no floor, leaving TLSv1 and TLSv1.1 reachable in
   the test that asserts the gateway's transport rules.
@@ -355,11 +403,6 @@ fail closed.
   still readable but is no longer enforced.
 
 ### Fixed
-
-- `verify_audit_bundle()` now reports malformed `tool_name` values during claim
-  summary verification and malformed external-receipt `evidence_type` values as
-  failed verification results instead of raising `TypeError`. Hash-chain checks
-  remain active, and receipt verification remains opt-in (#593).
 
 - **Gateway NV appraisal accepted an evidence-selected NV object and certified
   range as the configured gateway measurement.** `verify_gateway_measurement`
@@ -698,7 +741,9 @@ Five changes below the headline TPM fix, each one a case where cMCP reported mor
 - `cmcp-verify` standalone verifier for validating TRACE Claims offline
 - Audit chain with Ed25519 signing for tamper-evident log integrity
 
-[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/agentrust-io/cmcp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/agentrust-io/cmcp/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/agentrust-io/cmcp/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/agentrust-io/cmcp/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/agentrust-io/cmcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentrust-io/cmcp/compare/v0.2.0...v0.3.0
