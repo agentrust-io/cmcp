@@ -205,20 +205,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The accumulated session-sensitivity value can now live in a shared,
-  persistent store** (`session_state_path`). Without one it is held in the
-  gateway process, so it is lost on restart while the session identifier the
-  agent host holds is still live, and where several instances serve one session
-  the ratchet holds per instance rather than per session: an agent that reads
-  sensitive data through one instance and egresses through another is evaluated
-  by an instance that never saw the read. `SqliteSessionStateStore` serialises
-  the read-modify-write with `BEGIN IMMEDIATE`, which takes SQLite's RESERVED
-  lock and so spans processes; an `asyncio.Lock` cannot, being invisible to every
-  other instance. A gateway now hydrates the session's stored value at call entry,
-  before the pre-call policy evaluation reads it. A reset also advances the closed
-  session's generation in the store, so an instance still holding the old
-  identifier stops applying responses to it. Unset is the default and preserves
-  the previous single-instance behaviour exactly.
+- **Wire the configured session-state store into startup.** `session_state_path`
+  is accepted at config load, checked for a non-blank string and traversal, and
+  opened as a `SqliteSessionStateStore` before the gateway starts. An unopenable
+  path aborts startup with `SESSION_STATE_STORE_UNAVAILABLE`. Writes for the
+  same session identifier use SQLite's cross-process transaction lock.
+  Restarting the gateway or sharing the database does not restore the same
+  logical session. Authenticated session resumption remains separate work in
+  #653; this change only connects the existing store. Unset preserves the
+  in-process default.
 
 ### Changed
 

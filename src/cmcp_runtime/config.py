@@ -137,11 +137,11 @@ class Config:
     max_response_size_bytes: int = 2 * 1024 * 1024  # 2MB
     policy_reload_interval_seconds: int = 0  # 0 = disabled (POLICY-001)
     audit_db_path: str = "audit.db"  # AUDIT-001: durable audit chain storage
-    #: Path to the shared session-state database. Unset keeps the accumulated
-    #: session-sensitivity value in the gateway process, which is correct for a
-    #: single instance and loses the value on restart. Set it to a path on a
-    #: volume every instance shares to make the ratchet hold per session across
-    #: instances and survive a restart. See ``session/store.py``.
+    #: Path to the SQLite session-state database. When configured, startup opens
+    #: this store and connects it to the gateway. Unset keeps the accumulated
+    #: session-sensitivity value in process-local memory. Configuring this store
+    #: does not restore the same logical session after restart or across
+    #: instances; authenticated session resumption remains tracked in #653.
     session_state_path: str | None = None
     dev_mode: bool = False
     bearer_token: str | None = None
@@ -175,6 +175,7 @@ _KNOWN_TOP_KEYS = {
     "policy_reload_interval_seconds",
     "audit_db_path",
     "conformance_profile",
+    "session_state_path",
 }
 
 # #495: catalog identity and routing are immutable for the process lifetime.
@@ -501,8 +502,12 @@ def load_config(path: str) -> Config:
     policy_bundle_path = raw.get("policy_bundle_path", "policy/")
     catalog_path = raw.get("catalog_path", "catalog.json")
     audit_db_path = raw.get("audit_db_path", "audit.db")
-    session_state_path = raw.get("session_state_path") or None
+    session_state_path = raw.get("session_state_path")
     if session_state_path is not None:
+        if not isinstance(session_state_path, str):
+            raise ConfigError("session_state_path must be a string")
+        if not session_state_path.strip():
+            raise ConfigError("session_state_path must not be empty or whitespace only")
         _check_no_traversal("session_state_path", session_state_path)
     _check_no_traversal("policy_bundle_path", policy_bundle_path)
     _check_no_traversal("catalog_path", catalog_path)

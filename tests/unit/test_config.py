@@ -91,6 +91,37 @@ def test_unknown_key_raises(config_file):
         load_config(path)
 
 
+def test_session_state_path_is_accepted(config_file):
+    """#653: the documented key must not be rejected as unknown."""
+    path = config_file("""
+        attestation:
+          provider: tpm
+          enforcement_mode: advisory
+        session_state_path: /etc/cmcp/session-state.db
+    """)
+    cfg = load_config(path)
+    assert cfg.session_state_path == "/etc/cmcp/session-state.db"
+
+
+@pytest.mark.parametrize("value", ["123", "false", "[]"])
+def test_session_state_path_rejects_non_string(config_file, value):
+    """#653: a non-string value must fail closed as ConfigError, not reach
+    _check_no_traversal() and raise a raw TypeError."""
+    path = config_file(f"session_state_path: {value}\n")
+    with pytest.raises(ConfigError, match="session_state_path"):
+        load_config(path)
+
+
+@pytest.mark.parametrize("value", ['""', '"   "'])
+def test_session_state_path_rejects_empty_or_whitespace(config_file, value):
+    """#653: an explicitly set but blank value must be refused. It is not the
+    unconfigured default, and a whitespace-only path creates a file named for
+    the whitespace rather than the store the operator intended."""
+    path = config_file(f"session_state_path: {value}\n")
+    with pytest.raises(ConfigError, match="session_state_path"):
+        load_config(path)
+
+
 def test_catalog_reload_knob_is_reserved_and_requires_restart(config_file):
     """#495: adding a parser field alone must not enable catalog mutation."""
     path = config_file("catalog_reload_interval_seconds: 60\n")

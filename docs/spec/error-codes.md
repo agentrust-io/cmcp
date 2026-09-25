@@ -30,6 +30,7 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 | `RESPONSE_SCHEMA_VIOLATION_STRICT` | 409 | WARN | Tool response contains fields outside approved `output_schema` (strict mode) | [response-inspection.md Stage 2](response-inspection.md) |
 | `SESSION_SENSITIVITY_POLICY_DENY` | 403 | INFO | Call denied due to session sensitivity state | [session-policy.md](session-policy.md) |
 | `SESSION_RESET_REQUIRED` | 428 | INFO | Agent attempted call that requires session reset first | [session-policy.md](session-policy.md) |
+| `SESSION_STATE_STORE_UNAVAILABLE` | startup | FATAL | A configured `session_state_path` could not be opened, so the gateway would run without the cross-instance session-state persistence the operator configured | [configuration.md](../configuration.md) |
 | `TEE_FAULT` | 500 | ERROR | TEE process fault during call execution | [failure-modes.md FM-3](failure-modes.md) |
 | `ATTESTATION_STALE` | 412 | WARN | Attestation report validity period has expired | [attestation.md §3](attestation.md) |
 | `BREAK_GLASS_ACTIVE` | 200 | WARN | Call allowed via catalog exception (break-glass procedure active) | [tool-identity.md](tool-identity.md) |
