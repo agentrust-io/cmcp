@@ -7,8 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `agent_manifest.revocation_list_path`: a JSON Lines revocation list in the
+  Agent Manifest CLI's CRL format. Startup rejects a bound manifest listed
+  there, and a missing or malformed list aborts startup instead of reading as
+  empty. Without it, startup now logs that revocation is not checked; before,
+  the SDK was always handed an empty store.
+
 ### Fixed
 
+- `verify_audit_bundle` now requires every change of entry `session_id` to be a
+  recorded `session_reset` that names the closing session and its successor,
+  and requires the claim's `gateway.session_id` to be the session the bundle
+  ends in. A bundle mixing sessions with no recorded boundary used to verify.
+- `code_digest` hashes each installed file RECORD vouches for and refuses the
+  measurement when the bytes differ, so an edit to an installed file with
+  RECORD left alone no longer leaves the digest unchanged. A listed file that
+  was deleted is marked `<missing>` in the digest. Digests of intact installs
+  are unchanged.
+- `GET /audit/export` served the live chain under any `session_id` the caller
+  named, labelling the bundle with that id. It now serves a closed session's
+  chain under its own id and the live chain only under the current session id,
+  and returns 404 otherwise. The quickstart read the internal id by exporting
+  under the `_cmcp.session_id` label; it now reads it from the allowed call's
+  `result._cmcp.session_id`.
+- A bearer token containing non-ASCII characters returned 500 from the auth
+  middleware; it now returns 401.
+- The container image and the ClusterFuzzLite build install dependencies from
+  the new hash-pinned `requirements/runtime.txt`, and the base image is pinned
+  by digest.
 - Accept emitted `gateway.call_log_summary` and call-graph `edges_represent`
   fields in the TRACE claim schema. Both remain optional for older claims;
   malformed values and undeclared properties remain rejected.

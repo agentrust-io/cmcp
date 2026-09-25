@@ -499,3 +499,66 @@ def test_valid_providers_matches_the_map_it_says_it_mirrors():
 
     mapped = frozenset(_PROVIDER_MAP)
     assert mapped == _VALID_PROVIDERS
+
+
+def _write_revocation_list(tmp_path: Path, manifest_id: str) -> Path:
+    crl = tmp_path / "revocations.jsonl"
+    crl.write_text(json.dumps({
+        "manifest_id": manifest_id,
+        "revoked_at": "2026-09-20T00:00:00Z",
+        "reason": "key_compromise",
+        "revoked_by": "spiffe://factory.example/signing-authority/development",
+    }) + "\n")
+    return crl
+
+
+def _agent_manifest_config(complete_setup, extra: str = "") -> Path:
+    config_path = Path(complete_setup)
+    tmp_path = config_path.parent
+    policy_hash = load_policy_bundle(str(tmp_path / "policy")).bundle_hash
+    catalog_hash = load_catalog(str(tmp_path / "catalog.json")).catalog_hash
+    manifest_path, key_path = _write_agent_manifest_files(
+        tmp_path,
+        policy_hash=policy_hash,
+        catalog_hash=catalog_hash,
+    )
+    config_path.write_text(
+        config_path.read_text()
+        + "\nagent_manifest:\n"
+        + f"  path: {manifest_path}\n"
+        + f"  trust_anchor_path: {key_path}\n"
+        + f"  authenticated_subject: {AGENT_ID}\n"
+        + extra
+    )
+    return config_path
+
+
+def test_startup_rejects_manifest_on_configured_revocation_list(complete_setup):
+    tmp_path = Path(complete_setup).parent
+    crl = _write_revocation_list(tmp_path, "0197739a-8c00-7000-8000-000000000001")
+    config_path = _agent_manifest_config(
+        complete_setup, f"  revocation_list_path: {crl}\n"
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
+
+
+def test_startup_binds_when_revocation_list_does_not_name_manifest(complete_setup):
+    tmp_path = Path(complete_setup).parent
+    crl = _write_revocation_list(tmp_path, "00000000-0000-7000-8000-000000000000")
+    config_path = _agent_manifest_config(
+        complete_setup, f"  revocation_list_path: {crl}\n"
+    )
+    ctx = run_startup(str(config_path))
+    assert ctx.agent_manifest is not None
+
+
+def test_startup_fails_closed_on_unreadable_revocation_list(complete_setup):
+    tmp_path = Path(complete_setup).parent
+    config_path = _agent_manifest_config(
+        complete_setup, f"  revocation_list_path: {tmp_path / 'absent.jsonl'}\n"
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1

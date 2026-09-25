@@ -194,6 +194,73 @@ def load_agent_manifest_trust_anchor(path: str) -> dict[str, bytes]:
     )
 
 
+# A revocation list is operator-supplied, so it is bounded the same way the
+# SDK's own FileCRL bounds one.
+_MAX_REVOCATION_LIST_BYTES = 50 * 1024 * 1024
+
+
+def load_agent_manifest_revocations(path: str) -> Any:
+    """Load an authoritative revocation list into an SDK ``RevocationStore``.
+
+    The file is JSON Lines, one revocation record per line, in the format the
+    Agent Manifest CLI writes (``manifest revoke``) and reads (``--crl-path``):
+    ``manifest_id``, ``revoked_at``, ``reason``, ``revoked_by``, plus optional
+    signature fields that are not needed here.
+
+    The SDK's FileCRL treats a missing file as empty and skips a malformed
+    line. This loader fails closed on both: an operator who configured a
+    revocation list and got a typo in the path, or a truncated write, must not
+    end up with a gateway that silently checks nothing. A record can only
+    revoke, so accepting one without a signature can deny a manifest but never
+    admit one.
+    """
+    try:
+        list_path = Path(path)
+        size = list_path.stat().st_size
+        if size > _MAX_REVOCATION_LIST_BYTES:
+            raise ConfigError(
+                f"Agent Manifest revocation list is {size} bytes, over the "
+                f"{_MAX_REVOCATION_LIST_BYTES}-byte limit"
+            )
+        text = list_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"Cannot read Agent Manifest revocation list: {exc}") from exc
+
+    store = agent_manifest_sdk.RevocationStore()
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(
+                f"Agent Manifest revocation list line {line_no} is not JSON: {exc}"
+            ) from exc
+        if not isinstance(item, dict):
+            raise ConfigError(
+                f"Agent Manifest revocation list line {line_no} must be a JSON object"
+            )
+        manifest_id = item.get("manifest_id")
+        if not isinstance(manifest_id, str) or not manifest_id:
+            raise ConfigError(
+                f"Agent Manifest revocation list line {line_no} has no manifest_id"
+            )
+        try:
+            record = agent_manifest_sdk.RevocationRecord(
+                manifest_id=manifest_id,
+                revoked_at=item.get("revoked_at"),
+                reason=item.get("reason"),
+                revoked_by=item.get("revoked_by"),
+            )
+        except Exception as exc:  # noqa: BLE001 - pydantic ValidationError -> ConfigError
+            raise ConfigError(
+                f"Agent Manifest revocation list line {line_no} is not a valid "
+                f"revocation record: {exc}"
+            ) from exc
+        store.revoke(record)
+    return store
+
+
 def _trusted_keys_for_sdk(trusted_keys: dict[str, bytes]) -> dict[str, str]:
     sdk_keys: dict[str, str] = {}
     for key_id, public_key in trusted_keys.items():
@@ -240,6 +307,8 @@ def _raise_for_sdk_result(result: Any, *, require_runtime_artifacts: bool) -> No
         raise ConfigError("Agent Manifest tool catalog hash does not match runtime catalog")
     if "signature" in mismatch_fields:
         raise ConfigError("Agent Manifest signature verification failed")
+    if result.result == agent_manifest_sdk.OverallResult.REVOKED:
+        raise ConfigError("Agent Manifest has been revoked")
     if result.result == agent_manifest_sdk.OverallResult.EXPIRED:
         raise ConfigError("Agent Manifest has expired")
     if result.result == agent_manifest_sdk.OverallResult.SIGNATURE_MISSING:
@@ -270,6 +339,7 @@ def _verify_with_sdk(
     enforcement_mode: EnforcementMode | None = None,
     require_runtime_artifacts: bool = False,
     envelope: bytes | None = None,
+    revocations: Any = None,
 ) -> None:
     # The envelope is handed to the verifier when there is one, because for a
     # v0.2 manifest the envelope is the signature. Passing the decoded payload
@@ -300,7 +370,9 @@ def _verify_with_sdk(
             # every binding it did not verify.
             strict_artifact_verification=False,
         ),
-        agent_manifest_sdk.RevocationStore(),
+        # The operator's authoritative store when one was supplied. Otherwise
+        # an empty store, which enforces no revocation; startup logs that case.
+        revocations if revocations is not None else agent_manifest_sdk.RevocationStore(),
     )
     _raise_for_sdk_result(result, require_runtime_artifacts=require_runtime_artifacts)
 
@@ -370,12 +442,18 @@ def verify_agent_manifest_binding(
     allow_dev_subject_from_manifest: bool = False,
     now: datetime | None = None,
     envelope: bytes | None = None,
+    revocations: Any = None,
 ) -> AgentManifestBinding:
     """Verify manifest signature and bind it to runtime session inputs.
 
     *envelope* carries the COSE bytes for a v0.2 manifest. The binding fields
     are read from the decoded document either way: what the envelope changes is
     which artifact the signature is checked over, not where identity lives.
+
+    *revocations* is an SDK ``RevocationStore`` holding authoritative
+    revocation state (see load_agent_manifest_revocations); a manifest listed
+    there is rejected. When it is None the store is empty and no revocation
+    is enforced.
     """
     manifest_id, agent_id, issuer, key_id, manifest_policy, manifest_catalog = (
         _manifest_binding_fields(manifest)
@@ -396,6 +474,7 @@ def verify_agent_manifest_binding(
         enforcement_mode=enforcement_mode,
         require_runtime_artifacts=True,
         envelope=envelope,
+        revocations=revocations,
     )
 
     subject = authenticated_subject

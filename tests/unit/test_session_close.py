@@ -123,6 +123,56 @@ def test_audit_export_serves_closed_session(server):
     assert "session_end" in entry_types
 
 
+def test_audit_export_serves_the_live_session_under_its_own_id(server):
+    client = TestClient(server.app)
+    session_id = server._session.session_id
+
+    resp = client.get(f"/audit/export?session_id={session_id}")
+    assert resp.status_code == 200
+    bundle = resp.json()
+    assert bundle["session_id"] == session_id
+    assert {e["session_id"] for e in bundle["entries"]} == {session_id}
+
+
+@pytest.mark.parametrize("requested", ["demo-session-001", "not-a-session"])
+def test_audit_export_refuses_an_id_that_is_not_a_session(server, requested):
+    """The live chain must not be exported under a label it does not belong to."""
+    client = TestClient(server.app)
+
+    resp = client.get(f"/audit/export?session_id={requested}")
+    assert resp.status_code == 404
+
+
+def test_audit_export_refuses_the_live_chain_under_a_closed_session_id(server):
+    """After close, the successor's chain is not served under the old id or a guess."""
+    client = TestClient(server.app)
+    old_id = server._session.session_id
+    client.post(f"/sessions/{old_id}/close")
+    new_id = server._session.session_id
+    assert new_id != old_id
+
+    old = client.get(f"/audit/export?session_id={old_id}").json()
+    new = client.get(f"/audit/export?session_id={new_id}").json()
+    assert {e["session_id"] for e in old["entries"]} == {old_id}
+    assert {e["session_id"] for e in new["entries"]} == {new_id}
+    assert client.get("/audit/export?session_id=unrelated").status_code == 404
+
+
+def test_audit_export_after_reset_serves_the_chain_only_under_the_successor(server):
+    """A reset session's entries continue in the live chain, which carries the boundary."""
+    from cmcp_verify import verify_audit_bundle
+
+    client = TestClient(server.app)
+    old_id = server._session.session_id
+    new_id = client.post(f"/sessions/{old_id}/reset").json()["new_session_id"]
+
+    assert client.get(f"/audit/export?session_id={old_id}").status_code == 404
+    bundle = client.get(f"/audit/export?session_id={new_id}").json()
+    assert bundle["session_id"] == new_id
+    assert {e["session_id"] for e in bundle["entries"]} == {old_id}
+    assert verify_audit_bundle(bundle).verified
+
+
 def _stateful_stdio_catalog(script: str) -> ToolCatalog:
     entry = CatalogEntry(
         tool_name="stateful.tool",
@@ -1343,3 +1393,27 @@ async def test_a_sealed_gateway_answers_tool_calls_instead_of_hanging(server, mo
 
     assert response.status_code == 500
     assert response.json()["error"]["code"] == -32000
+
+
+@pytest.mark.asyncio
+async def test_failed_hydration_records_a_not_attempted_terminal(server, monkeypatch):
+    """A shared-store error during hydration still leaves the call's terminal."""
+    import sqlite3
+
+    proxy = server._proxy
+    chain = server._audit_chain
+
+    async def hydrate():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(server._session, "hydrate", hydrate)
+    with pytest.raises(sqlite3.OperationalError):
+        await proxy.call_tool("hydration-fails", "test.tool", {})
+
+    terminals = [e for e in chain.entries if e.call_id == "hydration-fails"]
+    assert len(terminals) == 1
+    assert terminals[0].entry_type == "fault"
+    assert terminals[0].detail["exception_type"] == "OperationalError"
+    assert terminals[0].detail["terminal_disposition"] == "not_attempted"
+    assert terminals[0].detail["effect_boundary"] == "not_reached"
+    assert proxy._active_calls == 0

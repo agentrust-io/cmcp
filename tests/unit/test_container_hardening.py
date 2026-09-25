@@ -1,5 +1,6 @@
 """Static release invariants for the CMCP runtime container."""
 
+import re
 from pathlib import Path
 
 import yaml
@@ -30,10 +31,19 @@ def test_runtime_image_pins_python_patch_and_distribution() -> None:
         if line.startswith("FROM ")
     ]
 
-    assert stages == [
-        "FROM python:3.11.15-slim-bookworm AS builder",
-        "FROM python:3.11.15-slim-bookworm AS runtime",
-    ]
+    assert len(stages) == 2
+    for stage, name in zip(stages, ("builder", "runtime"), strict=True):
+        assert re.fullmatch(
+            rf"FROM python:3\.11\.15-slim-bookworm@sha256:[0-9a-f]{{64}} AS {name}", stage
+        ), stage
+
+
+def test_runtime_dependencies_install_from_the_hashed_lock() -> None:
+    dockerfile = _dockerfile()
+
+    assert "--require-hashes -r /tmp/runtime.txt" in dockerfile
+    assert "--no-deps /wheels/cmcp_runtime-*.whl" in dockerfile
+    assert "--find-links" not in dockerfile
 
 
 def test_container_prs_build_without_registry_write() -> None:

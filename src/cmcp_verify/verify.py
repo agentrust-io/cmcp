@@ -579,6 +579,44 @@ def _audit_bundle_shape_failure(path: str, entry_count: int = 0) -> AuditBundleR
     )
 
 
+def _check_session_epochs(entries: list[dict[str, Any]], failures: list[str]) -> str | None:
+    """Check every change of session_id is a recorded reset; return the last session.
+
+    A credentialed reset keeps one hash-linked chain across two sessions: the
+    ``session_reset`` entry is attributed to the closed session and names it
+    and its successor, and later entries carry the successor's identifier.
+    Any other change of identifier means the bundle mixes sessions with no
+    recorded boundary between them. Returns None when a failure was recorded,
+    so the caller does not compare a claim against an unreliable value.
+    """
+    current = entries[0].get("session_id")
+    if not isinstance(current, str) or not current:
+        failures.append("entry 0: session_id must be a non-empty string")
+        return None
+    ok = True
+    for i, entry in enumerate(entries):
+        session_id = entry.get("session_id")
+        if session_id != current:
+            failures.append(
+                f"entry {i}: session_id changes without a recorded session_reset transition"
+            )
+            ok = False
+            break
+        if entry.get("entry_type") != "session_reset":
+            continue
+        detail = entry.get("detail")
+        closed = detail.get("closed_session_id") if isinstance(detail, dict) else None
+        successor = detail.get("successor_session_id") if isinstance(detail, dict) else None
+        if closed != current or not isinstance(successor, str) or not successor:
+            failures.append(
+                f"entry {i}: session_reset does not name the current session and a successor"
+            )
+            ok = False
+            break
+        current = successor
+    return current if ok else None
+
+
 def verify_audit_bundle(
     bundle_json: dict[str, Any],
     claim_json: dict[str, Any] | None = None,
@@ -647,6 +685,8 @@ def verify_audit_bundle(
         if entry.get("prev_entry_hash") != prev:
             failures.append(f"entry {i}: chain link broken")
         prev = entry.get("entry_hash", "")
+
+    final_session_id = _check_session_epochs(entries, failures)
 
     # #301: verify independent execution receipts (opt-in via external_evidence_keys).
     if external_evidence_keys is not None:
@@ -800,6 +840,13 @@ def verify_audit_bundle(
                 failures.append(
                     f"claim gateway.call_summary.{field_name} does not match audit bundle tool calls"
                 )
+
+        claim_session_id = claim_json.get("gateway", {}).get("session_id")
+        if final_session_id is not None and claim_session_id != final_session_id:
+            failures.append(
+                "claim gateway.session_id does not match the session the audit "
+                "bundle ends in"
+            )
 
         if chain.get("root") != entries[0].get("entry_hash"):
             failures.append("bundle root does not match claim gateway.audit_chain.root")

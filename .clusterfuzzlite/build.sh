@@ -4,8 +4,13 @@
 # Installed rather than put on the path so the targets exercise the same import
 # surface a consumer gets.
 
+#
+# Dependencies come from the hash-pinned runtime lock and the package itself
+# goes in with --no-deps, so the fuzz build resolves nothing unpinned.
+
 cd "$SRC/cmcp"
-pip3 install --no-cache-dir .
+pip3 install --no-cache-dir --require-hashes -r requirements/runtime.txt
+pip3 install --no-cache-dir --no-deps .
 
 # compile_python_fuzzer bundles each target with PyInstaller, which follows
 # static imports only. The cryptography and pydantic stacks reach email.mime

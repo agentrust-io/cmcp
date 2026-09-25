@@ -14,6 +14,7 @@ from cmcp_verify.verify import AuditBundleResult, verify_audit_bundle
 def _one_entry_bundle() -> dict[str, Any]:
     body = {
         "entry_type": "session",
+        "session_id": "session-1",
         "call_id": "call-1",
         "prev_entry_hash": "genesis",
     }

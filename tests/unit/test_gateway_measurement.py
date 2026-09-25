@@ -135,43 +135,132 @@ def test_config_digest_excludes_the_bearer_token() -> None:
 # ── code digest ───────────────────────────────────────────────────────────────
 
 
-def test_code_digest_covers_recorded_file_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The digest is over RECORD hashes, so a changed dependency file changes it."""
+def _record_hash(data: bytes) -> str:
+    import base64
 
-    class _Dist:
-        def __init__(self, name: str, version: str, record: str | None) -> None:
-            self.metadata = {"Name": name}
-            self.version = version
-            self._record = record
+    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+    return "sha256=" + digest.decode()
 
-        def read_text(self, name: str) -> str | None:
-            return self._record if name == "RECORD" else None
 
+class _InstalledDist:
+    """A distribution whose files are real bytes under *root*.
+
+    RECORD is built from the bytes at construction, the way pip writes it, and
+    can then be left alone while the files change underneath it.
+    """
+
+    def __init__(
+        self, root: Path, name: str, files: dict[str, bytes], version: str = "1.0.0"
+    ) -> None:
+        self.metadata = {"Name": name}
+        self.version = version
+        self._root = root
+        for rel, data in files.items():
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        self.record = "".join(
+            f"{rel},{_record_hash(data)},{len(data)}\n" for rel, data in files.items()
+        )
+
+    def read_text(self, name: str) -> str | None:
+        return self.record if name == "RECORD" else None
+
+    def locate_file(self, path: str) -> Path:
+        return self._root / path
+
+
+def test_code_digest_covers_recorded_file_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dependency installed with different bytes gives a different digest."""
     clean = [
-        _Dist("cmcp", "1.0.0", "cmcp/__init__.py,sha256=AAA,10\n"),
-        _Dist("requests", "2.0.0", "requests/api.py,sha256=BBB,20\n"),
+        _InstalledDist(tmp_path / "a", "cmcp", {"cmcp/__init__.py": b"x = 1\n"}),
+        _InstalledDist(tmp_path / "a", "requests", {"requests/api.py": b"def get(): ...\n"}),
     ]
-    tampered = [
-        _Dist("cmcp", "1.0.0", "cmcp/__init__.py,sha256=AAA,10\n"),
-        _Dist("requests", "2.0.0", "requests/api.py,sha256=EVIL,20\n"),
+    swapped = [
+        _InstalledDist(tmp_path / "b", "cmcp", {"cmcp/__init__.py": b"x = 1\n"}),
+        _InstalledDist(tmp_path / "b", "requests", {"requests/api.py": b"def get(): evil\n"}),
     ]
 
     monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: clean)
     baseline = code_digest()
-    monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: tampered)
+    monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: swapped)
     assert code_digest() != baseline
 
 
-def test_code_digest_is_independent_of_scan_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Dist:
-        def __init__(self, name: str) -> None:
-            self.metadata = {"Name": name}
-            self.version = "1.0.0"
+def test_code_digest_refuses_a_file_edited_after_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editing an installed file while leaving RECORD alone must not go unseen."""
+    dist = _InstalledDist(tmp_path, "six", {"six.py": b"PY3 = True\n"})
+    monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: [dist])
+    code_digest()
 
-        def read_text(self, name: str) -> str | None:
-            return f"{self.metadata['Name']}/m.py,sha256=X,1\n" if name == "RECORD" else None
+    (tmp_path / "six.py").write_bytes(b"PY3 = True\n# injected\n")
+    with pytest.raises(MeasurementUnavailable, match="do not match") as exc_info:
+        code_digest()
+    assert "six:six.py" in (exc_info.value.detail or "")
 
-    forward = [_Dist("aaa"), _Dist("bbb"), _Dist("ccc")]
+
+def test_code_digest_marks_a_deleted_file_instead_of_vouching_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dist = _InstalledDist(
+        tmp_path, "pkg", {"pkg/__init__.py": b"", "pkg/tests/test_x.py": b"assert 1\n"}
+    )
+    monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: [dist])
+    baseline = code_digest()
+
+    (tmp_path / "pkg" / "tests" / "test_x.py").unlink()
+    assert code_digest() != baseline
+
+
+def test_code_digest_refuses_a_weak_record_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dist = _InstalledDist(tmp_path, "pkg", {"pkg/__init__.py": b"x = 1\n"})
+    dist.record = "pkg/__init__.py,md5=AAAA,6\n"
+    monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: [dist])
+    with pytest.raises(MeasurementUnavailable):
+        code_digest()
+
+
+def test_code_digest_is_unchanged_for_an_intact_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Checking bytes leaves the digest of an install that matches RECORD as it was."""
+    source = b"x = 1\n"
+    dist = _InstalledDist(tmp_path, "pkg", {"pkg/__init__.py": source})
+    dist.record = (
+        f"pkg/__init__.py,{_record_hash(source)},6\n"
+        "pkg/__pycache__/x.pyc,,\n"
+        "pkg-1.0.0.dist-info/RECORD,,\n"
+    )
+    monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: [dist])
+    entry = json.dumps(
+        {
+            "name": "pkg",
+            "version": "1.0.0",
+            "files": {
+                "pkg/__init__.py": _record_hash(source),
+                "pkg/__pycache__/x.pyc": "<none>",
+                "pkg-1.0.0.dist-info/RECORD": "<none>",
+            },
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert code_digest() == hashlib.sha256(entry.encode()).hexdigest()
+
+
+def test_code_digest_is_independent_of_scan_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    forward = [
+        _InstalledDist(tmp_path, name, {f"{name}/m.py": b"pass\n"})
+        for name in ("aaa", "bbb", "ccc")
+    ]
     monkeypatch.setattr("cmcp_runtime.tee.measurement.distributions", lambda: forward)
     baseline = code_digest()
     monkeypatch.setattr(

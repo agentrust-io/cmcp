@@ -43,7 +43,8 @@ def wait_for_server(url, process):
 def main():
     page = (ROOT / "docs/quickstart.md").read_text(encoding="utf-8-sig")
     snippets = blocks(ROOT / "docs/quickstart.md")
-    if "--published" in sys.argv[1:]:
+    published = "--published" in sys.argv[1:]
+    if published:
         import cmcp_runtime
         pin = re.search(r"pip install cmcp-runtime==([0-9][0-9a-z.]*)", page)[1]
         installed = importlib.metadata.version("cmcp-runtime")
@@ -85,8 +86,12 @@ def main():
                 wait_for_server("http://localhost:9001", upstream)
                 allowed = httpx.post("http://localhost:8443/mcp", json=requests[1])
                 assert allowed.status_code == 200 and "mock response" in allowed.text, allowed.text
-                audit = httpx.get("http://localhost:8443/audit/export?session_id=demo-session-001").json()
-                sid = audit["entries"][0]["session_id"]
+                sid = allowed.json()["result"]["_cmcp"]["session_id"]
+                # The export serves the live chain only under its own id, never under the caller's
+                # label. Releases before this check was added still answer to any label.
+                if not published:
+                    assert httpx.get("http://localhost:8443/audit/export?session_id=demo-session-001").status_code == 404
+                assert httpx.get(f"http://localhost:8443/audit/export?session_id={sid}").json()["entries"][0]["session_id"] == sid
                 response = httpx.post(f"http://localhost:8443/sessions/{sid}/close")
                 response.raise_for_status()
                 claim = response.json()

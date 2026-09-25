@@ -118,6 +118,10 @@ class AgentManifestConfig:
     path: str | None = None
     trust_anchor_path: str | None = None
     authenticated_subject: str | None = None
+    #: JSON Lines revocation list (the Agent Manifest CLI's CRL format). When
+    #: set, a manifest listed there is rejected at startup; a missing or
+    #: malformed file aborts startup rather than being read as empty.
+    revocation_list_path: str | None = None
 
 
 @dataclass
@@ -202,7 +206,12 @@ _KNOWN_ATTEST_KEYS = {
     "allow_unmeasured_spawn",
     "required_provenance_kind",
 }
-_KNOWN_AGENT_MANIFEST_KEYS = {"path", "trust_anchor_path", "authenticated_subject"}
+_KNOWN_AGENT_MANIFEST_KEYS = {
+    "path",
+    "trust_anchor_path",
+    "authenticated_subject",
+    "revocation_list_path",
+}
 
 
 def parse_listen_addr(value: str) -> tuple[str, int]:
@@ -502,6 +511,7 @@ def load_config(path: str) -> Config:
     agent_manifest_path = manifest_raw.get("path")
     trust_anchor_path = manifest_raw.get("trust_anchor_path")
     authenticated_subject = manifest_raw.get("authenticated_subject")
+    revocation_list_path = manifest_raw.get("revocation_list_path")
     if agent_manifest_path is not None and not isinstance(agent_manifest_path, str):
         raise ConfigError("agent_manifest.path must be a string")
     if trust_anchor_path is not None and not isinstance(trust_anchor_path, str):
@@ -518,6 +528,14 @@ def load_config(path: str) -> Config:
         _check_no_traversal("agent_manifest.path", agent_manifest_path)
     if trust_anchor_path is not None:
         _check_no_traversal("agent_manifest.trust_anchor_path", trust_anchor_path)
+    if revocation_list_path is not None:
+        if not isinstance(revocation_list_path, str) or not revocation_list_path:
+            raise ConfigError("agent_manifest.revocation_list_path must be a non-empty string")
+        if not agent_manifest_path:
+            raise ConfigError(
+                "agent_manifest.revocation_list_path requires agent_manifest.path"
+            )
+        _check_no_traversal("agent_manifest.revocation_list_path", revocation_list_path)
 
     profile = raw.get("conformance_profile")
     if profile is not None and (
@@ -553,6 +571,7 @@ def load_config(path: str) -> Config:
             path=agent_manifest_path,
             trust_anchor_path=trust_anchor_path,
             authenticated_subject=authenticated_subject,
+            revocation_list_path=revocation_list_path,
         ),
         kill_switch=KillSwitchConfig(
             enabled=ks_enabled,

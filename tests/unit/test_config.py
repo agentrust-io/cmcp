@@ -487,3 +487,23 @@ def test_operator_token_equal_to_bearer_token_is_refused(config_file, monkeypatc
 
     with pytest.raises(ConfigError, match="must differ from CMCP_BEARER_TOKEN"):
         load_config(config_file(""))
+
+
+def test_agent_manifest_revocation_list_path_is_loaded(config_file):
+    path = config_file("""
+        agent_manifest:
+          path: /etc/cmcp/agent-manifest.json
+          trust_anchor_path: /etc/cmcp/manifest-public-key.json
+          revocation_list_path: /etc/cmcp/revocations.jsonl
+    """)
+    cfg = load_config(path)
+    assert cfg.agent_manifest.revocation_list_path == "/etc/cmcp/revocations.jsonl"
+
+
+def test_agent_manifest_revocation_list_requires_manifest(config_file):
+    path = config_file("""
+        agent_manifest:
+          revocation_list_path: /etc/cmcp/revocations.jsonl
+    """)
+    with pytest.raises(ConfigError, match="requires agent_manifest.path"):
+        load_config(path)

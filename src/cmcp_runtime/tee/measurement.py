@@ -83,6 +83,7 @@ attestation key is available to certify with.
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import json
@@ -160,6 +161,12 @@ def code_digest() -> str:
     swapped transitive package is the more likely supply-chain path and measuring
     only cMCP's own source would report an identical digest for it.
 
+    Every file with a recorded hash is read and checked against it (see
+    :func:`_check_installed_bytes`), so the digest describes the bytes on disk
+    and not only the metadata. A file whose bytes differ from RECORD raises
+    :class:`MeasurementUnavailable`; a listed file that is absent is marked
+    ``<missing>`` in the digest.
+
     Raises :class:`MeasurementUnavailable` when a distribution has no ``RECORD``
     (an editable or ``pth``-based install). That failure is deliberate rather than
     skipped: silently measuring a subset would report a confident digest over an
@@ -167,6 +174,7 @@ def code_digest() -> str:
     """
     entries: list[str] = []
     missing: list[str] = []
+    altered: list[str] = []
 
     for dist in sorted(distributions(), key=_dist_sort_key):
         name = dist.metadata["Name"] or "unknown"
@@ -175,6 +183,7 @@ def code_digest() -> str:
         if file_hashes is None:
             missing.append(f"{name} {version}")
             continue
+        altered.extend(_check_installed_bytes(dist, file_hashes))
         entries.append(
             json.dumps(
                 {"name": name, "version": version, "files": file_hashes},
@@ -193,12 +202,74 @@ def code_digest() -> str:
                 "install ('pip install -e'); measure a wheel or sdist install instead."
             ),
         )
+    if altered:
+        raise MeasurementUnavailable(
+            "the gateway cannot be measured: installed files do not match the "
+            "hashes their distribution recorded",
+            detail=(
+                f"{len(altered)} file(s) differ from RECORD: {', '.join(sorted(altered)[:5])}"
+                f"{' ...' if len(altered) > 5 else ''}. Reinstall the affected "
+                "distributions from a trusted source."
+            ),
+        )
     if not entries:
         raise MeasurementUnavailable(
             "the gateway cannot be measured: no installed distributions were found"
         )
 
     return _sha256_hex("\n".join(entries).encode())
+
+
+# Digests PEP 376 and the wheel spec allow in RECORD. md5 and sha1 are refused
+# there, and a file vouched for only by one of them is treated as altered.
+_RECORD_HASH_ALGORITHMS = frozenset({"sha256", "sha384", "sha512"})
+_MISSING_FILE = "<missing>"
+_HASH_CHUNK_BYTES = 1 << 20
+
+
+def _check_installed_bytes(dist: Distribution, file_hashes: dict[str, str]) -> list[str]:
+    """Hash each installed file RECORD vouches for and compare it with RECORD.
+
+    RECORD is metadata written next to the code it describes, so on its own it
+    says what was installed, not what is on disk now: edit an installed file and
+    leave RECORD alone, and a digest built only from RECORD does not move. Each
+    file with a recorded hash is therefore read and hashed. A mismatch is
+    returned for the caller to refuse the measurement.
+
+    A file RECORD lists that is no longer present is not a mismatch, since image
+    builds routinely delete test directories from installed packages. It is
+    marked as missing in *file_hashes* instead, so the digest reports the
+    deletion rather than vouching for bytes that are not there.
+
+    Entries with no recorded hash (RECORD itself, bytecode caches) are left as
+    they are: their bytes are not reproducible across installs, so hashing them
+    would give every install a different expected digest.
+    """
+    altered: list[str] = []
+    name = dist.metadata["Name"] or "unknown"
+    for path, recorded in file_hashes.items():
+        if recorded == "<none>":
+            continue
+        algorithm, _, expected = recorded.partition("=")
+        if algorithm not in _RECORD_HASH_ALGORITHMS or not expected:
+            altered.append(f"{name}:{path} (unsupported RECORD hash)")
+            continue
+        try:
+            located = Path(str(dist.locate_file(path)))
+            hasher = hashlib.new(algorithm)
+            with located.open("rb") as handle:
+                while chunk := handle.read(_HASH_CHUNK_BYTES):
+                    hasher.update(chunk)
+        except FileNotFoundError:
+            file_hashes[path] = _MISSING_FILE
+            continue
+        except OSError as exc:
+            altered.append(f"{name}:{path} (unreadable: {type(exc).__name__})")
+            continue
+        actual = base64.urlsafe_b64encode(hasher.digest()).rstrip(b"=").decode()
+        if actual != expected:
+            altered.append(f"{name}:{path}")
+    return altered
 
 
 def _dist_sort_key(dist: Distribution) -> tuple[str, str]:
