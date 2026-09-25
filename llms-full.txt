@@ -429,12 +429,11 @@ ______________________________________________________________________
 
 ## Get the TRACE Claim
 
-The TRACE Claim is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. Read that id from the audit export, then close the session:
+The TRACE Claim is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. The allowed call's response body carries that id in `result._cmcp.session_id`. Copy it from the output above, then close the session:
 
 ```
-# 1. Look up the session's internal id
-SESSION_UUID=$(curl -s "http://localhost:8443/audit/export?session_id=demo-session-001" \
-  | python3 -c "import sys, json; print(json.load(sys.stdin)['entries'][0]['session_id'])")
+# 1. The internal id from the allowed call's result._cmcp.session_id
+SESSION_UUID="<session id from the allowed call>"
 
 # 2. Close the session; this returns the signed TRACE Claim
 curl -s -X POST "http://localhost:8443/sessions/$SESSION_UUID/close" \
@@ -728,11 +727,12 @@ policy_reload_interval_seconds: 0
 
 All fields are optional as a group. If `path` is set, `trust_anchor_path` must also be set. When the block is configured, cMCP fails closed on manifest signature failure, subject mismatch, policy hash drift, or catalog hash drift.
 
-| Field                   | Type   | Default | Description                                                                                                                                                                                                            |
-| ----------------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`                  | string | none    | Path to the signed Agent Manifest JSON document. Path traversal (`..` components) is rejected.                                                                                                                         |
-| `trust_anchor_path`     | string | none    | Path to a JSON trust anchor containing the issuer Ed25519 public key, either as `{ "key_id": "...", "public_key_base64url": "..." }` or `{ "keys": [...] }`.                                                           |
-| `authenticated_subject` | string | none    | SPIFFE URI for the authenticated agent subject. This must equal `manifest.agent_id`. In production this should come from the agent SVID/mTLS identity; the config field is the current runtime input for that subject. |
+| Field                   | Type   | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`                  | string | none    | Path to the signed Agent Manifest JSON document. Path traversal (`..` components) is rejected.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `trust_anchor_path`     | string | none    | Path to a JSON trust anchor containing the issuer Ed25519 public key, either as `{ "key_id": "...", "public_key_base64url": "..." }` or `{ "keys": [...] }`.                                                                                                                                                                                                                                                                                                                                                              |
+| `authenticated_subject` | string | none    | SPIFFE URI for the authenticated agent subject. This must equal `manifest.agent_id`. In production this should come from the agent SVID/mTLS identity; the config field is the current runtime input for that subject.                                                                                                                                                                                                                                                                                                    |
+| `revocation_list_path`  | string | none    | Path to a JSON Lines revocation list, one record per line with `manifest_id`, `revoked_at`, `reason` and `revoked_by` (the format `manifest revoke` writes and `manifest verify --crl-path` reads). A manifest listed there fails startup. A missing, unreadable or malformed file also fails startup rather than being read as empty. Requires `path`. Without it, revocation is not checked and startup logs a warning. The list is read at startup only, so a revocation added later takes effect on the next restart. |
 
 ### catalog
 

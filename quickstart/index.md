@@ -352,12 +352,11 @@ ______________________________________________________________________
 
 ## Get the TRACE Claim
 
-The TRACE Claim is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. Read that id from the audit export, then close the session:
+The TRACE Claim is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. The allowed call's response body carries that id in `result._cmcp.session_id`. Copy it from the output above, then close the session:
 
 ```
-# 1. Look up the session's internal id
-SESSION_UUID=$(curl -s "http://localhost:8443/audit/export?session_id=demo-session-001" \
-  | python3 -c "import sys, json; print(json.load(sys.stdin)['entries'][0]['session_id'])")
+# 1. The internal id from the allowed call's result._cmcp.session_id
+SESSION_UUID="<session id from the allowed call>"
 
 # 2. Close the session; this returns the signed TRACE Claim
 curl -s -X POST "http://localhost:8443/sessions/$SESSION_UUID/close" \
