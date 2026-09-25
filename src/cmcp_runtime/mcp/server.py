@@ -342,8 +342,10 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": "Bearer realm=\"cmcp-runtime\""},
             )
         provided = auth[len(prefix):]
-        # Constant-time compare to prevent timing oracle on the token
-        if not hmac.compare_digest(provided, expected):
+        # Constant-time compare to prevent timing oracle on the token. Compared
+        # as bytes: compare_digest raises TypeError on a str holding non-ASCII
+        # characters, and header values are caller-controlled latin-1 text.
+        if not hmac.compare_digest(provided.encode(), expected.encode()):
             logger.warning("AUTH_FAILURE: invalid bearer token from %s", request.client)
             return JSONResponse(
                 {"error": "unauthorized", "error_code": "INVALID_BEARER_TOKEN"},

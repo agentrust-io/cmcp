@@ -103,6 +103,7 @@ All fields are optional as a group. If `path` is set, `trust_anchor_path` must a
 | `path` | string | none | Path to the signed Agent Manifest JSON document. Path traversal (`..` components) is rejected. |
 | `trust_anchor_path` | string | none | Path to a JSON trust anchor containing the issuer Ed25519 public key, either as `{ "key_id": "...", "public_key_base64url": "..." }` or `{ "keys": [...] }`. |
 | `authenticated_subject` | string | none | SPIFFE URI for the authenticated agent subject. This must equal `manifest.agent_id`. In production this should come from the agent SVID/mTLS identity; the config field is the current runtime input for that subject. |
+| `revocation_list_path` | string | none | Path to a JSON Lines revocation list, one record per line with `manifest_id`, `revoked_at`, `reason` and `revoked_by` (the format `manifest revoke` writes and `manifest verify --crl-path` reads). A manifest listed there fails startup. A missing, unreadable or malformed file also fails startup rather than being read as empty. Requires `path`. Without it, revocation is not checked and startup logs a warning. The list is read at startup only, so a revocation added later takes effect on the next restart. |
 
 ### catalog
 

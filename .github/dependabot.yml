@@ -21,3 +21,11 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action*"
+
+  # Dockerfile base images are pinned by digest; this keeps the digest current.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5

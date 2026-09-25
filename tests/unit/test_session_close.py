@@ -1343,3 +1343,27 @@ async def test_a_sealed_gateway_answers_tool_calls_instead_of_hanging(server, mo
 
     assert response.status_code == 500
     assert response.json()["error"]["code"] == -32000
+
+
+@pytest.mark.asyncio
+async def test_failed_hydration_records_a_not_attempted_terminal(server, monkeypatch):
+    """A shared-store error during hydration still leaves the call's terminal."""
+    import sqlite3
+
+    proxy = server._proxy
+    chain = server._audit_chain
+
+    async def hydrate():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(server._session, "hydrate", hydrate)
+    with pytest.raises(sqlite3.OperationalError):
+        await proxy.call_tool("hydration-fails", "test.tool", {})
+
+    terminals = [e for e in chain.entries if e.call_id == "hydration-fails"]
+    assert len(terminals) == 1
+    assert terminals[0].entry_type == "fault"
+    assert terminals[0].detail["exception_type"] == "OperationalError"
+    assert terminals[0].detail["terminal_disposition"] == "not_attempted"
+    assert terminals[0].detail["effect_boundary"] == "not_reached"
+    assert proxy._active_calls == 0

@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/**'
       - '.clusterfuzzlite/**'
+      - 'requirements/runtime.txt'
       - '.github/workflows/cflite_pr.yml'
 
 # Read-only. Findings surface in the job log and the uploaded crash artifact

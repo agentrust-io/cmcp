@@ -861,3 +861,21 @@ def test_non_standard_json_constant_returns_parse_error(literal):
     )
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == -32700
+
+
+def test_non_ascii_bearer_token_returns_401_not_500():
+    """A token with non-ASCII bytes is a wrong token, not a server error.
+
+    hmac.compare_digest refuses str arguments containing non-ASCII characters
+    with TypeError, and Starlette decodes header bytes as latin-1, so any
+    caller could turn an auth check into an unhandled exception.
+    """
+    server = _make_server(bearer_token="correct-token")
+    client = TestClient(server.app, raise_server_exceptions=False)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
+        headers={"Authorization": "Bearer café".encode("latin-1")},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "INVALID_BEARER_TOKEN"

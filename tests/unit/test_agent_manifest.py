@@ -335,3 +335,81 @@ def test_a_mislabelled_post_quantum_manifest_fails_closed_cleanly() -> None:
             tool_catalog_hash=CATALOG_HASH,
             enforcement_mode=EnforcementMode.ENFORCING,
         )
+
+
+# --- authoritative revocation state -------------------------------------
+
+
+def _revocation_line(manifest_id: str) -> str:
+    return json.dumps({
+        "manifest_id": manifest_id,
+        "revoked_at": "2026-09-20T00:00:00Z",
+        "reason": "key_compromise",
+        "revoked_by": "spiffe://factory.example/signing-authority/development",
+    })
+
+
+def test_manifest_listed_in_revocation_list_is_rejected(tmp_path: Path) -> None:
+    from cmcp_runtime.agent_manifest import load_agent_manifest_revocations
+
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    crl = tmp_path / "revocations.jsonl"
+    crl.write_text(_revocation_line(manifest["manifest_id"]) + "\n")
+
+    with pytest.raises(ConfigError, match="revoked"):
+        verify_agent_manifest_binding(
+            manifest,
+            {key_id: pub},
+            authenticated_subject=AGENT_ID,
+            policy_bundle_hash=POLICY_HASH,
+            tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ENFORCING,
+            revocations=load_agent_manifest_revocations(str(crl)),
+        )
+
+
+def test_revocation_list_naming_another_manifest_still_binds(tmp_path: Path) -> None:
+    from cmcp_runtime.agent_manifest import load_agent_manifest_revocations
+
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    crl = tmp_path / "revocations.jsonl"
+    crl.write_text(_revocation_line("00000000-0000-7000-8000-000000000000") + "\n\n")
+
+    binding = verify_agent_manifest_binding(
+        manifest,
+        {key_id: pub},
+        authenticated_subject=AGENT_ID,
+        policy_bundle_hash=POLICY_HASH,
+        tool_catalog_hash=CATALOG_HASH,
+        enforcement_mode=EnforcementMode.ENFORCING,
+        revocations=load_agent_manifest_revocations(str(crl)),
+    )
+    assert binding.manifest_id == manifest["manifest_id"]
+
+
+def test_missing_revocation_list_fails_closed(tmp_path: Path) -> None:
+    from cmcp_runtime.agent_manifest import load_agent_manifest_revocations
+
+    with pytest.raises(ConfigError, match="Cannot read"):
+        load_agent_manifest_revocations(str(tmp_path / "absent.jsonl"))
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "not json",
+        "[1, 2]",
+        json.dumps({"revoked_at": "2026-09-20T00:00:00Z", "reason": "x", "revoked_by": "y"}),
+        json.dumps({"manifest_id": "m", "revoked_at": "yesterday", "reason": "x", "revoked_by": "y"}),
+        json.dumps({"manifest_id": "m", "revoked_at": "2026-09-20T00:00:00Z"}),
+    ],
+)
+def test_malformed_revocation_line_fails_closed(tmp_path: Path, line: str) -> None:
+    from cmcp_runtime.agent_manifest import load_agent_manifest_revocations
+
+    crl = tmp_path / "revocations.jsonl"
+    crl.write_text(_revocation_line("ok-entry") + "\n" + line + "\n")
+    with pytest.raises(ConfigError, match="line 2"):
+        load_agent_manifest_revocations(str(crl))
