@@ -413,6 +413,27 @@ def test_agent_manifest_binding_enforcement_mode_mismatch_fails():
     assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
 
 
+def test_agent_manifest_binding_declared_mode_missing_from_claim_fails():
+    """A signed manifest's mode cannot be omitted from the claim's binding."""
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id, enforcement_mode="enforce")
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    identity.enforcement_mode = None
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+    assert "enforcement_mode" not in claim_dict["gateway"]["agent_identity"]
+
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+    )
+
+    assert "agent_manifest.binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
+
+
 def test_agent_manifest_binding_without_enforcement_mode_still_works():
     """A manifest that doesn't declare enforcement_mode at all -- the common
     case before this field existed -- must bind and verify exactly as before.

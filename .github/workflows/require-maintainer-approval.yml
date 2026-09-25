@@ -25,7 +25,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const MAINTAINERS = ['imran-siddique', 'carloshvp', 'qubeena07', 'zohebk8s'];
+            const MAINTAINERS = ['imran-siddique', 'carloshvp', 'qubeena07', 'zohebk8s', 'pforest', 'Qiang-Xu', 'rajnisht7', 'podcastinator', 'AaronRoeF'];
 
             const author = context.payload.pull_request.user.login;
             if (MAINTAINERS.includes(author)) {

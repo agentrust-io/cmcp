@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,29 @@ def _verify_fixture(fixture: dict):
         fixture["detached_payload"],
         fixture["trace_claim"],
     )
+
+
+@pytest.mark.parametrize("algorithm", ["sha256", "sha384"])
+@pytest.mark.parametrize("structure", ["nested", "cyclic"])
+def test_recursive_detached_payload_returns_failure(algorithm, structure):
+    fixture = _fixture()
+    context = {}
+    if structure == "cyclic":
+        context["child"] = context
+    else:
+        for _ in range(sys.getrecursionlimit() + 100):
+            context = {"child": context}
+    fixture["detached_payload"]["approval_context"] = context
+    digest_length = 64 if algorithm == "sha256" else 96
+    fixture["audit_entry"]["external_execution_evidence"]["evidence_hash"] = (
+        f"{algorithm}:" + "0" * digest_length
+    )
+
+    result = _verify_fixture(fixture)
+
+    assert not result.verified
+    assert "external_execution_evidence.evidence_hash" not in result.verified_fields
+    assert any("could not be canonicalized" in failure for failure in result.failures)
 
 
 def test_ros2_fibonacci_aborted_fixture_verifies():
