@@ -29,3 +29,10 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # Digest refreshes and 3.11 patch releases only. Moving the image to a new
+    # Python minor is a deliberate change with its own PR and test run.
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
