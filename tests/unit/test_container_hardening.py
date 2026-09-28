@@ -34,7 +34,7 @@ def test_runtime_image_pins_python_patch_and_distribution() -> None:
     assert len(stages) == 2
     for stage, name in zip(stages, ("builder", "runtime"), strict=True):
         assert re.fullmatch(
-            rf"FROM python:3\.11\.15-slim-bookworm@sha256:[0-9a-f]{{64}} AS {name}", stage
+            rf"FROM python:3\.11\.16-slim-bookworm@sha256:[0-9a-f]{{64}} AS {name}", stage
         ), stage
 
 
