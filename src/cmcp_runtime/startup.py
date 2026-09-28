@@ -154,6 +154,27 @@ def _fatal(code: str, message: str, **fields: Any) -> None:
     logger.critical("%s", entry)
 
 
+def _open_session_state_store(config: Config) -> SqliteSessionStateStore | None:
+    """Open the shared, persistent session-state store if configured (#653).
+
+    Unconfigured (the default), returns None and hydrate() reproduces the
+    pre-existing single-instance-only behaviour, unchanged.
+    """
+    if config.session_state_path is None:
+        return None
+    from pathlib import Path as _Path
+
+    try:
+        return SqliteSessionStateStore(_Path(config.session_state_path))
+    except Exception as exc:
+        _fatal(
+            "SESSION_STATE_STORE_UNAVAILABLE",
+            f"Cannot open session state store at '{config.session_state_path}': {exc}",
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
+
 def _degrade_measurement(config: Config, exc: MeasurementUnavailable) -> None:
     """Abort on an unmeasurable gateway, or warn and continue in dev mode.
 
@@ -801,6 +822,9 @@ def run_startup(config_path: str) -> RuntimeContext:
             )
             sys.exit(1)
 
+    # Step 5g: open the shared, persistent session-state store if configured.
+    session_state_store = _open_session_state_store(config)
+
     return RuntimeContext(
         config=config,
         tee_provider=tee_provider,
@@ -817,4 +841,5 @@ def run_startup(config_path: str) -> RuntimeContext:
         gateway_measurement=measurement,
         measurement_extend=extend_result,
         measurement_evidence=measurement_evidence,
+        session_state_store=session_state_store,
     )

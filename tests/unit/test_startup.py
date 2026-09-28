@@ -147,6 +147,95 @@ def test_startup_returns_gateway_context_with_all_fields(complete_setup):
     assert ctx.attestation_report.provider == "software-only"
 
 
+def test_startup_leaves_session_state_store_none_when_unconfigured(complete_setup):
+    """#653 regression guard: the unconfigured default must stay unchanged."""
+    ctx = run_startup(complete_setup)
+    assert ctx.session_state_store is None
+
+
+def test_startup_opens_the_configured_session_state_store(tmp_path, monkeypatch):
+    """#653: session_state_path must be accepted and actually wired in."""
+    monkeypatch.setenv("CMCP_DEV_MODE", "1")
+    import cmcp_runtime.config as _cfg
+
+    monkeypatch.setattr(_cfg, "DEV_MODE", True)
+
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    state_path = tmp_path / "session-state.db"
+    config_path.write_text(
+        f"policy_bundle_path: {policy_dir}\n"
+        f"catalog_path: {catalog_path}\n"
+        f"session_state_path: {state_path}\n"
+    )
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+
+    from cmcp_runtime.session.store import SqliteSessionStateStore
+
+    ctx = run_startup(str(config_path))
+    try:
+        assert isinstance(ctx.session_state_store, SqliteSessionStateStore)
+        assert state_path.exists()
+    finally:
+        # An unclosed sqlite3 connection can hold the file open long enough to
+        # interfere with tmp_path cleanup on Windows CI.
+        ctx.session_state_store.close()
+
+
+def test_startup_fails_closed_when_session_state_store_cannot_open(
+    tmp_path, monkeypatch, caplog
+):
+    """#653: a configured store that fails to open must abort startup, not run
+    silently without the persistence the operator asked for.
+
+    Forces the failure via monkeypatch rather than an OS-level trick (e.g.
+    pointing the path at a directory): this repo's CI runs both Linux and
+    Windows, and this test should exercise the fail-closed wiring, not an
+    unverified cross-platform filesystem behavior.
+    """
+    monkeypatch.setenv("CMCP_DEV_MODE", "1")
+    import cmcp_runtime.config as _cfg
+    import cmcp_runtime.startup as _startup
+
+    monkeypatch.setattr(_cfg, "DEV_MODE", True)
+
+    def _raise(*args, **kwargs):
+        raise OSError("simulated open failure")
+
+    monkeypatch.setattr(_startup, "SqliteSessionStateStore", _raise)
+
+    config_path = tmp_path / "cmcp-config.yaml"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    catalog_path = tmp_path / "catalog.json"
+    state_path = tmp_path / "session-state.db"
+    config_path.write_text(
+        f"policy_bundle_path: {policy_dir}\n"
+        f"catalog_path: {catalog_path}\n"
+        f"session_state_path: {state_path}\n"
+    )
+    (policy_dir / "manifest.json").write_text(json.dumps(MANIFEST))
+    (policy_dir / "allow.cedar").write_text(CEDAR_POLICY)
+    (policy_dir / "schema.cedarschema").write_text(SCHEMA)
+    catalog_path.write_text(json.dumps([CATALOG_ENTRY]))
+
+    with caplog.at_level("CRITICAL", logger="cmcp_runtime.startup"), pytest.raises(
+        SystemExit
+    ) as exc_info:
+        run_startup(str(config_path))
+    assert exc_info.value.code == 1
+    # Exit code 1 alone would also pass if startup aborted for an unrelated
+    # reason, so pin the event that must have caused it.
+    assert any(
+        "SESSION_STATE_STORE_UNAVAILABLE" in record.getMessage() for record in caplog.records
+    )
+
+
 def test_startup_binds_configured_agent_manifest(complete_setup):
     config_path = Path(complete_setup)
     tmp_path = config_path.parent
