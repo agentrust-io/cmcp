@@ -52,11 +52,21 @@ revoke authority, stop admission on the old gate, replace it under controller
 serialization, and use the same protected replay database. Reconstructing a
 gate does not stop already admitted delivery on another live gate.
 
-After validation, a durable SQLite transaction consumes the request ID **before**
-the delivery callback. A crash, callback exception or lost acknowledgement leaves
-delivery unknown; the ID stays consumed. Never automatically retry or assign a
-fresh ID to an unknown attempt. A normal callback return is an acknowledgement,
-not proof of recipient installation, processing or downstream confidentiality.
+After validation, a durable SQLite transaction consumes the request ID. For an
+authorized disclosure whose validity is time-bounded, validity is rechecked after
+that reservation. Only then does the gate persist a separate minimized release
+attempt with an independent event ID and conservative `delivery=unknown`.
+**That durable attempt write must succeed before the delivery callback is invoked.**
+
+The release-attempt table contains only event ID, disposition, reason and delivery
+state. It does not join the private replay identifier or copy payload, payload
+digest, principal, recipient, purpose, source scope, labels or approval material.
+A normal callback return upgrades the same event to `acknowledged`. If the
+callback raises, the process is interrupted after the callback begins, or the
+post-delivery update fails, the durable record remains `unknown`; the disclosure
+cannot be undone and is never automatically retried. A normal callback return is
+an acknowledgement, not proof of recipient installation, processing or downstream
+confidentiality.
 
 All gates for a release authority must use the same trusted replay store.
 Deletion, snapshot rollback, database substitution or separate clones defeat
@@ -78,9 +88,11 @@ The API lives in `cmcp_runtime.disclosure`. A trusted controller constructs a
 The owner-side `approve_exact_output` signs that request after review using a
 private key held outside the model/runtime. `DisclosureGate` receives only pinned
 public `ReleaseAuthority` grants, `ReleaseRecipient` adapters and a `ReplayStore`.
-Calling `release(request, approval)` validates and consumes the attempt before
-calling the pinned adapter. The returned `ReleaseObservation` must not be
-interpreted as attested execution or used to authorize another release.
+Calling `release(request, approval)` validates and consumes the replay identifier,
+rechecks validity where required, persists the minimized unknown attempt, and only
+then calls the pinned adapter. If the pre-delivery attempt write fails, delivery is
+not attempted. The returned `ReleaseObservation` must not be interpreted as
+attested execution or used to authorize another release.
 
 The scope and purpose strings are exact identifiers, not patterns. Purpose
 checking authorizes sending for that declared purpose; it cannot enforce the
@@ -99,8 +111,9 @@ Tests use generated software keys and a recording callback, not external
 recipients or real confidential content. The independent serialization control
 constructs one ASCII canonical approval without the signing helper; this is not
 a second protocol implementation. Concurrent attempts use separate SQLite
-connections in threads. Restart is modeled by reopening the store; process-kill,
-filesystem durability faults and rollback-resistant hardware are not tested.
+connections in threads. Restart is modeled by reopening the store, including after
+a `BaseException` interrupts the call after delivery begins. SIGKILL/host-loss
+timing, filesystem durability faults and rollback-resistant hardware are not tested.
 
 ## Scope
 
