@@ -63,7 +63,7 @@ def _signed_manifest(intent: dict | None = None) -> tuple[dict, dict[str, bytes]
             "system_prompt": {"hash": "sha256:" + "a" * 64},
             "model_identity": {"version": "claude-3", "deployment_type": "api"},
             "policy_bundle": {"hash": POLICY_HASH, "policy_language": "cedar"},
-            "tool_manifest": {"catalog_hash": CATALOG_HASH, "tools": []},
+            "tool_manifest": {"catalog_hash": CATALOG_HASH},
         },
         "delegation_chain": [],
     }
