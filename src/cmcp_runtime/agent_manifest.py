@@ -9,12 +9,16 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import agent_manifest as agent_manifest_sdk
 
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
+from cmcp_runtime.manifest_catalog import manifest_catalog_binding
+
+if TYPE_CHECKING:
+    from cmcp_runtime.catalog.loader import ToolCatalog
 
 SIGNED_FIELDS: tuple[str, ...] = tuple(agent_manifest_sdk.SIGNED_FIELDS)
 
@@ -303,7 +307,9 @@ def _raise_for_sdk_result(result: Any, *, require_runtime_artifacts: bool) -> No
         )
     if "policy_bundle" in mismatch_fields:
         raise ConfigError("Agent Manifest policy bundle hash does not match runtime policy")
-    if "tool_manifest" in mismatch_fields:
+    # agent-manifest 0.13 reports a root that disagrees with its own tools list
+    # as "tool_manifest.catalog_hash"; to an operator it is the same failure.
+    if mismatch_fields & {"tool_manifest", "tool_manifest.catalog_hash"}:
         raise ConfigError("Agent Manifest tool catalog hash does not match runtime catalog")
     if "signature" in mismatch_fields:
         raise ConfigError("Agent Manifest signature verification failed")
@@ -340,7 +346,20 @@ def _verify_with_sdk(
     require_runtime_artifacts: bool = False,
     envelope: bytes | None = None,
     revocations: Any = None,
+    runtime_catalog: ToolCatalog | None = None,
 ) -> None:
+    projection = None
+    if require_runtime_artifacts and _lists_tools(manifest):
+        # A manifest that lists its tools declares a Merkle root over them
+        # (spec 3.2.3), not cMCP's sealed digest, so the two are never compared.
+        # The root is recomputed from the catalog this runtime serves, which
+        # must be the catalog behind the sealed digest the caller supplied.
+        if runtime_catalog is None or runtime_catalog.catalog_hash != tool_catalog_hash:
+            raise ConfigError(
+                "Agent Manifest lists its tools; binding it needs the runtime catalog"
+            )
+        projection = manifest_catalog_binding(runtime_catalog)
+        tool_catalog_hash = projection["catalog_hash"]
     # The envelope is handed to the verifier when there is one, because for a
     # v0.2 manifest the envelope is the signature. Passing the decoded payload
     # instead would ask the SDK to appraise a document with nothing to appraise.
@@ -375,6 +394,44 @@ def _verify_with_sdk(
         revocations if revocations is not None else agent_manifest_sdk.RevocationStore(),
     )
     _raise_for_sdk_result(result, require_runtime_artifacts=require_runtime_artifacts)
+    if projection is not None:
+        _require_listed_tools_match(manifest, projection)
+
+
+def _lists_tools(manifest: dict[str, Any]) -> bool:
+    """True when tool_manifest carries a ``tools`` member, even an empty one.
+
+    Same test the SDK applies from agent-manifest 0.13: an explicit empty list
+    declares an empty catalog, and only an absent member is the legacy form.
+    """
+    artifacts = manifest.get("artifacts")
+    tools = artifacts.get("tool_manifest") if isinstance(artifacts, dict) else None
+    return isinstance(tools, dict) and "tools" in tools
+
+
+def _require_listed_tools_match(manifest: dict[str, Any], projection: dict[str, Any]) -> None:
+    """The signed tool list must be exactly the served catalog's projection.
+
+    Checked here as well as by the SDK, after signature verification, so the
+    guarantee does not depend on which SDK release is installed: before 0.13
+    the SDK compared only ``catalog_hash`` and never looked at ``tools``.
+    """
+    tool_manifest = manifest["artifacts"]["tool_manifest"]
+
+    def leaves(tools: Any) -> list[tuple[Any, Any, Any]] | None:
+        if not isinstance(tools, list) or not all(isinstance(t, dict) for t in tools):
+            return None
+        return sorted(
+            (t.get("tool_id"), t.get("schema_hash"), t.get("description_hash")) for t in tools
+        )
+
+    declared = leaves(tool_manifest.get("tools"))
+    if (
+        declared is None
+        or declared != leaves(projection["tools"])
+        or tool_manifest.get("catalog_hash") != projection["catalog_hash"]
+    ):
+        raise ConfigError("Agent Manifest tool catalog hash does not match runtime catalog")
 
 
 def verify_agent_manifest_signature(
@@ -443,6 +500,7 @@ def verify_agent_manifest_binding(
     now: datetime | None = None,
     envelope: bytes | None = None,
     revocations: Any = None,
+    runtime_catalog: ToolCatalog | None = None,
 ) -> AgentManifestBinding:
     """Verify manifest signature and bind it to runtime session inputs.
 
@@ -454,6 +512,13 @@ def verify_agent_manifest_binding(
     revocation state (see load_agent_manifest_revocations); a manifest listed
     there is rejected. When it is None the store is empty and no revocation
     is enforced.
+
+    *tool_catalog_hash* is cMCP's sealed catalog digest. A manifest that omits
+    ``tool_manifest.tools`` must declare exactly that digest. A manifest that
+    lists its tools declares their Merkle root instead, and binds only when the
+    list and root equal the projection of *runtime_catalog*, the catalog being
+    served (cmcp_runtime.manifest_catalog). Without *runtime_catalog* such a
+    manifest does not bind.
     """
     manifest_id, agent_id, issuer, key_id, manifest_policy, manifest_catalog = (
         _manifest_binding_fields(manifest)
@@ -475,6 +540,7 @@ def verify_agent_manifest_binding(
         require_runtime_artifacts=True,
         envelope=envelope,
         revocations=revocations,
+        runtime_catalog=runtime_catalog,
     )
 
     subject = authenticated_subject

@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `launch_measurement` unverified: genuine hardware says what ran, not that
   it was approved, and a report from any guest image used to come out `verified`.
 
+### Fixed
+
+- An Agent Manifest that lists its tools in `tool_manifest.tools` could never
+  bind: cMCP handed the SDK its sealed catalog digest, and from agent-manifest
+  0.13 the SDK compares `catalog_hash` with the Merkle root of that list. Such a
+  manifest now binds when its list and root equal the projection of the catalog
+  being served (`cmcp_runtime.manifest_catalog`). A manifest that omits `tools`
+  is still compared with the sealed digest. `verify_agent_manifest_binding`
+  takes `runtime_catalog` for this; without it a manifest with `tools` does not
+  bind, which includes `cmcp verify`, since it has no catalog to project.
+
 ## [0.6.0] - 2026-09-25
 
 ### Added
