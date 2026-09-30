@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import agent_manifest as agent_manifest_sdk
+import rfc8785
+from cryptography.exceptions import InvalidSignature
 
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
@@ -21,6 +23,11 @@ if TYPE_CHECKING:
     from cmcp_runtime.catalog.loader import ToolCatalog
 
 SIGNED_FIELDS: tuple[str, ...] = tuple(agent_manifest_sdk.SIGNED_FIELDS)
+
+#: Agent Manifest profile whose signed evidence_requirements name cMCP's sealed
+#: catalog digest while tool_manifest carries the Merkle projection
+#: (cmcp_runtime.manifest_catalog). Experimental; see agentrust-io/trace-spec#439.
+EVIDENCE_REQUIREMENTS_PROFILE = "evidence-requirements-experimental-v1"
 
 _B64URL_RE = re.compile(r"^[A-Za-z0-9\-_]*$")
 _HASH_RE = re.compile(r"^(sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96})$")
@@ -347,19 +354,38 @@ def _verify_with_sdk(
     envelope: bytes | None = None,
     revocations: Any = None,
     runtime_catalog: ToolCatalog | None = None,
-) -> None:
+) -> str | None:
+    """Appraise the manifest; return the COSE signer's key id when there is exactly one."""
+    sealed_catalog_hash = tool_catalog_hash
+    experimental = (
+        require_runtime_artifacts and manifest.get("profile") == EVIDENCE_REQUIREMENTS_PROFILE
+    )
     projection = None
-    if require_runtime_artifacts and _lists_tools(manifest):
+    if require_runtime_artifacts and (experimental or _lists_tools(manifest)):
         # A manifest that lists its tools declares a Merkle root over them
         # (spec 3.2.3), not cMCP's sealed digest, so the two are never compared.
         # The root is recomputed from the catalog this runtime serves, which
-        # must be the catalog behind the sealed digest the caller supplied.
-        if runtime_catalog is None or runtime_catalog.catalog_hash != tool_catalog_hash:
+        # must be the catalog behind the sealed digest the caller supplied. The
+        # experimental profile always binds this way and also signs the sealed
+        # digest, checked below.
+        if runtime_catalog is None or runtime_catalog.catalog_hash != sealed_catalog_hash:
+            if experimental:
+                raise ConfigError("Experimental requirements need the actual runtime catalog")
             raise ConfigError(
                 "Agent Manifest lists its tools; binding it needs the runtime catalog"
             )
         projection = manifest_catalog_binding(runtime_catalog)
         tool_catalog_hash = projection["catalog_hash"]
+    if envelope is not None:
+        # Before appraisal, so a substituted document is reported as that
+        # rather than as whatever the SDK finds first. Decoding here does not
+        # authenticate anything; the SDK and the check after it do.
+        try:
+            decoded = agent_manifest_sdk.decode_cose_manifest(envelope)
+        except ValueError:
+            decoded = None  # malformed; the SDK appraisal below refuses it
+        if decoded is not None:
+            _require_same_payload(decoded.manifest, manifest)
     # The envelope is handed to the verifier when there is one, because for a
     # v0.2 manifest the envelope is the signature. Passing the decoded payload
     # instead would ask the SDK to appraise a document with nothing to appraise.
@@ -394,8 +420,16 @@ def _verify_with_sdk(
         revocations if revocations is not None else agent_manifest_sdk.RevocationStore(),
     )
     _raise_for_sdk_result(result, require_runtime_artifacts=require_runtime_artifacts)
+    authenticated_key_id = (
+        _authenticated_envelope_key_id(manifest, envelope, trusted_keys)
+        if envelope is not None
+        else None
+    )
     if projection is not None:
         _require_listed_tools_match(manifest, projection)
+    if experimental:
+        _require_sealed_catalog_requirement(manifest, sealed_catalog_hash)
+    return authenticated_key_id
 
 
 def _lists_tools(manifest: dict[str, Any]) -> bool:
@@ -432,6 +466,62 @@ def _require_listed_tools_match(manifest: dict[str, Any], projection: dict[str, 
         or tool_manifest.get("catalog_hash") != projection["catalog_hash"]
     ):
         raise ConfigError("Agent Manifest tool catalog hash does not match runtime catalog")
+
+
+def _authenticated_envelope_key_id(
+    manifest: dict[str, Any], envelope: bytes, trusted_keys: dict[str, bytes]
+) -> str | None:
+    """Refuse a decoded manifest that differs from the payload the envelope signs.
+
+    The SDK appraised the envelope, but every binding field is read from the
+    decoded dict the caller passed. Without this check a caller could pair a
+    valid envelope with a different identity, policy or catalog.
+    """
+    try:
+        verification = agent_manifest_sdk.verify_cose_manifest(
+            envelope, _trusted_keys_for_sdk(trusted_keys)
+        )
+    except (ValueError, InvalidSignature, agent_manifest_sdk.CoseError) as exc:
+        raise ConfigError("Agent Manifest signature verification failed") from exc
+    _require_same_payload(verification.manifest, manifest)
+    signatures = verification.signatures
+    if len(signatures) == 1 and signatures[0].verified:
+        return str(signatures[0].key_id)
+    return None
+
+
+def _require_same_payload(signed: Any, manifest: dict[str, Any]) -> None:
+    try:
+        same_payload = rfc8785.dumps(signed) == rfc8785.dumps(manifest)
+    except (ValueError, TypeError) as exc:
+        raise ConfigError("Decoded manifest is not canonicalizable") from exc
+    if not same_payload:
+        raise ConfigError("Decoded manifest does not match authenticated COSE artifact")
+
+
+def _require_sealed_catalog_requirement(
+    manifest: dict[str, Any], sealed_catalog_hash: str | None
+) -> None:
+    """The experimental profile must also sign cMCP's sealed catalog digest.
+
+    Read only after signature and schema verification. The Merkle root covers
+    tool IDs, schemas and descriptions; the sealed digest adds server identity
+    and output schemas, so both constructions are required to be signed.
+    """
+    requirements = manifest.get("evidence_requirements")
+    components = requirements.get("components") if isinstance(requirements, dict) else None
+    declarations = [
+        c
+        for c in (components if isinstance(components, list) else [])
+        if isinstance(c, dict)
+        and c.get("component_type") == "tool-catalog"
+        and c.get("required") is True
+        and c.get("artifact_ref") == "artifacts.tool_manifest"
+    ]
+    if not declarations or any(
+        c.get("expected_observed_digest") != sealed_catalog_hash for c in declarations
+    ):
+        raise ConfigError("Experimental manifest does not bind the sealed runtime catalog")
 
 
 def verify_agent_manifest_signature(
@@ -519,6 +609,8 @@ def verify_agent_manifest_binding(
     list and root equal the projection of *runtime_catalog*, the catalog being
     served (cmcp_runtime.manifest_catalog). Without *runtime_catalog* such a
     manifest does not bind.
+    The experimental evidence-requirements profile always binds this way and
+    must also sign the sealed digest.
     """
     manifest_id, agent_id, issuer, key_id, manifest_policy, manifest_catalog = (
         _manifest_binding_fields(manifest)
@@ -531,7 +623,7 @@ def verify_agent_manifest_binding(
         current_time = current_time.replace(tzinfo=UTC)
     if expires_at <= current_time.astimezone(UTC):
         raise ConfigError("Agent Manifest has expired")
-    _verify_with_sdk(
+    authenticated_key_id = _verify_with_sdk(
         manifest,
         trusted_keys,
         policy_bundle_hash=policy_bundle_hash,
@@ -542,6 +634,10 @@ def verify_agent_manifest_binding(
         revocations=revocations,
         runtime_catalog=runtime_catalog,
     )
+    # A v0.2 manifest has no detached signature block; its signer is the key
+    # that verified the COSE envelope.
+    if authenticated_key_id is not None:
+        key_id = authenticated_key_id
 
     subject = authenticated_subject
     subject_source = authenticated_subject_source
@@ -570,7 +666,13 @@ def verify_agent_manifest_binding(
         issuer=issuer,
         issuer_key_id=key_id,
         policy_bundle_hash=manifest_policy,
-        tool_catalog_hash=manifest_catalog,
+        # Under the experimental profile the manifest's catalog_hash is the
+        # Merkle projection; the claim keeps carrying cMCP's sealed digest.
+        tool_catalog_hash=(
+            tool_catalog_hash
+            if manifest.get("profile") == EVIDENCE_REQUIREMENTS_PROFILE
+            else manifest_catalog
+        ),
         # Read after the signature has been verified above, never before: an
         # intent taken from an unverified manifest is an intent anyone could
         # have written, which is the failure the field exists to prevent.

@@ -14,6 +14,7 @@ from cmcp_runtime import __version__
 if TYPE_CHECKING:
     from cmcp_runtime.mcp.server import MCPServer
     from cmcp_runtime.startup import RuntimeContext
+    from cmcp_runtime.trace_gate import TraceGate
 
 
 def _marker(preferred: str, fallback: str, stream: object) -> str:
@@ -41,7 +42,7 @@ def _bad() -> str:
     return _marker("✗", "ERROR", sys.stderr)
 
 
-def build_server(ctx: RuntimeContext) -> MCPServer:
+def build_server(ctx: RuntimeContext, *, trace_gate: TraceGate | None = None) -> MCPServer:
     """
     Compose the running gateway from a validated RuntimeContext.
 
@@ -93,6 +94,7 @@ def build_server(ctx: RuntimeContext) -> MCPServer:
         attestation_validity_seconds=ctx.attestation_report.attestation_validity_seconds,
         attestation_platform=attestation_platform,
         catalog_scanner=ctx.catalog_scanner,
+        trace_gate=trace_gate,
     )
     # AUTH-001: the token validated in run_startup must reach the server, otherwise
     # every protected endpoint is reachable unauthenticated.

@@ -32,6 +32,7 @@ from starlette.routing import Route
 from cmcp_runtime.catalog.loader import ApprovedDefinition, CatalogEntry, ServerIdentity
 from cmcp_runtime.errors import KillSwitchTripped
 from cmcp_runtime.mcp.proxy import SESSION_CLOSE_DRAIN_SECONDS, CMCPProxy
+from cmcp_runtime.trace_gate import TraceGate, decode_trace_token
 
 if TYPE_CHECKING:
     from cmcp_runtime.audit.chain import AuditChain
@@ -375,6 +376,11 @@ class MCPServer:
         max_request_bytes: int = _DEFAULT_MAX_REQUEST_BYTES,
     ) -> None:
         self._proxy = proxy
+        # Read once. With no gate the /trace routes are not registered and
+        # tools/call ignores _cmcp.trace, so the server is unchanged.
+        self._trace_gate: TraceGate | None = (
+            proxy.trace_gate if isinstance(proxy, CMCPProxy) else None
+        )
         self._session_manager = session_manager
         self._audit_chain = audit_chain
         self._session = session
@@ -430,6 +436,14 @@ class MCPServer:
             lifespan=self._lifespan,
             routes=[
                 Route("/mcp", self._handle_mcp, methods=["POST"]),
+                *(
+                    [
+                        Route("/trace/challenge", self._trace_challenge, methods=["POST"]),
+                        Route("/trace/admit", self._trace_admit, methods=["POST"]),
+                    ]
+                    if self._trace_gate is not None
+                    else []
+                ),
                 Route("/health", self._health, methods=["GET"]),
                 Route("/readyz", self._readyz, methods=["GET"]),
                 Route("/tools/list", self._list_tools, methods=["GET"]),
@@ -583,6 +597,70 @@ class MCPServer:
             status_code=404,
         )
 
+    async def _trace_challenge(self, request: Request) -> Response:
+        """Mint a holder-proof challenge for session admission or for one call.
+
+        Registered only when a TRACE gate is configured, and behind the same
+        bearer authentication as /mcp. For a call, the server picks the call_id
+        and the action comes from the approved catalog, not from the client.
+        """
+        gate = self._trace_gate
+        assert gate is not None
+        body = await self._parse_mcp_envelope(request)
+        if isinstance(body, Response):
+            return body
+        try:
+            token = decode_trace_token(body.get("token"))
+            session_id = self._proxy._session.session_id
+            call_id: str | None
+            purpose = body.get("purpose")
+            if purpose == "admission":
+                action: dict[str, Any] = {
+                    "domain": "cmcp:trace-admission:experimental-v1",
+                    "session_id": session_id,
+                }
+                call_id = None
+            elif purpose == "call":
+                tool = body.get("tool_name")
+                arguments = body.get("arguments")
+                workflow_id = body.get("workflow_id")
+                data_class = body.get("data_class")
+                if (
+                    not isinstance(tool, str)
+                    or not isinstance(arguments, dict)
+                    or not isinstance(workflow_id, (str, type(None)))
+                    or not isinstance(data_class, (str, type(None)))
+                ):
+                    raise ValueError("invalid challenge action")
+                call_id = str(uuid.uuid4())
+                action = self._proxy.trace_action(
+                    call_id, tool, arguments, workflow_id, data_class
+                )
+            else:
+                raise ValueError("invalid challenge purpose")
+            result = gate.challenge(token, session_id=session_id, action=action)
+        except ValueError:
+            return JSONResponse({"error_code": "TRACE_CHALLENGE_REFUSED"}, status_code=403)
+        result.update(action=action, call_id=call_id)
+        return JSONResponse(result)
+
+    async def _trace_admit(self, request: Request) -> Response:
+        """Admit a TRACE token for this session after the holder proves the key."""
+        gate = self._trace_gate
+        assert gate is not None
+        body = await self._parse_mcp_envelope(request)
+        if isinstance(body, Response):
+            return body
+        try:
+            result = gate.admit(
+                decode_trace_token(body.get("token")),
+                body.get("credentials"),
+                session_id=self._proxy._session.session_id,
+            )
+        except ValueError:
+            return JSONResponse({"error_code": "TRACE_ADMISSION_REFUSED"}, status_code=403)
+        return JSONResponse(result)
+
     def _deny_response(self, rpc_id: Any, call_id: str, result: Any) -> JSONResponse:
         """Build the JSON-RPC error response for a policy-denied tool call."""
         deny_reason = result.deny_reason or ""
@@ -723,6 +801,20 @@ class MCPServer:
             raw_data_class if isinstance(raw_data_class, str) else None
         )
 
+        # With a TRACE gate, the call_id is the one the challenge minted, because
+        # the holder proof is bound to it. Without a gate this block is skipped
+        # and call_tool receives exactly the arguments it always has.
+        trace_kwargs: dict[str, Any] = {}
+        if self._trace_gate is not None:
+            trace = cmcp_params.get("trace")
+            trace_kwargs["trace_credentials"] = None
+            if isinstance(trace, dict):
+                trace_call_id = trace.get("call_id", "")
+                if not isinstance(trace_call_id, str) or not 1 <= len(trace_call_id) <= 128:
+                    return _invalid_request(rpc_id)
+                call_id = trace_call_id
+                trace_kwargs["trace_credentials"] = trace.get("credentials")
+
         try:
             result = await self._proxy.call_tool(
                 call_id,
@@ -731,6 +823,7 @@ class MCPServer:
                 workflow_id=workflow_id,
                 declared_data_class=declared_data_class,
                 execution_id=execution_id,
+                **trace_kwargs,
             )
         except KillSwitchTripped as exc:
             receipt = None
