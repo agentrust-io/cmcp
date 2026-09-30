@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-30
+
 ### Security
 
 - TPM 2.0: `verify_tpm_measurement` listed a `qualifying_data` mismatch as
