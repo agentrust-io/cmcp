@@ -219,6 +219,13 @@ def client_bridge(gateway_url: str, token_env: str) -> None:
     type=click.Path(exists=True, dir_okay=False, readable=True),
     help="TPM 2.0 claims only: verifier-pinned CA certificate bundle (PEM).",
 )
+@click.option(
+    "--launch-measurement",
+    "launch_measurements",
+    multiple=True,
+    help="Approved launch measurement (repeatable), in the claim's measurement "
+         "format. Without one, a hardware claim is at most partially verified.",
+)
 def verify(
     claim_file: str,
     policy_hash: str | None,
@@ -229,6 +236,7 @@ def verify(
     agent_manifest: str | None,
     agent_manifest_trust_anchor: str | None,
     trusted_tpm_ca: str | None,
+    launch_measurements: tuple[str, ...],
 ) -> None:
     """Verify a signed TRACE Claim (and optionally its audit bundle).
 
@@ -281,6 +289,7 @@ def verify(
         agent_manifest=manifest_json,
         trusted_agent_manifest_keys=manifest_keys,
         trusted_tpm_ca_pem=tpm_ca_bundle,
+        expected_launch_measurements=launch_measurements or None,
     )
 
     def _line(name: str, ok: bool, note: str = "") -> None:

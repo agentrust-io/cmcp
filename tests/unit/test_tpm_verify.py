@@ -34,6 +34,7 @@ def _make_tpm2b_attest(
     qualifying_data: bytes = b"\x00" * 32,
     magic: int = 0xFF544347,
     qualified_signer: bytes = b"",
+    pcr_digest: bytes = bytes.fromhex(VALID_MEASUREMENT[len("sha256:"):]),
 ) -> bytes:
     """Build a minimal but structurally complete TPM2B_ATTEST.
 
@@ -53,10 +54,10 @@ def _make_tpm2b_attest(
     clock_info = b"\x00" * 17
     firmware_version = b"\x00" * 8
     pcr_selection = struct.pack(">I", 0)  # TPML_PCR_SELECTION with no entries
-    pcr_digest = struct.pack(">H", 32) + b"\x02" * 32  # TPM2B_DIGEST
+    digest = struct.pack(">H", len(pcr_digest)) + pcr_digest  # TPM2B_DIGEST
     attest_body = (
         magic_bytes + type_bytes + qs + ed
-        + clock_info + firmware_version + pcr_selection + pcr_digest
+        + clock_info + firmware_version + pcr_selection + digest
     )
 
     # Outer TPM2B size
@@ -131,7 +132,9 @@ def test_raw_evidence_valid_magic_parsed() -> None:
         raw_evidence=blob,
     )
     assert "pcr_format" in result.verified_fields
-    assert result.failure_reason is None
+    # Parsed, but nothing binds it to a key, so it must not verify.
+    assert result.verified is False
+    assert result.failure_reason == "tpm_evidence_check_failed"
 
 
 def test_raw_evidence_wrong_magic_fails_gracefully() -> None:
@@ -186,6 +189,32 @@ def test_qualifying_data_mismatch_is_unverified() -> None:
     )
     assert "qualifying_data" in result.unverified_fields
     assert "qualifying_data" not in result.verified_fields
+    # Listing the field as unverified is not enough: the result must fail, or a
+    # genuine quote can be attached to a claim signed by any key.
+    assert result.verified is False
+
+
+def test_matching_qualifying_data_and_pcr_digest_verify() -> None:
+    expected_qd = b"\x5a" * 32
+    result = verify_tpm_measurement(
+        measurement=VALID_MEASUREMENT,
+        raw_evidence=_make_tpm2b_attest(qualifying_data=expected_qd),
+        expected_qualifying_data=expected_qd,
+    )
+    assert result.verified is True
+    assert {"qualifying_data", "pcr_digest"} <= set(result.verified_fields)
+
+
+def test_pcr_digest_that_differs_from_the_measurement_fails() -> None:
+    """The quote signs pcrDigest; the claim's measurement must be that digest."""
+    expected_qd = b"\x5a" * 32
+    result = verify_tpm_measurement(
+        measurement=VALID_MEASUREMENT,
+        raw_evidence=_make_tpm2b_attest(qualifying_data=expected_qd, pcr_digest=b"\x02" * 32),
+        expected_qualifying_data=expected_qd,
+    )
+    assert result.verified is False
+    assert "pcr_digest" in result.unverified_fields
 
 
 def test_no_expected_qualifying_data_unverified() -> None:
@@ -335,12 +364,24 @@ def test_software_only_stays_in_sw_path() -> None:
 
 
 def test_tpm2_with_valid_raw_evidence_parses() -> None:
-    blob = _make_tpm2b_attest()
+    from cmcp_runtime.tee.base import jwk_thumbprint
+
+    key = SigningKey()
+    blob = _make_tpm2b_attest(qualifying_data=jwk_thumbprint(key.public_key_bytes))
     raw_b64 = base64.b64encode(blob).decode()
-    claim_dict = _make_tpm2_claim(raw_evidence_b64=raw_b64)
+    claim_dict = _make_tpm2_claim(raw_evidence_b64=raw_b64, key=key)
     result = verify_trace_claim(claim_dict, _approved())
-    # pcr_format should be verified since magic is correct
-    assert "pcr_format" in result.verified_fields
+    # Parsed, bound to the claim's key, and its pcrDigest is the claim's measurement.
+    assert {"pcr_format", "qualifying_data", "pcr_digest"} <= set(result.verified_fields)
+
+
+def test_tpm2_quote_bound_to_another_key_credits_nothing() -> None:
+    """A parsed quote that fails a binding must not lend its fields to the claim."""
+    blob = _make_tpm2b_attest()  # qualifying_data is not this claim's key thumbprint
+    claim_dict = _make_tpm2_claim(raw_evidence_b64=base64.b64encode(blob).decode())
+    result = verify_trace_claim(claim_dict, _approved())
+    assert "pcr_format" not in result.verified_fields
+    assert result.status.value != "verified"
 
 
 def test_tpm2_qualifying_data_verifies_with_key_thumbprint() -> None:

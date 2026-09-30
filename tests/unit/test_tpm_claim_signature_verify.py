@@ -157,7 +157,8 @@ def _attest(qualifying_data: bytes) -> bytes:
         + b"\x00" * 17  # clockInfo
         + b"\x00" * 8  # firmwareVersion
         + struct.pack(">I", 0)  # TPML_PCR_SELECTION count
-        + struct.pack(">H", 32) + b"\x02" * 32  # pcrDigest
+        # pcrDigest must be the claim's measurement, which the verifier compares.
+        + struct.pack(">H", 32) + bytes.fromhex(VALID_MEASUREMENT[len("sha256:"):])
     )
 
 
@@ -612,7 +613,12 @@ def test_evidence_travels_in_the_gateway_envelope_end_to_end() -> None:
     assert "attestation_evidence" in claim["gateway"]
     assert "cert_chain" not in claim["trace"]["runtime"]
 
-    result = verify_trace_claim(claim, _approved(), trusted_tpm_ca_pem=root_pem)
+    result = verify_trace_claim(
+        claim,
+        _approved(),
+        trusted_tpm_ca_pem=root_pem,
+        expected_launch_measurements=[claim["trace"]["runtime"]["measurement"]],
+    )
 
     assert result.failure_reason is None
     assert result.status.value == "verified"

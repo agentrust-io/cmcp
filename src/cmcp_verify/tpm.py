@@ -91,9 +91,17 @@ def verify_tpm_measurement(
         parse_ok, parse_details = _parse_tpm2b_attest(
             raw_evidence,
             expected_qualifying_data=expected_qualifying_data,
+            expected_pcr_digest=bytes.fromhex(measurement[len("sha256:"):]),
         )
         if parse_ok:
             verified_fields.append("pcr_format")
+            if parse_details.get("pcr_digest_verified"):
+                verified_fields.append("pcr_digest")
+            else:
+                unverified_fields.append("pcr_digest")
+                details["pcr_digest_error"] = (
+                    "quote pcrDigest does not equal the claim's measurement"
+                )
             if expected_qualifying_data is not None:
                 qd_verified = parse_details.get("qualifying_data_verified", False)
                 if qd_verified:
@@ -127,8 +135,15 @@ def verify_tpm_measurement(
     unverified_fields.append("ek_cert_chain")
     details["ek_cert_chain_validation"] = "ek_cert_chain_validation_requires_ca_lookup"
 
-    # verified=True only when the evidence parsed and matched
-    verified = "measurement_format" in verified_fields and "pcr_format" not in unverified_fields
+    # verified=True only when the evidence parsed AND both bindings matched. Listing
+    # a failed binding as unverified while still returning verified let a genuine
+    # quote be attached to a claim signed by any key, or to any measurement.
+    verified = (
+        "measurement_format" in verified_fields
+        and "pcr_format" in verified_fields
+        and "qualifying_data" in verified_fields
+        and "pcr_digest" in verified_fields
+    )
 
     return TPMVerificationResult(
         verified=verified,
@@ -157,6 +172,7 @@ def _parse_tpm2b_attest(
     data: bytes,
     *,
     expected_qualifying_data: bytes | None,
+    expected_pcr_digest: bytes,
 ) -> tuple[bool, dict[str, Any]]:
     """
     Parse an attest blob and verify qualifying_data if an expected value is given.
@@ -174,7 +190,10 @@ def _parse_tpm2b_attest(
     except Exception as exc:  # noqa: BLE001
         return False, {"error": f"unexpected parse error: {exc}"}
 
-    result: dict[str, Any] = {"qualifying_data_verified": False}
+    result: dict[str, Any] = {
+        "qualifying_data_verified": False,
+        "pcr_digest_verified": hmac.compare_digest(quote.pcr_digest, expected_pcr_digest),
+    }
 
     if expected_qualifying_data is not None:
         # hmac.compare_digest for constant-time comparison of the committed nonce

@@ -57,6 +57,7 @@ def test_signed_platform_state_gates_public_claim(provider, state, allowed):
     if chain:
         envelope["cert_chain"] = base64.b64encode(chain).decode()
     _resign(claim, key)
+    kwargs["expected_launch_measurements"] = [measurement]
     # Positive control: authentic reports from unsuitable machines used to pass
     # because the platform policy did not exist. No-policy compatibility remains.
     baseline = verify_trace_claim(claim, _approved(), **kwargs)

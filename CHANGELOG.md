@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- TPM 2.0: `verify_tpm_measurement` listed a `qualifying_data` mismatch as
+  unverified but still returned `verified`, so a genuine quote could be attached
+  to a claim signed by any key. It also never compared the quote's `pcrDigest`
+  with the claim's `measurement`, though `docs/spec/tpm-security-model.md` said it
+  did. Both now fail the check.
+
+### Changed
+
+- `verify_trace_claim` takes `expected_launch_measurements`, and `cmcp verify`
+  takes a repeatable `--launch-measurement`. A hardware claim whose measurement is
+  outside the set fails. With no set, a hardware claim is `partially_verified`
+  with `launch_measurement` unverified: genuine hardware says what ran, not that
+  it was approved, and a report from any guest image used to come out `verified`.
+
 ## [0.6.0] - 2026-09-25
 
 ### Added
