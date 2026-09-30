@@ -754,6 +754,7 @@ def run_startup(config_path: str) -> RuntimeContext:
                 authenticated_subject=config.agent_manifest.authenticated_subject,
                 policy_bundle_hash=policy_bundle.bundle_hash,
                 tool_catalog_hash=catalog.catalog_hash,
+                runtime_catalog=catalog,
                 enforcement_mode=config.attestation.enforcement_mode,
                 allow_dev_subject_from_manifest=config.dev_mode,
                 revocations=revocations,
