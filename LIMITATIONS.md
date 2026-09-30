@@ -111,7 +111,11 @@ Session-scoped resources, meaning the stdio child, the pooled HTTP clients, and 
 `cmcp_verify` reports `status: verified` only when the platform evidence is
 cryptographically checked; a claim whose report signature or certificate chain
 is unverified stays `partially_verified` and is never presented as
-hardware-backed (issue #370). What that check covers differs by platform:
+hardware-backed (issue #370). It also requires the claim's launch measurement to
+be in a set the verifier pins (`expected_launch_measurements`, or
+`cmcp verify --launch-measurement`); without one the claim is
+`partially_verified`, because authentic evidence from an unapproved image is still
+authentic. What that check covers differs by platform:
 
 - **AMD SEV-SNP** — report signature plus the VCEK → ASK → ARK chain, with the
   ARK pinned by the operator.

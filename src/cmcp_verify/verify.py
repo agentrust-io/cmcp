@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -900,6 +901,7 @@ def verify_trace_claim(
     trusted_tpm_ca_pem: bytes | None = None,
     expected_gateway_measurement: str | bytes | None = None,
     snp_platform_policy: SnpPlatformPolicy | None = None,
+    expected_launch_measurements: Collection[str] | None = None,
 ) -> VerificationResult:
     """
     Verify a TRACE Claim without trusting the operator.
@@ -1460,6 +1462,27 @@ def verify_trace_claim(
         unverified.append("hardware_attestation")
         failure = failure or VerificationError.UNSUPPORTED_PROVIDER
 
+    # Which code ran. The platform verifiers bind trace.runtime.measurement to the
+    # signed evidence, which proves what was measured, not that it is approved.
+    # Without a pinned set, a report from any guest image on genuine hardware
+    # would come out VERIFIED.
+    if "hardware_attestation" in verified:
+        claimed_launch = _runtime.get("measurement")
+        if expected_launch_measurements is None:
+            unverified.append("launch_measurement")
+            details["launch_measurement"] = (
+                "not pinned: pass expected_launch_measurements "
+                "(cmcp verify --launch-measurement) to establish which code ran"
+            )
+        elif claimed_launch in set(expected_launch_measurements):
+            verified.append("launch_measurement")
+        else:
+            unverified.append("launch_measurement")
+            failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
+            details["launch_measurement"] = (
+                "trace.runtime.measurement is not an approved launch measurement"
+            )
+
     # Determine overall status
     if snp_platform_policy is not None and "platform_state" not in verified:
         # A different platform, dev-mode marker, missing evidence, or failed
@@ -1474,7 +1497,7 @@ def verify_trace_claim(
         # or any non-hardware-backed path) is never fully VERIFIED, even when it is
         # otherwise self-consistent. See LIMITATIONS.md. A real failure below still
         # takes precedence and is not downgraded to partial.
-        if "hardware_attestation" in unverified:
+        if "hardware_attestation" in unverified or "launch_measurement" in unverified:
             status = VerificationStatus.PARTIALLY_VERIFIED
         else:
             status = VerificationStatus.VERIFIED
