@@ -23,6 +23,7 @@ from enum import StrEnum
 from typing import Any, NoReturn
 
 import httpx
+import rfc8785
 
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.catalog.loader import (
@@ -32,7 +33,7 @@ from cmcp_runtime.catalog.loader import (
     approved_definition_digest,
 )
 from cmcp_runtime.catalog.scanner import CatalogScanner
-from cmcp_runtime.config import Config, DriftPolicy
+from cmcp_runtime.config import Config, DriftPolicy, EnforcementMode
 from cmcp_runtime.errors import (
     KillSwitchTripped,
     PolicyDeny,
@@ -56,6 +57,7 @@ from cmcp_runtime.provenance import ProvenanceResult, check_server_provenance
 from cmcp_runtime.runtime_gateway import GovernancePolicy, MCPGateway, MCPResponseScanner
 from cmcp_runtime.session.call_log import CallLog, CallRecord, SessionCallLog
 from cmcp_runtime.session.state import SessionState, _max_sensitivity, effective_sensitivity_order
+from cmcp_runtime.trace_gate import TraceGate
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,9 @@ class _CallFinalizationState:
     terminal_entry_id: str | None = None
     # Validated caller identity retained on the unavailable-feature refusal.
     execution_id: str | None = None
+    # Set only when a TRACE gate is configured and admitted this call.
+    trace_handle: Any = None
+    trace_action: dict[str, Any] | None = None
 
     @property
     def terminal_disposition(self) -> str:
@@ -251,8 +256,18 @@ class CMCPProxy:
         catalog_hash: str | None = None,
         attestation_platform: str = "unknown",
         catalog_scanner: CatalogScanner | None = None,
+        trace_gate: TraceGate | None = None,
     ) -> None:
         self._catalog = catalog
+        # Optional. None keeps every call path exactly as it is without TRACE.
+        # A gate only means something if a refusal stops the call, so advisory
+        # and silent modes, which let denied calls through, cannot carry one.
+        if (
+            trace_gate is not None
+            and config.attestation.enforcement_mode is not EnforcementMode.ENFORCING
+        ):
+            raise ValueError("a TRACE gate requires enforcing mode")
+        self._trace_gate = trace_gate
         # Capture operator policy once. Per-call arguments cannot replace it,
         # and changing the Config object later cannot disable this gate.
         self._sink_policy = config.sink_policy
@@ -1020,6 +1035,7 @@ class CMCPProxy:
 
         if entry.server.is_stdio:
             server = await self._stdio_for(entry)
+            self._trace_before_transport(finalization, entry, tool_name, arguments)
             if finalization is not None:
                 finalization.failure_stage = "stdio_server_call"
                 finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_MAY_HAVE_STARTED
@@ -1033,6 +1049,7 @@ class CMCPProxy:
             name=tool_name,
         )
         headers.update(parameter_headers(entry.approved_definition.input_schema, arguments))
+        self._trace_before_transport(finalization, entry, tool_name, arguments)
         if finalization is not None:
             finalization.failure_stage = "http_transport"
             finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_MAY_HAVE_STARTED
@@ -1229,6 +1246,15 @@ class CMCPProxy:
         """Persist one terminal for this invocation, independent of call_id reuse."""
         if finalization.terminal_entry_id is not None:
             raise RuntimeError("terminal audit entry already persisted for this invocation")
+        if self._trace_gate is not None and finalization.trace_handle is not None:
+            # An allowed call already holds its receipt from before transport;
+            # the gate keeps the first receipt per call and fails closed on an
+            # allow that conflicts with it.
+            self._trace_gate.receipt(
+                finalization.trace_handle,
+                allowed=fields.get("policy_decision") == "allow",
+                reason="gateway_terminal",
+            )
         # #565: every terminal for a correlated call carries its execution_id.
         # Set from one place so no per-branch call site has to remember it.
         fields.setdefault("execution_id", finalization.execution_id)
@@ -1387,6 +1413,7 @@ class CMCPProxy:
         workflow_id: str | None = None,
         declared_data_class: str | None = None,
         execution_id: str | None = None,
+        trace_credentials: dict[str, Any] | None = None,
     ) -> CallResult:
         """Run one call and guarantee one terminal on failure or cancellation."""
         finalization = _CallFinalizationState()
@@ -1395,6 +1422,22 @@ class CMCPProxy:
             try:
                 await self._session.hydrate()
                 finalization.reset_count = self._session.reset_count
+                if self._trace_gate is not None:
+                    refused = self._trace_begin(
+                        finalization,
+                        call_id,
+                        tool_name,
+                        arguments,
+                        workflow_id,
+                        declared_data_class,
+                        trace_credentials,
+                    )
+                    if refused is not None:
+                        return refused
+                    # The holder proof covers this exact action. Forward the
+                    # canonical copy so later caller mutation cannot change it.
+                    assert finalization.trace_action is not None
+                    arguments = finalization.trace_action["arguments"]
                 return await self._call_tool_impl(
                     call_id,
                     tool_name,
@@ -1417,6 +1460,124 @@ class CMCPProxy:
                 raise
         finally:
             await self._leave_call()
+
+    @property
+    def trace_gate(self) -> TraceGate | None:
+        """The configured TRACE gate, or None (the default)."""
+        return self._trace_gate
+
+    def _trace_begin(
+        self,
+        finalization: _CallFinalizationState,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        workflow_id: str | None,
+        declared_data_class: str | None,
+        trace_credentials: dict[str, Any] | None,
+    ) -> CallResult | None:
+        """Consume the call's holder proof, or record the refusal and return it."""
+        gate = self._trace_gate
+        assert gate is not None
+        # Canonicalize before the first await in the call pipeline: the proof
+        # binds these bytes, and the proxy forwards exactly these arguments.
+        frozen = json.loads(rfc8785.dumps(arguments))
+        action = self.trace_action(call_id, tool_name, frozen, workflow_id, declared_data_class)
+        finalization.trace_action = action
+        session_id = self._session.session_id
+        try:
+            handle, _claims = gate.begin(
+                trace_credentials,
+                action=action,
+                session_id=session_id,
+                call_id=call_id,
+                policy_digest=self._policy.bundle_hash,
+            )
+        except ValueError as exc:
+            gate.refusal(action=action, session_id=session_id, call_id=call_id)
+            self._append_call_terminal(
+                finalization,
+                "tool_call",
+                call_id=call_id,
+                tool_name=tool_name,
+                policy_decision="deny",
+                policy_rule_matched="trace:refused",
+            )
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=False,
+                response=None,
+                deny_reason=str(exc),
+                latency_us=0,
+                audit_entry_hash=self._audit.chain_tip,
+            )
+        finalization.trace_handle = handle
+        return None
+
+    def trace_action(
+        self,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        workflow_id: str | None = None,
+        data_class: str | None = None,
+    ) -> dict[str, Any]:
+        """Return the action a TRACE holder proof authorizes for one call.
+
+        Server identity and definition hash come from the approved catalog, never
+        from the caller, so a proof for one upstream cannot be spent on another.
+        """
+        entry = self._catalog.lookup(tool_name)
+        return {
+            "domain": "cmcp:protected-action:experimental-v1",
+            "session_id": self._session.session_id,
+            "call_id": call_id,
+            "protocol": "mcp",
+            "operation": "tools/call",
+            "tool_name": tool_name,
+            "server_identity": list(_server_execution_key(entry)) if entry else [],
+            "definition_hash": entry.definition_hash if entry else None,
+            "arguments": arguments,
+            "workflow_id": workflow_id,
+            "declared_data_class": data_class,
+        }
+
+    def _trace_before_transport(
+        self,
+        finalization: _CallFinalizationState | None,
+        entry: CatalogEntry,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        """Last TRACE check, after provenance and immediately before bytes leave."""
+        gate = self._trace_gate
+        if gate is None:
+            return
+        if (
+            finalization is None
+            or finalization.trace_handle is None
+            or finalization.trace_action is None
+        ):
+            raise UpstreamUnavailable("TRACE admission required before transport")
+        action = dict(finalization.trace_action)
+        action.update(
+            server_identity=list(_server_execution_key(entry)),
+            definition_hash=entry.definition_hash,
+            tool_name=tool_name,
+            arguments=arguments,
+            session_id=self._session.session_id,
+        )
+        policy_digest = self._policy.bundle_hash
+        try:
+            gate.recheck(finalization.trace_handle, action=action, policy_digest=policy_digest)
+            gate.receipt(finalization.trace_handle, allowed=True, reason="cedar_allowed")
+            # Committing the receipt can take time and the token can expire or
+            # be revoked meanwhile, so check once more right before transport.
+            gate.recheck(finalization.trace_handle, action=action, policy_digest=policy_digest)
+        except ValueError as exc:
+            raise UpstreamUnavailable("TRACE refused before transport") from exc
 
     async def _call_tool_impl(
         self,
@@ -1770,6 +1931,37 @@ class CMCPProxy:
             )
 
         # Step 5b: forward to the attested upstream MCP server.
+        if self._trace_gate is not None:
+            # Provenance and policy were awaited above. The token may have
+            # expired or been refreshed, or the catalog entry changed, meanwhile.
+            current_action = self.trace_action(
+                call_id, tool_name, arguments, workflow_id, declared_data_class
+            )
+            try:
+                self._trace_gate.recheck(
+                    _finalization.trace_handle,
+                    action=current_action,
+                    policy_digest=self._policy.bundle_hash,
+                )
+            except ValueError as exc:
+                self._append_call_terminal(
+                    _finalization,
+                    "tool_call",
+                    call_id=call_id,
+                    tool_name=tool_name,
+                    policy_decision="deny",
+                    policy_rule_matched="trace:stale",
+                )
+                return CallResult(
+                    call_id=call_id,
+                    tool_name=tool_name,
+                    allowed=False,
+                    would_have_denied=False,
+                    response=None,
+                    deny_reason=str(exc),
+                    latency_us=0,
+                    audit_entry_hash=self._audit.chain_tip,
+                )
         _finalization.failure_stage = "upstream_invocation"
         try:
             response_text = await self._forward_to_upstream(

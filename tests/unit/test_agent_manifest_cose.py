@@ -238,3 +238,56 @@ def test_cose_envelope_digest_is_stable(tmp_path: Path) -> None:
     loaded = load_agent_manifest_document(str(path))
     assert loaded.envelope is not None
     assert hashlib.sha256(loaded.envelope).digest() == hashlib.sha256(envelope).digest()
+
+
+# ---------------------------------------------------------------------------
+# The decoded document must be the payload the envelope signs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("field", ["agent_id", "policy", "catalog"])
+def test_decoded_manifest_substitution_is_refused(field: str) -> None:
+    """Binding fields are read from the decoded dict, so it must be the signed one."""
+    from cmcp_runtime.agent_manifest import LoadedAgentManifest
+
+    envelope, manifest, key_id, public_key = _cose_envelope()
+    substituted = json.loads(json.dumps(manifest))
+    if field == "agent_id":
+        substituted["agent_id"] = "spiffe://factory.example/agent/other"
+    elif field == "policy":
+        substituted["artifacts"]["policy_bundle"]["hash"] = "sha256:" + "f" * 64
+    else:
+        substituted["artifacts"]["tool_manifest"]["catalog_hash"] = "sha256:" + "e" * 64
+    loaded = LoadedAgentManifest(manifest=substituted, envelope=envelope)
+    with pytest.raises(ConfigError, match="does not match authenticated COSE artifact"):
+        _bind(loaded, {key_id: public_key})
+
+
+def test_issuer_key_id_is_the_cose_signer() -> None:
+    """A v0.2 manifest has no detached signature block to read a key id from."""
+    from cmcp_runtime.agent_manifest import LoadedAgentManifest
+
+    envelope, manifest, key_id, public_key = _cose_envelope()
+    binding = _bind(LoadedAgentManifest(manifest=manifest, envelope=envelope), {key_id: public_key})
+    assert binding.issuer_key_id == key_id
+
+
+@pytest.mark.parametrize("catalog", ["absent", "other-sealed-hash"])
+def test_experimental_profile_requires_the_served_catalog(catalog: str) -> None:
+    """The experimental profile binds a projection of the catalog actually served."""
+    from cmcp_runtime.catalog.loader import ToolCatalog
+
+    manifest = _manifest("0.2")
+    manifest["profile"] = "evidence-requirements-experimental-v1"
+    runtime = (
+        None if catalog == "absent" else ToolCatalog(entries={}, catalog_hash="sha256:" + "c" * 64)
+    )
+    with pytest.raises(ConfigError, match="need the actual runtime catalog"):
+        verify_agent_manifest_binding(
+            manifest,
+            {},
+            authenticated_subject=AGENT_ID,
+            policy_bundle_hash=POLICY_HASH,
+            tool_catalog_hash=CATALOG_HASH,
+            runtime_catalog=runtime,
+        )
