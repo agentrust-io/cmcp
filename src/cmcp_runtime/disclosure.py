@@ -7,7 +7,7 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
@@ -134,8 +134,17 @@ class ReplayStore:
         self._path = str(Path(path).resolve())
         connection = sqlite3.connect(self._path)
         try:
-            connection.execute("CREATE TABLE IF NOT EXISTS disclosure_attempts "
-                               "(request_id TEXT PRIMARY KEY)")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS disclosure_attempts "
+                "(request_id TEXT PRIMARY KEY)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS disclosure_release_audit ("
+                "event_id TEXT PRIMARY KEY, "
+                "disposition TEXT NOT NULL, "
+                "reason TEXT NOT NULL, "
+                "delivery TEXT NOT NULL)"
+            )
             connection.commit()
         finally:
             connection.close()
@@ -152,6 +161,72 @@ class ReplayStore:
         finally:
             connection.close()
         return True
+
+    def record_release_attempt(self, observation: ReleaseObservation) -> None:
+        """Persist only the minimized audit-facing boundary record.
+
+        The replay identifier and all protected authorization context deliberately
+        remain in the separate private replay table and are never copied here.
+        """
+        if (
+            observation.disposition not in ("unchanged", "authorized_disclosure")
+            or observation.reason != "delivery_unknown"
+            or observation.delivery != "unknown"
+            or len(observation.event_id) != 64
+            or any(c not in "0123456789abcdef" for c in observation.event_id)
+        ):
+            raise ValueError("canonical minimized pre-delivery release observation required")
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO disclosure_release_audit "
+                "(event_id, disposition, reason, delivery) VALUES (?, ?, ?, ?)",
+                (
+                    observation.event_id,
+                    observation.disposition,
+                    observation.reason,
+                    observation.delivery,
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def acknowledge_release(self, event_id: str) -> None:
+        """Upgrade one durable unknown attempt after the adapter returns normally."""
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE disclosure_release_audit "
+                "SET reason = ?, delivery = ? "
+                "WHERE event_id = ? AND delivery = ?",
+                ("adapter_acknowledged", "acknowledged", event_id, "unknown"),
+            )
+            if cursor.rowcount != 1:
+                raise sqlite3.IntegrityError("release attempt is missing or already terminal")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def release_observations(self) -> tuple[ReleaseObservation, ...]:
+        """Return durable minimized records; no authorization context is joined in."""
+        connection = sqlite3.connect(self._path)
+        try:
+            rows = connection.execute(
+                "SELECT disposition, reason, delivery, event_id "
+                "FROM disclosure_release_audit ORDER BY rowid"
+            ).fetchall()
+        finally:
+            connection.close()
+        return tuple(ReleaseObservation(*row) for row in rows)
 
 
 class DisclosureGate:
@@ -223,12 +298,28 @@ class DisclosureGate:
             validity = self._validity(approval)
             if validity is not None:
                 return validity
+        # This record is the durable evidence boundary for the irreversible action.
+        # It is intentionally minimized and contains no request, payload, digest,
+        # principal, recipient, purpose, labels, scope, or approval material.
+        attempt = ReleaseObservation(disposition, "delivery_unknown", "unknown")
+        try:
+            self._store.record_release_attempt(attempt)
+        except sqlite3.Error:
+            return ReleaseObservation("unavailable", "audit_storage")
+
         try:
             recipient.deliver(request.payload)
         except Exception:
             # Do not copy upstream exception text or a traceback into evidence.
-            return ReleaseObservation(disposition, "delivery_unknown", "unknown")
-        return ReleaseObservation(disposition, "adapter_acknowledged", "acknowledged")
+            # The durable pre-delivery observation remains conservative: unknown.
+            return attempt
+
+        try:
+            self._store.acknowledge_release(attempt.event_id)
+        except sqlite3.Error:
+            # Delivery already happened and cannot be undone. Keep and report unknown.
+            return attempt
+        return replace(attempt, reason="adapter_acknowledged", delivery="acknowledged")
 
     def _validity(self, approval: DisclosureApproval) -> ReleaseObservation | None:
         try:

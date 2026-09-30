@@ -263,3 +263,112 @@ def test_signed_exception_for_accepted_but_lower_ceiling(context):
     result = DisclosureGate(**options).release(request, approve())
     assert result.disposition == "authorized_disclosure"
     sink.assert_called_once_with(PAYLOAD)
+
+
+def test_durable_attempt_exists_before_irreversible_callback_even_on_baseexception(
+    context, tmp_path,
+):
+    request, sink, options, approve = context
+    sink.side_effect = KeyboardInterrupt("simulated process interruption")
+
+    with pytest.raises(KeyboardInterrupt):
+        DisclosureGate(**options).release(request, approve())
+
+    # Reopen the database as a fresh process would. The irreversible callback began,
+    # so evidence of the boundary attempt must survive even though release() never returned.
+    reopened = ReplayStore(tmp_path / "attempts.db")
+    observations = reopened.release_observations()
+    assert len(observations) == 1
+    assert observations[0].disposition == "authorized_disclosure"
+    assert observations[0].reason == "delivery_unknown"
+    assert observations[0].delivery == "unknown"
+    sink.assert_called_once_with(PAYLOAD)
+
+
+def test_pre_delivery_audit_failure_blocks_recipient(context, monkeypatch):
+    request, sink, options, approve = context
+    store = options["replay_store"]
+    monkeypatch.setattr(
+        store,
+        "record_release_attempt",
+        Mock(side_effect=__import__("sqlite3").OperationalError("disk unavailable")),
+    )
+
+    result = DisclosureGate(**options).release(request, approve())
+
+    assert (result.disposition, result.reason, result.delivery) == (
+        "unavailable", "audit_storage", "not_attempted"
+    )
+    sink.assert_not_called()
+
+
+def test_post_delivery_ack_failure_keeps_durable_and_returned_outcome_unknown(
+    context, monkeypatch,
+):
+    request, sink, options, approve = context
+    store = options["replay_store"]
+    monkeypatch.setattr(
+        store,
+        "acknowledge_release",
+        Mock(side_effect=__import__("sqlite3").OperationalError("disk unavailable")),
+    )
+
+    result = DisclosureGate(**options).release(request, approve())
+
+    assert (result.reason, result.delivery) == ("delivery_unknown", "unknown")
+    durable = store.release_observations()
+    assert len(durable) == 1
+    assert durable[0] == result
+    sink.assert_called_once_with(PAYLOAD)
+
+
+def test_durable_release_audit_contains_only_minimized_observation(context):
+    request, _, options, approve = context
+    store = options["replay_store"]
+
+    result = DisclosureGate(**options).release(request, approve())
+    durable = store.release_observations()
+
+    assert durable == (result,)
+    encoded = json.dumps([asdict(item) for item in durable])
+    for private in (
+        PAYLOAD.decode(),
+        hashlib.sha256(PAYLOAD).hexdigest(),
+        request.request_id,
+        request.recipient,
+        request.workload,
+        request.source_scope,
+        request.purpose,
+        "owner",
+        "confidential",
+    ):
+        assert private not in encoded
+    assert set(asdict(durable[0])) == {"disposition", "reason", "delivery", "event_id"}
+
+
+def test_expiry_after_replay_reservation_does_not_create_boundary_attempt(context):
+    request, sink, options, approve = context
+    clock = iter([100, 110])
+    options["now"] = lambda: next(clock)
+    store = options["replay_store"]
+
+    result = DisclosureGate(**options).release(request, approve())
+
+    assert result.reason == "approval_expired_or_early"
+    assert store.release_observations() == ()
+    sink.assert_not_called()
+
+
+def test_replay_store_refuses_non_minimized_release_audit(context):
+    from cmcp_runtime.disclosure import ReleaseObservation
+
+    store = context[2]["replay_store"]
+    with pytest.raises(ValueError, match="canonical minimized"):
+        store.record_release_attempt(
+            ReleaseObservation(
+                "authorized_disclosure",
+                PAYLOAD.decode(),
+                "unknown",
+            )
+        )
+    assert store.release_observations() == ()

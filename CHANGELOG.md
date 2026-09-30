@@ -111,9 +111,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add an opt-in exact-output disclosure contract and library adapter. Independently
   scoped owner signatures bind output bytes, source labels, workload, recipient,
-  purpose, policy and validity. Durable pre-delivery consumption rejects replay
-  and keeps failed delivery unknown. Existing gateway sink ceilings are unchanged;
-  transport binding, classification, storage and clocks remain trusted inputs.
+  purpose, policy and validity. Durable pre-delivery consumption rejects replay.
+  Before the irreversible recipient callback, the gate now also persists a separate
+  minimized attempt record with `delivery=unknown`; a normal callback return upgrades
+  that event to `acknowledged`, while interruption or post-delivery audit failure
+  leaves the durable result unknown. Failure of the pre-delivery attempt write blocks
+  delivery. The audit-facing row contains no payload, digest, principal, recipient,
+  purpose, source scope, labels, approval or replay identifier (#660, reported and
+  implemented by @altrudev). Existing gateway sink ceilings are unchanged; transport
+  binding, classification, storage and clocks remain trusted inputs.
 
 - **Distinct tool names could share one Cedar policy identity.** The policy
   backend names a call's action by joining the underscore-separated parts of the
