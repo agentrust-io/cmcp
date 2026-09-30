@@ -171,7 +171,7 @@ def _signed_manifest(
                 if enforcement_mode is not None
                 else {"hash": POLICY_HASH, "policy_language": "cedar"}
             ),
-            "tool_manifest": {"catalog_hash": CATALOG_HASH, "tools": []},
+            "tool_manifest": {"catalog_hash": CATALOG_HASH},
         },
         "delegation_chain": [],
     }

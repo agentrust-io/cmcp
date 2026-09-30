@@ -78,7 +78,7 @@ def _write_agent_manifest_files(
             "system_prompt": {"hash": "sha256:" + "a" * 64},
             "model_identity": {"version": "claude-3", "deployment_type": "api"},
             "policy_bundle": {"hash": policy_hash, "policy_language": "cedar"},
-            "tool_manifest": {"catalog_hash": catalog_hash, "tools": []},
+            "tool_manifest": {"catalog_hash": catalog_hash},
         },
         "delegation_chain": [],
     }
