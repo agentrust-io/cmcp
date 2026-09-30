@@ -60,7 +60,6 @@ def _manifest(version: str = "0.2") -> dict:
             },
             "tool_manifest": {
                 "catalog_hash": CATALOG_HASH,
-                "tools": [],
                 "allow_dynamic_registration": False,
                 "rug_pull_policy": "deny-and-alert",
             },

@@ -171,7 +171,7 @@ def _signed_manifest(
                 if enforcement_mode is not None
                 else {"hash": POLICY_HASH, "policy_language": "cedar"}
             ),
-            "tool_manifest": {"catalog_hash": CATALOG_HASH, "tools": []},
+            "tool_manifest": {"catalog_hash": CATALOG_HASH},
         },
         "delegation_chain": [],
     }
@@ -573,7 +573,10 @@ def test_hardware_backed_happy_path_is_verified(monkeypatch):
 
     claim_dict, key = _make_signed_claim(provider="tdx")
     result = verify_trace_claim(
-        claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex
+        claim_dict,
+        _approved(),
+        trusted_public_key_hex=key.public_key_hex,
+        expected_launch_measurements=[claim_dict["trace"]["runtime"]["measurement"]],
     )
     assert result.failure_reason is None, result.details
     assert "hardware_attestation" in result.verified_fields
@@ -1118,3 +1121,38 @@ def test_measurement_binding_is_skipped_when_no_expectation_is_supplied():
     assert "measurement_binding" not in result.verified_fields
     assert "measurement_binding" not in result.unverified_fields
     assert "measurement_binding" not in result.details
+
+
+
+def _hardware_claim(monkeypatch):
+    import cmcp_verify.tdx as tdx_mod
+    from cmcp_verify.tdx import TDXVerificationResult
+
+    def _passing_tdx(*args, **kwargs):
+        return TDXVerificationResult(verified=True, verified_fields=["measurement", "report_data"])
+
+    monkeypatch.setattr(tdx_mod, "verify_tdx_measurement", _passing_tdx)
+    return _make_signed_claim(provider="tdx")
+
+
+def test_unpinned_launch_measurement_is_not_verified(monkeypatch):
+    """Genuine hardware says what ran, not that it was approved. With no pinned
+    launch measurement, a report from any guest image used to come out VERIFIED."""
+    claim_dict, key = _hardware_claim(monkeypatch)
+    result = verify_trace_claim(claim_dict, _approved(), trusted_public_key_hex=key.public_key_hex)
+    assert "hardware_attestation" in result.verified_fields
+    assert "launch_measurement" in result.unverified_fields
+    assert result.status == VerificationStatus.PARTIALLY_VERIFIED
+
+
+def test_launch_measurement_outside_the_pinned_set_fails(monkeypatch):
+    claim_dict, key = _hardware_claim(monkeypatch)
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        trusted_public_key_hex=key.public_key_hex,
+        expected_launch_measurements=["sha384:" + "0" * 96],
+    )
+    assert result.failure_reason == VerificationError.HARDWARE_ATTESTATION_FAILED
+    assert "launch_measurement" in result.unverified_fields
+    assert result.status != VerificationStatus.VERIFIED

@@ -72,7 +72,6 @@ def _signed_manifest(
             },
             "tool_manifest": {
                 "catalog_hash": catalog_hash,
-                "tools": [],
                 "allow_dynamic_registration": False,
                 "rug_pull_policy": "deny-and-alert",
             },
