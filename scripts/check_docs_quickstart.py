@@ -12,11 +12,13 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -28,12 +30,25 @@ def blocks(path):
     return re.findall(r"^```[^\n]*\n(.*?)^```", path.read_text(encoding="utf-8-sig"), re.M | re.S)
 
 
+def require_free_port(url):
+    address = urlsplit(url)
+    try:
+        with socket.create_connection((address.hostname, address.port), timeout=1):
+            pass
+    except ConnectionRefusedError:
+        return
+    raise RuntimeError(f"Tutorial port {address.port} in use before startup")
+
+
 def wait_for_server(url, process):
+    port = urlsplit(url).port
     for _ in range(80):
         if process.poll() is not None:
-            raise RuntimeError("Tutorial server exited before readiness")
+            raise RuntimeError(f"Tutorial server exited before readiness; port {port} may be in use (see runtime.log)")
         try:
             httpx.get(url, timeout=1)
+            if process.poll() is not None:
+                raise RuntimeError(f"Tutorial server exited after port {port} became ready; port {port} may be in use (see runtime.log)")
             return
         except httpx.ConnectError:
             time.sleep(.25)
@@ -75,12 +90,15 @@ def main():
         with (work / "runtime.log").open("w", encoding="utf-8") as log:
             processes = []
             try:
+                # Readiness alone cannot distinguish our child from another listener.
+                require_free_port("http://localhost:8443/health")
                 runtime = subprocess.Popen(CLI + ["start", "--config", "cmcp-config.yaml"], cwd=work, env=environment, stdout=log, stderr=log)
                 processes.append(runtime)
                 wait_for_server("http://localhost:8443/health", runtime)
                 requests = [json.loads(re.search(r"-d '(.*?)'", b, re.S)[1]) for b in snippets if "curl -i -X POST" in b]
                 denied = httpx.post("http://localhost:8443/mcp", json=requests[0])
                 assert denied.status_code == 403 and "POLICY_DENY" in denied.text, denied.text
+                require_free_port("http://localhost:9001")
                 upstream = subprocess.Popen([sys.executable, "mock_upstream.py"], cwd=work, env=environment, stdout=log, stderr=log)
                 processes.append(upstream)
                 wait_for_server("http://localhost:9001", upstream)
@@ -125,16 +143,26 @@ def main():
                         raise AssertionError(f"Consumer accepted {status}: {fields}")
                 print("PASS: documented deny, allow, two-call summary, independently pinned software verification, and consumer rejection cases")
             finally:
+                failed = sys.exc_info()[0] is not None
+                cleanup_errors = []
                 for process in reversed(processes):
-                    if os.name == "nt":
-                        # Windows venv launchers have a child interpreter holding SQLite.
-                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=True, capture_output=True)
-                    else:
-                        process.terminate()
-                    process.wait(timeout=15)
+                    try:
+                        if process.poll() is None:
+                            if os.name == "nt":
+                                # Windows venv launchers have a child interpreter holding SQLite.
+                                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False, capture_output=True)
+                            else:
+                                process.terminate()
+                        process.wait(timeout=15)
+                    except (OSError, subprocess.SubprocessError) as error:
+                        cleanup_errors.append(error)
+                        print(f"Tutorial cleanup failed for PID {process.pid}: {error}", file=sys.stderr)
                 log.flush()
-                if sys.exc_info()[0]:
+                if failed or cleanup_errors:
+                    print("Tutorial runtime.log:")
                     print((work / "runtime.log").read_text(encoding="utf-8"))
+                if cleanup_errors and not failed:
+                    raise RuntimeError("Tutorial process cleanup failed (see runtime.log)") from cleanup_errors[0]
 
 
 if __name__ == "__main__":
