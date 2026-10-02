@@ -37,7 +37,7 @@ ______________________________________________________________________
 ```
 python3 -m venv cmcp-env
 source cmcp-env/bin/activate
-python3 -m pip install cmcp-runtime==0.5.0
+python3 -m pip install cmcp-runtime==0.7.0
 ```
 
 The install is pinned so the commands and outputs below match what you run. CI runs this page end to end against that release on every docs change.
