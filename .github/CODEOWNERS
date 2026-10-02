@@ -1,7 +1,8 @@
 # Default owners for all files
 * @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07 @rajnisht7
 
-# Security-sensitive paths require security-reviewers sign-off
+# Security paths require two current-head maintainer approvals in the policy gate.
+# GitHub CODEOWNERS alone accepts any one owner on a line.
 src/cmcp_runtime/audit/ @agentrust-io/security-reviewers @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07 @rajnisht7
 src/cmcp_runtime/tee/ @agentrust-io/security-reviewers @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07 @rajnisht7
 src/cmcp_runtime/policy/ @agentrust-io/security-reviewers @agentrust-io/maintainers @carloshvp @zohebk8s @qubeena07 @rajnisht7
