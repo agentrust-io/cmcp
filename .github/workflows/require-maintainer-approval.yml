@@ -28,54 +28,70 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const MAINTAINERS = ['imran-siddique', 'carloshvp', 'qubeena07', 'zohebk8s', 'pforest', 'Qiang-Xu', 'rajnisht7', 'podcastinator', 'AaronRoeF'];
-
-            const author = context.payload.pull_request.user.login;
-            if (MAINTAINERS.includes(author)) {
-              core.info(`Author ${author} is a maintainer, skipping gate`);
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            // Read only reviewed base-branch data. Never execute or read policy from a PR head.
+            let file;
+            try {
+              ({ data: file } = await github.rest.repos.getContent({
+                owner: context.repo.owner, repo: context.repo.repo,
+                path: '.github/maintainers.json', ref: pr.base.sha,
+              }));
+            } catch (error) {
+              // One-commit bootstrap: the initial policy PR must be reviewable before its
+              // policy file exists on main. Missing policy on any later base fails closed.
+              if (error.status !== 404 || pr.base.sha !== "316ecf3176cb2d72c4f26060e1709016dd8f0b16") throw error;
+              file = { encoding: 'base64', content: Buffer.from(JSON.stringify({"schema":1,"repository":"cmcp","source":"agentrust-io/.github:maintainers/roster.json","maintainers":["imran-siddique","carloshvp","qubeena07","zohebk8s","pforest","Qiang-Xu","rajnisht7","podcastinator","AaronRoeF"],"security_paths":["src/cmcp_runtime/audit/","src/cmcp_runtime/tee/","src/cmcp_runtime/policy/","src/cmcp_verify/"],"security_approvals":2})).toString('base64') };
+            }
+            if (Array.isArray(file) || file.encoding !== 'base64') {
+              throw new Error('Missing base-branch maintainer policy');
+            }
+            const policy = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+            if (policy.schema !== 1 || policy.repository !== context.repo.repo ||
+                !Array.isArray(policy.maintainers) || policy.maintainers.length < 2 ||
+                !policy.maintainers.every(x => typeof x === 'string' && /^[A-Za-z0-9-]+$/.test(x)) ||
+                new Set(policy.maintainers.map(x => x.toLowerCase())).size !== policy.maintainers.length ||
+                !Array.isArray(policy.security_paths) ||
+                !policy.security_paths.every(x => typeof x === 'string' && x.endsWith('/') && !x.startsWith('/') && !x.includes('..')) ||
+                policy.security_approvals !== (policy.security_paths.length ? 2 : 1)) {
+              throw new Error('Invalid base-branch maintainer policy');
+            }
+            const maintainers = new Set(policy.maintainers.map(x => x.toLowerCase()));
+            let securityChange = false;
+            if (policy.security_paths.length) {
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number,
+              });
+              if (files.length !== pr.changed_files) throw new Error('Incomplete changed-file inventory');
+              // Renaming a security file out of its directory must still require two reviews.
+              securityChange = files.some(f => [f.filename, f.previous_filename]
+                .some(p => typeof p === 'string' && policy.security_paths.some(prefix => p.startsWith(prefix))));
+            }
+            const author = pr.user.login.toLowerCase();
+            if (!securityChange && maintainers.has(author)) {
+              core.info('Maintainer-authored routine change: branch rules still require independent review.');
               return;
             }
-
-            // Both pull_request_target and pull_request_review payloads
-            // carry the PR at context.payload.pull_request.
-            const prNumber = context.payload.pull_request.number;
-
-            // Re-fetch the PR so we compare against the head SHA at
-            // evaluation time, not a possibly stale SHA from the payload.
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-            });
-            const headSha = pr.head.sha;
-
-            // Paginate: listReviews otherwise returns only the first 30.
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number,
             });
-
-            // Only a maintainer's most recent non-comment review counts,
-            // and it must approve the current head commit. An approval of
-            // an older commit does not clear the gate after a later push
-            // (prevents approve-then-swap).
-            const latestByMaintainer = new Map();
-            for (const review of reviews) {
-              if (
-                review.user &&
-                review.user.type === 'User' &&
-                MAINTAINERS.includes(review.user.login) &&
-                review.state !== 'COMMENTED'
-              ) {
-                latestByMaintainer.set(review.user.login, review);
+            const latest = new Map();
+            for (const review of reviews.slice().sort((a, b) =>
+              Date.parse(a.submitted_at || 0) - Date.parse(b.submitted_at || 0) || a.id - b.id)) {
+              const login = review.user?.login?.toLowerCase();
+              if (review.user?.type === 'User' && maintainers.has(login) &&
+                  login !== author && review.state !== 'COMMENTED') {
+                latest.set(login, review);
               }
             }
-
-            const approved = [...latestByMaintainer.values()].some(
-              (r) => r.state === 'APPROVED' && r.commit_id === headSha
-            );
-
-            if (!approved) {
-              core.setFailed('Waiting for maintainer approval of the current head commit before merging.');
+            const approvals = [...latest.values()].filter(r =>
+              r.state === 'APPROVED' && r.commit_id === pr.head.sha);
+            const required = securityChange ? policy.security_approvals : 1;
+            if (approvals.length < required) {
+              core.setFailed('Awaiting ' + required + ' independent maintainer approval(s) of current head ' +
+                pr.head.sha + '; found ' + approvals.length + '. Branch rules and specification governance also apply.');
+            } else {
+              core.info(approvals.length + ' maintainer(s) approved current head ' + pr.head.sha);
             }

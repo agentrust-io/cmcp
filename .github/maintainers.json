@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "repository": "cmcp",
+  "source": "agentrust-io/.github:maintainers/roster.json",
+  "maintainers": [
+    "imran-siddique",
+    "carloshvp",
+    "qubeena07",
+    "zohebk8s",
+    "pforest",
+    "Qiang-Xu",
+    "rajnisht7",
+    "podcastinator",
+    "AaronRoeF"
+  ],
+  "security_paths": [
+    "src/cmcp_runtime/audit/",
+    "src/cmcp_runtime/tee/",
+    "src/cmcp_runtime/policy/",
+    "src/cmcp_verify/"
+  ],
+  "security_approvals": 2
+}
