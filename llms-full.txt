@@ -3891,13 +3891,15 @@ ______________________________________________________________________
 
 cMCP evaluates every tool call against Cedar policies using three entities:
 
-| Entity role | cMCP type                   | Example value                         |
-| ----------- | --------------------------- | ------------------------------------- |
-| `principal` | `cMCP::Principal`           | session that initiated the call       |
-| `action`    | `cMCP::Action::"call_tool"` | fixed: all tool calls use this action |
-| `resource`  | `cMCP::Resource`            | the tool being called                 |
+| Entity role | cMCP type  | Example value                                               |
+| ----------- | ---------- | ----------------------------------------------------------- |
+| `principal` | `Agent`    | `Agent::"anonymous"` by default, or the supplied `agent_id` |
+| `action`    | `Action`   | `Action::"ReadFile"` for `read_file`                        |
+| `resource`  | `Resource` | `Resource::"salesforce.contacts"` for that tool             |
 
-The principal carries `session_id` and `workflow_id`. The resource carries `tool_name` and `server_domain`. Cedar also receives a `context` record with `session_max_sensitivity` and `workflow_id`.
+The runtime supplies entity identifiers, with no principal or resource attributes. Match a tool using its resource UID, not `resource.tool_name`. Session and workflow values belong to the `context` record, including `session_max_sensitivity` and `workflow_id`.
+
+Actions are derived from the tool name by splitting on underscores, capitalizing each part, and joining them: `read_file` becomes `ReadFile`, and `crm.get_customer` becomes `Crm.getCustomer`. They are not a fixed `call_tool` action. The examples below use an action wildcard and constrain resources instead.
 
 A tool call is denied unless at least one `permit` rule matches and no `forbid` rule matches. Cedar evaluates `forbid` before `permit`, so a `forbid` always wins.
 
@@ -3912,7 +3914,7 @@ Create `policies/allow-all.cedar`:
 ```
 permit (
   principal,
-  action == cMCP::Action::"call_tool",
+  action,
   resource
 );
 ```
@@ -3928,10 +3930,10 @@ Add a `policies/manifest.json` so cMCP can compute the bundle hash:
 }
 ```
 
-Add a minimal `policies/schema.cedarschema` (one line, no whitespace):
+Add `policies/schema.cedarschema` for the three tools used below. The empty namespace matches the runtime; add action declarations for any additional tools you use. This schema describes these tutorial requests, not every context field the gateway may supply.
 
 ```
-{"cMCP":{"entityTypes":{"Principal":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{"session_id":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}},"Resource":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{"tool_name":{"type":"String","required":true}}}}},"actions":{"call_tool":{"appliesTo":{"principalTypes":["cMCP::Principal"],"resourceTypes":["cMCP::Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}}}}}
+{"":{"entityTypes":{"Agent":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{}}},"Resource":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{}}}},"actions":{"Crm.getCustomer":{"appliesTo":{"principalTypes":["Agent"],"resourceTypes":["Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}},"Kyc.verifyIdentity":{"appliesTo":{"principalTypes":["Agent"],"resourceTypes":["Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}},"Salesforce.contacts":{"appliesTo":{"principalTypes":["Agent"],"resourceTypes":["Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}}}}}
 ```
 
 Start the runtime with dev mode:
@@ -3944,43 +3946,37 @@ ______________________________________________________________________
 
 ## Write a production policy
 
-Production policies should be explicit about what is permitted and deny everything else. This policy allows a specific workflow to call a named set of tools, blocks calls when PII is in session, and denies all other calls by default.
+Production policies should be explicit about what is permitted and deny everything else. This policy allows a specific workflow to call a named set of tools, blocks `salesforce.contacts` when PII is in session, and denies all other calls by default.
 
-Create `policies/production.cedar`:
+Replace `policies/allow-all.cedar` with `policies/production.cedar`. Do not leave the development allow-all policy in the bundle: all `.cedar` files are evaluated together, and its broad permit would allow calls outside this workflow and tool list. Use enforcing mode to block denied calls; advisory mode logs them and forwards them.
+
+Write `policies/production.cedar`:
 
 ```
 // Permit the customer-onboarding workflow to call approved tools only
 permit (
   principal,
-  action == cMCP::Action::"call_tool",
+  action,
   resource
 )
 when {
   context.workflow_id == "customer_onboarding" &&
-  resource.tool_name in ["crm.get_customer", "kyc.verify_identity", "salesforce.contacts"]
+  resource in [Resource::"crm.get_customer", Resource::"kyc.verify_identity", Resource::"salesforce.contacts"]
 };
 
 // Block salesforce.contacts when the session has reached PII sensitivity
 forbid (
   principal,
-  action == cMCP::Action::"call_tool",
+  action,
   resource
 )
 when {
   context.session_max_sensitivity == "pii" &&
-  resource.tool_name == "salesforce.contacts"
+  resource == Resource::"salesforce.contacts"
 };
-
-// Explicit default-deny: Cedar is default-deny already, but this makes it
-// auditable: the bundle hash changes if this rule is removed
-forbid (
-  principal,
-  action == cMCP::Action::"call_tool",
-  resource
-);
 ```
 
-The explicit `forbid` at the bottom ensures that removing all `permit` rules does not silently open access: the default deny is now tamper-evident (changing it changes the bundle hash).
+Cedar implicitly denies calls when no permit matches. Do not add an unconditional `forbid` as a default-deny rule: it overrides every permit, including approved calls. Removing all permits also denies everything. Any change to the policy bytes changes the bundle hash.
 
 ______________________________________________________________________
 
@@ -3992,13 +3988,13 @@ Before loading a policy bundle into the runtime, test it locally with the `cedar
 cedar authorize \
   --policies policies/production.cedar \
   --schema policies/schema.cedarschema \
-  --principal 'cMCP::Principal::"s1"' \
-  --action 'cMCP::Action::"call_tool"' \
-  --resource 'cMCP::Resource::"crm.get_customer"' \
+  --principal 'Agent::"anonymous"' \
+  --action 'Action::"Crm.getCustomer"' \
+  --resource 'Resource::"crm.get_customer"' \
   --context '{"session_max_sensitivity":"public","workflow_id":"customer_onboarding"}'
 ```
 
-Expected output: `ALLOW`
+Expected decision: `Allow`. These entity UIDs and context values match the runtime request.
 
 Test the forbid rule:
 
@@ -4006,13 +4002,13 @@ Test the forbid rule:
 cedar authorize \
   --policies policies/production.cedar \
   --schema policies/schema.cedarschema \
-  --principal 'cMCP::Principal::"s1"' \
-  --action 'cMCP::Action::"call_tool"' \
-  --resource 'cMCP::Resource::"salesforce.contacts"' \
+  --principal 'Agent::"anonymous"' \
+  --action 'Action::"Salesforce.contacts"' \
+  --resource 'Resource::"salesforce.contacts"' \
   --context '{"session_max_sensitivity":"pii","workflow_id":"customer_onboarding"}'
 ```
 
-Expected output: `DENY`
+Expected decision: `Deny`.
 
 ______________________________________________________________________
 
@@ -4022,13 +4018,17 @@ ______________________________________________________________________
 
 ```
 // Wrong: permits every tool call from every principal
-permit (principal, action == cMCP::Action::"call_tool", resource);
+permit (principal, action, resource);
+```
 
-// Right: scoped to a workflow and tool list
-permit (principal, action == cMCP::Action::"call_tool", resource)
+Use this scoped alternative instead; do not combine it with the broad permit above:
+
+```
+// Scoped to a workflow and tool list
+permit (principal, action, resource)
 when {
   context.workflow_id == "my_workflow" &&
-  resource.tool_name in ["tool_a", "tool_b"]
+  resource in [Resource::"tool_a", Resource::"tool_b"]
 };
 ```
 
@@ -4042,7 +4042,7 @@ ______________________________________________________________________
 
 ## Summary
 
-You wrote a minimal dev policy and a production policy with workflow scoping, a PII-triggered forbid, and an explicit default-deny. You tested both with the `cedar` CLI before loading them into the runtime. Any change to the policy bundle changes the `policy_bundle.hash` field in TRACE Claims, making the active policy tamper-evident.
+You wrote a minimal dev policy and a production policy with workflow scoping, a PII-triggered forbid, and Cedar’s implicit default-deny. You tested both with the `cedar` CLI before loading them into the runtime. Any change to the policy bundle changes the `policy_bundle.hash` field in TRACE Claims, making the active policy tamper-evident.
 
 Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md): confirm the policy hash in a produced claim matches what you deployed. [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md): run per-tenant policy bundles with separate hashes.
 
