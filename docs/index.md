@@ -16,7 +16,7 @@ cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy
 [What this proves, and what it does not](limitations.md){ .md-button }
 
 !!! tip "TL;DR"
-    Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.5.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and see `403 POLICY_DENY` locally, reported as `partially_verified` because software mode carries no hardware attestation. The SEV-SNP and Intel TDX verifiers are validated on real Azure and GCP evidence, and calls that bypass the gateway, along with NVIDIA GPU confidential computing, are outside what it proves today.
+    Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and see `403 POLICY_DENY` locally, reported as `partially_verified` because software mode carries no hardware attestation. The SEV-SNP and Intel TDX verifiers are validated on real Azure and GCP evidence, and calls that bypass the gateway, along with NVIDIA GPU confidential computing, are outside what it proves today.
 
 <div class="grid cards" markdown>
 
@@ -77,4 +77,4 @@ Read the [architecture](concepts.md), [enforcement modes](configuration.md), and
 
 For implementation bugs or specification feedback, include the failing command, runtime version, and expected behavior in an [issue](https://github.com/agentrust-io/cmcp/issues). See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
 
-**Status:** cmcp-runtime 0.5.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · Sponsored by OPAQUE, which funds the engineering, infrastructure and confidential-computing work behind these projects.
+**Status:** cmcp-runtime 0.7.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · Sponsored by OPAQUE, which funds the engineering, infrastructure and confidential-computing work behind these projects.
