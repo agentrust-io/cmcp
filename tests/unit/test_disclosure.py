@@ -165,10 +165,80 @@ def test_replay_survives_reopen_and_failed_delivery(context, tmp_path):
     result = DisclosureGate(**options).release(request, approve())
     assert result.delivery == "unknown"
     assert PAYLOAD.decode() not in json.dumps(asdict(result))
-    options["replay_store"] = ReplayStore(tmp_path / "attempts.db")
+    reopened = ReplayStore(tmp_path / "attempts.db")
+    assert reopened.audit_observations() == (
+        replace(result, reason="delivery_attempted"),
+    )
+    options["replay_store"] = reopened
     sink.side_effect = None
     assert DisclosureGate(**options).release(request, approve()).reason == "replay"
     sink.assert_called_once_with(PAYLOAD)
+
+
+def test_attempt_is_durable_before_delivery_and_ack_survives_restart(context, tmp_path):
+    request, sink, options, approve = context
+    result = DisclosureGate(**options).release(request, approve())
+    assert result.delivery == "acknowledged"
+    reopened = ReplayStore(tmp_path / "attempts.db")
+    assert reopened.audit_observations() == (result,)
+    sink.assert_called_once_with(PAYLOAD)
+
+
+def test_baseexception_during_delivery_leaves_durable_unknown_attempt(context, tmp_path):
+    request, sink, options, approve = context
+    sink.side_effect = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt):
+        DisclosureGate(**options).release(request, approve())
+    observations = ReplayStore(tmp_path / "attempts.db").audit_observations()
+    assert len(observations) == 1
+    assert observations[0].delivery == "unknown"
+    assert observations[0].reason == "delivery_attempted"
+
+
+def test_pre_delivery_audit_failure_fails_closed(context, monkeypatch):
+    request, sink, options, approve = context
+    monkeypatch.setattr(
+        options["replay_store"], "record_attempt",
+        Mock(side_effect=__import__("sqlite3").OperationalError("disk unavailable")),
+    )
+    result = DisclosureGate(**options).release(request, approve())
+    assert (result.disposition, result.reason, result.delivery) == (
+        "unavailable", "audit_storage", "not_attempted")
+    sink.assert_not_called()
+
+
+def test_post_delivery_audit_failure_retains_unknown(context, tmp_path, monkeypatch):
+    request, sink, options, approve = context
+    store = options["replay_store"]
+    monkeypatch.setattr(
+        store, "acknowledge",
+        Mock(side_effect=__import__("sqlite3").OperationalError("disk unavailable")),
+    )
+    result = DisclosureGate(**options).release(request, approve())
+    assert result.delivery == "unknown"
+    assert result.reason == "delivery_unknown"
+    sink.assert_called_once_with(PAYLOAD)
+    observations = ReplayStore(tmp_path / "attempts.db").audit_observations()
+    assert observations == (replace(result, reason="delivery_attempted"),)
+
+
+def test_durable_audit_row_contains_only_minimized_fields(context, tmp_path):
+    request, _, options, approve = context
+    result = DisclosureGate(**options).release(request, approve())
+    import sqlite3
+    connection = sqlite3.connect(tmp_path / "attempts.db")
+    try:
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(disclosure_audit)")]
+        row = connection.execute("SELECT * FROM disclosure_audit").fetchone()
+    finally:
+        connection.close()
+    assert columns == ["event_id", "disposition", "reason", "delivery"]
+    assert row == (result.event_id, result.disposition, result.reason, result.delivery)
+    encoded = json.dumps(row)
+    for private in (PAYLOAD.decode(), hashlib.sha256(PAYLOAD).hexdigest(), request.request_id,
+                    request.recipient, request.workload, request.source_scope,
+                    request.purpose, "owner"):
+        assert private not in encoded
 
 
 def test_shared_store_concurrent_attempts_deliver_once(context, tmp_path):
