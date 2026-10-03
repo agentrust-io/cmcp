@@ -136,6 +136,11 @@ class ReplayStore:
         try:
             connection.execute("CREATE TABLE IF NOT EXISTS disclosure_attempts "
                                "(request_id TEXT PRIMARY KEY)")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS disclosure_audit "
+                "(event_id TEXT PRIMARY KEY, disposition TEXT NOT NULL, "
+                "reason TEXT NOT NULL, delivery TEXT NOT NULL)"
+            )
             connection.commit()
         finally:
             connection.close()
@@ -152,6 +157,51 @@ class ReplayStore:
         finally:
             connection.close()
         return True
+
+    def record_attempt(self, observation: ReleaseObservation) -> None:
+        """Persist only minimized audit-facing evidence before boundary crossing."""
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO disclosure_audit VALUES (?, ?, ?, ?)",
+                (observation.event_id, observation.disposition,
+                 observation.reason, observation.delivery),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def acknowledge(self, event_id: str) -> None:
+        """Durably upgrade one pre-delivery unknown event after adapter return."""
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE disclosure_audit "
+                "SET reason = ?, delivery = ? WHERE event_id = ?",
+                ("adapter_acknowledged", "acknowledged", event_id),
+            )
+            if cursor.rowcount != 1:
+                raise sqlite3.IntegrityError("missing disclosure audit event")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def audit_observations(self) -> tuple[ReleaseObservation, ...]:
+        """Return minimized durable observations; no private release context is stored."""
+        connection = sqlite3.connect(self._path)
+        try:
+            rows = connection.execute(
+                "SELECT disposition, reason, delivery, event_id "
+                "FROM disclosure_audit ORDER BY rowid"
+            ).fetchall()
+        finally:
+            connection.close()
+        return tuple(ReleaseObservation(*row) for row in rows)
 
 
 class DisclosureGate:
@@ -223,12 +273,28 @@ class DisclosureGate:
             validity = self._validity(approval)
             if validity is not None:
                 return validity
+        # Persist minimized evidence of a boundary-crossing attempt before the
+        # irreversible callback. No protected release context is stored here.
+        attempt = ReleaseObservation(disposition, "delivery_attempted", "unknown")
+        try:
+            self._store.record_attempt(attempt)
+        except sqlite3.Error:
+            return ReleaseObservation("unavailable", "audit_storage")
         try:
             recipient.deliver(request.payload)
         except Exception:
             # Do not copy upstream exception text or a traceback into evidence.
-            return ReleaseObservation(disposition, "delivery_unknown", "unknown")
-        return ReleaseObservation(disposition, "adapter_acknowledged", "acknowledged")
+            # The durable pre-delivery record remains conservatively unknown.
+            return ReleaseObservation(
+                disposition, "delivery_unknown", "unknown", attempt.event_id)
+        try:
+            self._store.acknowledge(attempt.event_id)
+        except sqlite3.Error:
+            # Delivery happened, but durable acknowledgement did not.
+            return ReleaseObservation(
+                disposition, "delivery_unknown", "unknown", attempt.event_id)
+        return ReleaseObservation(
+            disposition, "adapter_acknowledged", "acknowledged", attempt.event_id)
 
     def _validity(self, approval: DisclosureApproval) -> ReleaseObservation | None:
         try:
