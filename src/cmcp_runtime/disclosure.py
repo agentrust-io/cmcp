@@ -280,6 +280,12 @@ class DisclosureGate:
             self._store.record_attempt(attempt)
         except sqlite3.Error:
             return ReleaseObservation("unavailable", "audit_storage")
+        # The durable audit write may block long enough for a scoped approval
+        # to expire. Recheck immediately before the irreversible callback.
+        if not within and approval is not None:
+            validity = self._validity(approval)
+            if validity is not None:
+                return validity
         try:
             recipient.deliver(request.payload)
         except Exception:

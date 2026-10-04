@@ -56,7 +56,10 @@ After validation, a durable SQLite transaction consumes the request ID **before*
 the delivery callback. After the post-reservation validity recheck, the gate must
 durably save a minimized disclosure-attempt record with delivery `unknown`
 **before** invoking the irreversible recipient callback. If that audit write fails,
-delivery is not attempted. A crash, `BaseException`, callback exception or lost
+delivery is not attempted. Because that durable write can itself block, scoped
+approval validity is checked again after the write and immediately before the
+callback; expiry at that point fails closed and the consumed request cannot be
+retried. A crash, `BaseException`, callback exception or lost
 post-delivery acknowledgement leaves the durable outcome `unknown`; the consumed
 request ID prevents automatic retry. On normal callback return the gate
 best-effort upgrades that same event to `acknowledged`. A normal callback return is

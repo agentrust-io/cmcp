@@ -195,6 +195,22 @@ def test_baseexception_during_delivery_leaves_durable_unknown_attempt(context, t
     assert observations[0].reason == "delivery_attempted"
 
 
+def test_expiry_rechecked_after_pre_delivery_audit_write(context):
+    request, sink, options, approve = context
+    # Initial validation and post-reservation validation succeed. The approval
+    # expires while the durable audit write is completing, before delivery.
+    clock = iter([100, 100, 110])
+    options["now"] = lambda: next(clock)
+    gate = DisclosureGate(**options)
+    result = gate.release(request, approve())
+    assert (result.disposition, result.reason, result.delivery) == (
+        "denied", "approval_expired_or_early", "not_attempted")
+    sink.assert_not_called()
+    # The one-use request remains consumed after the failed pre-delivery recheck.
+    options["now"] = lambda: 100
+    assert DisclosureGate(**options).release(request, approve()).reason == "replay"
+
+
 def test_pre_delivery_audit_failure_fails_closed(context, monkeypatch):
     request, sink, options, approve = context
     monkeypatch.setattr(
