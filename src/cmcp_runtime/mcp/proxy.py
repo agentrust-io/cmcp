@@ -927,15 +927,19 @@ class CMCPProxy:
             self._drift_checked.add(key)
             return self._session.catalog_drift
 
-        by_name = {
-            t.get("name"): t
+        by_name: dict[str, dict[str, Any]] = {
+            t["name"]: t
             for t in advertised
             if isinstance(t, dict) and isinstance(t.get("name"), str)
         }
         drifted: list[tuple[str, str]] = []
+        active_admitted_names: set[str] = set()
+        active_exception_count = 0
         for tool_name, catalog_entry in self._catalog.entries.items():
             if _server_provenance_key(catalog_entry) != key:
                 continue
+            active_admitted_names.add(tool_name)
+            active_exception_count += int(catalog_entry.catalog_exception)
             offered = by_name.get(tool_name)
             if offered is None:
                 drifted.append((tool_name, "withdrawn"))
@@ -944,6 +948,25 @@ class CMCPProxy:
                 catalog_entry.approved_definition
             ):
                 drifted.append((tool_name, "definition_changed"))
+
+        # Extra names are evidence, not drift. The active basis includes runtime
+        # exceptions; catalog_hash still identifies the original measured catalog.
+        for tool_name in sorted(by_name.keys() - active_admitted_names):
+            self._audit.append(
+                "tool_observed_unadmitted",
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                detail={
+                    "status": "observed_unadmitted",
+                    "source": "upstream",
+                    "measured_catalog_hash": self._catalog.catalog_hash,
+                    "admission_basis": "active_catalog_entries",
+                    "active_admitted_count": len(active_admitted_names),
+                    "active_exception_count": active_exception_count,
+                },
+                session_sensitivity_before=self._session.max_sensitivity,
+                session_sensitivity_after=self._session.max_sensitivity,
+            )
 
         if not drifted:
             logger.info("upstream drift: server=%s outcome=match", key)
