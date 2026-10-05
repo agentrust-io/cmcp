@@ -611,6 +611,7 @@ async def test_o3_extra_name_records_without_drift(drift_policy):
         "admission_basis": "active_catalog_entries",
         "active_admitted_count": 1,
         "active_exception_count": 0,
+        "recorded_name_truncated": False,
     }
     assert all(isinstance(value, str | int | float) for value in observation.detail.values())
     assert not any(entry.entry_type == "catalog_drift" for entry in chain.entries)

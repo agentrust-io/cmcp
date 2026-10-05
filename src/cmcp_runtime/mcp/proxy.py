@@ -61,6 +61,10 @@ from cmcp_runtime.trace_gate import TraceGate
 
 logger = logging.getLogger(__name__)
 
+# Per-comparison audit recording bounds, not discovery or admission limits.
+NAME_OBSERVATION_CAP = 64
+TOOL_NAME_RECORD_MAX_LENGTH = 256
+
 
 _EXTERNAL_EVIDENCE_FIELDS: frozenset[str] = frozenset(
     {
@@ -951,18 +955,47 @@ class CMCPProxy:
 
         # Extra names are evidence, not drift. The active basis includes runtime
         # exceptions; catalog_hash still identifies the original measured catalog.
-        for tool_name in sorted(by_name.keys() - active_admitted_names):
+        unadmitted_names = sorted(by_name.keys() - active_admitted_names)
+        observation_context: dict[str, str | int | float] = {
+            "source": "upstream",
+            "measured_catalog_hash": self._catalog.catalog_hash,
+            "admission_basis": "active_catalog_entries",
+            "active_admitted_count": len(active_admitted_names),
+            "active_exception_count": active_exception_count,
+        }
+        for tool_name in unadmitted_names[:NAME_OBSERVATION_CAP]:
+            truncated = len(tool_name) > TOOL_NAME_RECORD_MAX_LENGTH
+            detail: dict[str, str | int | float] = {
+                **observation_context,
+                "status": "observed_unadmitted",
+                "recorded_name_truncated": truncated,
+            }
+            if truncated:
+                # A recorded prefix is not a tool identity. Bind the original
+                # name without persisting it; surrogatepass handles every str
+                # accepted by the existing full-name comparison.
+                detail["tool_name_original_length"] = len(tool_name)
+                detail["tool_name_sha256"] = hashlib.sha256(
+                    tool_name.encode("utf-8", errors="surrogatepass")
+                ).hexdigest()
             self._audit.append(
                 "tool_observed_unadmitted",
-                tool_name=tool_name,
+                tool_name=tool_name[:TOOL_NAME_RECORD_MAX_LENGTH],
+                server_identity=entry.server.url,
+                detail=detail,
+                session_sensitivity_before=self._session.max_sensitivity,
+                session_sensitivity_after=self._session.max_sensitivity,
+            )
+        omitted_name_count = len(unadmitted_names) - NAME_OBSERVATION_CAP
+        if omitted_name_count > 0:
+            self._audit.append(
+                "tool_observed_unadmitted",
+                tool_name=None,
                 server_identity=entry.server.url,
                 detail={
-                    "status": "observed_unadmitted",
-                    "source": "upstream",
-                    "measured_catalog_hash": self._catalog.catalog_hash,
-                    "admission_basis": "active_catalog_entries",
-                    "active_admitted_count": len(active_admitted_names),
-                    "active_exception_count": active_exception_count,
+                    **observation_context,
+                    "status": "observed_unadmitted_summary",
+                    "omitted_name_count": omitted_name_count,
                 },
                 session_sensitivity_before=self._session.max_sensitivity,
                 session_sensitivity_after=self._session.max_sensitivity,
