@@ -195,9 +195,26 @@ class ReplayStore:
         """Durably upgrade one pre-delivery unknown event after adapter return."""
         self._update_audit_delivery(event_id, "adapter_acknowledged", "acknowledged")
 
-    def mark_not_attempted(self, event_id: str, reason: str) -> None:
+    def mark_not_attempted(
+        self, event_id: str, disposition: Disposition, reason: str,
+    ) -> None:
         """Correct a prepared audit event when the final admission recheck denies dispatch."""
-        self._update_audit_delivery(event_id, reason, "not_attempted")
+        connection = sqlite3.connect(self._path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE disclosure_audit "
+                "SET disposition = ?, reason = ?, delivery = ? WHERE event_id = ?",
+                (disposition, reason, "not_attempted", event_id),
+            )
+            if cursor.rowcount != 1:
+                raise sqlite3.IntegrityError("missing disclosure audit event")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def audit_observations(self) -> tuple[ReleaseObservation, ...]:
         """Return minimized durable observations; no private release context is stored."""
@@ -294,7 +311,8 @@ class DisclosureGate:
             validity = self._validity(approval)
             if validity is not None:
                 try:
-                    self._store.mark_not_attempted(attempt.event_id, validity.reason)
+                    self._store.mark_not_attempted(
+                        attempt.event_id, validity.disposition, validity.reason)
                 except sqlite3.Error:
                     # The corrective audit write failed. Preserve the conservative
                     # durable unknown state and tie the denial to that event.
