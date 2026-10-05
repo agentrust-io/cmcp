@@ -172,15 +172,15 @@ class ReplayStore:
         finally:
             connection.close()
 
-    def acknowledge(self, event_id: str) -> None:
-        """Durably upgrade one pre-delivery unknown event after adapter return."""
+    def _update_audit_delivery(self, event_id: str, reason: str, delivery: Delivery) -> None:
+        """Durably update one existing minimized audit event."""
         connection = sqlite3.connect(self._path)
         try:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
                 "UPDATE disclosure_audit "
                 "SET reason = ?, delivery = ? WHERE event_id = ?",
-                ("adapter_acknowledged", "acknowledged", event_id),
+                (reason, delivery, event_id),
             )
             if cursor.rowcount != 1:
                 raise sqlite3.IntegrityError("missing disclosure audit event")
@@ -190,6 +190,14 @@ class ReplayStore:
             raise
         finally:
             connection.close()
+
+    def acknowledge(self, event_id: str) -> None:
+        """Durably upgrade one pre-delivery unknown event after adapter return."""
+        self._update_audit_delivery(event_id, "adapter_acknowledged", "acknowledged")
+
+    def mark_not_attempted(self, event_id: str, reason: str) -> None:
+        """Correct a prepared audit event when the final admission recheck denies dispatch."""
+        self._update_audit_delivery(event_id, reason, "not_attempted")
 
     def audit_observations(self) -> tuple[ReleaseObservation, ...]:
         """Return minimized durable observations; no private release context is stored."""
@@ -285,7 +293,15 @@ class DisclosureGate:
         if not within and approval is not None:
             validity = self._validity(approval)
             if validity is not None:
-                return validity
+                try:
+                    self._store.mark_not_attempted(attempt.event_id, validity.reason)
+                except sqlite3.Error:
+                    # The corrective audit write failed. Preserve the conservative
+                    # durable unknown state and tie the denial to that event.
+                    return ReleaseObservation(
+                        validity.disposition, validity.reason, "unknown", attempt.event_id)
+                return ReleaseObservation(
+                    validity.disposition, validity.reason, "not_attempted", attempt.event_id)
         try:
             recipient.deliver(request.payload)
         except Exception:
