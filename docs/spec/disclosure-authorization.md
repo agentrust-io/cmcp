@@ -58,10 +58,13 @@ durably save a minimized disclosure-attempt record with delivery `unknown`
 **before** invoking the irreversible recipient callback. If that audit write fails,
 delivery is not attempted. Because that durable write can itself block, scoped
 approval validity is checked again after the write and immediately before the
-callback; expiry at that point fails closed and the consumed request cannot be
-retried. A crash, `BaseException`, callback exception or lost
-post-delivery acknowledgement leaves the durable outcome `unknown`; the consumed
-request ID prevents automatic retry. On normal callback return the gate
+callback. If that final check denies dispatch, the same audit event is
+best-effort corrected to `not_attempted` and the denial returns its `event_id`.
+If the corrective audit write fails, the durable event remains conservatively
+`unknown` and the returned denial carries that same `event_id`. In either case
+the consumed request cannot be retried. A crash, `BaseException`, callback
+exception or lost post-delivery acknowledgement leaves the durable outcome
+`unknown`; the consumed request ID prevents automatic retry. On normal callback return the gate
 best-effort upgrades that same event to `acknowledged`. A normal callback return is
 an acknowledgement, not proof of recipient installation, processing or downstream
 confidentiality.
