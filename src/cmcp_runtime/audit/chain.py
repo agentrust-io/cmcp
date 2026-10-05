@@ -30,6 +30,7 @@ EntryType = Literal[
     "suspicious_call_sequence",
     "attestation_stale",
     "catalog_drift",
+    "tool_observed_unadmitted",
     "break_glass_used",
 ]
 
