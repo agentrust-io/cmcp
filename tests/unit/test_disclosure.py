@@ -195,7 +195,7 @@ def test_baseexception_during_delivery_leaves_durable_unknown_attempt(context, t
     assert observations[0].reason == "delivery_attempted"
 
 
-def test_expiry_rechecked_after_pre_delivery_audit_write(context):
+def test_expiry_rechecked_after_pre_delivery_audit_write(context, tmp_path):
     request, sink, options, approve = context
     # Initial validation and post-reservation validation succeed. The approval
     # expires while the durable audit write is completing, before delivery.
@@ -206,9 +206,33 @@ def test_expiry_rechecked_after_pre_delivery_audit_write(context):
     assert (result.disposition, result.reason, result.delivery) == (
         "denied", "approval_expired_or_early", "not_attempted")
     sink.assert_not_called()
+    # The prepared row is corrected to the actual no-dispatch outcome and the
+    # returned denial is tied to the same durable event.
+    observations = ReplayStore(tmp_path / "attempts.db").audit_observations()
+    assert observations == (result,)
     # The one-use request remains consumed after the failed pre-delivery recheck.
     options["now"] = lambda: 100
     assert DisclosureGate(**options).release(request, approve()).reason == "replay"
+
+
+def test_expiry_recheck_correction_failure_preserves_unknown(context, tmp_path, monkeypatch):
+    request, sink, options, approve = context
+    clock = iter([100, 100, 110])
+    options["now"] = lambda: next(clock)
+    store = options["replay_store"]
+    monkeypatch.setattr(
+        store, "mark_not_attempted",
+        Mock(side_effect=__import__("sqlite3").OperationalError("disk unavailable")),
+    )
+    result = DisclosureGate(**options).release(request, approve())
+    assert (result.disposition, result.reason, result.delivery) == (
+        "denied", "approval_expired_or_early", "unknown")
+    sink.assert_not_called()
+    observations = ReplayStore(tmp_path / "attempts.db").audit_observations()
+    assert len(observations) == 1
+    assert observations[0].event_id == result.event_id
+    assert observations[0].reason == "delivery_attempted"
+    assert observations[0].delivery == "unknown"
 
 
 def test_pre_delivery_audit_failure_fails_closed(context, monkeypatch):
