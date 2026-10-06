@@ -53,10 +53,26 @@ serialization, and use the same protected replay database. Reconstructing a
 gate does not stop already admitted delivery on another live gate.
 
 After validation, a durable SQLite transaction consumes the request ID **before**
-the delivery callback. A crash, callback exception or lost acknowledgement leaves
-delivery unknown; the ID stays consumed. Never automatically retry or assign a
-fresh ID to an unknown attempt. A normal callback return is an acknowledgement,
-not proof of recipient installation, processing or downstream confidentiality.
+the delivery callback. After the post-reservation validity recheck, the gate must
+durably save a minimized disclosure-attempt record with delivery `unknown`
+**before** invoking the irreversible recipient callback. If that audit write fails,
+delivery is not attempted. Because that durable write can itself block, scoped
+approval validity is checked again after the write and immediately before the
+callback. If that final check denies dispatch, the same audit event is
+best-effort corrected to `not_attempted` and the denial returns its `event_id`.
+If the corrective audit write fails, the durable event remains conservatively
+`unknown` and the returned denial carries that same `event_id`. In either case
+the consumed request cannot be retried. A crash, `BaseException`, callback
+exception or lost post-delivery acknowledgement leaves the durable outcome
+`unknown`; the consumed request ID prevents automatic retry. On normal callback return the gate
+best-effort upgrades that same event to `acknowledged`. A normal callback return is
+an acknowledgement, not proof of recipient installation, processing or downstream
+confidentiality.
+
+The durable audit table contains only event ID, disposition, reason and delivery.
+It must not contain payload, payload digest, request ID, principal, recipient,
+purpose, source scope, labels or approval. Private authorization/replay context
+remains separate and access-controlled.
 
 All gates for a release authority must use the same trusted replay store.
 Deletion, snapshot rollback, database substitution or separate clones defeat
