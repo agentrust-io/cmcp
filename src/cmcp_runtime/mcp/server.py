@@ -36,8 +36,11 @@ from cmcp_runtime.trace_gate import TraceGate, decode_trace_token
 
 if TYPE_CHECKING:
     from cmcp_runtime.audit.chain import AuditChain
+    from cmcp_runtime.audit.store import SqliteAuditStore
+    from cmcp_runtime.kill_switch import KillSwitchBlockStore
     from cmcp_runtime.session.manager import SessionManager
     from cmcp_runtime.session.state import ClosedSessionRecord, SessionState
+    from cmcp_runtime.session.store import SqliteSessionStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -374,8 +377,18 @@ class MCPServer:
         operator_token: str | None = None,
         session: SessionState | None = None,
         max_request_bytes: int = _DEFAULT_MAX_REQUEST_BYTES,
+        audit_store: SqliteAuditStore | None = None,
+        kill_switch_store: KillSwitchBlockStore | None = None,
+        session_state_store: SqliteSessionStateStore | None = None,
     ) -> None:
         self._proxy = proxy
+        # Explicit transfer of process-lifetime ownership. Stores merely referenced
+        # by an embedded proxy/chain are not implicitly owned by this server.
+        self._durable_stores = [
+            store for store in (audit_store, kill_switch_store, session_state_store)
+            if store is not None
+        ]
+        self._shutdown_lock = asyncio.Lock()
         # Read once. With no gate the /trace routes are not registered and
         # tools/call ignores _cmcp.trace, so the server is unchanged.
         self._trace_gate: TraceGate | None = (
@@ -477,7 +490,33 @@ class MCPServer:
         try:
             yield
         finally:
-            await self._proxy.shutdown(drain_timeout=self._session_close_drain_s)
+            await self.shutdown()
+
+    async def shutdown(self) -> None:
+        """Release runtime-owned stores after writers stop; failed closes can be retried."""
+        async with self._shutdown_lock:
+            shutdown_error: BaseException | None = None
+            try:
+                await self._proxy.shutdown(drain_timeout=self._session_close_drain_s)
+            except BaseException as exc:
+                shutdown_error = exc
+                raise
+            finally:
+                # A timeout or cancellation before drain completion leaves writers
+                # alive. A later retry must retain their audit/persistence handles.
+                if self._proxy.shutdown_drained is True:
+                    close_error: Exception | None = None
+                    for store in tuple(self._durable_stores):
+                        try:
+                            store.close()
+                        except Exception as exc:
+                            logger.exception("Failed to close a durable store during shutdown")
+                            if close_error is None:
+                                close_error = exc
+                        else:
+                            self._durable_stores.remove(store)
+                    if shutdown_error is None and close_error is not None:
+                        raise close_error
 
     async def _parse_mcp_envelope(self, request: Request) -> dict[str, Any] | Response:
         """Read, size-check, and parse the request body.

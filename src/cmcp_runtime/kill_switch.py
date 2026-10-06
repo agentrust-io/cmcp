@@ -54,6 +54,10 @@ class KillSwitchBlockStore:
         self._conn.commit()
         logger.info("Kill switch block store opened: path=%s", db_path)
 
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
     def block(self, agent_id: str, *, reason: str) -> None:
         """Record a block. Blocking an identity that is already blocked keeps the first record."""
         with self._lock:
