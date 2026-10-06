@@ -345,6 +345,7 @@ class CMCPProxy:
         # persist. Keep this separate from drain state: shutdown can still reap.
         self._failed_terminal_call: str | None = None
         self._shutting_down = False
+        self._shutdown_drained = False
         # Set when the kill switch has stopped this gateway: the session it
         # served is closed and no successor exists, so admission is refused
         # rather than held open for a rotation that is never coming.
@@ -499,6 +500,11 @@ class CMCPProxy:
                 ) from None
         self._drain_incomplete = False
 
+    @property
+    def shutdown_drained(self) -> bool:
+        """Admission is permanently sealed and all store writers have drained."""
+        return self._shutdown_drained
+
     async def shutdown(self, *, drain_timeout: float = SESSION_CLOSE_DRAIN_SECONDS) -> None:
         """Permanently reject admission, drain calls, then close owned resources.
 
@@ -513,6 +519,8 @@ class CMCPProxy:
             async with self._lifecycle_condition:
                 self._session_rotation_in_progress = True
                 await self._drain_calls(drain_timeout)
+                # Cleanup may fail after draining; durable stores are still safe to close.
+                self._shutdown_drained = True
             async with self._stdio_spawn_lock:
                 await self.aclose()
 

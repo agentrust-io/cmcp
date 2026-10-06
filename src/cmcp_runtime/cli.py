@@ -107,6 +107,9 @@ def build_server(ctx: RuntimeContext, *, trace_gate: TraceGate | None = None) ->
         session=session,
         bearer_token=ctx.config.bearer_token,
         operator_token=ctx.config.operator_token,
+        audit_store=ctx.audit_store,
+        kill_switch_store=ctx.kill_switch_store,
+        session_state_store=ctx.session_state_store,
     )
 
 
