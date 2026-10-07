@@ -1,6 +1,6 @@
 # Multi-Tenant Deployment
 
-Run cMCP with per-tenant policy isolation by deploying separate runtime instances, each with its own Cedar bundle, catalog, and audit chain.
+This page is for operators who serve several customers or teams (tenants) and need each one kept to its own rules. The way to do it in cMCP is to run one gateway per tenant, each with its own policy rules, its own list of approved tools (catalog) and its own log (audit chain). You end up with two example tenants whose signed records show, by fingerprint, which rules each one ran under.
 
 ## What you'll learn
 
@@ -20,7 +20,7 @@ pip install cmcp-runtime
 
 ## Understand the isolation model
 
-cMCP does not have a built-in multi-tenant API. Tenant isolation is achieved by running one gateway instance per tenant, each with its own configuration. Each instance:
+cMCP has no built-in way to serve several tenants from one gateway. You keep tenants apart by running one gateway per tenant, each with its own configuration. Each one:
 
 - Loads its own Cedar policy bundle (different `policy_bundle_path`)
 - Loads its own tool catalog (different `catalog_path`)
@@ -28,7 +28,7 @@ cMCP does not have a built-in multi-tenant API. Tenant isolation is achieved by 
 - Listens on a separate port (different `listen_addr`)
 - Maintains separate session state and audit chains
 
-This is the only supported isolation model. A single gateway instance with shared state does not provide tenant policy isolation.
+This is the only supported way to keep tenants apart. One gateway shared between tenants does not keep their policies separate.
 
 ---
 
@@ -156,7 +156,7 @@ forbid (
 
 ## Start both instances
 
-Each tenant gets its own set of env vars:
+Each tenant gets its own set of environment variables:
 
 ```bash
 # Tenant A
@@ -172,7 +172,7 @@ CMCP_CATALOG_HASH="sha256:<tenant-b-catalog-hash>" \
 cmcp start --config tenant-b/cmcp-config.yaml &
 ```
 
-Each instance prints its own hashes at startup:
+Each gateway prints its own fingerprints (hashes) at startup:
 
 ```
 [cmcp] policy bundle loaded: sha256:<tenant-a-bundle-hash>
@@ -232,7 +232,7 @@ A TRACE claim from tenant B's gateway:
 }
 ```
 
-When verifying, pass the approved hashes for the specific tenant:
+When checking a claim, pass the approved hashes for that specific tenant:
 
 ```python
 from cmcp_verify import verify_trace_claim, ApprovedHashes
@@ -258,14 +258,14 @@ If you accidentally verify a tenant B claim with tenant A's approved hashes, `po
 
 ## Audit chain isolation
 
-Each session gets its own `AuditChain` instance inside the gateway. Sessions from different tenants run on different gateway processes, so their audit chains are physically separate. The `session_id` is scoped to the gateway instance. There is no cross-tenant session state.
+Each session gets its own log inside the gateway (an `AuditChain` instance). Sessions from different tenants run in different gateway processes, so their logs are completely separate. A `session_id` only means something within its own gateway, and no session state is shared between tenants.
 
-When you export the audit bundle for a session (`GET /audit/export`), the bundle contains only the entries for that session. The `gateway.audit_chain.root` and `.tip` in the TRACE claim refer to that session's chain only.
+When you export the log for a session (`GET /audit/export`), you get only that session's entries. The `gateway.audit_chain.root` and `.tip` in the TRACE claim (the first and last entries' fingerprints) refer to that session's log only.
 
 ---
 
 ## Summary
 
-Per-tenant isolation in cMCP is one gateway instance per tenant, each with its own config, Cedar bundle, catalog, and listener port. The policy bundle hash and catalog hash differ per tenant and are recorded in TRACE claims, making tenant identity tamper-evident to verifiers. Audit chains are session-scoped and process-isolated.
+In cMCP, keeping tenants apart means one gateway per tenant, each with its own config, policy files, catalog and port. The policy and catalog fingerprints differ per tenant and are written into the signed TRACE claims, so anyone checking a claim can tell which tenant's rules applied, and a mix-up shows. Each session has its own log, held in its own tenant's process.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): writing the per-tenant Cedar policies. [Verify a TRACE claim](./verifying-a-trace-claim.md): verifying tenant-specific claims with the correct approved hashes.
+Related tutorials: the [Cedar policy walkthrough](./cedar-policy-walkthrough.md) covers writing each tenant's rules, and [Verify a TRACE claim](./verifying-a-trace-claim.md) covers checking a tenant's claims against the right approved hashes.

@@ -2,6 +2,8 @@
 
 Status: Draft v0.1 | Covers: Phase 1 cMCP Runtime
 
+A threat model lists what needs protecting, who might attack it, and how. This page does that for the Phase 1 gateway, records where claims in the overview needed correcting, and lists the protections that remain the operator's job. Read it if you are judging whether cMCP fits your security needs.
+
 ## Assets
 
 | Asset | Sensitivity | Why it matters |

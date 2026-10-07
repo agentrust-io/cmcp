@@ -1,10 +1,10 @@
 # Tool Catalog Authoring
 
-The tool catalog is the operator-controlled allowlist of MCP tools the gateway will route. Every entry is hashed into the TRACE claim at startup; adding, removing, or changing any field changes `catalog_hash` and invalidates prior attestations.
+This page is for operators who decide which tools an AI agent may use through cMCP. That list is the tool catalog (`catalog.json`): the gateway passes calls only to tools named in it. You learn what each field means, how to write entries for low-risk and high-risk tools, and how to compute the catalog's fingerprint so others can check which catalog was in force.
 
-The catalog-entry JSON Schema ships inside the Python distribution and is a
-mandatory startup dependency. CMCP refuses to load a catalog if the schema is
-missing or unreadable; it never degrades to partial hand-written validation.
+When cMCP starts, it takes a fingerprint (hash) of every catalog entry and puts it in the signed TRACE claim. Adding, removing or changing any field changes `catalog_hash`, so earlier attestations no longer match.
+
+The JSON Schema that describes a valid catalog entry ships inside the Python package, and cMCP needs it to start. If the schema is missing or unreadable, cMCP refuses to load the catalog; it never falls back to a partial check.
 
 ## What you'll learn
 
@@ -43,7 +43,7 @@ pip install cmcp-runtime
 ]
 ```
 
-All fields are required. `catalog_exception` defaults to `false`; set to `true` via the runtime break-glass API (`POST /catalog/exception`), never in the static file.
+All fields are required. `catalog_exception` defaults to `false`. It is set only through the emergency override endpoint (`POST /catalog/exception`, the "break-glass" API), never in the file itself.
 
 ---
 
@@ -51,11 +51,11 @@ All fields are required. `catalog_exception` defaults to `false`; set to `true` 
 
 ### `tool_name`
 
-The canonical name of the tool. **Must be lowercase.** The gateway rejects any catalog that contains uppercase characters in a tool name with a `ConfigError` at startup. This name must match exactly what the MCP server advertises and what agents send in `tools/call` requests.
+The tool's name. **Must be lowercase.** The gateway refuses to start (`ConfigError`) if any tool name contains a capital letter. The name must match exactly what the tool server offers and what agents send in `tools/call` requests.
 
 ### `server`
 
-Identity of the upstream MCP server that provides this tool:
+Which tool server provides this tool, and how to recognise it:
 
 ```json
 {
@@ -79,7 +79,7 @@ Identity of the upstream MCP server that provides this tool:
 
 ### `approved_definition`
 
-What the tool is allowed to do. This is what gets hashed into `definition_hash`:
+What the tool is allowed to do. This is the part that is fingerprinted into `definition_hash`:
 
 ```json
 {
@@ -96,7 +96,7 @@ What the tool is allowed to do. This is what gets hashed into `definition_hash`:
 }
 ```
 
-`input_schema` is a JSON Schema object. The gateway uses it for schema validation at call time (controlled by `schema_validation_mode`). `output_schema` validates the tool's response; `null` disables response schema validation.
+`input_schema` is a JSON Schema describing the arguments the tool accepts; the gateway checks each call against it (how strictly is set by `schema_validation_mode`). `output_schema` describes the tool's response and is checked the same way; `null` turns that check off.
 
 ### `definition_hash`
 
@@ -111,37 +111,37 @@ def compute_definition_hash(approved_definition: dict) -> str:
     return f"sha256:{digest}"
 ```
 
-The gateway recomputes this at load time and rejects the catalog if any entry's stored hash does not match. This prevents silent modification of approved definitions after signing.
+The gateway recomputes this when it loads the catalog and refuses the catalog if any stored hash does not match. That way nobody can quietly change an approved definition after it was signed off.
 
 ### `compliance_domain`
 
-A string label grouping tools by their compliance context. Used by Cedar policies to write rules like "tools in domain `pii` require a PII handler principal attribute." Common values: `"pii"`, `"financial"`, `"phi"`, `"internal"`, `"external"`. The runtime does not validate the value: it is a policy input.
+A label that groups tools by the kind of rules they fall under. Your Cedar policies can use it, for example to say that tools in the `pii` domain may only be used by an agent cleared for personal data. Common values: `"pii"`, `"financial"`, `"phi"`, `"internal"`, `"external"`. cMCP does not check the value; it only passes it to your policy.
 
 ### `requires_baa`
 
-Boolean. When `true`, Cedar policies can enforce that a Business Associate Agreement is in place before allowing calls. The runtime surfaces this to the policy engine as a context attribute; enforcement is via Cedar rules.
+`true` or `false`. When `true`, your Cedar policies can require a Business Associate Agreement (a US health-data contract) to be in place before calls are allowed. cMCP only passes the flag to the policy; the rules do the enforcing.
 
 ### `sensitivity_level`
 
-String label for the data sensitivity of this tool's outputs. Common values: `"public"`, `"internal"`, `"confidential"`, `"pii"`. The session sensitivity tracker uses this: after a session calls a `"pii"` tool, all subsequent calls in the session carry `session_sensitivity: "pii"` in Cedar context.
+How sensitive the data this tool returns is. Common values: `"public"`, `"internal"`, `"confidential"`, `"pii"`. cMCP remembers the highest level a session has touched: after a session calls a `"pii"` tool, every later call in that session carries `session_sensitivity: "pii"` into your Cedar rules.
 
-The legal set of values is the built in vocabulary plus anything a deployment has added in config under `sensitivity.vocabulary` (see [session-policy.md](../spec/session-policy.md#session-sensitivity-state-machine)), so a regulator specific top tier can be catalogued once that config addition is in place. An entry naming a level outside that set fails to load, closed by design.
+The allowed values are the built-in list plus anything added in config under `sensitivity.vocabulary` (see [session-policy.md](../spec/session-policy.md#session-sensitivity-state-machine)), so a stricter level required by a particular regulator can be used once it is added there. An entry naming any other level fails to load, on purpose.
 
 ### `added_at`
 
-ISO 8601 timestamp when this entry was approved. Included in the canonical hash and surfaced in the TRACE claim.
+When this entry was approved, as an ISO 8601 timestamp. It is part of the fingerprint and appears in the TRACE claim.
 
 ### `approved_by`
 
-String identifying who approved the entry (person, team, or process). Included in the canonical hash. Appears in break-glass audit entries.
+Who approved the entry (a person, team or process). It is part of the fingerprint and appears in log entries for emergency overrides.
 
 ### `catalog_exception`
 
-Nullable string. When set, marks this entry as a break-glass exception with a reason. Exceptions added via the runtime API (`POST /catalog/exception`) are always visible in the TRACE claim even though they do not modify `catalog_hash`.
+A string, or null. When set, it marks this entry as an emergency exception and gives the reason. Exceptions added through the override endpoint (`POST /catalog/exception`) always show in the TRACE claim, even though they do not change `catalog_hash`.
 
 ### `schema_validation_mode`
 
-Controls what the gateway does when a tool call argument fails schema validation against `input_schema`:
+What the gateway does when a call's arguments do not fit `input_schema`:
 
 | Value | Behavior |
 |---|---|
@@ -149,13 +149,13 @@ Controls what the gateway does when a tool call argument fails schema validation
 | `"strict"` | Reject the call with HTTP 422 if any argument fails validation |
 | `"log"` | Log the violation but pass through unchanged |
 
-Use `"strict"` for tools that handle sensitive data where unexpected fields could indicate an injection attempt. Use `"redact"` (the default) when agents may send extra fields the tool ignores. Use `"log"` only for baselining: it provides no enforcement.
+Use `"strict"` for tools that handle sensitive data, where an unexpected field could be a sign of prompt injection (hidden instructions planted in what the agent read). Use `"redact"` (the default) when agents may send extra fields the tool ignores. Use `"log"` only while getting a first picture of traffic, since it blocks nothing.
 
 ---
 
 ## How `catalog_hash` is computed
 
-The `catalog_hash` measured into the TRACE claim covers the full catalog, not individual entries:
+The `catalog_hash` in the TRACE claim is one fingerprint over the whole catalog, not one per entry:
 
 ```python
 import hashlib, json
@@ -168,7 +168,7 @@ def compute_catalog_hash(entries: list[dict]) -> str:
 ```
 
 Steps:
-1. Sort entries by `tool_name` (ascending, case-sensitive: but tool names are always lowercase)
+1. Sort entries by `tool_name` (ascending and case-sensitive, though tool names are always lowercase)
 2. Canonical JSON: `sort_keys=True`, no spaces (`separators=(",", ":")`)
 3. SHA-256 of the UTF-8 bytes
 
@@ -188,7 +188,7 @@ with open("catalog.json") as f:
 print(catalog_hash(entries))
 ```
 
-Pin it in `CMCP_CATALOG_HASH` or in your attestation policy to detect unauthorized catalog changes. After startup the hash is also visible in the TRACE claim under `gateway.catalog.hash`.
+Pin it in `CMCP_CATALOG_HASH` or in your attestation policy so any unapproved catalog change is caught. After startup the hash also appears in the TRACE claim under `gateway.catalog.hash`.
 
 ---
 
@@ -259,7 +259,7 @@ Pin it in `CMCP_CATALOG_HASH` or in your attestation policy to detect unauthoriz
 ]
 ```
 
-Note that `kyc.verify` uses `"strict"` because unexpected fields in a KYC call could indicate prompt injection; `crm.query` uses `"redact"` because agents may pass extra context fields the CRM ignores.
+`kyc.verify` (an identity check) uses `"strict"` because unexpected fields in that call could signal prompt injection. `crm.query` uses `"redact"` because agents may pass extra fields the CRM ignores.
 
 ---
 
@@ -284,7 +284,7 @@ cmcp validate-bundle --bundle-path ./policies/ --expected-hash sha256:<hex>
 cmcp validate-config --config cmcp-config.yaml
 ```
 
-Both commands exit non-zero on any validation error without starting the gateway.
+If anything is wrong, both commands exit with an error and the gateway is not started.
 
 ---
 
@@ -296,4 +296,4 @@ Both commands exit non-zero on any validation error without starting the gateway
 4. Use `"strict"` schema validation for high-sensitivity tools; `"redact"` is the safe default for others
 5. `sensitivity_level` feeds session tracking; `compliance_domain` feeds Cedar policy context
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): using `compliance_domain` and `sensitivity_level` in Cedar rules. [TLS pinning](./tls-pinning.md): computing `tls_fingerprint` values.
+Related tutorials: the [Cedar policy walkthrough](./cedar-policy-walkthrough.md) covers using `compliance_domain` and `sensitivity_level` in rules, and [TLS pinning](./tls-pinning.md) covers computing `tls_fingerprint` values.

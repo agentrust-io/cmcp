@@ -4,6 +4,8 @@ Status: agreed design for
 [#565](https://github.com/agentrust-io/cmcp/issues/565). Implementation remains
 separate. This document does not itself change the cMCP protocol.
 
+In plain terms: newer versions of MCP no longer keep a protocol-level session open, so cMCP needs another way to tie each tool call to its evidence. This page records the agreed design for that link. It is for implementers and spec reviewers.
+
 [mcp-2026-roadmap-impact.md](mcp-2026-roadmap-impact.md) places this work first
 in the issue sequence. cMCP needs an execution identifier that survives
 independent requests while TRACE evidence remains joinable without implying an

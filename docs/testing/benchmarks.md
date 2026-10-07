@@ -1,8 +1,12 @@
-﻿# cMCP Runtime: Latency Targets and Benchmarks
+# cMCP Runtime: Latency Targets and Benchmarks
+
+This page says how much delay cMCP aims to add to each tool call, and how to measure it.
+It is for anyone sizing a deployment or checking performance. The numbers here are goals
+and estimates; no measured results are published yet.
 
 ## Latest results
 
-The main-branch CI benchmark runs in `software-only` mode on a standard Ubuntu runner. It uploads a `benchmark-results` workflow artifact; it does not commit nightly hardware measurements to the repository. See the [CI workflow](https://github.com/agentrust-io/cmcp/blob/main/.github/workflows/ci.yml).
+The benchmark that runs in CI (our automated build) on the main branch uses `software-only` mode, with no secure hardware, on a standard Ubuntu runner. It uploads a `benchmark-results` workflow artifact; it does not commit nightly hardware measurements to the repository. See the [CI workflow](https://github.com/agentrust-io/cmcp/blob/main/.github/workflows/ci.yml).
 
 The committed `benchmarks/` directory currently contains only its placeholder. The latency figures below are targets and estimates, not measured results or service guarantees. For recorded hardware validation, see [hardware runs](hardware-validation.md); those reports have their own scope and do not establish these latency targets.
 
@@ -10,10 +14,10 @@ The committed `benchmarks/` directory currently contains only its placeholder. T
 
 ## Overview
 
-This document defines latency targets and the benchmark methodology for the cMCP Runtime. Targets are split by phase:
+Latency is the extra time cMCP adds between an agent sending a tool call and the call reaching the tool. The targets come in two phases:
 
-- **Phase 1**: Runtime intercept path only (Cedar policy evaluation, audit entry creation, routing). No payload inspection.
-- **Phase 2**: Full proxy path with payload inspection (pattern-based and model-based classification).
+- **Phase 1**: the gateway checks the call against the Cedar policy (the rule file), writes an audit entry, and passes the call on. It does not look inside the data.
+- **Phase 2**: the gateway also inspects the data in each request and response, using pattern matching or a classifier model.
 
 ---
 
@@ -21,7 +25,7 @@ This document defines latency targets and the benchmark methodology for the cMCP
 
 ### Attestation Handshake (one-time, at runtime startup)
 
-Attestation is a startup cost, not a per-call cost. It is not included in the per-call latency budget.
+Attestation is the step where the secure hardware proves what software it is running. It happens once when the gateway starts, so it is not counted in the time per call.
 
 | TEE Provider    | Target     | Notes                                              |
 |-----------------|------------|----------------------------------------------------|
@@ -32,7 +36,7 @@ Attestation is a startup cost, not a per-call cost. It is not included in the pe
 
 ### Per-Call Runtime Overhead
 
-Covers Cedar policy evaluation + audit entry creation + routing. Excludes upstream tool execution time.
+This covers the policy check, the audit entry and passing the call on. It leaves out the time the tool itself takes to do the work.
 
 | Percentile | Target  |
 |------------|---------|
@@ -44,15 +48,15 @@ Expected breakdown for a 10-rule policy bundle:
 
 | Component                      | Estimated cost     |
 |--------------------------------|--------------------|
-| Cedar evaluation (10 rules)    | 0.2 – 0.5ms        |
+| Cedar evaluation (10 rules)    | 0.2 to 0.5ms        |
 | Audit entry hash computation   | ~0.1ms             |
-| Network routing overhead       | 0.5 – 2ms          |
+| Network routing overhead       | 0.5 to 2ms          |
 
 ---
 
 ## Phase 2 Targets
 
-Phase 2 adds payload inspection between runtime receive and upstream forward.
+Phase 2 adds a look inside the data after the gateway receives a call and before it passes the call to the tool.
 
 | Path                                           | p50     | p95     | p99     |
 |------------------------------------------------|---------|---------|---------|
@@ -70,7 +74,7 @@ Phase 2 adds payload inspection between runtime receive and upstream forward.
 
 ### Hardware
 
-Run one benchmark suite per TEE provider, on TEE-enabled hardware matching production targets. Do not run benchmarks on non-TEE hardware and report results as representative.
+Run one set of benchmarks per TEE provider (a TEE, or trusted execution environment, is the hardware-isolated area the gateway runs in), on the same kind of hardware you would use in production. Numbers from ordinary hardware without a TEE do not represent a real deployment, so do not report them as if they did.
 
 ### Representative Policy Bundle
 
@@ -97,7 +101,7 @@ Approximately 200 bytes.
 
 ### Warmup
 
-Run 1000 calls before measurement starts. This eliminates JIT compilation and cache cold-start effects from reported numbers.
+Run 1000 calls before you start measuring, so that one-off startup costs (code compilation and empty caches) do not show up in the numbers.
 
 ### Measurement
 
@@ -121,7 +125,7 @@ Collect the following per run, in microseconds unless noted:
 
 ## Reporting Format
 
-Benchmark results are committed as JSON to the `benchmarks/` directory in CI after each run.
+Benchmark results are committed as JSON to the `benchmarks/` directory in CI after each run, in this format. (As noted at the top, the directory holds only a placeholder today.)
 
 ```json
 {

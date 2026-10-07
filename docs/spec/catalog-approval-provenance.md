@@ -1,5 +1,7 @@
 # Verifiable catalog-approval provenance
 
+The tool catalog is the list of tools a gateway is allowed to call. This page defines a separate signed record of who approved each change to that list, and in what order, so an auditor can check the approval history as well as the final list. It is for operators who run a catalog review process and for anyone building a verifier for those records.
+
 The active catalog hash proves that the gateway is using the approved bytes at
 runtime. It does not prove how those bytes reached the approved state. The
 detached record defined by `schemas/catalog-approval.schema.json` supplies that

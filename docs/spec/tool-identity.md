@@ -10,6 +10,8 @@ Last updated: 2026-06-04
 Stability: Unstable , expect breaking changes before v1.0
 ---
 
+MCP on its own does not prove which server a tool name belongs to, so two servers could offer tools with the same name. cMCP keeps an approved list, the catalog, that ties each tool name to one specific server identity and routes calls only there. This page defines that list and how routing works.
+
 This document specifies how the cMCP Runtime identifies upstream MCP servers, prevents tool name collisions, and routes tool calls. These mechanisms close the protocol-level gap in MCP (issue #40): MCP defines no signed manifest binding a tool name to a publisher. The runtime closes this by maintaining a catalog that binds each tool name to a specific upstream server identity.
 
 ---

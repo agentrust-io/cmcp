@@ -1,5 +1,17 @@
 # Reference agent confinement
 
+The gateway can only check tool calls that actually go through it. This page describes an
+experimental example that locks an AI agent inside a Docker container with no network, so
+the gateway is the only way the agent can send data anywhere. It is for engineers who need
+to stop an agent from going around the gateway, and it ends with an honest list of what the
+example does not cover.
+
+In short: the container has no network, a read-only filesystem and no access to the host's
+files. The agent talks only to a small bridge program, and every request it makes is checked
+by the cMCP gateway before any tool sees it. Tests try each escape route and confirm that the
+data does not leak, and they also switch off each protection one at a time to show that the
+same tests would catch the leak.
+
 Tracking: [#659](https://github.com/agentrust-io/cmcp/issues/659).
 The executable reference is `examples/confinement/adapter.py`; its adversarial
 fixture and independent observers are in `tests/confinement/`.
@@ -37,6 +49,8 @@ as the decision being tested. The upstream is a real measured stdio process.
 
 ## Plaintext routes and mediators
 
+Each row is a way data could leave the agent, and what stops or checks it.
+
 | Source / destination | Mediator and failure behavior |
 | --- | --- |
 | Initial input and returned tool results | Trusted bridge stdin; preflight and container inspection precede initial input. Operator classifies input; cMCP evaluates tool responses. |
@@ -50,6 +64,10 @@ as the decision being tested. The upstream is a real measured stdio process.
 | Shutdown and restart | No automatic container restart. Each run gets a fresh container and trusted session configuration; cleanup stops the container even if its attach process failed. Gateway unavailability has no direct-network fallback. |
 
 ## Crash-dump policy
+
+When a program crashes, Linux can save a copy of its memory (a core dump), which could
+contain the agent's data. The adapter refuses to start if the host is set up in a way that
+could send that copy outside the container.
 
 The host's `/proc/sys/kernel/core_pattern` is checked before plaintext admission.
 Piped handlers are refused: Linux ignores `RLIMIT_CORE` when piping a core dump
@@ -100,6 +118,9 @@ failure and termination. No real secrets or external recipients are used.
 
 ## Bridge failure and live policy restrictions
 
+If the bridge program dies, a separate watchdog process notices within two seconds and stops
+the agent's container. An operator can also take away an approved tool while the agent is running.
+
 Before plaintext admission, the running container gets a separate host watchdog.
 The bridge sends a payload-free heartbeat every 250 ms over a private inherited
 pipe. EOF or a two-second missed-heartbeat lease makes the watchdog stop the
@@ -145,6 +166,9 @@ revocation/restoration without a session reset.
 
 ## Audit and telemetry probes
 
+These tests check that the agent's data does not end up in the gateway's own logs, audit
+records or monitoring output.
+
 The confinement job installs the hash-pinned optional SDK from
 `requirements/confinement.txt`. Its tests send synthetic payloads through the
 real gateway and stdio upstream, then inspect persisted SQLite audit entries,
@@ -160,6 +184,9 @@ plugin can still write its own logs, and metadata/hashes may themselves be
 sensitive; these probes do not certify all collectors, exporters or encodings.
 
 ## Limits and remaining issue work
+
+The example depends on the host machine, Docker and the approved tools being trustworthy, and
+it does not use secure hardware. The details:
 
 The trusted boundary includes the host kernel, Docker daemon and local socket,
 bridge, cMCP process, interpreter, dependencies, approved tool and operator

@@ -3,6 +3,8 @@
 Status: design backlog, 2026-08-24. This document is informative and does not
 change the cMCP protocol.
 
+In plain terms: the MCP project's August 2026 roadmap changes some basic assumptions, and this page lists, in priority order, what cMCP and Agent Manifest have to change in response. It is a planning document for contributors.
+
 The MCP project's August 2026 roadmap changes four assumptions that matter to
 the AgenTrust stack: protocol-level sessions are gone, Tasks carry long-running
 multi-round-trip work, discovery can be progressive, and enterprise identity

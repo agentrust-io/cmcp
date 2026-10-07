@@ -1,5 +1,7 @@
 # Explicit SNP platform requirements
 
+AMD SEV-SNP is AMD's confidential computing feature. A signed report from it shows the report is genuine, but you still have to decide which hardware settings you accept. This page shows how to state those settings and have the cMCP verifier enforce them.
+
 A signed report establishes authenticity. A relying party must separately decide
 which reported platform settings it accepts. The Python verifier can enforce
 that choice for native AMD SEV-SNP and Azure vTPM-rooted SEV-SNP evidence:

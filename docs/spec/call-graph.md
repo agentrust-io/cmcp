@@ -2,6 +2,8 @@
 
 Status: Draft v0.1 | Closes #35 | Related: session-policy.md, cedar-policy.md
 
+Two calls that are each allowed can still leak data together, for example reading health records and then posting to an outside web address. This page explains how cMCP keeps a per-session list of calls to catch those combinations, and what the gateway cannot see. Read it if you write session rules or need to know how far that protection goes.
+
 ## Overview
 
 Individual call authorization is insufficient for cross-system compliance boundary enforcement (P1.3). A session may issue a sequence of tool calls where each individual call is individually authorized, yet the combination crosses a compliance boundary. For example: call A retrieves PHI from an EHR tool (authorized for the principal), and call B posts to an external webhook (also authorized for the principal in isolation). Neither call is individually impermissible, but together they represent an unauthorized export of PHI across a regulatory boundary.

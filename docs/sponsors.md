@@ -1,5 +1,7 @@
 # Sponsors
 
+This page says who pays for cMCP and how other organisations can help.
+
 cMCP is an open-source AgenTrust project. It is sponsored by OPAQUE Systems,
 which funds the engineering, infrastructure and confidential-computing work
 behind it and contributes to the project's confidential-computing

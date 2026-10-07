@@ -1,6 +1,6 @@
 # Verify a TRACE Claim
 
-Use `cmcp_verify` to confirm that a TRACE claim produced by cMCP is cryptographically valid, bound to the approved policy and catalog, and backed by a fresh attestation.
+This page is for whoever has to decide whether to trust what an agent did, such as an auditor or the next job in a pipeline. cMCP signs a record of each session, called a TRACE claim, and the `cmcp_verify` library checks it: that the signature is genuine, that the policy and tool list it names are the ones you approved, and that its hardware report (attestation) is recent. You get a clear verdict and a small script that refuses unverified records.
 
 ## What you'll learn
 
@@ -20,7 +20,7 @@ pip install cmcp-runtime   # includes cmcp_verify
 
 ## Install the verify library
 
-`cmcp_verify` ships as part of `cmcp-runtime`. No separate install is needed:
+`cmcp_verify` comes with `cmcp-runtime`, so there is nothing extra to install:
 
 ```python
 from cmcp_verify import verify_trace_claim, ApprovedHashes
@@ -30,14 +30,14 @@ from cmcp_verify import verify_trace_claim, ApprovedHashes
 
 ## Obtain the approved hashes
 
-The expected hashes must come from artifacts your verifier trusts. The [quickstart](../quickstart.md#confirm-your-setup) computes them from local input files before startup. Gateway logs also print hashes, but those logs alone do not establish approval:
+To check a claim you need the fingerprints (hashes) of the policy and catalog you approved, and they must come from a source you trust. The [quickstart](../quickstart.md#confirm-your-setup) computes them from the local files before the gateway starts. The gateway's own logs print them too, but a log line from the gateway does not show that anyone approved those values:
 
 ```
 [cmcp] policy bundle loaded: sha256:abc123...
 [cmcp] catalog loaded: 3 tools, sha256:def456...
 ```
 
-In production, these values come from your deployment pipeline: not from the operator. The point of verification is to confirm the runtime loaded what your organization approved, without trusting the operator's assertion. Store the hashes in your CI artifact registry or secrets manager at bundle-build time and retrieve them at verification time.
+In production, take these values from your deployment pipeline, never from the operator. The whole point is to confirm the gateway loaded what your organisation approved without taking the operator's word for it. Save the hashes in your build system's artifact store or secrets manager when the policy is built, and read them back when you check a claim.
 
 ---
 
@@ -61,9 +61,9 @@ print(f"Unverified fields: {result.unverified_fields}")
 print(f"Details: {result.details}")
 ```
 
-This inspection script prints the result; it is not an acceptance gate. The software quickstart should report `partially_verified`. Use the consuming-job example below when evidence is required before processing output.
+This script only prints the result; it does not accept or reject anything. On the software quickstart it should report `partially_verified`. If a job must refuse output that lacks evidence, use the example at the end of this page.
 
-Integration sketch: the function also accepts optional parameters. Replace the key placeholder with a verifier-approved key before running:
+The function also takes optional parameters, sketched below. Replace the key placeholder with a key you have approved before running it:
 
 ```python
 result = verify_trace_claim(
@@ -78,7 +78,7 @@ result = verify_trace_claim(
 
 ## Verify a TPM claim from the CLI
 
-For a TPM 2.0 claim, supply the attestation-key CA certificates your verifier trusts:
+For a claim from a TPM 2.0 chip (the security chip in many servers and VMs), supply the certificate authority certificates you trust for that chip's attestation keys:
 
 ```bash
 cmcp verify claim.json \
@@ -87,15 +87,14 @@ cmcp verify claim.json \
   --trusted-tpm-ca /etc/cmcp/trust/tpm-ca-roots.pem
 ```
 
-The PEM file may contain one or more verifier-approved CA certificates. Keep it in a
-verifier-controlled trust store; do not obtain the trust bundle from the claim or the
-runtime that produced the claim. A valid CA bundle is one input to TPM verification,
-not a substitute for the signed quote and attestation-key evidence carried by the
-claim.
+The PEM file may hold one or more certificates you have approved. Keep it in a store
+you control, and never take it from the claim or from the gateway that made the claim.
+The certificates are one input to the TPM check; the claim still has to carry the
+signed TPM report (quote) and the attestation-key evidence.
 
-`--trusted-tpm-ca` is deliberately TPM-only. It does not configure AMD SEV-SNP or
-Intel TDX trust anchors, and it does not change how claims from those platforms are
-evaluated.
+`--trusted-tpm-ca` applies to TPM only, on purpose. It does not set the trusted roots
+for AMD SEV-SNP or Intel TDX, and it does not change how claims from those platforms
+are checked.
 
 ---
 
@@ -119,7 +118,7 @@ evaluated.
 
 ## Understand partially_verified
 
-`partially_verified` means some checks passed and at least one failed. The most common reason in a correct deployment is that the gateway ran in software-only mode (`CMCP_DEV_MODE=1`): hardware attestation cannot be verified, but all cryptographic fields are valid.
+`partially_verified` means some checks passed and at least one did not. In a correctly set up test, the usual reason is that the gateway ran in software-only mode (`CMCP_DEV_MODE=1`): there is no hardware report to check, but the signatures and fingerprints are all valid.
 
 Example output for a dev-mode claim:
 
@@ -132,17 +131,17 @@ Attestation fresh:True
 Details:          {'hardware_attestation': 'software-only mode - not hardware-backed'}
 ```
 
-`hardware_attestation` is in `unverified_fields` but no `failure_reason` is set for it in isolation: the status rolls up to `partially_verified` because other fields were verified. A hardware deployment reaches `verified` only when the required checks pass; moving the process to a TEE alone is insufficient.
+`hardware_attestation` is listed in `unverified_fields`, with no `failure_reason` of its own, and the overall result is `partially_verified` because the other fields passed. A hardware deployment reaches `verified` only when all the required checks pass; just running the gateway on protected hardware (a TEE) is not enough.
 
-`unverified` (with no verified fields at all) means the claim is either malformed, signature-invalid, or the hashes do not match. Treat this as a hard rejection.
+`unverified` (no fields verified at all) means the claim is badly formed, its signature is wrong, or the fingerprints do not match. Always reject it.
 
 ---
 
 ## Integrate verification at job start
 
-If a consuming job requires fully verified evidence, reject **every** other status before processing agent output. `partially_verified` can include failures beyond missing hardware; freshness alone is not an acceptance rule.
+If a job that uses the agent's output needs fully verified evidence, it must reject **every** other result before it touches that output. `partially_verified` can hide failures other than missing hardware, and a recent timestamp on its own is not a reason to accept.
 
-Save the following as `accept_claim.py`. It uses the same two files as the inspection example. Supply `approved-hashes.json` through your deployment's trusted artifact channel. This is a result gate; configure any additional platform trust inputs required by your deployment when calling the verifier.
+Save the following as `accept_claim.py`. It uses the same two files as the earlier script. Deliver `approved-hashes.json` through a channel your deployment trusts. This script accepts or rejects; if your deployment needs extra trusted inputs for its hardware platform, pass them when calling the verifier.
 
 ```python
 import json
@@ -167,6 +166,6 @@ if __name__ == "__main__":
     print(f"Claim verified. Tools called: {claim['gateway']['call_summary']['tools_invoked']}")
 ```
 
-Run `python accept_claim.py`. It must reject the software quickstart record with a nonzero exit and `CLAIM REJECTED: partially_verified`. A development workflow that permits software evidence needs an explicit, narrower acceptance policy and must preserve that distinction in its output.
+Run `python accept_claim.py`. On the software quickstart record it must fail with a nonzero exit and `CLAIM REJECTED: partially_verified`. If a development setup is allowed to accept software-only evidence, write that down as its own, narrower acceptance rule, and keep the difference visible in its output.
 
 Next: [Cedar policy walkthrough](cedar-policy-walkthrough.md), [TEE attestation](tee-attestation.md), and [verification library reference](../spec/verification-library.md).

@@ -1,6 +1,8 @@
 # Configuration Reference
 
-`cmcp-config.yaml` controls the gateway's attestation provider, policy enforcement behavior, network settings, and file paths. Environment variables override specific fields and control secrets that must not appear in config files.
+This page lists every setting that controls how the cMCP gateway runs. It is for whoever installs and operates the gateway. You get an annotated example file, a table for each setting, and a checklist for production.
+
+Most settings live in one file, `cmcp-config.yaml`. It says which secure hardware to use for attestation (the hardware's signed proof of what software is running), whether a policy "deny" actually blocks a call, which network address to listen on, and where the policy and tool files are. Environment variables override some fields and carry values, such as tokens and approved file hashes, that should not sit in a config file.
 
 ## Full example
 
@@ -96,6 +98,8 @@ policy_reload_interval_seconds: 0
 
 ### agent_manifest
 
+An Agent Manifest is a signed document that declares which agent this is and which policy and tool catalog it was approved with. Setting this block makes the gateway check that manifest before it accepts any session.
+
 All fields are optional as a group. If `path` is set, `trust_anchor_path` must also be set. When the block is configured, cMCP fails closed on manifest signature failure, subject mismatch, policy hash drift, or catalog hash drift.
 
 | Field | Type | Default | Description |
@@ -107,9 +111,11 @@ All fields are optional as a group. If `path` is set, `trust_anchor_path` must a
 
 ### catalog
 
-The gateway compares an upstream server's advertised tool definitions with the approved
-catalog once per server per session, on first contact. Drift is always written to the audit
-chain and TRACE Claim; this setting controls whether the session also fails closed.
+The catalog is your approved list of tools and what each one looks like. The gateway compares
+what a tool server says it offers with that approved list once per server per session, the
+first time it connects. Any difference ("drift") is always written to the audit chain (the
+tamper-evident log) and the TRACE Claim (the signed session record); this setting decides
+whether the session is also blocked.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -129,11 +135,15 @@ chain and TRACE Claim; this setting controls whether the session also fails clos
 
 ## Environment variables
 
-`CMCP_POLICY_SIGNING_KEY` is the raw Ed25519 **public** key (base64url or hex, 32 bytes) permitted to sign policy bundles. Pinning it is what allows `policy_reload_interval_seconds > 0`: a bundle is installed at runtime only when its `manifest.signature` verifies under this key and its `manifest.version` increased. It is not a secret, but it is security-critical config, which is why it sits here with `CMCP_POLICY_HASH` rather than in the config file.
-
-`CMCP_POLICY_SUCCESSOR_SIGNING_KEY` is an optional second Ed25519 public key, same format, that must differ from `CMCP_POLICY_SIGNING_KEY` and is refused without it (`POLICY_SIGNING_KEY_INVALID`). It signs no bundle while the current key is trusted. Its use is to revoke the current key on a running gateway: put a statement signed by the successor's private key in `signing-key-revocations.json` in the bundle directory, and on the next reload the current key is revoked and the successor becomes the key bundles must be signed by. Keep the successor's private key apart from the current one, since a statement signed by a stolen current key can only hand control to the successor. Without a successor pinned, the current key can still revoke itself, which leaves no trusted key and refuses every tool call until a restart with a new key. After a revocation, set `CMCP_POLICY_SIGNING_KEY` to the successor before the next restart; revocation state is kept in memory, and a restart rebuilds it from these variables plus whatever statement file is on disk. The statement format is in [Policy Hot-Reload](spec/policy-hot-reload.md#revocation-without-a-restart).
-
 Environment variables control secrets and mode flags that must not appear in config files. They are read once at process startup; they cannot be changed at runtime.
+
+Two of them decide who may approve a new policy while the gateway is running. `CMCP_POLICY_SIGNING_KEY` is the public key whose signature a new policy bundle needs, and `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` is a backup key that can take over if the first one is compromised.
+
+??? info "Technical detail: policy signing keys"
+
+    `CMCP_POLICY_SIGNING_KEY` is the raw Ed25519 **public** key (base64url or hex, 32 bytes) permitted to sign policy bundles. Pinning it is what allows `policy_reload_interval_seconds > 0`: a bundle is installed at runtime only when its `manifest.signature` verifies under this key and its `manifest.version` increased. It is public, yet security-critical, which is why it sits here with `CMCP_POLICY_HASH` rather than in the config file.
+
+    `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` is an optional second Ed25519 public key, same format, that must differ from `CMCP_POLICY_SIGNING_KEY` and is refused without it (`POLICY_SIGNING_KEY_INVALID`). It signs no bundle while the current key is trusted. Its use is to revoke the current key on a running gateway: put a statement signed by the successor's private key in `signing-key-revocations.json` in the bundle directory, and on the next reload the current key is revoked and the successor becomes the key bundles must be signed by. Keep the successor's private key apart from the current one, since a statement signed by a stolen current key can only hand control to the successor. Without a successor pinned, the current key can still revoke itself, which leaves no trusted key and refuses every tool call until a restart with a new key. After a revocation, set `CMCP_POLICY_SIGNING_KEY` to the successor before the next restart; revocation state is kept in memory, and a restart rebuilds it from these variables plus whatever statement file is on disk. The statement format is in [Policy Hot-Reload](spec/policy-hot-reload.md#revocation-without-a-restart).
 
 | Variable | Description | Overrides |
 |----------|-------------|-----------|
@@ -151,6 +161,8 @@ and a gateway restart. Hot-reload configuration is rejected with
 
 ## Enforcement modes
 
+The enforcement mode decides what happens when your policy says no to a tool call: block it, or let it through and record that it would have been blocked. Start with `advisory` while you tune a new policy, then switch to `enforcing`.
+
 | Mode | Behavior | Use case |
 |------|----------|----------|
 | `enforcing` | Policy denies block the tool call. The runtime returns HTTP 403 and a structured error to the agent. The call is not forwarded to the upstream server. | Production. Default for new deployments. |
@@ -159,7 +171,9 @@ and a gateway restart. Hot-reload configuration is rejected with
 
 ### Silent-mode audit contract
 
-`enforcing` is the default and must be configured explicitly to use any other mode. In `silent` mode, `PolicyEvaluator` suppresses application-level log lines for denied tool calls but still returns `would_have_denied=True` in the `PolicyDecision`. The proxy writes an `advisory_deny` entry into the hash-chained audit log for every call that would have been denied. The audit chain records evidence even in silent mode. Only operational logs are quiet; the tamper-evident record remains complete and available for post-hoc review.
+`enforcing` is the default and must be configured explicitly to use any other mode. In short, silent mode turns off the gateway's ordinary log messages about denied calls but never removes them from the tamper-evident audit log.
+
+In `silent` mode, `PolicyEvaluator` suppresses application-level log lines for denied tool calls but still returns `would_have_denied=True` in the `PolicyDecision`. The proxy writes an `advisory_deny` entry into the hash-chained audit log for every call that would have been denied. The audit chain records evidence even in silent mode. Only operational logs are quiet; the tamper-evident record remains complete and available for post-hoc review.
 
 ## Minimal working config
 
@@ -183,14 +197,17 @@ catalog_path: ./catalog.json
 
 ## Production hardening checklist
 
-An optional `sink_policy` sets hard per-tool and caller-response sensitivity
-ceilings, including when Cedar uses advisory mode. It also suppresses captured
-stdio stderr content. See [sink sensitivity ceilings](spec/sink-policy.md) for
+Do these before you rely on the gateway for real traffic. Each item closes a gap that the
+developer defaults leave open.
+
+An optional `sink_policy` sets a hard upper limit on how sensitive the data sent to each
+tool, or returned to the caller, may be, and it applies even when Cedar runs in advisory
+mode. It also keeps error output captured from local (stdio) tool servers out of the logs. See [sink sensitivity ceilings](spec/sink-policy.md) for
 configuration, classification assumptions, and the remaining audit/log limits.
 
 - Set `attestation.enforcement_mode` to `enforcing`. Advisory mode provides no blocking protection against policy violations.
 - Set `CMCP_CATALOG_HASH` to the SHA-256 of the approved `catalog.json`. The gateway fails closed at startup if this is unset in non-dev mode, but setting it explicitly pins the approved catalog hash and prevents silent substitution.
 - Configure `agent_manifest.path`, `agent_manifest.trust_anchor_path`, and `agent_manifest.authenticated_subject` for agents with signed manifests. The runtime will refuse to start if the signed manifest does not bind the authenticated agent subject to the loaded policy bundle and catalog hashes.
 - Set `attestation.expected_measurement` to the expected TEE measurement for your deployment. Without this, a different binary could be deployed and would still produce valid attestation reports.
-- Use a real TEE provider (`tpm`, `sev-snp`, `tdx`, or `opaque`), not `software-only`. Software-only mode does not provide a hardware root of trust and leaves threat classes T1 through T4 open.
+- Use a real TEE provider (`tpm`, `sev-snp`, `tdx`, or `opaque`), not `software-only`. Software-only mode has no hardware root of trust (nothing in the chip vouches for the software), and it leaves threat classes T1 through T4 in the [specification's threat model](SPEC.md#formal-threat-classes) open.
 - Rotate the TEE signing key by performing a full enclave restart on a regular schedule. The signing key is hardware-sealed per enclave instance; rotation requires restart.
