@@ -26,7 +26,6 @@ Phase 1 is the gateway on the agent's side; Phase 2 adds protection on the tool 
 | docs/spec/error-codes.md | Central error code registry for all runtime and verification errors | 1+2 | Draft v0.1 | - |
 | docs/spec/threat-model.md | Assets, adversaries, STRIDE analysis per component | 1 | Draft v0.1 | #18, #24 |
 | docs/spec/verification-library.md | cmcp-verify Python library interface and per-provider verification steps | 1 | Draft v0.1 | #25 |
-| docs/spec/mcp-spec-strategy.md | MCP spec monitoring and attestation extension contribution window | 1+2 | Draft v0.1 | #30 |
 | docs/spec/proxy-security.md | Phase 2 proxy parser fuzzing DoD | 2 | Draft v0.1 | #34 |
 | docs/spec/phase2-server.md | Provider-side attestation, 5 unique properties, streaming proxy, multi-tenant | 2 | Draft v0.1 | #17, #28, #29, #32, #42 |
 | docs/testing/benchmarks.md | Latency targets and benchmark methodology | 1 | Draft v0.1 | #27 |
