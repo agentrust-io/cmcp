@@ -1,6 +1,6 @@
 # Kill switch
 
-Stop an agent identity when its deny rate crosses a threshold or when an operator says so, and produce signed evidence of the stop that a verifier can check without trusting the operator.
+This page is for operators who need a way to stop a misbehaving AI agent. The kill switch blocks an agent automatically when too many of its tool calls are being refused, or by hand when an operator decides to. Each stop leaves signed evidence that someone else can check later without having to take the operator's word for it.
 
 ## What you'll learn
 
@@ -16,21 +16,21 @@ Stop an agent identity when its deny rate crosses a threshold or when an operato
 pip install cmcp-runtime
 ```
 
-An [Agent Manifest](../spec/component-model.md) must be bound to the gateway so the runtime has a per-agent SPIFFE URI to block. With `kill_switch.enabled: true` and no manifest configured, the gateway refuses to start (`KILL_SWITCH_REQUIRES_IDENTITY`): the switch would otherwise look armed while having nothing to stop.
+The gateway needs to know which agent it is serving, so it has something to block. That comes from an [Agent Manifest](../spec/component-model.md), a signed description of the agent that gives it an identity (a SPIFFE URI, a standard ID format for software). With `kill_switch.enabled: true` and no manifest configured, the gateway refuses to start (`KILL_SWITCH_REQUIRES_IDENTITY`), because the switch would look armed while having nothing to stop.
 
 ---
 
 ## Background
 
-In a production deployment an agent can go rogue: a bug, a prompt injection, or a misconfiguration causes it to request tool calls that policy forbids. Without automated remediation, the agent keeps running: accumulating denies in the audit chain but never stopping.
+An agent can start asking for things it should not: because of a bug, a bad setting, or a prompt injection (hidden instructions planted in content the agent reads). Your rules refuse each call, but without something more the agent keeps running and the refusals just pile up in the log.
 
-The kill switch closes this gap. cMCP tracks policy decisions per agent identity in a rolling time window, and evaluates it as each call completes. When the deny rate crosses a configurable threshold with enough samples, the runtime stops the session at the call that crossed it:
+The kill switch handles this. cMCP keeps count of allowed and refused calls for each agent over the last few minutes, and checks the count after every call. Once enough calls have been made and the share refused passes your threshold, it stops the agent at the call that crossed the line:
 
 1. Closes the session at once, without waiting for the client, and signs its TRACE claim with `gateway.kill_switch_triggered: true` and `gateway.kill_switch.trigger: "deny_rate"`
 2. Refuses every later call, and every new session, from that agent identity with `KILL_SWITCH_TRIPPED (403)`, each refusal carrying a signed receipt
 3. Appends a `break_glass_used` audit entry recording the trip and the call that caused it (`tripping_call_id`)
 
-On a hardware attestation provider (SEV-SNP, TDX, Azure CVM, TPM) the claim's signing key is bound into the attestation report, so a verifier can tie the claim, and every receipt signed by the same key, to the attested gateway without trusting the operator. In Level 0 (`CMCP_DEV_MODE`) the same claim is signed by a software key and shows only that the gateway process signed it.
+When cMCP runs on protected hardware (SEV-SNP, TDX, Azure CVM, TPM), the key that signs the claim is named in the hardware's own signed report, so a checker can tie the claim, and every receipt signed by the same key, to the measured gateway without trusting the operator. In Level 0 (`CMCP_DEV_MODE`, software only) the same claim is signed by a software key and shows only that the gateway process signed it.
 
 ---
 
@@ -46,13 +46,13 @@ kill_switch:
   min_calls: 10            # require at least 10 calls before evaluating
 ```
 
-All fields have defaults: setting `enabled: false` (the default) disables evaluation without removing the block.
+Every field has a default. `enabled: false` (the default) turns the switch off without removing the block.
 
 | Field | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Master switch. Set to `true` to activate. |
 | `window_seconds` | `300` | Rolling window length in seconds. |
-| `deny_rate_threshold` | `0.9` | Fraction of calls that must be denied to trip (0–1]. |
+| `deny_rate_threshold` | `0.9` | Fraction of calls that must be denied to trip; above 0 and at most 1. |
 | `min_calls` | `10` | Minimum call count in the window before evaluation starts. |
 
 With `deny_rate_threshold: 0.9` and `min_calls: 10`, an agent must have at least 10 calls in the last 5 minutes with at least 90% of them denied before the kill switch fires.
@@ -130,7 +130,7 @@ if result.status == "verified":
         print(f"Stopped by the kill switch, trigger: {ks['trigger']}")
 ```
 
-A verifier running offline, with no connection to the gateway, can confirm that:
+Someone checking the claim offline, with no connection to the gateway, can confirm that:
 
 - The kill switch was armed, and with which settings: the `gateway.kill_switch` block (`window_seconds`, `deny_rate_threshold`, `min_calls`) is present only when the switch is enabled, so its absence means it was not armed
 - It stopped this session (`kill_switch_triggered: true`) and why (`kill_switch.trigger`: `deny_rate` or `operator`)
@@ -140,7 +140,7 @@ A verifier running offline, with no connection to the gateway, can confirm that:
 
 ### Check a refusal
 
-Every call refused by a tripped gateway returns a receipt in `error.data.receipt`, signed with the key that signs the gateway's claims and naming the closed session's claim by digest. A verifier can probe a tripped gateway at any time and check the answer:
+Every call refused by a tripped gateway comes back with a signed receipt in `error.data.receipt`. It is signed with the same key as the gateway's claims and names the closed session's claim by its fingerprint (digest). Anyone can send a call to a tripped gateway at any time and check the answer:
 
 ```python
 from cmcp_verify import verify_kill_switch_refusal
@@ -166,7 +166,7 @@ The rolling window of recent decisions is not stored. After a restart it starts 
 
 ## Unblock an agent identity
 
-Only an operator can lift a block. `POST /kill-switch/unblock` is an operator route: it accepts only `CMCP_OPERATOR_TOKEN` when one is configured.
+Only an operator can lift a block. `POST /kill-switch/unblock` is an operator route: when `CMCP_OPERATOR_TOKEN` is configured, it accepts only that token.
 
 ```bash
 curl -X POST https://localhost:8443/kill-switch/unblock \
@@ -197,7 +197,7 @@ The identity is blocked in the audit database, a `break_glass_used` entry with `
 
 ## What counts as a deny
 
-Both `deny` and `advisory_deny` policy decisions count toward the deny rate. A `fault` (tool error) does not count: it indicates a tool-side failure, not a policy enforcement event.
+Both `deny` and `advisory_deny` decisions count toward the refusal rate. A `fault` (the tool itself failed) does not count, because it says nothing about whether the agent broke a rule.
 
 | Decision | Counted as deny? |
 |---|---|
@@ -221,4 +221,4 @@ They do not show what the agent did outside the gateway. A tool the agent can re
 
 You configured the rolling-window kill switch, ran a session that tripped the threshold, and verified that the TRACE claim carries `gateway.kill_switch_triggered: true` and the `kill_switch` block. Later calls and sessions from the stopped identity are refused with `KILL_SWITCH_TRIPPED (403)`, and each refusal carries a receipt that `verify_kill_switch_refusal` checks against the claim.
 
-Related tutorials: [TEE attestation](./tee-attestation.md): hardware-backing the TRACE claim that carries `kill_switch_triggered`. [Verify a TRACE claim](./verifying-a-trace-claim.md): checking `kill_switch_triggered` as part of offline verification.
+Related tutorials: [TEE attestation](./tee-attestation.md) covers backing the TRACE claim that carries `kill_switch_triggered` with hardware, and [Verify a TRACE claim](./verifying-a-trace-claim.md) covers checking `kill_switch_triggered` as part of offline verification.

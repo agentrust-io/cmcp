@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-08-27
 
+This record explains why the cMCP runtime no longer depends on the Agent Governance Toolkit (AGT), an open-source toolkit for governing agents, while AGT is still used in the build and release checks. The decision is accepted; the page keeps the reasoning behind it.
+
 ## Context
 
 cMCP imported AGT v4 runtime classes for call gating, response inspection,

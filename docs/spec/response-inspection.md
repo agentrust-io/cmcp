@@ -2,6 +2,8 @@
 
 Status: Draft v0.1 | Closes #37 | Related: [session-policy.md](session-policy.md) (state handoff), [call-graph.md](call-graph.md) (tagging)
 
+After a tool answers, cMCP checks the answer before the agent sees it, for example for sensitive data or for text that tries to give the agent new instructions. This page defines those checks and how their results limit later calls in the same session. Read it if you configure inspection or need to know what it can catch.
+
 ## Overview
 
 Response inspection runs **after** the MCP tool call returns, before the runtime passes the response payload to the agent. This is a deliberate architectural choice: Cedar pre-call policy evaluates context that is known before the call (principal identity, tool catalog entry, session state, request arguments). It cannot inspect a response that does not yet exist. Post-call inspection therefore runs in runtime code, not in Cedar, and produces two outputs: (1) an allow/deny decision that gates whether the response reaches the agent, and (2) updated session state that gates future calls in the same session.

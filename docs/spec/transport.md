@@ -12,6 +12,8 @@ Stability: Unstable , expect breaking changes before v1.0
 
 Covers: Streamable HTTP scope, stdio gap analysis, SPIFFE-to-TEE attestation binding.
 
+Transport means how messages travel between cMCP and a tool server. This page lists the ways cMCP supports (web requests over HTTP, and local programs over stdio), the ones it rejects, and how much an agent's setup has to change to use the gateway.
+
 ## Current network transport
 
 cMCP speaks the stateless MCP 2026-07-28 Streamable HTTP contract to network

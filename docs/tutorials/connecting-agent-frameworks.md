@@ -1,10 +1,10 @@
 # Connecting Agent Frameworks
 
-Already using a client configured with an `mcpServers` block? Start with
-[Try cMCP from an existing MCP client](existing-mcp-clients.md); no agent code
-is required.
+This page is for developers who write their own agent code. It shows how to point an agent built with LangChain, LlamaIndex or a plain HTTP client at the cMCP gateway, so every tool call the agent makes is checked against your rules and logged. You get working examples for each and a way to read what the gateway reports back on every call.
 
-Wire a real agent: LangChain, LlamaIndex, or a plain HTTP client: to the cMCP gateway so every tool call passes through policy enforcement.
+Already using an app configured with an `mcpServers` block? Start with
+[Try cMCP from an existing MCP client](existing-mcp-clients.md) instead; no agent code
+is required.
 
 ## What you'll learn
 
@@ -36,7 +36,7 @@ curl http://localhost:8443/health
 
 ## How the gateway looks to an agent
 
-The gateway runs at `listen_addr` (default `127.0.0.1:8443` in dev mode, otherwise `0.0.0.0:8443`) and exposes a standard MCP over HTTP/SSE transport. Two endpoints matter for agent frameworks:
+To your agent, the gateway looks like any other MCP server reached over HTTP. It listens at `listen_addr` (by default `127.0.0.1:8443` in dev mode, otherwise `0.0.0.0:8443`). These endpoints matter for agent code:
 
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
@@ -44,7 +44,7 @@ The gateway runs at `listen_addr` (default `127.0.0.1:8443` in dev mode, otherwi
 | `/tools/list` | GET | Bearer token | Convenience read of the attested catalog |
 | `/health` | GET | None | Liveness probe |
 
-Every request to `/mcp` must include `Authorization: Bearer <token>` where the token matches `CMCP_BEARER_TOKEN`. Requests without a valid token receive HTTP 401.
+Every request to `/mcp` must carry an access token in the header `Authorization: Bearer <token>`, and the token must match `CMCP_BEARER_TOKEN`. Requests without a valid token get HTTP 401.
 
 ---
 
@@ -66,13 +66,13 @@ curl -s -X POST http://localhost:8443/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-The response lists only tools in the attested catalog: any tool not in `catalog.json` cannot be called regardless of what the agent requests.
+The response lists only the tools in the catalog (`catalog.json`, the operator's list of approved tools). A tool that is not in the catalog cannot be called, whatever the agent asks for.
 
 ---
 
 ## The `_cmcp` response block
 
-Every allowed tool call returns a standard MCP `result` with a `_cmcp` metadata extension:
+Every allowed tool call returns a normal MCP `result`, plus an extra `_cmcp` block in which the gateway reports what it did:
 
 ```json
 {
@@ -101,11 +101,11 @@ Every allowed tool call returns a standard MCP `result` with a `_cmcp` metadata 
 | `session_id` | The active session this call belongs to |
 | `workflow_id` | Echoed from `_cmcp.workflow_id` in the request, if provided |
 
-When `would_have_denied` is `true`, an `advice` field may also be present with annotations from the matching policy rule.
+When `would_have_denied` is `true`, there may also be an `advice` field holding notes from the rule that matched.
 
 ### Pass `workflow_id` from your agent
 
-Set `_cmcp.workflow_id` in the request `params` to associate tool calls with a named agent run:
+Set `_cmcp.workflow_id` in the request `params` to label tool calls as part of one named agent run:
 
 ```json
 {
@@ -124,7 +124,7 @@ Set `_cmcp.workflow_id` in the request `params` to associate tool calls with a n
 
 ### Declare a per call data class
 
-Set `_cmcp.data_class` in the request `params` when a specific call touches data more sensitive than the tool's own catalogued `sensitivity_level`, for example one model call tool that sometimes carries `pii` and sometimes `confidential` data (#479):
+Each tool in the catalog has a `sensitivity_level`, the kind of data it normally handles. When one particular call handles more sensitive data than that, say so by setting `_cmcp.data_class` in the request `params`. An example is a single tool that sometimes carries personal data (`pii`) and sometimes `confidential` data ([#479](https://github.com/agentrust-io/cmcp/issues/479)):
 
 ```json
 {
@@ -139,7 +139,10 @@ Set `_cmcp.data_class` in the request `params` when a specific call touches data
 }
 ```
 
-The declared value can only raise the effective class for this call above the tool's catalogued floor, never lower it, and it composes with any labels a deployment has added under `sensitivity.vocabulary` in config. An unrecognised value is silently ignored rather than rejected, the same treatment an unrecognised built in content pattern tag gets: it simply cannot rank above the catalogued floor. The effective class, not the raw declaration, is what appears in the signed transcript for that call, and it also raises the session's own `max_sensitivity` for the rest of the session.
+The value you declare can only raise the sensitivity for this call, never lower it below the tool's catalogue level. It also raises the session's `max_sensitivity` for the rest of the session.
+
+??? info "Technical detail: how the declared class is combined"
+    The declared value composes with any labels a deployment has added under `sensitivity.vocabulary` in config. An unrecognised value is silently ignored rather than rejected, the same treatment an unrecognised built in content pattern tag gets: it simply cannot rank above the catalogued floor. The effective class, not the raw declaration, is what appears in the signed transcript for that call.
 
 ---
 
@@ -192,7 +195,7 @@ def call_tool(tool_name: str, arguments: dict, workflow_id: str | None = None) -
 
 ## LangChain
 
-Use LangChain's `MCP` integration if available, or wrap the gateway with a custom tool:
+Use LangChain's MCP support if your version has it, or wrap the gateway in a custom tool:
 
 ```python
 from langchain.tools import BaseTool
@@ -302,7 +305,7 @@ crm_tool = FunctionTool.from_defaults(
 
 ## Handle denied calls
 
-When a call is denied by policy, the gateway returns HTTP 403:
+When your rules refuse a call, the gateway returns HTTP 403:
 
 ```json
 {
@@ -319,7 +322,7 @@ When a call is denied by policy, the gateway returns HTTP 403:
 }
 ```
 
-`error_code` is either `POLICY_DENY` (a Cedar forbid rule matched) or `TOOL_NOT_IN_CATALOG` (the tool name is not in the approved catalog). The `advice` field, when present, carries annotations from the policy rule: these come from the hash-pinned policy bundle, not from caller input, so they are safe to log and act on.
+`error_code` is either `POLICY_DENY` (a `forbid` rule matched) or `TOOL_NOT_IN_CATALOG` (the tool is not in the approved catalog). The `advice` field, when present, holds notes from the rule. They come from your own policy files, whose fingerprint is fixed when the gateway starts, and never from the caller, so they are safe to log and act on.
 
 ---
 
@@ -331,6 +334,6 @@ When a call is denied by policy, the gateway returns HTTP 403:
 | LangChain | Custom `BaseTool` wrapping the HTTP call |
 | LlamaIndex | `FunctionTool.from_defaults` wrapping a closure |
 
-Every tool call that passes through the gateway produces an `audit_entry_hash`. After the session ends, retrieve the full audit bundle at `GET /audit/export?session_id=<id>` and verify it with `GET /sessions/<id>/trace-claim`.
+Every tool call through the gateway gets an `audit_entry_hash`, its fingerprint in the log. After the session ends, download the full log from `GET /audit/export?session_id=<id>` and check it against the signed session record from `GET /sessions/<id>/trace-claim`.
 
-Related tutorials: [Cedar policy walkthrough](./cedar-policy-walkthrough.md): writing the policies that govern these calls. [Tool catalog authoring](./tool-catalog-authoring.md): what goes in `catalog.json` and how definition hashes are computed.
+Related tutorials: the [Cedar policy walkthrough](./cedar-policy-walkthrough.md) covers writing the rules that govern these calls, and [Tool catalog authoring](./tool-catalog-authoring.md) covers what goes in `catalog.json` and how each tool's fingerprint is computed.

@@ -10,6 +10,8 @@ Last updated: 2026-06-04
 Stability: Unstable , expect breaking changes before v1.0
 ---
 
+Phase 1 places the checking gateway on the agent's side. Phase 2 adds protection on the tool provider's side: the provider runs its MCP server inside protected hardware, so a client can check the server itself as well as the gateway. This page is the draft design for that, written for tool providers and reviewers.
+
 ## Section 1 : Phase 2 Architecture Overview
 
 Phase 2 targets a different deployer than Phase 1. The Phase 1 deployer is an agent developer who runs a runtime in front of their own agents. The Phase 2 deployer is a SaaS vendor or AI platform provider who exposes MCP endpoints to enterprise customers. Those enterprise customers: Phase 1 deployers: eventually ask: "prove your server code has not changed since I approved it." Phase 2 answers that question.

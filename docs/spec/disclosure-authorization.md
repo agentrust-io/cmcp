@@ -1,5 +1,7 @@
 # Exact-output disclosure authorization
 
+Sometimes a result has to go to a recipient outside the approved confidential boundary. This page defines an optional, operator-controlled way to approve the exact output being released, so the release rests on a real authorization instead of a model saying the output is safe to share. It is for operators who need a controlled release path.
+
 This reference contract addresses #660. A recipient outside the approved
 confidential boundary requires independently authorized disclosure. A model's
 claim that a summary is public is not release authority. The existing gateway

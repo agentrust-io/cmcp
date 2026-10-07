@@ -10,13 +10,13 @@ description: cMCP checks routed MCP tool calls against Cedar policy and signs se
 
 # Check routed MCP tool calls and sign the evidence
 
-cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy, blocks denied calls in enforcing mode, and signs a TRACE session record a verifier can check offline.
+When an AI agent uses a tool (looks up a customer, sends an email, queries a database), it sends a request called a tool call, usually over MCP, the Model Context Protocol. cMCP is a gateway that sits in the path of those calls: it checks each one against rules you write in the Cedar policy language, blocks the ones the rules forbid, and at the end of the session signs a receipt (a TRACE record) that anyone can check later without network access. New to these terms? See [the terms, in plain English](https://agentrust-io.com/#plain-terms).
 
 [Block a call in 10 minutes](https://agentrust-io.com/quickstart/){ .md-button .md-button--primary }
 [What this proves, and what it does not](limitations.md){ .md-button }
 
 !!! tip "TL;DR"
-    Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and see `403 POLICY_DENY` locally, reported as `partially_verified` because software mode carries no hardware attestation. The SEV-SNP and Intel TDX verifiers are validated on real Azure and GCP evidence, and calls that bypass the gateway, along with NVIDIA GPU confidential computing, are outside what it proves today.
+    Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and watch it block a call with `403 POLICY_DENY` on your own computer; the receipt reads `partially_verified` because a laptop gives no hardware proof of where the gateway ran. On sealed-off cloud hardware (AMD SEV-SNP on Azure, Intel TDX on GCP) the hardware checks pass on real evidence, while calls that go around the gateway, and NVIDIA GPU confidential computing, are outside what it proves today.
 
 <div class="grid cards" markdown>
 
@@ -24,7 +24,7 @@ cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy
 
     ---
 
-    A blocked request and a signed session record on your laptop, with a mock tool and software attestation.
+    See a request blocked and get a signed receipt on your laptop, using a stand-in tool and no special hardware.
 
     [Guided first demo](https://agentrust-io.com/quickstart/)
 
@@ -32,7 +32,7 @@ cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy
 
     ---
 
-    Software mode has no hardware isolation, and the upstream tool server stays outside the TEE.
+    On a laptop nothing shields the gateway from the computer it runs on, and the tool server it forwards to always sits outside the sealed-off hardware (the TEE, trusted execution environment).
 
     [Limitations](limitations.md)
 
@@ -40,7 +40,7 @@ cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy
 
     ---
 
-    SEV-SNP on an Azure confidential VM and Intel TDX on GCP C3, validated 2026-07-27. NVIDIA GPU CC is not implemented.
+    Real hardware reports checked on AMD SEV-SNP (an Azure confidential VM) and Intel TDX (GCP C3), validated 2026-07-27. NVIDIA GPU confidential computing is not implemented.
 
     [Hardware validation](testing/hardware-validation.md)
 
@@ -48,7 +48,7 @@ cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy
 
     ---
 
-    Before it: [Agent Manifest](https://manifest.agentrust-io.com) declares the agent. Alongside: [cA2A](https://ca2a.agentrust-io.com) covers delegation. After it: records in [TRACE](https://trace.agentrust-io.com). Check a real TDX quote at [agentrust-io.com/verify](https://agentrust-io.com/verify/).
+    Before it: [Agent Manifest](https://manifest.agentrust-io.com) describes the agent. Alongside: [cA2A](https://ca2a.agentrust-io.com) covers one agent handing work to another. After it: receipts in [TRACE](https://trace.agentrust-io.com). Check a real Intel TDX hardware report at [agentrust-io.com/verify](https://agentrust-io.com/verify/).
 
     [See the chain](https://agentrust-io.com/#chain)
 
@@ -58,23 +58,23 @@ cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy
 
 | You want to… | Start here | Result |
 |---|---|---|
-| Understand a policy denial | [Guided first demo](https://agentrust-io.com/quickstart/) | A blocked request and a signed session record |
-| Exercise a real local upstream | [Allow/deny quickstart](quickstart.md) | One denied tool call and one forwarded call |
+| See a rule block a call | [Guided first demo](https://agentrust-io.com/quickstart/) | A blocked request and a signed receipt |
+| Try it with a real tool server on your machine | [Allow/deny quickstart](quickstart.md) | One denied tool call and one forwarded call |
 | Connect an existing agent | [MCP client integration](tutorials/existing-mcp-clients.md) | Your client sends requests through the gateway |
-| Evaluate the trust boundary | [How it works](concepts.md) | Distinguish policy enforcement, signing, and hardware provenance |
-| Deploy with hardware evidence | [TEE attestation](tutorials/tee-attestation.md) | Provider prerequisites and verification requirements |
-| Implement against the protocol | [Specification index](spec-index.md) | The relevant component, transport, and policy contracts |
+| Understand what it protects | [How it works](concepts.md) | Tell apart rule checking, signing, and hardware proof |
+| Deploy with hardware evidence | [TEE attestation](tutorials/tee-attestation.md) | What each cloud needs and what a checker must verify |
+| Build your own implementation | [Specification index](spec-index.md) | The exact rules for each part |
 
 ## What changes at the tool boundary
 
-Authentication identifies a caller; your Cedar policy decides what a routed call may do. The gateway records the decision and binds the session's evidence into a signed claim when the session closes.
+Logging in tells the gateway who is calling. Your Cedar rules decide what that caller's tool call is allowed to do. The gateway writes down every decision, and when the session ends it signs a record of all of them.
 
-A hardware deployment can protect the runtime from its host, subject to the provider's threat model and verification support. The agent, model, and upstream tool server remain separate components. Calls that bypass the gateway are outside its enforcement. Host confidentiality also depends on the configured egress policy.
+On confidential-computing hardware (machines that keep running code sealed off from the cloud operator), the gateway can also be protected from the computer it runs on, within what each cloud provider supports and lets you verify. The agent, the AI model and the tool servers are still separate programs outside that protection. Calls that do not go through the gateway are not checked. Whether data can leak to the host also depends on the outbound-traffic (egress) rules you configure.
 
-Read the [architecture](concepts.md), [enforcement modes](configuration.md), and [limitations](limitations.md) before treating a successful software demo as evidence of hardware isolation.
+A working laptop demo is not proof of hardware isolation. Read [how it works](concepts.md), [enforcement modes](configuration.md) and [limitations](limitations.md) first.
 
 ## Get involved
 
-For implementation bugs or specification feedback, include the failing command, runtime version, and expected behavior in an [issue](https://github.com/agentrust-io/cmcp/issues). See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
+Found a bug or have feedback on the specification? Open an [issue](https://github.com/agentrust-io/cmcp/issues) with the command that failed, the runtime version, and what you expected to happen. See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
 
 **Status:** cmcp-runtime 0.7.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · Sponsored by OPAQUE, which funds the engineering, infrastructure and confidential-computing work behind these projects.

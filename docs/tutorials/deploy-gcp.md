@@ -1,6 +1,6 @@
 # Deploy on GCP Confidential VMs
 
-Run cMCP on Google Cloud infrastructure with Intel TDX so TRACE claims carry hardware-backed measurements.
+This page is for operators who want to run cMCP on Google Cloud with hardware protection switched on. Google Cloud Confidential VMs run on Intel TDX or AMD SEV-SNP processors, which keep the VM's memory sealed off from the cloud host and can produce a signed hardware report (an attestation) of the software that started. Following these steps, each signed session record cMCP produces (a TRACE claim) carries that hardware report instead of a software-only placeholder.
 
 ## What you'll learn
 
@@ -26,7 +26,7 @@ gcloud services enable compute.googleapis.com \
 
 ## Choose your hardware
 
-GCP Confidential VMs offer two TEE types:
+GCP Confidential VMs offer two kinds of protected hardware (TEE, trusted execution environment), plus an older option:
 
 | TEE type | GCP machine type | `provider` value | Notes |
 |---|---|---|---|
@@ -34,9 +34,9 @@ GCP Confidential VMs offer two TEE types:
 | AMD SEV-SNP | N2D (`n2d-standard-*`) | `sev-snp` | Wider zone availability |
 | AMD SEV (legacy) | N2D with `--confidential-compute-type=SEV` | `tpm` (vTPM) | Use SEV-SNP or TDX for new deployments |
 
-C3 with TDX is the recommended path for highest assurance on GCP. N2D with SEV-SNP is more widely available by zone.
+C3 with TDX gives the strongest guarantee on GCP. N2D with SEV-SNP is available in more zones.
 
-Check which zones support C3 + TDX in your project:
+Check which zones offer C3 with TDX in your project:
 
 ```bash
 gcloud compute zones list --filter="name~us-central1" --format="table(name,status)"
@@ -124,7 +124,7 @@ cmcp --version
 
 ## Configure for TDX
 
-Confirm the hardware is accessible. On a GCP TDX VM the TDX RTMR (Runtime Measurement Register) device is available:
+Confirm the gateway can reach the hardware. On a GCP TDX VM the TDX guest device, which also exposes the RTMR (Runtime Measurement Register) values, is present:
 
 ```bash
 ls /dev/tdx_guest 2>/dev/null && echo "TDX present" || echo "TDX not found"
@@ -155,7 +155,7 @@ listen_addr: "0.0.0.0:8443"
 
 For SEV-SNP, change `provider: tdx` to `provider: sev-snp`.
 
-Add a minimal policy bundle:
+Add a minimal set of policy rules:
 
 ```bash
 cat > policies/manifest.json <<'EOF'
@@ -197,13 +197,13 @@ Expected startup log on a real TDX VM:
 cMCP Runtime starting: TEE: tdx, listen: 0.0.0.0:8443
 ```
 
-The TEE field reads `tdx`. If it reads `software-only`, the TDX device was not found: confirm the instance type and that `/dev/tdx_guest` exists.
+The TEE field should read `tdx`. If it reads `software-only`, the gateway could not find the TDX hardware: check the machine type and that `/dev/tdx_guest` exists.
 
 ---
 
 ## Verify hardware attestation
 
-From your local machine:
+From your own computer, fetch a TRACE claim from the gateway and check it:
 
 ```bash
 VM_IP=<external IP from above>
@@ -243,13 +243,13 @@ Measurement:     sha384:<non-zero hardware measurement>
 Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain', 'hardware_attestation']
 ```
 
-`hardware_attestation` in `verified_fields` confirms the measurement is hardware-backed.
+If `hardware_attestation` appears in `verified_fields`, the measurement (the fingerprint of the software that started) came from the hardware.
 
 ---
 
 ## Pin the expected measurement
 
-After confirming the measurement on a known-good deploy:
+Once you have seen the measurement on a deployment you trust, write it into the config:
 
 ```yaml
 attestation:
@@ -258,7 +258,7 @@ attestation:
   expected_measurement: "sha384:<measurement from claim>"
 ```
 
-Any change to the cMCP binary or startup config produces a different measurement. The gateway exits at startup if the measurement does not match, rather than producing claims with an unknown value.
+Any change to the cMCP software or its startup config produces a different measurement. If the measurement does not match, the gateway stops at startup instead of signing claims with a value you did not expect.
 
 ---
 

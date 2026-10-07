@@ -3,6 +3,8 @@
 **Status:** Decided and enforced
 **Decision:** A running cMCP process never reloads or mutates its approved catalog.
 
+In plain terms: once cMCP starts, its list of approved tools stays fixed until the next restart. This page explains why, and what an operator does to roll out a new list.
+
 The catalog binds tool names to upstream identities, TLS pins, measured stdio
 executables, and approved schemas. Changing it at runtime can redirect a
 permitted call to different code or a different network authority. That blast

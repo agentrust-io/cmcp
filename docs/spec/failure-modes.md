@@ -12,6 +12,8 @@ Stability: Unstable , expect breaking changes before v1.0
 
 Documents exact runtime behavior for every failure scenario.
 
+In short, cMCP fails closed: when something goes wrong, such as a missing hardware report or a rule set that does not match the approved one, it refuses the affected calls instead of carrying on unchecked. Read this if you operate the gateway or need to know what evidence a failed call leaves behind.
+
 Closes #22.
 
 ---

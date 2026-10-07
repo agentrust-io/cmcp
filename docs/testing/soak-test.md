@@ -1,16 +1,16 @@
 ﻿# cMCP Runtime - 72-Hour Soak Test Plan
 
-Closes #31.
+A soak test runs the gateway for a long stretch, here 72 hours, to find problems that only show up over time, such as slowly growing memory or connections that quietly drop. This page is the plan for that test: how to set it up, what to check, and what counts as a pass. It is for anyone running or reviewing a long-running deployment. (Plan written for issue #31.)
 
 ## Purpose
 
-Surface stability failures that only emerge under sustained load and time. Short integration tests and unit tests will not catch:
+Find stability failures that only appear after hours of use. Short integration tests and unit tests will not catch:
 
-- Attestation expiration mid-session
-- Audit chain memory growth
-- SSE connection drops through an HTTP proxy
+- Attestation expiration mid-session (attestation is the hardware's signed proof of what software is running, and it is only trusted for a set time)
+- Audit chain memory growth (the audit chain is the gateway's tamper-evident log of every call)
+- SSE connection drops through an HTTP proxy (SSE, server-sent events, is how streamed responses travel)
 - Cloud networking idle timeout behavior
-- Signing key consistency across the enclave lifetime
+- Signing key consistency across the enclave lifetime (the enclave is the hardware-isolated area the gateway runs in)
 
 ---
 
@@ -27,7 +27,7 @@ Surface stability failures that only emerge under sustained load and time. Short
 
 ### Reference MCP Server
 
-A controlled test server exposing 3 tools:
+A test MCP server (the tool server the gateway sits in front of) that offers 3 tools:
 
 | Tool       | Behavior                                                        |
 |------------|-----------------------------------------------------------------|
@@ -39,7 +39,7 @@ A controlled test server exposing 3 tools:
 
 ## Edge Cases
 
-Each edge case must be explicitly tested and logged. A soak run does not pass if any edge case is skipped.
+These are the five situations most likely to break over a long run. Each edge case must be explicitly tested and logged. A soak run does not pass if any edge case is skipped.
 
 ### 1. Attestation Expiration During Active Session
 
@@ -72,7 +72,7 @@ Each edge case must be explicitly tested and logged. A soak run does not pass if
 
 **Setup:** At 100 calls/hour over 72 hours, the audit chain accumulates approximately 4,800 entries. Measure enclave memory usage at T=0h, T=24h, T=48h, T=72h.
 
-**Success:** Memory growth is bounded and proportional (O(n) with n = audit entries), not super-linear.
+**Success:** Memory grows in step with the number of audit entries (O(n) with n = audit entries) and no faster.
 
 Absolute threshold: enclave memory at T=72h must be less than:
 
@@ -84,7 +84,7 @@ Absolute threshold: enclave memory at T=72h must be less than:
 
 ### 4. TEE Networking Idle Timeout
 
-**Setup:** During the 1-hour idle periods, confirm that MCP connections are properly handled. Cloud networking rules may close idle TCP connections after 10 minutes.
+**Setup:** During the 1-hour idle periods, confirm that MCP connections are handled correctly. Cloud networks may close a network connection that has carried no traffic for 10 minutes.
 
 **What to check:**
 - Does the runtime maintain idle upstream connections?
@@ -98,7 +98,7 @@ Absolute threshold: enclave memory at T=72h must be less than:
 
 **Setup:** Collect `tee_public_key` from one TRACE Claim at T=0h, T=24h, T=48h, and T=72h (four samples total, one per 24-hour window).
 
-**Expected:** All four values are identical. The ephemeral TEE signing key must not change during the enclave's lifetime.
+**Expected:** All four values are identical. The signing key is created fresh inside the TEE (trusted execution environment) when it starts, and it must not change during the enclave's lifetime.
 
 **Success:**
 - All 4 `tee_public_key` values are identical.

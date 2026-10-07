@@ -4,13 +4,13 @@ description: Run cMCP in dev mode with no hardware TEE, watch a Cedar policy blo
 
 # Quickstart - cMCP Runtime
 
-From zero to first TRACE Claim in under 30 minutes. Uses `CMCP_DEV_MODE=1` so no hardware TEE is required.
+This is the hands-on first run of cMCP, for developers who want to see it work on their own computer. In under 30 minutes you watch the gateway block one tool call, allow another, and hand you a signed receipt of the session (a TRACE Claim) that you then check. It uses `CMCP_DEV_MODE=1`, so you do not need a TEE (trusted execution environment, the sealed-off hardware cMCP can run on in production).
 
 ---
 
 ## What you'll build
 
-You'll run a cMCP Runtime that intercepts tool calls from a demo agent and enforces a Cedar policy bundle. You'll see the runtime do two things:
+You'll run the cMCP gateway, send it tool calls the way an agent would, and let a small set of rules written in Cedar (a policy language) decide each one. You'll see two outcomes:
 
 1. **Block** a call to a sensitive tool (`salesforce.contacts`). The gateway returns HTTP 403 and the call never reaches any upstream.
 2. **Allow** a call to a non-sensitive tool (`echo`) and forward it to a small mock upstream.
@@ -83,9 +83,9 @@ listen_addr: "127.0.0.1:8443"
 audit_db_path: ./audit.db
 ```
 
-- `provider: auto` detects a hardware TEE if present; falls back to software-only when `CMCP_DEV_MODE=1`
+- `provider: auto` uses protected hardware (a TEE) if the machine has one, and falls back to software-only when `CMCP_DEV_MODE=1`
 - `enforcement_mode: enforcing` means a policy deny returns HTTP 403 and the call is not forwarded. Use `advisory` instead if you want denies logged but not blocked while you tune a new policy.
-- `policy_bundle_path` is the directory containing `.cedar` policy files and `manifest.json`
+- `policy_bundle_path` is the folder holding your rules (`.cedar` files) and `manifest.json`, together called the policy bundle
 - `catalog_path` is the JSON file listing approved tools
 
 ---
@@ -136,9 +136,9 @@ Write `policies/schema.cedarschema` (one line):
 
 ## Catalog
 
-Write `catalog.json`. It lists two tools: `salesforce.contacts` (sensitive, the policy blocks it) and `echo` (non-sensitive, the policy allows it). Both point at the mock upstream you start below.
+Write `catalog.json`. The catalog is the list of tools the gateway is allowed to forward to, with an approved description of each. It lists two tools: `salesforce.contacts` (sensitive, the policy blocks it) and `echo` (non-sensitive, the policy allows it). Both point at the mock upstream you start below.
 
-The `definition_hash` is the SHA-256 of the canonical JSON of `approved_definition` (sorted keys, no whitespace, ASCII-safe). The values below are precomputed to match.
+Each entry carries a `definition_hash`, a fingerprint of the approved tool description, so the gateway can notice if a tool server later changes what it claims to do. Technically it is the SHA-256 of the canonical JSON of `approved_definition` (sorted keys, no whitespace, ASCII-safe). The values below are precomputed to match.
 
 ```json
 [
@@ -241,7 +241,7 @@ print(json.dumps(approved, indent=2))
 PY
 ```
 
-This validates the input files and creates `approved-hashes.json` from your local artifacts. Keep it unchanged while running the demo. In production, generate these values from reviewed build artifacts and deliver them through a verifier-controlled channel.
+This checks the input files and writes `approved-hashes.json`: fingerprints of the rules and tool list you just approved. You will compare the receipt against it at the end. Keep it unchanged while running the demo. In production, work these values out from reviewed files and give them to whoever checks receipts through a channel that person controls.
 
 ---
 
@@ -251,7 +251,7 @@ This validates the input files and creates `approved-hashes.json` from your loca
 CMCP_DEV_MODE=1 cmcp start --config cmcp-config.yaml
 ```
 
-In dev mode the runtime uses a software-only TEE provider (no hardware required). You will see a few informational warnings before it starts listening. These are expected in dev mode and do not mean anything is broken:
+In dev mode the runtime uses a software stand-in where the hardware check would go (a software-only TEE provider), so no special machine is needed. You will see a few informational warnings before it starts listening. These are expected in dev mode and do not mean anything is broken:
 
 ```
 No hardware TEE detected. Running in development mode: attestation is not hardware-backed. ...
@@ -261,7 +261,7 @@ cMCP Runtime starting: TEE: software-only, listen: 127.0.0.1:8443
 INFO:     Uvicorn running on http://127.0.0.1:8443 (Press CTRL+C to quit)
 ```
 
-Tokenless dev mode binds to loopback only. Reaching the gateway from a LAN, a container network, or the cloud requires setting `CMCP_BEARER_TOKEN`, so you never expose an unauthenticated gateway by accident.
+Without a token, dev mode only listens on your own machine (loopback). Reaching the gateway from a LAN, a container network, or the cloud requires setting `CMCP_BEARER_TOKEN`, so you never expose a gateway that anyone can call by accident.
 
 The gateway now holds this terminal open. Leave it running and open a **second terminal** for the next steps. In that second terminal, `cd` back into `cmcp-quickstart` (and re-activate your Python environment if you use one) so the commands run from the right place.
 
@@ -298,7 +298,7 @@ This is the point of the gateway: the sensitive call was stopped at the policy b
 
 ## Make an allowed call
 
-Now the `echo` tool, which the policy permits. For an allowed call the gateway forwards to the upstream, so start a small mock upstream first.
+Now the `echo` tool, which the policy permits. An allowed call is passed on to the tool server (the upstream), so start a small stand-in (mock) tool server first.
 
 If you cloned the repo, run the bundled one in Terminal 3, replacing `/path/to/cmcp` with your checkout path:
 
@@ -355,7 +355,7 @@ You get `HTTP/1.1 200 OK` and the mock's response. The policy permitted the call
 
 ## Get the TRACE Claim
 
-The TRACE Claim is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. The allowed call's response body carries that id in `result._cmcp.session_id`. Copy it from the output above, then close the session:
+The TRACE Claim is the signed receipt for the whole session. It is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. The allowed call's response body carries that id in `result._cmcp.session_id`. Copy it from the output above, then close the session:
 
 ```bash
 # 1. The internal id from the allowed call's result._cmcp.session_id
@@ -383,7 +383,7 @@ The `gateway.call_summary` in `claim.json` records both calls:
 
 ## Verify
 
-Verify the claim with the bundled `cmcp verify` command - no code required. It checks the Ed25519 signature, schema, attestation freshness, and audit-chain consistency without trusting the runtime operator:
+Check the receipt with the bundled `cmcp verify` command; no code required. It confirms the signature is valid, the receipt has the right format, its evidence is recent, and the call log has not been altered, all without having to trust whoever ran the gateway. (In technical terms: the Ed25519 signature, schema, attestation freshness, and audit-chain consistency.)
 
 ```bash
 cmcp verify claim.json
@@ -433,20 +433,24 @@ The `cmcp_verify` Python library is also available for programmatic checks (`fro
 
 ## What's in the TRACE Claim
 
-| Field | What it records |
-|---|---|
-| `trace.runtime.platform` | Which TEE hardware produced the attestation report (`tpm2`, `amd-sev-snp`, etc.) |
-| `trace.runtime.measurement` | PCR/measurement recorded by hardware at enclave boot - all zeros in dev mode |
-| `trace.policy.bundle_hash` | SHA-256 of the Cedar policy bundle loaded at startup - changing any policy file changes this hash |
-| `trace.policy.enforcement_mode` | Whether policy denies are hard (`enforcing`) or logged-only (`advisory`) |
-| `trace.data_class` | Highest sensitivity level touched in the session |
-| `trace.tool_transcript.hash` | SHA-256 of the audit chain tip - binds the call log to this Trust Record |
-| `trace.tool_transcript.call_count` | Number of tool calls in the session |
-| `trace.cnf.jwk` | Ed25519 public key used to sign this claim - bound to the TEE signing key |
-| `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip; verifying individual entries requires the exported audit bundle |
-| `gateway.call_summary` | Per-session statistics: total, allowed, denied, faulted calls and tools invoked |
-| `gateway.catalog.drift_detected` | `true` if any tool definition changed after catalog load - signals a rug-pull attempt |
-| `signature` | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`) |
+The receipt names the machine type, the rules that were loaded, how many calls were made and allowed, the key that signed it, and a fingerprint of the full call log.
+
+??? info "Technical detail: every field in the TRACE Claim"
+
+    | Field | What it records |
+    |---|---|
+    | `trace.runtime.platform` | Which TEE hardware produced the attestation report (`tpm2`, `amd-sev-snp`, etc.) |
+    | `trace.runtime.measurement` | PCR/measurement recorded by hardware at enclave boot - all zeros in dev mode |
+    | `trace.policy.bundle_hash` | SHA-256 of the Cedar policy bundle loaded at startup - changing any policy file changes this hash |
+    | `trace.policy.enforcement_mode` | Whether policy denies are hard (`enforcing`) or logged-only (`advisory`) |
+    | `trace.data_class` | Highest sensitivity level touched in the session |
+    | `trace.tool_transcript.hash` | SHA-256 of the audit chain tip - binds the call log to this Trust Record |
+    | `trace.tool_transcript.call_count` | Number of tool calls in the session |
+    | `trace.cnf.jwk` | Ed25519 public key used to sign this claim - bound to the TEE signing key |
+    | `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip; verifying individual entries requires the exported audit bundle |
+    | `gateway.call_summary` | Per-session statistics: total, allowed, denied, faulted calls and tools invoked |
+    | `gateway.catalog.drift_detected` | `true` if any tool definition changed after catalog load - signals a rug-pull attempt (a tool server quietly changing what a tool does after it was approved) |
+    | `signature` | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`) |
 
 ---
 

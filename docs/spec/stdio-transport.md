@@ -7,6 +7,8 @@ Supersedes: the original stdio exclusion in [transport.md](transport.md)
 Implementation: `src/cmcp_runtime/mcp/stdio.py` and `mcp/proxy.py`
 ---
 
+Some MCP tool servers are local programs that talk over their standard input and output (stdio) instead of over the network. This page explains how cMCP starts and supervises those programs itself, what it checks before starting one, and what isolation that does and does not give you.
+
 ## Current behavior
 
 The gateway starts a configured stdio server on first use within a session. A child is reused within that session by execution identity, and session close terminates it. An expected digest mismatch refuses the spawn; a missing digest requires explicit `allow_unmeasured_spawn`. In software-only mode this creates no enclave assurance.
@@ -16,7 +18,7 @@ Stderr content is kept out of the shareable audit chain but can reach gateway lo
 ## Cache identity
 
 Spawned children are pooled per session by executable, arguments, measurement
-target, and pinned digest—not by the server's human-readable display name.
+target, and pinned digest, not by the server's human-readable display name.
 Display names need not be unique and are not security identities. Provenance
 verdicts additionally bind the configured record and publisher key.
 
@@ -29,7 +31,7 @@ sound as far as it goes:
 > and cannot fork a child that executes inside isolated TEE memory.
 
 It then evaluates two bridging options, both of which put a translating component *outside*
-the enclave, and rejects both — correctly. An untrusted segment at the trust boundary can
+the enclave, and rejects both, correctly. An untrusted segment at the trust boundary can
 inject or suppress tool calls before the gateway ever sees them, and the attestation report
 does not cover it.
 

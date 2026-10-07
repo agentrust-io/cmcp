@@ -5,12 +5,14 @@ the policy signing key without a restart; see "Revocation without a restart"
 **Applies to:** cMCP Runtime gateway (`PolicyStore`, `startup`)  
 **Related config:** `policy_reload_interval_seconds`
 
+Hot-reload means swapping in new rules while the gateway keeps running. This page records why the first version of that feature could not work in real deployments, and how it works now: a new rule set must be signed by a trusted key. It is for operators who change policy in production.
+
 ---
 
 ## Summary
 
 Hot-reload was never missing. It was implemented in `PolicyStore.reload_if_stale`,
-wired into `PolicyEvaluator`, and documented as a supported knob — and **it could
+wired into `PolicyEvaluator`, and documented as a supported knob, and **it could
 not swap a policy in any production configuration.** The sections below record why,
 with the measurements, because the shape of that mistake is worth keeping.
 
@@ -86,7 +88,7 @@ store = PolicyStore(bundle=old_bundle, bundle_path=str(bundle_dir),
 
 That is the dev-mode configuration, where reload does work.
 `test_policy_store_bundle_swap_on_hash_change` passes and proves the swap logic is
-correct — in the one configuration production never uses. The pinned-hash case,
+correct, but only in the one configuration production never uses. The pinned-hash case,
 which is the only case a deployment runs, is untested.
 
 ### Second defect: it re-reads the bundle on every request, forever
@@ -117,7 +119,7 @@ is failing".
 
 ## The real design question
 
-Hot-reload and hash pinning are not accidentally in tension — they want different
+Hot-reload and hash pinning are not accidentally in tension: they want different
 things:
 
 - **Pinning a hash** says *the policy is exactly this artifact, decided before the
@@ -149,9 +151,9 @@ signature rather than its hash.
   approves", which is what actually makes runtime change safe.
 - Fits the existing manifest (`author_identity`, `commit_sha` are already there,
   unsigned) and the direction the rest of the stack has taken.
-- Cost: key management, revocation, and a rollback story — a validly signed *older*
+- Cost: key management, revocation, and a rollback story (a validly signed *older*
   bundle is a downgrade attack unless the manifest carries a version that must
-  increase monotonically.
+  increase monotonically).
 - Evidence: the claim records the bundle hash *and* the signer plus the bundle
   version, so a verifier can check both what ran and who authorised it.
 
@@ -163,14 +165,14 @@ allowlist.
 - Smallest change from what exists, and keeps the "exactly these artifacts" model.
 - No new cryptography and nothing to revoke.
 - Cost: every policy change still needs the operator to restart to extend the
-  allowlist, so it does not deliver hot-reload — it only lets a fleet roll between
+  allowlist, so it does not deliver hot-reload; it only lets a fleet roll between
   a known set of policies without restart. Useful for staged rollout and
   fast rollback; not an answer to "we need to tighten a policy right now".
 
 ### C. Re-read the pin from a trusted source at reload time
 
-The expected hash comes from somewhere the gateway can re-consult — a separate
-hash file, a control plane, a transparency log — instead of a startup env var.
+The expected hash comes from somewhere the gateway can re-consult (a separate
+hash file, a control plane, a transparency log) instead of a startup env var.
 
 - Genuine hot-reload, and the authority for a policy change stays outside the
   gateway.

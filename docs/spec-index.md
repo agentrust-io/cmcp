@@ -5,9 +5,9 @@ description: Every cMCP specification file, what it covers, which phase it belon
 
 # Specification index
 
-This page lists every specification file in the repository, what it covers, which phase it belongs to, and the schemas and conformance tests that go with it. For what cMCP is and where to start reading, see the [home page](index.md).
+This page lists every cMCP specification file: what each one covers, which phase it belongs to, and the data formats and conformance tests that go with it. Use it to find the right page when you are building against cMCP or reviewing its design. For what cMCP is and where to start, see the [home page](index.md); the main terms are explained [in plain English on the AgenTrust site](https://agentrust-io.com/#plain-terms).
 
-Issues in this repository track specification decisions rather than implementation bugs. Each issue corresponds to a design question, and is closed with a reference to the spec file that resolves it.
+Phase 1 is the gateway on the agent's side; Phase 2 adds protection on the tool provider's side. Issues in this repository record design questions about the specification, and each one is closed with a link to the spec file that answers it.
 
 ## Spec File Index
 
@@ -36,7 +36,7 @@ Issues in this repository track specification decisions rather than implementati
 
 ## Schema Files
 
-Machine-readable schemas in `schemas/` let implementations validate their outputs before shipping.
+The `schemas/` folder holds machine-readable descriptions of each data format, so you can check your own output against them before you ship.
 
 | File | What it validates | Use with |
 |------|------------------|---------|
@@ -59,7 +59,7 @@ cedar validate --schema schemas/cedar-schema.cedarschema --policies policies/
 
 ## Conformance Tests
 
-`tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
+Conformance tests show whether an implementation behaves the way the specification requires. `tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
 - Input conditions
 - Expected behavior (pass/fail, error code, field values)
 - The spec section it validates
@@ -74,7 +74,7 @@ A conforming implementation passes all MUST-level tests. SHOULD-level tests indi
 
 **Process:**
 1. Open an issue describing the spec gap or design question
-2. Discuss in the issue : the issue body captures the decision context
+2. Discuss in the issue: the issue body captures the decision context
 3. Submit a PR with the spec change, referencing the issue
 4. PR is merged when the spec change is accepted
 
@@ -83,6 +83,8 @@ A conforming implementation passes all MUST-level tests. SHOULD-level tests indi
 ---
 
 ## Glossary
+
+Short definitions of terms used across these pages.
 
 | Term | Definition |
 |------|-----------|

@@ -3,6 +3,8 @@
 !!! warning "Draft"
     Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
+This page names every part involved when an AI agent calls a tool through cMCP, from the application and the agent through the gateway to the tool servers and the systems behind them. For each phase it says which parts are protected by hardware and which rely on software alone. Read it before the other spec pages if you need to know exactly where the trust boundaries sit.
+
 Defines the full component model, trust levels per phase, and the hardware vs. software trust boundary.
 
 Closes #43.

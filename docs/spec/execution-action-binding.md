@@ -2,6 +2,8 @@
 
 Status: proposed normative contract for [#588](https://github.com/agentrust-io/cmcp/issues/588).
 
+When tool calls are not tied to one continuous session, cMCP still needs a fixed fingerprint of exactly which action was approved, so that evidence can be matched up later. This page defines how that fingerprint is computed. It is written for implementers.
+
 This document defines the canonical action binding consumed by session-independent execution correlation. It does not activate the execution registry by itself; activation remains subject to the admission, terminal-state, audit-transaction, crash/recovery, and replay requirements in [execution-correlation.md](execution-correlation.md).
 
 ## Normative contract

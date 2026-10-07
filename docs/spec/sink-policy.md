@@ -1,5 +1,7 @@
 # Optional sensitivity ceilings for tool and response sinks
 
+This optional setting lets an operator cap how sensitive the data sent to a given tool, or returned in a response, may be. The caps are fixed at startup and apply whatever the tool arguments say and whatever mode the Cedar rules run in. Leave the setting out and nothing changes.
+
 `sink_policy` adds hard admission ceilings to the actual gateway call path.
 It is supplied by the operator at startup, independent of tool arguments and
 Cedar advisory/silent modes. Omit the block to preserve existing behavior.
