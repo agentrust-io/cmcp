@@ -137,7 +137,7 @@ Who approved the entry (a person, team or process). It is part of the fingerprin
 
 ### `catalog_exception`
 
-A string, or null. When set, it marks this entry as an emergency exception and gives the reason. Exceptions added through the override endpoint (`POST /catalog/exception`) always show in the TRACE claim, even though they do not change `catalog_hash`.
+True or false, default `false`. When `true`, it marks this entry as an emergency exception. Exceptions added through the override endpoint (`POST /catalog/exception`) always show in the TRACE claim, even though they do not change `catalog_hash`.
 
 ### `schema_validation_mode`
 

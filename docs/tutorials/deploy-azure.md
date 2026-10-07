@@ -251,7 +251,7 @@ Measurement:     sha384:<non-zero hardware measurement>
 Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain', 'hardware_attestation']
 ```
 
-If `hardware_attestation` appears in `verified_fields`, the measurement (the fingerprint of the software that started) came from the hardware. On a DCedsv5 with TDX, `platform` reads `intel-tdx`.
+If `hardware_attestation` appears in `verified_fields`, the measurement (the fingerprint of the software that started) came from the hardware. On a TDX VM (DCesv6, or the older DCedsv5), `platform` reads `intel-tdx`.
 
 ---
 
