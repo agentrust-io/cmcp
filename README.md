@@ -131,9 +131,8 @@ Agent -> cMCP Runtime -> Cedar Policy Engine (TEE) -> Tool
 | `sev-snp` | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High | AMD KDS |
 | `tdx` | Intel TDX (Azure DCedsv5, GCP C3) | High | Intel PCS |
 | `gpu-cc` _(v0.2)_ | NVIDIA H100/H200/Blackwell (CC mode) | High | NVIDIA Remote Attestation Service (NRAS) |
-| `opaque` _(opt-in)_ | OPAQUE Confidential Runtime | n/a _(not yet implemented)_ | Placeholder: excluded from auto-detect; selecting it explicitly raises a not-implemented error |
 
-Provider auto-detect probe order: `azure-cvm -> tpm -> sev-snp -> tdx`. The first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
+Provider auto-detect probe order: `azure-cvm -> tpm -> sev-snp -> tdx`. The first provider whose `detect()` succeeds is selected. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start.
 
 ```python
 from cmcp_runtime.config import TEEProvider
@@ -144,9 +143,6 @@ from cmcp_runtime.config import TEEProvider
 
 # Explicit hardware selection
 # attestation.provider: sev-snp
-
-# OPAQUE Managed Runtime (opt-in only; not yet implemented)
-# OPAQUE_ATTESTATION_URL=https://... cmcp start --config cmcp-config.yaml
 ```
 
 ---
@@ -169,7 +165,7 @@ Default is `enforcing`. Set `enforcement_mode: advisory` in `cmcp-config.yaml` t
 
 ```yaml
 attestation:
-  provider: auto                    # auto | tpm | sev-snp | tdx | opaque | software-only
+  provider: auto                    # auto | tpm | sev-snp | tdx | software-only
   enforcement_mode: enforcing       # enforcing | advisory | silent
   validity_seconds: 86400           # attestation freshness window (default: 24 hours)
   staleness_policy: fail_closed     # fail_closed | warn_only
@@ -189,7 +185,6 @@ Environment variables:
 |---|---|
 | `CMCP_DEV_MODE=1` | Use software-only TEE provider; no hardware required |
 | `CMCP_BEARER_TOKEN` | Require this bearer token on all inbound requests |
-| `OPAQUE_ATTESTATION_URL` | Enable OPAQUE Managed Runtime attestation (explicit opt-in) |
 
 ---
 
@@ -279,7 +274,7 @@ Software-only governance runs the policy engine in the same OS an operator or a 
 
 ### Do I need special hardware to try it?
 
-No. Set `CMCP_DEV_MODE=1` to use the software-only TEE provider and run the full quickstart without a hardware TEE. Hardware providers (TPM, AMD SEV-SNP, Intel TDX, OPAQUE) are used in production.
+No. Set `CMCP_DEV_MODE=1` to use the software-only TEE provider and run the full quickstart without a hardware TEE. Hardware providers (TPM, AMD SEV-SNP, Intel TDX) are used in production.
 
 ### What is a TRACE Claim?
 
@@ -287,7 +282,7 @@ A TRACE Claim (a `GatewayClaim`) is a signed, hardware-attested artifact produce
 
 ### Which TEE providers are supported?
 
-TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2 and OPAQUE Confidential Runtime available as explicit opt-in. Auto-detection order is Azure confidential VM, then TPM 2.0 / vTPM, then AMD SEV-SNP, then Intel TDX; the software-only provider is used only under CMCP_DEV_MODE=1.
+TPM 2.0 / vTPM, AMD SEV-SNP, and Intel TDX, with NVIDIA GPU confidential computing planned for v0.2. Auto-detection order is Azure confidential VM, then TPM 2.0 / vTPM, then AMD SEV-SNP, then Intel TDX; the software-only provider is used only under CMCP_DEV_MODE=1.
 
 ### What license is cMCP under?
 

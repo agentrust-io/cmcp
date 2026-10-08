@@ -11,7 +11,6 @@ Most settings live in one file, `cmcp-config.yaml`. It says which secure hardwar
 
 attestation:
   # TEE provider. auto detects in order: azure-cvm -> tpm -> sev-snp -> tdx.
-  # opaque requires explicit opt-in via OPAQUE_ATTESTATION_URL env var.
   # Use software-only only with CMCP_DEV_MODE=1.
   provider: auto
 
@@ -90,7 +89,7 @@ policy_reload_interval_seconds: 0
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `provider` | string | `auto` | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `opaque`, `software-only`. `auto` detects in order: azure-cvm, then tpm, then sev-snp, then tdx. `opaque` requires `OPAQUE_ATTESTATION_URL` to be set. `software-only` requires `CMCP_DEV_MODE=1`. |
+| `provider` | string | `auto` | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `software-only`. `auto` detects in order: azure-cvm, then tpm, then sev-snp, then tdx. `software-only` requires `CMCP_DEV_MODE=1`. |
 | `enforcement_mode` | string | `enforcing` | Policy enforcement mode. Valid values: `enforcing`, `advisory`, `silent`. |
 | `validity_seconds` | integer | `86400` | Attestation report validity period in seconds. Must be a positive integer. At expiry, behavior is controlled by `staleness_policy`. |
 | `staleness_policy` | string | `fail_closed` | Action when attestation validity expires. Valid values: `fail_closed` (terminate sessions), `warn_only` (allow sessions, mark claims as stale). |
@@ -150,7 +149,6 @@ Two of them decide who may approve a new policy while the gateway is running. `C
 | `CMCP_DEV_MODE=1` | Enables software-only attestation. No hardware TEE required. TRACE Claims will show `partially_verified` status. Required when `provider` is `software-only`. | `attestation.provider` (forces software-only) |
 | `CMCP_BEARER_TOKEN` | Optional bearer token for runtime HTTP auth. If set, all requests to the runtime must include `Authorization: Bearer <token>`. If unset, no bearer auth is enforced. This token is required for non-loopback binds. | none |
 | `CMCP_OPERATOR_TOKEN` | Credential for the operator interface: `POST /sessions/{id}/reset` and `POST /catalog/exception`. Required outside `CMCP_DEV_MODE=1` (`OPERATOR_TOKEN_REQUIRED`), and must differ from `CMCP_BEARER_TOKEN`. When set, those two routes accept only this token and reject the tool-invocation token; when unset they fall back to `CMCP_BEARER_TOKEN`. A reset lowers accumulated session sensitivity, so an agent host holding only the tool-invocation token cannot clear the state that monotonicity exists to keep. | none |
-| `OPAQUE_ATTESTATION_URL` | Enables the OPAQUE Managed Runtime provider. Must be set to the OPAQUE attestation service URL. Required when `provider` is `opaque` or `auto` on OPAQUE infrastructure. | enables `opaque` provider detection |
 | `CMCP_POLICY_HASH` | SHA-256 hash of the approved policy bundle. Required in non-dev mode and checked by startup before Agent Manifest binding. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (startup policy integrity check) |
 | `CMCP_CATALOG_HASH` | SHA-256 hash of the approved `catalog.json`. Required in non-dev mode. The gateway fails closed at startup if this is unset and `CMCP_DEV_MODE` is not `1`. Format: `sha256:<hex>`. | none (additional startup check) |
 
@@ -209,5 +207,5 @@ configuration, classification assumptions, and the remaining audit/log limits.
 - Set `CMCP_CATALOG_HASH` to the SHA-256 of the approved `catalog.json`. The gateway fails closed at startup if this is unset in non-dev mode, but setting it explicitly pins the approved catalog hash and prevents silent substitution.
 - Configure `agent_manifest.path`, `agent_manifest.trust_anchor_path`, and `agent_manifest.authenticated_subject` for agents with signed manifests. The runtime will refuse to start if the signed manifest does not bind the authenticated agent subject to the loaded policy bundle and catalog hashes.
 - Set `attestation.expected_measurement` to the expected TEE measurement for your deployment. Without this, a different binary could be deployed and would still produce valid attestation reports.
-- Use a real TEE provider (`tpm`, `sev-snp`, `tdx`, or `opaque`), not `software-only`. Software-only mode has no hardware root of trust (nothing in the chip vouches for the software), and it leaves threat classes T1 through T4 in the [specification's threat model](SPEC.md#formal-threat-classes) open.
+- Use a real TEE provider (`tpm`, `sev-snp`, or `tdx`), not `software-only`. Software-only mode has no hardware root of trust (nothing in the chip vouches for the software), and it leaves threat classes T1 through T4 in the [specification's threat model](SPEC.md#formal-threat-classes) open.
 - Rotate the TEE signing key by performing a full enclave restart on a regular schedule. The signing key is hardware-sealed per enclave instance; rotation requires restart.

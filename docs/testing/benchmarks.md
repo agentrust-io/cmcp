@@ -32,7 +32,6 @@ Attestation is the step where the secure hardware proves what software it is run
 | TPM             | < 500ms    | Hardware I/O bound; TPM attestation is slow        |
 | SEV-SNP         | < 100ms    | Provider-specific deployment; verify the actual attestation profile                        |
 | TDX             | < 100ms    | Azure DCedsv5, GCP C3                              |
-| OPAQUE Managed  | < 50ms     | Configured managed runtime; assurance depends on verified evidence          |
 
 ### Per-Call Runtime Overhead
 
