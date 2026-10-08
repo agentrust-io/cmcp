@@ -4,6 +4,8 @@ Draft
 
 Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
+`cmcp-verify` is the Python library a third party uses to check a cMCP session record without trusting whoever ran the gateway. This page defines its public interface and the checks it runs for each kind of hardware. It is for developers building or integrating a verifier; the [Verify a TRACE claim tutorial](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md) shows it in use.
+
 This document is the interface specification for the `cmcp-verify` Python library. Implementation is separate from this spec. All type stubs below define the public interface that the implementation must satisfy.
 
 ## Type Stubs

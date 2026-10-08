@@ -1,6 +1,6 @@
 # TEE Attestation
 
-Deploy cMCP on real Trusted Execution Environment hardware so TRACE claims carry hardware-backed measurements instead of software-only placeholders.
+This page is for operators moving cMCP from a laptop demo to protected hardware. A TEE (trusted execution environment) is a sealed-off area of a processor that the machine's owner cannot read or change, and it can produce a signed report, called an attestation, of exactly what software started inside it. Running cMCP in one means each signed session record (TRACE claim) carries that hardware report instead of a placeholder, and this page explains what that does and does not prove.
 
 ## What you'll learn
 
@@ -22,7 +22,7 @@ ______________________________________________________________________
 
 ## Understand the provider values
 
-The `provider` field in `cmcp-config.yaml` controls which TEE the runtime uses. Valid values (from the startup source):
+The `provider` field in `cmcp-config.yaml` sets which kind of protected hardware cMCP uses. The accepted values, taken from the startup code:
 
 | `provider` value | What it requires                                                                                            |
 | ---------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -33,21 +33,25 @@ The `provider` field in `cmcp-config.yaml` controls which TEE the runtime uses. 
 | `opaque`         | OPAQUE Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var.                                          |
 | `software-only`  | No hardware. Requires `CMCP_DEV_MODE=1`.                                                                    |
 
-`software-only` is rejected at startup unless `CMCP_DEV_MODE=1` is set. Do not set `CMCP_DEV_MODE=1` in production.
+cMCP refuses to start with `software-only` unless `CMCP_DEV_MODE=1` is set. Never set `CMCP_DEV_MODE=1` in production.
 
 ______________________________________________________________________
 
 ## Understand what hardware attestation proves
 
-When the runtime starts on real TEE hardware, the TEE produces an attestation report. This report:
+When cMCP starts on real TEE hardware, the processor produces an attestation report. The report:
 
-- Is signed by hardware-resident keys that the operator cannot access
-- Contains a measurement of the workload: a hash of the code and configuration loaded into the enclave
-- Commits a runtime-supplied nonce (which includes the Ed25519 signing key fingerprint) into the report, binding the report to the specific key that will sign TRACE claims
+- Is signed by keys built into the hardware, which the operator cannot get at
+- Contains a measurement: a fingerprint (hash) of the code and configuration that were loaded
+- Names the key cMCP will use to sign its TRACE claims, so the claims can be tied back to this report
 
-What this proves: the measurement in the TRACE claim was produced by a known workload running on the reported hardware platform. A verifier who trusts the hardware vendor's root certificates can confirm that no operator intervention occurred between enclave load and attestation.
+What this proves: the measurement in the TRACE claim came from a known piece of software running on the hardware named in the report. Someone who trusts the chip maker's root certificates can confirm that the operator did not interfere between start-up and the report.
 
-What this does not prove: the contents of individual tool call arguments or responses are not measured by the TEE. The TEE measures the workload binary and its startup configuration. Per-call evidence lives in the audit chain (hashed and chained by the workload), not in the TEE hardware report.
+What this does not prove: the hardware does not measure the contents of individual tool calls or responses. It measures the software and its start-up configuration. Evidence about each call lives in the audit chain (the gateway's linked, fingerprinted log), not in the hardware report.
+
+Technical detail: how the signing key is bound
+
+The runtime supplies a nonce that includes the Ed25519 signing key fingerprint, and the hardware commits that nonce into the report, binding the report to the specific key that will sign TRACE claims.
 
 ______________________________________________________________________
 
@@ -65,7 +69,7 @@ On a real TEE host:
 - `trace.runtime.measurement` is the real hardware measurement: a non-zero hash specific to the loaded workload
 - `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`
 
-The measurement value is deterministic for a given workload binary and startup config. If the workload binary changes (e.g., an update to `cmcp-runtime`) the measurement changes, and verifiers who pinned the previous measurement will see a mismatch.
+The same software and start-up config always give the same measurement. If the software changes (for example, an update to `cmcp-runtime`), the measurement changes, and anyone who pinned the old value will see a mismatch.
 
 ______________________________________________________________________
 
@@ -98,6 +102,10 @@ export CMCP_CATALOG_HASH="sha256:<catalog hash>"
 cmcp start --config cmcp-config.yaml
 ```
 
+At start-up cMCP asks the hardware for a report that includes a fingerprint of its signing key, so a checker can later confirm that the key which signed the claims belongs to this report.
+
+Technical detail: the SEV-SNP nonce
+
 At startup the runtime calls `get_attestation_report(nonce)` where the nonce encodes the signing key fingerprint in its first 32 bytes. The SEV-SNP hardware commits this nonce into the attestation report's `REPORT_DATA` field. The TRACE claim carries this nonce as `trace.runtime.nonce`. Verifiers re-derive the key fingerprint from `trace.cnf.jwk.x` and compare against `nonce[:32]` to confirm the signing key is bound to this specific attestation report.
 
 ______________________________________________________________________
@@ -119,7 +127,7 @@ After switching from software-only to SEV-SNP, the TRACE claim shows:
 }
 ```
 
-`measurement` is the value the SEV-SNP hardware measures at enclave load. Pin this value in `attestation.expected_measurement` to reject unknown workload versions at startup:
+`measurement` is the fingerprint the SEV-SNP hardware takes when cMCP starts. Write it into `attestation.expected_measurement` and cMCP will refuse to start as any other version:
 
 ```
 attestation:
@@ -128,7 +136,7 @@ attestation:
   expected_measurement: "sha384:7f3c9a1b2e4d8f6a0c5b7e9d3f1a4c8b2e6f0d4a8c1b3e5f7a9d2c4e6f8a0b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 ```
 
-If the deployed binary differs from the expected measurement, the runtime exits at startup rather than producing claims with an unexpected measurement.
+If the deployed software does not match, cMCP stops at start-up instead of signing claims with a measurement you did not expect.
 
 ______________________________________________________________________
 
@@ -142,16 +150,16 @@ Use `software-only` when:
 
 Use a real TEE in production when:
 
-- Consumers of TRACE claims need hardware-backed evidence (compliance requirements, contractual obligations, regulated data)
-- You need the signing key bound to the hardware report (CRYPTO-001 check in `verify_trace_claim`)
-- You are protecting against threat classes T1-T4 as defined in the threat model (operator tampering, policy substitution, catalog substitution, key substitution)
+- Whoever relies on your TRACE claims needs evidence backed by hardware (compliance rules, contracts, regulated data)
+- You need the signing key tied to the hardware report (the CRYPTO-001 check in `verify_trace_claim`)
+- You need protection against threats T1 to T4 in the threat model: the operator tampering with the gateway, or swapping its policy, its tool catalog or its signing key
 
-Software-only mode leaves all four threat classes open. The audit chain and policy hash checks still run and provide evidence, but nothing prevents an operator from restarting the runtime with a different policy bundle and a different key.
+Software-only mode leaves all four of those open. The log and policy fingerprint checks still run and still produce evidence, but nothing stops an operator from restarting cMCP with different rules and a different key.
 
 ______________________________________________________________________
 
 ## Summary
 
-You configured cMCP for AMD SEV-SNP, confirmed the `trace.runtime.platform` and `trace.runtime.measurement` fields reflect real hardware values, and pinned the expected measurement in config. On a real TEE host, `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`, providing hardware-backed assurance that the workload was not tampered with.
+You configured cMCP for AMD SEV-SNP, confirmed that `trace.runtime.platform` and `trace.runtime.measurement` show real hardware values, and pinned the expected measurement in the config. On a real TEE host, `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`: the hardware vouches that the software was the version you expected.
 
-Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md): hardware attestation is one of the verification steps that determines overall status. [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md): each tenant's policy bundle hash is separate; the hardware measurement is shared across tenants on the same host.
+Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md) shows where the hardware check fits in the overall result, and in a [multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md) each tenant has its own policy fingerprint while tenants on the same host share the hardware measurement.

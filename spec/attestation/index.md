@@ -4,6 +4,8 @@
 **Applies to:** cMCP Runtime, all TEE providers\
 **Related issues:** #5, #6, #23, #33, #38
 
+Attestation is a signed report from the hardware saying what software is running and how the machine is set up. This page sets out how cMCP collects that report, how it chains its log of decisions so that later edits show, how it keeps the evidence fresh, how it handles signing keys, and how it pins the list of approved tools. It is written for people building or checking a verifier; for a guided walk-through, start with the [TEE attestation tutorial](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md).
+
 ______________________________________________________________________
 
 ## Overview

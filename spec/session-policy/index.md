@@ -2,6 +2,8 @@
 
 Status: Draft v0.1 | Closes #36 | Related: [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) (feeds this), [call-graph.md](https://cmcp.agentrust-io.com/spec/call-graph/index.md) (uses this)
 
+Once a session has handled sensitive data, such as health records, cMCP remembers that and blocks later calls that would send data somewhere not approved for that level. This page defines how the level is tracked, why it only goes up within a session, and how an operator can reset it. Read it if you write rules for sessions that touch sensitive data.
+
 ## Overview
 
 Individual call policy, Cedar evaluated before each tool call, is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.

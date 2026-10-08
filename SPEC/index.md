@@ -2,6 +2,8 @@
 
 Status: Draft v0.1
 
+This is the top-level design for cMCP. It explains the problems the gateway is meant to solve for teams whose AI agents call outside tools over MCP (the Model Context Protocol), how the parts fit together, and what Phase 1 and Phase 2 each cover. Read it first if you are reviewing the design or building against it; the detailed rules are in the pages listed in the [specification index](https://cmcp.agentrust-io.com/spec-index/index.md), and the main terms are explained [in plain English on the AgenTrust site](https://agentrust-io.com/#plain-terms).
+
 Architectural conviction: in the agent era, the agent-to-tool boundary is a primary control surface, not a backup to deterministic backends. Primary control surfaces must be tamper-evident in hardware. Phase 1 attests that boundary on the consumer side (the gateway). Phase 2 attests it on the provider side (the server).
 
 ______________________________________________________________________

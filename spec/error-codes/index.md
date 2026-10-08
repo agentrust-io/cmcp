@@ -1,5 +1,7 @@
 # Error Code Registry
 
+When cMCP refuses a request or fails, it returns a short code such as `POLICY_DENY` that says why. This page is the full list, with the HTTP status and log level for each code and the page that defines it. Use it to look up an error you have seen or to handle errors in your own code.
+
 This is the normative registry for all error codes used across the cMCP Runtime. Every error code MUST be registered here before it is referenced in code, configuration, or other spec documents. Implementations MUST NOT emit error codes that do not appear in this registry.
 
 ## Runtime Errors

@@ -2,6 +2,8 @@
 
 Status: Proposal v0.1 | Related: [verification-library.md](https://cmcp.agentrust-io.com/spec/verification-library/index.md), [session-policy.md](https://cmcp.agentrust-io.com/spec/session-policy/index.md), [issue #337](https://github.com/agentrust-io/cmcp/issues/337), [trace-spec#66](https://github.com/agentrust-io/trace-spec/issues/66)
 
+Some agents act in the physical world by asking a machine controller to do something. This proposal describes how cMCP records the policy decision, the handoff to that controller and any receipt the controller sends back, so the action can be audited later. It is for teams building such systems and for people writing verifiers.
+
 This profile defines a small evidence shape for embodied-agent workflows where an agent requests a physical-world action and cMCP records the governance decision, controller handoff, and optional external receipt as auditable evidence.
 
 The profile builds on the existing `external_execution_evidence` audit entry field. It does not change the core audit schema in v0.1. Instead, it defines how an embodied-action producer should construct the detached evidence payload that is committed by `external_execution_evidence.evidence_hash`.

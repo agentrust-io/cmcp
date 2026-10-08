@@ -10,19 +10,19 @@ cMCP is an open-source gateway for MCP tool-call policy enforcement. It evaluate
 
 # Check routed MCP tool calls and sign the evidence
 
-cMCP is an MCP gateway that evaluates each routed tool call against Cedar policy, blocks denied calls in enforcing mode, and signs a TRACE session record a verifier can check offline.
+When an AI agent uses a tool (looks up a customer, sends an email, queries a database), it sends a request called a tool call, usually over MCP, the Model Context Protocol. cMCP is a gateway that sits in the path of those calls: it checks each one against rules you write in the Cedar policy language, blocks the ones the rules forbid, and at the end of the session signs a receipt (a TRACE record) that anyone can check later without network access. New to these terms? See [the terms, in plain English](https://agentrust-io.com/#plain-terms).
 
 [Block a call in 10 minutes](https://agentrust-io.com/quickstart/) [What this proves, and what it does not](https://cmcp.agentrust-io.com/limitations/index.md)
 
 TL;DR
 
-Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and see `403 POLICY_DENY` locally, reported as `partially_verified` because software mode carries no hardware attestation. The SEV-SNP and Intel TDX verifiers are validated on real Azure and GCP evidence, and calls that bypass the gateway, along with NVIDIA GPU confidential computing, are outside what it proves today.
+Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the PyPI name `cmcp` belongs to an unrelated project) and watch it block a call with `403 POLICY_DENY` on your own computer; the receipt reads `partially_verified` because a laptop gives no hardware proof of where the gateway ran. On sealed-off cloud hardware (AMD SEV-SNP on Azure, Intel TDX on GCP) the hardware checks pass on real evidence, while calls that go around the gateway, and NVIDIA GPU confidential computing, are outside what it proves today.
 
 - **Run it**
 
   ______________________________________________________________________
 
-  A blocked request and a signed session record on your laptop, with a mock tool and software attestation.
+  See a request blocked and get a signed receipt on your laptop, using a stand-in tool and no special hardware.
 
   [Guided first demo](https://agentrust-io.com/quickstart/)
 
@@ -30,7 +30,7 @@ Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the P
 
   ______________________________________________________________________
 
-  Software mode has no hardware isolation, and the upstream tool server stays outside the TEE.
+  On a laptop nothing shields the gateway from the computer it runs on, and the tool server it forwards to always sits outside the sealed-off hardware (the TEE, trusted execution environment).
 
   [Limitations](https://cmcp.agentrust-io.com/limitations/index.md)
 
@@ -38,7 +38,7 @@ Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the P
 
   ______________________________________________________________________
 
-  SEV-SNP on an Azure confidential VM and Intel TDX on GCP C3, validated 2026-07-27. NVIDIA GPU CC is not implemented.
+  Real hardware reports checked on AMD SEV-SNP (an Azure confidential VM) and Intel TDX (GCP C3), validated 2026-07-27. NVIDIA GPU confidential computing is not implemented.
 
   [Hardware validation](https://cmcp.agentrust-io.com/testing/hardware-validation/index.md)
 
@@ -46,44 +46,44 @@ Install [cmcp-runtime](https://pypi.org/project/cmcp-runtime/) 0.7.0 (MIT; the P
 
   ______________________________________________________________________
 
-  Before it: [Agent Manifest](https://manifest.agentrust-io.com) declares the agent. Alongside: [cA2A](https://ca2a.agentrust-io.com) covers delegation. After it: records in [TRACE](https://trace.agentrust-io.com). Check a real TDX quote at [agentrust-io.com/verify](https://agentrust-io.com/verify/).
+  Before it: [Agent Manifest](https://manifest.agentrust-io.com) describes the agent. Alongside: [cA2A](https://ca2a.agentrust-io.com) covers one agent handing work to another. After it: receipts in [TRACE](https://trace.agentrust-io.com). Check a real Intel TDX hardware report at [agentrust-io.com/verify](https://agentrust-io.com/verify/).
 
   [See the chain](https://agentrust-io.com/#chain)
 
 ## Choose your next step
 
-| You want to…                   | Start here                                                                                      | Result                                                           |
-| ------------------------------ | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Understand a policy denial     | [Guided first demo](https://agentrust-io.com/quickstart/)                                       | A blocked request and a signed session record                    |
-| Exercise a real local upstream | [Allow/deny quickstart](https://cmcp.agentrust-io.com/quickstart/index.md)                      | One denied tool call and one forwarded call                      |
-| Connect an existing agent      | [MCP client integration](https://cmcp.agentrust-io.com/tutorials/existing-mcp-clients/index.md) | Your client sends requests through the gateway                   |
-| Evaluate the trust boundary    | [How it works](https://cmcp.agentrust-io.com/concepts/index.md)                                 | Distinguish policy enforcement, signing, and hardware provenance |
-| Deploy with hardware evidence  | [TEE attestation](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md)             | Provider prerequisites and verification requirements             |
-| Implement against the protocol | [Specification index](https://cmcp.agentrust-io.com/spec-index/index.md)                        | The relevant component, transport, and policy contracts          |
+| You want to…                                   | Start here                                                                                      | Result                                                |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| See a rule block a call                        | [Guided first demo](https://agentrust-io.com/quickstart/)                                       | A blocked request and a signed receipt                |
+| Try it with a real tool server on your machine | [Allow/deny quickstart](https://cmcp.agentrust-io.com/quickstart/index.md)                      | One denied tool call and one forwarded call           |
+| Connect an existing agent                      | [MCP client integration](https://cmcp.agentrust-io.com/tutorials/existing-mcp-clients/index.md) | Your client sends requests through the gateway        |
+| Understand what it protects                    | [How it works](https://cmcp.agentrust-io.com/concepts/index.md)                                 | Tell apart rule checking, signing, and hardware proof |
+| Deploy with hardware evidence                  | [TEE attestation](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md)             | What each cloud needs and what a checker must verify  |
+| Build your own implementation                  | [Specification index](https://cmcp.agentrust-io.com/spec-index/index.md)                        | The exact rules for each part                         |
 
 ## What changes at the tool boundary
 
-Authentication identifies a caller; your Cedar policy decides what a routed call may do. The gateway records the decision and binds the session's evidence into a signed claim when the session closes.
+Logging in tells the gateway who is calling. Your Cedar rules decide what that caller's tool call is allowed to do. The gateway writes down every decision, and when the session ends it signs a record of all of them.
 
-A hardware deployment can protect the runtime from its host, subject to the provider's threat model and verification support. The agent, model, and upstream tool server remain separate components. Calls that bypass the gateway are outside its enforcement. Host confidentiality also depends on the configured egress policy.
+On confidential-computing hardware (machines that keep running code sealed off from the cloud operator), the gateway can also be protected from the computer it runs on, within what each cloud provider supports and lets you verify. The agent, the AI model and the tool servers are still separate programs outside that protection. Calls that do not go through the gateway are not checked. Whether data can leak to the host also depends on the outbound-traffic (egress) rules you configure.
 
-Read the [architecture](https://cmcp.agentrust-io.com/concepts/index.md), [enforcement modes](https://cmcp.agentrust-io.com/configuration/index.md), and [limitations](https://cmcp.agentrust-io.com/limitations/index.md) before treating a successful software demo as evidence of hardware isolation.
+A working laptop demo is not proof of hardware isolation. Read [how it works](https://cmcp.agentrust-io.com/concepts/index.md), [enforcement modes](https://cmcp.agentrust-io.com/configuration/index.md) and [limitations](https://cmcp.agentrust-io.com/limitations/index.md) first.
 
 ## Get involved
 
-For implementation bugs or specification feedback, include the failing command, runtime version, and expected behavior in an [issue](https://github.com/agentrust-io/cmcp/issues). See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
+Found a bug or have feedback on the specification? Open an [issue](https://github.com/agentrust-io/cmcp/issues) with the command that failed, the runtime version, and what you expected to happen. See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
 
 **Status:** cmcp-runtime 0.7.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · Sponsored by OPAQUE, which funds the engineering, infrastructure and confidential-computing work behind these projects.
 
 # Quickstart - cMCP Runtime
 
-From zero to first TRACE Claim in under 30 minutes. Uses `CMCP_DEV_MODE=1` so no hardware TEE is required.
+This is the hands-on first run of cMCP, for developers who want to see it work on their own computer. In under 30 minutes you watch the gateway block one tool call, allow another, and hand you a signed receipt of the session (a TRACE Claim) that you then check. It uses `CMCP_DEV_MODE=1`, so you do not need a TEE (trusted execution environment, the sealed-off hardware cMCP can run on in production).
 
 ______________________________________________________________________
 
 ## What you'll build
 
-You'll run a cMCP Runtime that intercepts tool calls from a demo agent and enforces a Cedar policy bundle. You'll see the runtime do two things:
+You'll run the cMCP gateway, send it tool calls the way an agent would, and let a small set of rules written in Cedar (a policy language) decide each one. You'll see two outcomes:
 
 1. **Block** a call to a sensitive tool (`salesforce.contacts`). The gateway returns HTTP 403 and the call never reaches any upstream.
 1. **Allow** a call to a non-sensitive tool (`echo`) and forward it to a small mock upstream.
@@ -157,9 +157,9 @@ listen_addr: "127.0.0.1:8443"
 audit_db_path: ./audit.db
 ```
 
-- `provider: auto` detects a hardware TEE if present; falls back to software-only when `CMCP_DEV_MODE=1`
+- `provider: auto` uses protected hardware (a TEE) if the machine has one, and falls back to software-only when `CMCP_DEV_MODE=1`
 - `enforcement_mode: enforcing` means a policy deny returns HTTP 403 and the call is not forwarded. Use `advisory` instead if you want denies logged but not blocked while you tune a new policy.
-- `policy_bundle_path` is the directory containing `.cedar` policy files and `manifest.json`
+- `policy_bundle_path` is the folder holding your rules (`.cedar` files) and `manifest.json`, together called the policy bundle
 - `catalog_path` is the JSON file listing approved tools
 
 ______________________________________________________________________
@@ -210,9 +210,9 @@ ______________________________________________________________________
 
 ## Catalog
 
-Write `catalog.json`. It lists two tools: `salesforce.contacts` (sensitive, the policy blocks it) and `echo` (non-sensitive, the policy allows it). Both point at the mock upstream you start below.
+Write `catalog.json`. The catalog is the list of tools the gateway is allowed to forward to, with an approved description of each. It lists two tools: `salesforce.contacts` (sensitive, the policy blocks it) and `echo` (non-sensitive, the policy allows it). Both point at the mock upstream you start below.
 
-The `definition_hash` is the SHA-256 of the canonical JSON of `approved_definition` (sorted keys, no whitespace, ASCII-safe). The values below are precomputed to match.
+Each entry carries a `definition_hash`, a fingerprint of the approved tool description, so the gateway can notice if a tool server later changes what it claims to do. Technically it is the SHA-256 of the canonical JSON of `approved_definition` (sorted keys, no whitespace, ASCII-safe). The values below are precomputed to match.
 
 ```
 [
@@ -315,7 +315,7 @@ print(json.dumps(approved, indent=2))
 PY
 ```
 
-This validates the input files and creates `approved-hashes.json` from your local artifacts. Keep it unchanged while running the demo. In production, generate these values from reviewed build artifacts and deliver them through a verifier-controlled channel.
+This checks the input files and writes `approved-hashes.json`: fingerprints of the rules and tool list you just approved. You will compare the receipt against it at the end. Keep it unchanged while running the demo. In production, work these values out from reviewed files and give them to whoever checks receipts through a channel that person controls.
 
 ______________________________________________________________________
 
@@ -325,7 +325,7 @@ ______________________________________________________________________
 CMCP_DEV_MODE=1 cmcp start --config cmcp-config.yaml
 ```
 
-In dev mode the runtime uses a software-only TEE provider (no hardware required). You will see a few informational warnings before it starts listening. These are expected in dev mode and do not mean anything is broken:
+In dev mode the runtime uses a software stand-in where the hardware check would go (a software-only TEE provider), so no special machine is needed. You will see a few informational warnings before it starts listening. These are expected in dev mode and do not mean anything is broken:
 
 ```
 No hardware TEE detected. Running in development mode: attestation is not hardware-backed. ...
@@ -335,7 +335,7 @@ cMCP Runtime starting: TEE: software-only, listen: 127.0.0.1:8443
 INFO:     Uvicorn running on http://127.0.0.1:8443 (Press CTRL+C to quit)
 ```
 
-Tokenless dev mode binds to loopback only. Reaching the gateway from a LAN, a container network, or the cloud requires setting `CMCP_BEARER_TOKEN`, so you never expose an unauthenticated gateway by accident.
+Without a token, dev mode only listens on your own machine (loopback). Reaching the gateway from a LAN, a container network, or the cloud requires setting `CMCP_BEARER_TOKEN`, so you never expose a gateway that anyone can call by accident.
 
 The gateway now holds this terminal open. Leave it running and open a **second terminal** for the next steps. In that second terminal, `cd` back into `cmcp-quickstart` (and re-activate your Python environment if you use one) so the commands run from the right place.
 
@@ -372,7 +372,7 @@ ______________________________________________________________________
 
 ## Make an allowed call
 
-Now the `echo` tool, which the policy permits. For an allowed call the gateway forwards to the upstream, so start a small mock upstream first.
+Now the `echo` tool, which the policy permits. An allowed call is passed on to the tool server (the upstream), so start a small stand-in (mock) tool server first.
 
 If you cloned the repo, run the bundled one in Terminal 3, replacing `/path/to/cmcp` with your checkout path:
 
@@ -429,7 +429,7 @@ ______________________________________________________________________
 
 ## Get the TRACE Claim
 
-The TRACE Claim is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. The allowed call's response body carries that id in `result._cmcp.session_id`. Copy it from the output above, then close the session:
+The TRACE Claim is the signed receipt for the whole session. It is finalized and signed when the session is **closed**. Closing takes the session's internal id (a UUID), not the `_cmcp.session_id` label (`demo-session-001`) you sent with the call. The allowed call's response body carries that id in `result._cmcp.session_id`. Copy it from the output above, then close the session:
 
 ```
 # 1. The internal id from the allowed call's result._cmcp.session_id
@@ -457,7 +457,7 @@ ______________________________________________________________________
 
 ## Verify
 
-Verify the claim with the bundled `cmcp verify` command - no code required. It checks the Ed25519 signature, schema, attestation freshness, and audit-chain consistency without trusting the runtime operator:
+Check the receipt with the bundled `cmcp verify` command; no code required. It confirms the signature is valid, the receipt has the right format, its evidence is recent, and the call log has not been altered, all without having to trust whoever ran the gateway. (In technical terms: the Ed25519 signature, schema, attestation freshness, and audit-chain consistency.)
 
 ```
 cmcp verify claim.json
@@ -504,20 +504,24 @@ ______________________________________________________________________
 
 ## What's in the TRACE Claim
 
-| Field                               | What it records                                                                                      |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `trace.runtime.platform`            | Which TEE hardware produced the attestation report (`tpm2`, `amd-sev-snp`, etc.)                     |
-| `trace.runtime.measurement`         | PCR/measurement recorded by hardware at enclave boot - all zeros in dev mode                         |
-| `trace.policy.bundle_hash`          | SHA-256 of the Cedar policy bundle loaded at startup - changing any policy file changes this hash    |
-| `trace.policy.enforcement_mode`     | Whether policy denies are hard (`enforcing`) or logged-only (`advisory`)                             |
-| `trace.data_class`                  | Highest sensitivity level touched in the session                                                     |
-| `trace.tool_transcript.hash`        | SHA-256 of the audit chain tip - binds the call log to this Trust Record                             |
-| `trace.tool_transcript.call_count`  | Number of tool calls in the session                                                                  |
-| `trace.cnf.jwk`                     | Ed25519 public key used to sign this claim - bound to the TEE signing key                            |
-| `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip; verifying individual entries requires the exported audit bundle |
-| `gateway.call_summary`              | Per-session statistics: total, allowed, denied, faulted calls and tools invoked                      |
-| `gateway.catalog.drift_detected`    | `true` if any tool definition changed after catalog load - signals a rug-pull attempt                |
-| `signature`                         | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`)               |
+The receipt names the machine type, the rules that were loaded, how many calls were made and allowed, the key that signed it, and a fingerprint of the full call log.
+
+Technical detail: every field in the TRACE Claim
+
+| Field                               | What it records                                                                                                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trace.runtime.platform`            | Which TEE hardware produced the attestation report (`tpm2`, `amd-sev-snp`, etc.)                                                                              |
+| `trace.runtime.measurement`         | PCR/measurement recorded by hardware at enclave boot - all zeros in dev mode                                                                                  |
+| `trace.policy.bundle_hash`          | SHA-256 of the Cedar policy bundle loaded at startup - changing any policy file changes this hash                                                             |
+| `trace.policy.enforcement_mode`     | Whether policy denies are hard (`enforcing`) or logged-only (`advisory`)                                                                                      |
+| `trace.data_class`                  | Highest sensitivity level touched in the session                                                                                                              |
+| `trace.tool_transcript.hash`        | SHA-256 of the audit chain tip - binds the call log to this Trust Record                                                                                      |
+| `trace.tool_transcript.call_count`  | Number of tool calls in the session                                                                                                                           |
+| `trace.cnf.jwk`                     | Ed25519 public key used to sign this claim - bound to the TEE signing key                                                                                     |
+| `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip; verifying individual entries requires the exported audit bundle                                                          |
+| `gateway.call_summary`              | Per-session statistics: total, allowed, denied, faulted calls and tools invoked                                                                               |
+| `gateway.catalog.drift_detected`    | `true` if any tool definition changed after catalog load - signals a rug-pull attempt (a tool server quietly changing what a tool does after it was approved) |
+| `signature`                         | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`)                                                                        |
 
 ______________________________________________________________________
 
@@ -548,13 +552,15 @@ Use Ctrl+C in the gateway and mock-server terminals. Keep `claim.json` and `appr
 
 # How cMCP works
 
-cMCP sits between an MCP client and its tool servers. It evaluates routed calls against a Cedar policy, records decisions, and signs a session record when the session closes.
+This page explains, in plain terms, what cMCP checks, what its signed receipt can and cannot tell you, and where hardware comes in. Read it before you rely on cMCP for anything real.
+
+An AI agent uses tools by sending requests (tool calls) through an MCP client, the part of the agent that speaks the Model Context Protocol. cMCP sits between that client and the tool servers. It checks each call it receives against your rules, written in the Cedar policy language, writes down every decision, and signs a record of the session when the session ends.
 
 [Run the local allow/deny example](https://cmcp.agentrust-io.com/quickstart/index.md) [Read the verification guide](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md)
 
 ## Where enforcement runs
 
-Scroll the diagram horizontally on smaller screens. The text below explains the same boundaries.
+A request goes from the agent to cMCP. cMCP looks the tool up in its list of approved tools (the catalog), applies your rules, and either forwards the call or sends back an error. Replies from the tool are checked on the way back too. Scroll the diagram sideways on small screens; the text below says the same thing.
 
 ```
 flowchart TB
@@ -577,13 +583,15 @@ flowchart TB
     claim -->|evidence| verifier[Independent verifier]
 ```
 
-The runtime box is a **process boundary in software mode**. With a supported confidential-computing deployment, it can also be a hardware isolation boundary. The agent, model inference, and upstream tool server do not automatically move inside that boundary. A TPM can provide measured-state evidence; it does not by itself isolate the runtime's memory from the host.
+On an ordinary computer (**software mode**), the cMCP box in the diagram is just a separate program. On supported confidential-computing hardware, which keeps a program's memory sealed off from the machine's owner, the box can also be a hardware wall. The agent, the AI model and the tool servers do not move inside that wall on their own. A TPM (a security chip that records what software started) can report the machine's state, but it does not by itself hide the gateway's memory from the host.
 
-Only calls routed through cMCP are governed. The deployment must prevent an agent from bypassing the gateway. In `enforcing` mode, a policy denial stops forwarding; in `advisory` mode, the same decision is logged while the call proceeds. See the [component model](https://cmcp.agentrust-io.com/spec/component-model/index.md), [enforcement modes](https://cmcp.agentrust-io.com/configuration/index.md), and [provider limitations](https://cmcp.agentrust-io.com/limitations/index.md).
+cMCP only checks calls that go through it. Your setup has to stop the agent from reaching tools some other way. In `enforcing` mode a call the rules deny is not forwarded; in `advisory` mode the same decision is written down but the call goes ahead. See the [component model](https://cmcp.agentrust-io.com/spec/component-model/index.md), [enforcement modes](https://cmcp.agentrust-io.com/configuration/index.md), and [provider limitations](https://cmcp.agentrust-io.com/limitations/index.md).
 
 ## What the signed record tells you
 
-A cMCP `GatewayClaim` contains an inner TRACE Trust Record plus session summaries and audit-chain information. The signature binds the claim's contents. Whether those contents establish hardware provenance depends on the attestation evidence and the verifier's trust policy.
+The signed receipt cMCP produces is called a `GatewayClaim`. Inside it is a TRACE Trust Record (the shared AgenTrust receipt format), a summary of the session and a fingerprint of the full log. The signature proves the contents were not changed after signing. Whether they also prove *where* the gateway ran depends on the hardware report (attestation) attached to it and on what the person checking it is willing to trust.
+
+Each row below is a question you might ask of a receipt, where to look, and what you must check on your own.
 
 | Question                   | Evidence to inspect                                 | Additional check                                                                         |
 | -------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -593,27 +601,27 @@ A cMCP `GatewayClaim` contains an inner TRACE Trust Record plus session summarie
 | What calls were recorded?  | Session summary and signed transcript commitment    | Verify the exported audit entries when individual calls matter                           |
 | Where did the runtime run? | Platform, measurement, and raw attestation evidence | Verify the platform's signature chain, key binding, freshness, and required measurements |
 
-In the [software quickstart](https://cmcp.agentrust-io.com/quickstart/index.md), the signature and consistency checks pass, but hardware attestation does not. The expected result is `partially_verified`, with CLI exit code 1. A consumer that requires hardware provenance must reject that result.
+In the [software quickstart](https://cmcp.agentrust-io.com/quickstart/index.md), the signature and consistency checks pass, but there is no hardware report to check. The expected result is `partially_verified`, with CLI exit code 1. Anyone who needs proof of hardware must reject that result.
 
 ## Policy approval is a separate input
 
-The verifier needs to know what your organization approved **before** inspecting a claim. Compute the bundle and catalog hashes from reviewed build artifacts, then deliver them through a verifier-controlled channel.
+A receipt says which rules and which tool list were loaded, as hashes (short fingerprints of the files). That only means something if the person checking it already knows which fingerprints your organization approved. Work out the policy bundle and catalog hashes from reviewed files, then hand them to the checker through a channel the checker controls.
 
-Copying the hashes out of the claim and comparing them with that same claim does not establish approval. It only repeats the producer's assertion. The [quickstart](https://cmcp.agentrust-io.com/quickstart/#confirm-your-setup) computes expected hashes from local input files before starting the runtime; a production deployment should obtain them from its approved build artifacts.
+Copying the hashes out of the receipt and comparing them with the same receipt proves nothing. It only repeats what the gateway said about itself. The [quickstart](https://cmcp.agentrust-io.com/quickstart/#confirm-your-setup) computes expected hashes from local input files before starting the runtime; a production deployment should obtain them from its approved build artifacts.
 
-Cedar rules decide authorization using the context supplied by the runtime. A catalog tag such as `pii` describes the configured tool; it is not a scan of the agent's request. Session sensitivity can rise after inspected responses, but the runtime cannot see the model's internal context or prove which earlier response influenced a later call. See [Cedar policy](https://cmcp.agentrust-io.com/spec/cedar-policy/index.md) and [call graph and tag propagation](https://cmcp.agentrust-io.com/spec/call-graph/index.md).
+Cedar rules decide using the facts the gateway gives them. A catalog tag such as `pii` (personal data) is a label you put on a tool; cMCP does not scan the agent's request for personal data. A session can be marked more sensitive after cMCP inspects a reply, but cMCP cannot see what is inside the AI model or prove which earlier reply led to a later call. See [Cedar policy](https://cmcp.agentrust-io.com/spec/cedar-policy/index.md) and [call graph and tag propagation](https://cmcp.agentrust-io.com/spec/call-graph/index.md).
 
 ## Audit entries and their limits
 
-The runtime hashes canonical audit entries that include the previous entry's hash. A verifier with the entries can recompute the chain and compare it with the signed commitment. Modification, deletion, or reordering can then be detected relative to that commitment.
+Every log entry includes a fingerprint (hash) of the entry before it, so the entries form a chain, and the receipt signs the last link. Someone with the full log can rebuild the chain and compare it with the signed value. If any entry was changed, deleted or moved, the values will not match.
 
-A signed chain tip alone does not replay or inspect every entry. It also does not prove that every real-world action was routed through the runtime. Use the exported audit bundle when you need transcript verification, and retain the approved signed record separately from the logs it commits to.
+The signed last link on its own does not show what each entry said. It also cannot prove that every real-world action went through cMCP. When individual calls matter, check the exported log (the audit bundle), and keep the signed receipt somewhere separate from the logs it covers.
 
 See the [audit implementation](https://github.com/agentrust-io/cmcp/blob/main/src/cmcp_runtime/audit/chain.py) and [verification library](https://cmcp.agentrust-io.com/spec/verification-library/index.md) for the exact serialized fields and checks. Hash formats and platform measurement rules are implementation-specific; the diagram above does not define their wire format.
 
 ## Hardware verification is platform-specific
 
-Hardware provenance requires more than changing `provider` or moving a process to a confidential VM. A verifier must check the evidence chain, bind the signing key to the attested environment, and apply its expected measurements and freshness policy. Provider support and trust anchors differ.
+Proving that the gateway ran on protected hardware takes more than changing the `provider` setting or starting it on a confidential virtual machine. The checker has to verify the hardware maker's signatures on the report, confirm the receipt's signing key belongs to that protected machine, check the software fingerprints (measurements) it expects, and make sure the report is recent. Each cloud supports this differently and roots trust in different keys.
 
 - [Attestation specification](https://cmcp.agentrust-io.com/spec/attestation/index.md): provider evidence and binding rules.
 - [Hardware validation](https://cmcp.agentrust-io.com/testing/hardware-validation/index.md): recorded platform validation.
@@ -629,7 +637,9 @@ Hardware provenance requires more than changing `provider` or moving a process t
 
 # Configuration Reference
 
-`cmcp-config.yaml` controls the gateway's attestation provider, policy enforcement behavior, network settings, and file paths. Environment variables override specific fields and control secrets that must not appear in config files.
+This page lists every setting that controls how the cMCP gateway runs. It is for whoever installs and operates the gateway. You get an annotated example file, a table for each setting, and a checklist for production.
+
+Most settings live in one file, `cmcp-config.yaml`. It says which secure hardware to use for attestation (the hardware's signed proof of what software is running), whether a policy "deny" actually blocks a call, which network address to listen on, and where the policy and tool files are. Environment variables override some fields and carry values, such as tokens and approved file hashes, that should not sit in a config file.
 
 ## Full example
 
@@ -725,6 +735,8 @@ policy_reload_interval_seconds: 0
 
 ### agent_manifest
 
+An Agent Manifest is a signed document that declares which agent this is and which policy and tool catalog it was approved with. Setting this block makes the gateway check that manifest before it accepts any session.
+
 All fields are optional as a group. If `path` is set, `trust_anchor_path` must also be set. When the block is configured, cMCP fails closed on manifest signature failure, subject mismatch, policy hash drift, or catalog hash drift.
 
 | Field                   | Type   | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -736,7 +748,7 @@ All fields are optional as a group. If `path` is set, `trust_anchor_path` must a
 
 ### catalog
 
-The gateway compares an upstream server's advertised tool definitions with the approved catalog once per server per session, on first contact. Drift is always written to the audit chain and TRACE Claim; this setting controls whether the session also fails closed.
+The catalog is your approved list of tools and what each one looks like. The gateway compares what a tool server says it offers with that approved list once per server per session, the first time it connects. Any difference ("drift") is always written to the audit chain (the tamper-evident log) and the TRACE Claim (the signed session record); this setting decides whether the session is also blocked.
 
 | Field          | Type   | Default       | Description                                                                                                                                                                        |
 | -------------- | ------ | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -756,11 +768,15 @@ The gateway compares an upstream server's advertised tool definitions with the a
 
 ## Environment variables
 
-`CMCP_POLICY_SIGNING_KEY` is the raw Ed25519 **public** key (base64url or hex, 32 bytes) permitted to sign policy bundles. Pinning it is what allows `policy_reload_interval_seconds > 0`: a bundle is installed at runtime only when its `manifest.signature` verifies under this key and its `manifest.version` increased. It is not a secret, but it is security-critical config, which is why it sits here with `CMCP_POLICY_HASH` rather than in the config file.
+Environment variables control secrets and mode flags that must not appear in config files. They are read once at process startup; they cannot be changed at runtime.
+
+Two of them decide who may approve a new policy while the gateway is running. `CMCP_POLICY_SIGNING_KEY` is the public key whose signature a new policy bundle needs, and `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` is a backup key that can take over if the first one is compromised.
+
+Technical detail: policy signing keys
+
+`CMCP_POLICY_SIGNING_KEY` is the raw Ed25519 **public** key (base64url or hex, 32 bytes) permitted to sign policy bundles. Pinning it is what allows `policy_reload_interval_seconds > 0`: a bundle is installed at runtime only when its `manifest.signature` verifies under this key and its `manifest.version` increased. It is public, yet security-critical, which is why it sits here with `CMCP_POLICY_HASH` rather than in the config file.
 
 `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` is an optional second Ed25519 public key, same format, that must differ from `CMCP_POLICY_SIGNING_KEY` and is refused without it (`POLICY_SIGNING_KEY_INVALID`). It signs no bundle while the current key is trusted. Its use is to revoke the current key on a running gateway: put a statement signed by the successor's private key in `signing-key-revocations.json` in the bundle directory, and on the next reload the current key is revoked and the successor becomes the key bundles must be signed by. Keep the successor's private key apart from the current one, since a statement signed by a stolen current key can only hand control to the successor. Without a successor pinned, the current key can still revoke itself, which leaves no trusted key and refuses every tool call until a restart with a new key. After a revocation, set `CMCP_POLICY_SIGNING_KEY` to the successor before the next restart; revocation state is kept in memory, and a restart rebuilds it from these variables plus whatever statement file is on disk. The statement format is in [Policy Hot-Reload](https://cmcp.agentrust-io.com/spec/policy-hot-reload/#revocation-without-a-restart).
-
-Environment variables control secrets and mode flags that must not appear in config files. They are read once at process startup; they cannot be changed at runtime.
 
 | Variable                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Overrides                                     |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
@@ -775,6 +791,8 @@ The catalog is immutable for the process lifetime. Updating routing, tool defini
 
 ## Enforcement modes
 
+The enforcement mode decides what happens when your policy says no to a tool call: block it, or let it through and record that it would have been blocked. Start with `advisory` while you tune a new policy, then switch to `enforcing`.
+
 | Mode        | Behavior                                                                                                                                                                                                                                                                                                      | Use case                                                                                                                                             |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enforcing` | Policy denies block the tool call. The runtime returns HTTP 403 and a structured error to the agent. The call is not forwarded to the upstream server.                                                                                                                                                        | Production. Default for new deployments.                                                                                                             |
@@ -783,7 +801,9 @@ The catalog is immutable for the process lifetime. Updating routing, tool defini
 
 ### Silent-mode audit contract
 
-`enforcing` is the default and must be configured explicitly to use any other mode. In `silent` mode, `PolicyEvaluator` suppresses application-level log lines for denied tool calls but still returns `would_have_denied=True` in the `PolicyDecision`. The proxy writes an `advisory_deny` entry into the hash-chained audit log for every call that would have been denied. The audit chain records evidence even in silent mode. Only operational logs are quiet; the tamper-evident record remains complete and available for post-hoc review.
+`enforcing` is the default and must be configured explicitly to use any other mode. In short, silent mode turns off the gateway's ordinary log messages about denied calls but never removes them from the tamper-evident audit log.
+
+In `silent` mode, `PolicyEvaluator` suppresses application-level log lines for denied tool calls but still returns `would_have_denied=True` in the `PolicyDecision`. The proxy writes an `advisory_deny` entry into the hash-chained audit log for every call that would have been denied. The audit chain records evidence even in silent mode. Only operational logs are quiet; the tamper-evident record remains complete and available for post-hoc review.
 
 ## Minimal working config
 
@@ -807,20 +827,22 @@ catalog_path: ./catalog.json
 
 ## Production hardening checklist
 
-An optional `sink_policy` sets hard per-tool and caller-response sensitivity ceilings, including when Cedar uses advisory mode. It also suppresses captured stdio stderr content. See [sink sensitivity ceilings](https://cmcp.agentrust-io.com/spec/sink-policy/index.md) for configuration, classification assumptions, and the remaining audit/log limits.
+Do these before you rely on the gateway for real traffic. Each item closes a gap that the developer defaults leave open.
+
+An optional `sink_policy` sets a hard upper limit on how sensitive the data sent to each tool, or returned to the caller, may be, and it applies even when Cedar runs in advisory mode. It also keeps error output captured from local (stdio) tool servers out of the logs. See [sink sensitivity ceilings](https://cmcp.agentrust-io.com/spec/sink-policy/index.md) for configuration, classification assumptions, and the remaining audit/log limits.
 
 - Set `attestation.enforcement_mode` to `enforcing`. Advisory mode provides no blocking protection against policy violations.
 - Set `CMCP_CATALOG_HASH` to the SHA-256 of the approved `catalog.json`. The gateway fails closed at startup if this is unset in non-dev mode, but setting it explicitly pins the approved catalog hash and prevents silent substitution.
 - Configure `agent_manifest.path`, `agent_manifest.trust_anchor_path`, and `agent_manifest.authenticated_subject` for agents with signed manifests. The runtime will refuse to start if the signed manifest does not bind the authenticated agent subject to the loaded policy bundle and catalog hashes.
 - Set `attestation.expected_measurement` to the expected TEE measurement for your deployment. Without this, a different binary could be deployed and would still produce valid attestation reports.
-- Use a real TEE provider (`tpm`, `sev-snp`, `tdx`, or `opaque`), not `software-only`. Software-only mode does not provide a hardware root of trust and leaves threat classes T1 through T4 open.
+- Use a real TEE provider (`tpm`, `sev-snp`, `tdx`, or `opaque`), not `software-only`. Software-only mode has no hardware root of trust (nothing in the chip vouches for the software), and it leaves threat classes T1 through T4 in the [specification's threat model](https://cmcp.agentrust-io.com/SPEC/#formal-threat-classes) open.
 - Rotate the TEE signing key by performing a full enclave restart on a regular schedule. The signing key is hardware-sealed per enclave instance; rotation requires restart.
 
 # Specification index
 
-This page lists every specification file in the repository, what it covers, which phase it belongs to, and the schemas and conformance tests that go with it. For what cMCP is and where to start reading, see the [home page](https://cmcp.agentrust-io.com/index.md).
+This page lists every cMCP specification file: what each one covers, which phase it belongs to, and the data formats and conformance tests that go with it. Use it to find the right page when you are building against cMCP or reviewing its design. For what cMCP is and where to start, see the [home page](https://cmcp.agentrust-io.com/index.md); the main terms are explained [in plain English on the AgenTrust site](https://agentrust-io.com/#plain-terms).
 
-Issues in this repository track specification decisions rather than implementation bugs. Each issue corresponds to a design question, and is closed with a reference to the spec file that resolves it.
+Phase 1 is the gateway on the agent's side; Phase 2 adds protection on the tool provider's side. Issues in this repository record design questions about the specification, and each one is closed with a link to the spec file that answers it.
 
 ## Spec File Index
 
@@ -839,7 +861,6 @@ Issues in this repository track specification decisions rather than implementati
 | docs/spec/error-codes.md          | Central error code registry for all runtime and verification errors           | 1+2   | Draft v0.1 | -                       |
 | docs/spec/threat-model.md         | Assets, adversaries, STRIDE analysis per component                            | 1     | Draft v0.1 | #18, #24                |
 | docs/spec/verification-library.md | cmcp-verify Python library interface and per-provider verification steps      | 1     | Draft v0.1 | #25                     |
-| docs/spec/mcp-spec-strategy.md    | MCP spec monitoring and attestation extension contribution window             | 1+2   | Draft v0.1 | #30                     |
 | docs/spec/proxy-security.md       | Phase 2 proxy parser fuzzing DoD                                              | 2     | Draft v0.1 | #34                     |
 | docs/spec/phase2-server.md        | Provider-side attestation, 5 unique properties, streaming proxy, multi-tenant | 2     | Draft v0.1 | #17, #28, #29, #32, #42 |
 | docs/testing/benchmarks.md        | Latency targets and benchmark methodology                                     | 1     | Draft v0.1 | #27                     |
@@ -849,7 +870,7 @@ ______________________________________________________________________
 
 ## Schema Files
 
-Machine-readable schemas in `schemas/` let implementations validate their outputs before shipping.
+The `schemas/` folder holds machine-readable descriptions of each data format, so you can check your own output against them before you ship.
 
 | File                              | What it validates                         | Use with                                   |
 | --------------------------------- | ----------------------------------------- | ------------------------------------------ |
@@ -874,7 +895,7 @@ ______________________________________________________________________
 
 ## Conformance Tests
 
-`tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
+Conformance tests show whether an implementation behaves the way the specification requires. `tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
 
 - Input conditions
 - Expected behavior (pass/fail, error code, field values)
@@ -891,7 +912,7 @@ ______________________________________________________________________
 **Process:**
 
 1. Open an issue describing the spec gap or design question
-1. Discuss in the issue : the issue body captures the decision context
+1. Discuss in the issue: the issue body captures the decision context
 1. Submit a PR with the spec change, referencing the issue
 1. PR is merged when the spec change is accepted
 
@@ -900,6 +921,8 @@ ______________________________________________________________________
 ______________________________________________________________________
 
 ## Glossary
+
+Short definitions of terms used across these pages.
 
 | Term                | Definition                                                                                         |
 | ------------------- | -------------------------------------------------------------------------------------------------- |
@@ -920,6 +943,8 @@ ______________________________________________________________________
 # cMCP Runtime - Product Specification
 
 Status: Draft v0.1
+
+This is the top-level design for cMCP. It explains the problems the gateway is meant to solve for teams whose AI agents call outside tools over MCP (the Model Context Protocol), how the parts fit together, and what Phase 1 and Phase 2 each cover. Read it first if you are reviewing the design or building against it; the detailed rules are in the pages listed in the [specification index](https://cmcp.agentrust-io.com/spec-index/index.md), and the main terms are explained [in plain English on the AgenTrust site](https://agentrust-io.com/#plain-terms).
 
 Architectural conviction: in the agent era, the agent-to-tool boundary is a primary control surface, not a backup to deterministic backends. Primary control surfaces must be tamper-evident in hardware. Phase 1 attests that boundary on the consumer side (the gateway). Phase 2 attests it on the provider side (the server).
 
@@ -1241,6 +1266,8 @@ Not the current build focus. Revisit after Phase 1 GA and early production feedb
 Draft
 
 Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
+
+Cedar is a small language for writing access rules, such as which agent may call which tool. This page defines how cMCP packages those rules, how it applies them to each tool call, and the modes that decide whether a denied call is blocked or only recorded. Read it if you write or review policies; the [Cedar policy walkthrough](https://cmcp.agentrust-io.com/tutorials/cedar-policy-walkthrough/index.md) covers the same ground by example.
 
 This document specifies the Cedar policy bundle format, policy expression examples, enforcement modes, evaluation decision flow, and related governance features for the cMCP Runtime.
 
@@ -1593,6 +1620,8 @@ TRACE Claims with a non-empty `catalog_exceptions` list are flagged for auditor 
 
 Status: Draft v0.1 | Closes #36 | Related: [response-inspection.md](https://cmcp.agentrust-io.com/spec/response-inspection/index.md) (feeds this), [call-graph.md](https://cmcp.agentrust-io.com/spec/call-graph/index.md) (uses this)
 
+Once a session has handled sensitive data, such as health records, cMCP remembers that and blocks later calls that would send data somewhere not approved for that level. This page defines how the level is tracked, why it only goes up within a session, and how an operator can reset it. Read it if you write rules for sessions that touch sensitive data.
+
 ## Overview
 
 Individual call policy, Cedar evaluated before each tool call, is necessary but not sufficient. It answers "is this call permitted given what we know right now?" It cannot answer "has this session already seen PHI, and does that change what downstream calls are permitted?" That question requires session-level state that accumulates across calls.
@@ -1808,6 +1837,8 @@ Status: Draft v0.1 Last updated: 2026-06-04 Stability: Unstable , expect breakin
 
 ______________________________________________________________________
 
+MCP on its own does not prove which server a tool name belongs to, so two servers could offer tools with the same name. cMCP keeps an approved list, the catalog, that ties each tool name to one specific server identity and routes calls only there. This page defines that list and how routing works.
+
 This document specifies how the cMCP Runtime identifies upstream MCP servers, prevents tool name collisions, and routes tool calls. These mechanisms close the protocol-level gap in MCP (issue #40): MCP defines no signed manifest binding a tool name to a publisher. The runtime closes this by maintaining a catalog that binds each tool name to a specific upstream server identity.
 
 ______________________________________________________________________
@@ -1996,6 +2027,8 @@ Status: Draft v0.1 Last updated: 2026-06-04 Stability: Unstable , expect breakin
 ______________________________________________________________________
 
 Covers: Streamable HTTP scope, stdio gap analysis, SPIFFE-to-TEE attestation binding.
+
+Transport means how messages travel between cMCP and a tool server. This page lists the ways cMCP supports (web requests over HTTP, and local programs over stdio), the ones it rejects, and how much an agent's setup has to change to use the gateway.
 
 ## Current network transport
 
@@ -2206,6 +2239,8 @@ Status: Draft v0.1 Last updated: 2026-08-27 Stability: Unstable , expect breakin
 
 ______________________________________________________________________
 
+Fuzzing means feeding a program large amounts of malformed input to find crashes and parsing bugs. This page lists the fuzzing work that must be finished before the Phase 2 proxy can be released. It is for contributors working on that parser.
+
 This document defines the fuzzing definition of done (DoD) for the Phase 2 proxy parser. No Phase 2 release ships without satisfying every item below.
 
 ## Fuzz Targets
@@ -2271,6 +2306,8 @@ This contract applies to all four fuzz targets. Any code path that returns a nul
 **Document status:** Draft v0.1\
 **Applies to:** cMCP Runtime, all TEE providers\
 **Related issues:** #5, #6, #23, #33, #38
+
+Attestation is a signed report from the hardware saying what software is running and how the machine is set up. This page sets out how cMCP collects that report, how it chains its log of decisions so that later edits show, how it keeps the evidence fresh, how it handles signing keys, and how it pins the list of approved tools. It is written for people building or checking a verifier; for a guided walk-through, start with the [TEE attestation tutorial](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md).
 
 ______________________________________________________________________
 
@@ -2851,6 +2888,8 @@ Draft
 
 Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
+`cmcp-verify` is the Python library a third party uses to check a cMCP session record without trusting whoever ran the gateway. This page defines its public interface and the checks it runs for each kind of hardware. It is for developers building or integrating a verifier; the [Verify a TRACE claim tutorial](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md) shows it in use.
+
 This document is the interface specification for the `cmcp-verify` Python library. Implementation is separate from this spec. All type stubs below define the public interface that the implementation must satisfy.
 
 ## Type Stubs
@@ -3093,6 +3132,8 @@ As noted in [threat-model.md](https://cmcp.agentrust-io.com/spec/threat-model/in
 
 Status: Proposal v0.1 | Related: [verification-library.md](https://cmcp.agentrust-io.com/spec/verification-library/index.md), [session-policy.md](https://cmcp.agentrust-io.com/spec/session-policy/index.md), [issue #337](https://github.com/agentrust-io/cmcp/issues/337), [trace-spec#66](https://github.com/agentrust-io/trace-spec/issues/66)
 
+Some agents act in the physical world by asking a machine controller to do something. This proposal describes how cMCP records the policy decision, the handoff to that controller and any receipt the controller sends back, so the action can be audited later. It is for teams building such systems and for people writing verifiers.
+
 This profile defines a small evidence shape for embodied-agent workflows where an agent requests a physical-world action and cMCP records the governance decision, controller handoff, and optional external receipt as auditable evidence.
 
 The profile builds on the existing `external_execution_evidence` audit entry field. It does not change the core audit schema in v0.1. Instead, it defines how an embodied-action producer should construct the detached evidence payload that is committed by `external_execution_evidence.evidence_hash`.
@@ -3331,6 +3372,8 @@ Keeping these three identifiers separate avoids making the gateway claim it obse
 
 # Error Code Registry
 
+When cMCP refuses a request or fails, it returns a short code such as `POLICY_DENY` that says why. This page is the full list, with the HTTP status and log level for each code and the page that defines it. Use it to look up an error you have seen or to handle errors in your own code.
+
 This is the normative registry for all error codes used across the cMCP Runtime. Every error code MUST be registered here before it is referenced in code, configuration, or other spec documents. Implementations MUST NOT emit error codes that do not appear in this registry.
 
 ## Runtime Errors
@@ -3388,6 +3431,8 @@ The following error codes are defined and documented in [verification-library.md
 # Threat Model
 
 Status: Draft v0.1 | Covers: Phase 1 cMCP Runtime
+
+A threat model lists what needs protecting, who might attack it, and how. This page does that for the Phase 1 gateway, records where claims in the overview needed correcting, and lists the protections that remain the operator's job. Read it if you are judging whether cMCP fits your security needs.
 
 ## Assets
 
@@ -3508,7 +3553,9 @@ These threats are real but outside the TEE's scope. Operators must address them 
 
 # Try cMCP from an existing MCP client
 
-Start the cMCP gateway, then configure a client that supports the standard `mcpServers` stdio shape to launch the included bridge:
+This page is for anyone who already uses an AI app that talks to tools over MCP (Model Context Protocol, the common way AI agents call outside tools). With one config change, every tool call your app makes goes through the cMCP gateway, which checks it against your rules and logs it. You write no agent code.
+
+Start the cMCP gateway, then add the entry below to your client's `mcpServers` block (the standard place MCP apps list the tool servers they launch). It starts the small bridge program that ships with cMCP:
 
 ```
 {
@@ -3522,21 +3569,21 @@ Start the cMCP gateway, then configure a client that supports the standard `mcpS
 }
 ```
 
-Restart the client after changing its configuration. Its `tools/list` and `tools/call` messages now pass through cMCP and appear in the gateway audit chain; upstream addresses remain solely in the attested cMCP catalog.
+Restart the client after changing its configuration. From then on, when the app lists tools (`tools/list`) or calls one (`tools/call`), the request goes through cMCP and is written to the gateway's audit chain, a tamper-evident log where each entry is linked to the one before it. Your app never sees the real addresses of the tool servers; those stay in cMCP's catalog, the list of approved tools that is included in the gateway's attestation.
 
-## What this proves—and what it does not
+## What this proves, and what it does not
 
-The bridge is an evaluation aid. It runs on the user's machine, outside the TEE and outside cMCP's measurement. A user who controls the client configuration can remove it, so this does **not** prove cMCP cannot be bypassed. Production enforcement requires controls that make the governed gateway the only reachable path to upstream servers.
+The bridge is for trying cMCP out. It runs on your own machine, outside the TEE (the protected hardware area cMCP can run in) and outside what cMCP measures and signs. Anyone who controls the client configuration can remove it, so this setup does **not** prove that calls cannot go around cMCP. In production you also need network or host controls that leave the gateway as the only way to reach the tool servers.
 
-The bearer token is read from `CMCP_BEARER_TOKEN`; do not put it in command arguments, where process-list tooling may expose it. Diagnostics go to stderr so stdout remains strict newline-delimited JSON-RPC.
+The bridge reads the access token from the `CMCP_BEARER_TOKEN` environment variable. Do not pass it as a command argument, because tools that list running processes can show it. Diagnostic messages go to stderr, so stdout carries only the newline-separated JSON-RPC messages the client expects.
 
 Design and trust boundary: [#510](https://github.com/agentrust-io/cmcp/issues/510).
 
 # Connecting Agent Frameworks
 
-Already using a client configured with an `mcpServers` block? Start with [Try cMCP from an existing MCP client](https://cmcp.agentrust-io.com/tutorials/existing-mcp-clients/index.md); no agent code is required.
+This page is for developers who write their own agent code. It shows how to point an agent built with LangChain, LlamaIndex or a plain HTTP client at the cMCP gateway, so every tool call the agent makes is checked against your rules and logged. You get working examples for each and a way to read what the gateway reports back on every call.
 
-Wire a real agent: LangChain, LlamaIndex, or a plain HTTP client: to the cMCP gateway so every tool call passes through policy enforcement.
+Already using an app configured with an `mcpServers` block? Start with [Try cMCP from an existing MCP client](https://cmcp.agentrust-io.com/tutorials/existing-mcp-clients/index.md) instead; no agent code is required.
 
 ## What you'll learn
 
@@ -3568,7 +3615,7 @@ ______________________________________________________________________
 
 ## How the gateway looks to an agent
 
-The gateway runs at `listen_addr` (default `127.0.0.1:8443` in dev mode, otherwise `0.0.0.0:8443`) and exposes a standard MCP over HTTP/SSE transport. Two endpoints matter for agent frameworks:
+To your agent, the gateway looks like any other MCP server reached over HTTP. It listens at `listen_addr` (by default `127.0.0.1:8443` in dev mode, otherwise `0.0.0.0:8443`). These endpoints matter for agent code:
 
 | Endpoint      | Method | Auth         | Purpose                                                           |
 | ------------- | ------ | ------------ | ----------------------------------------------------------------- |
@@ -3576,7 +3623,7 @@ The gateway runs at `listen_addr` (default `127.0.0.1:8443` in dev mode, otherwi
 | `/tools/list` | GET    | Bearer token | Convenience read of the attested catalog                          |
 | `/health`     | GET    | None         | Liveness probe                                                    |
 
-Every request to `/mcp` must include `Authorization: Bearer <token>` where the token matches `CMCP_BEARER_TOKEN`. Requests without a valid token receive HTTP 401.
+Every request to `/mcp` must carry an access token in the header `Authorization: Bearer <token>`, and the token must match `CMCP_BEARER_TOKEN`. Requests without a valid token get HTTP 401.
 
 ______________________________________________________________________
 
@@ -3598,13 +3645,13 @@ curl -s -X POST http://localhost:8443/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-The response lists only tools in the attested catalog: any tool not in `catalog.json` cannot be called regardless of what the agent requests.
+The response lists only the tools in the catalog (`catalog.json`, the operator's list of approved tools). A tool that is not in the catalog cannot be called, whatever the agent asks for.
 
 ______________________________________________________________________
 
 ## The `_cmcp` response block
 
-Every allowed tool call returns a standard MCP `result` with a `_cmcp` metadata extension:
+Every allowed tool call returns a normal MCP `result`, plus an extra `_cmcp` block in which the gateway reports what it did:
 
 ```
 {
@@ -3633,11 +3680,11 @@ Every allowed tool call returns a standard MCP `result` with a `_cmcp` metadata 
 | `session_id`        | The active session this call belongs to                                             |
 | `workflow_id`       | Echoed from `_cmcp.workflow_id` in the request, if provided                         |
 
-When `would_have_denied` is `true`, an `advice` field may also be present with annotations from the matching policy rule.
+When `would_have_denied` is `true`, there may also be an `advice` field holding notes from the rule that matched.
 
 ### Pass `workflow_id` from your agent
 
-Set `_cmcp.workflow_id` in the request `params` to associate tool calls with a named agent run:
+Set `_cmcp.workflow_id` in the request `params` to label tool calls as part of one named agent run:
 
 ```
 {
@@ -3656,7 +3703,7 @@ Set `_cmcp.workflow_id` in the request `params` to associate tool calls with a n
 
 ### Declare a per call data class
 
-Set `_cmcp.data_class` in the request `params` when a specific call touches data more sensitive than the tool's own catalogued `sensitivity_level`, for example one model call tool that sometimes carries `pii` and sometimes `confidential` data (#479):
+Each tool in the catalog has a `sensitivity_level`, the kind of data it normally handles. When one particular call handles more sensitive data than that, say so by setting `_cmcp.data_class` in the request `params`. An example is a single tool that sometimes carries personal data (`pii`) and sometimes `confidential` data ([#479](https://github.com/agentrust-io/cmcp/issues/479)):
 
 ```
 {
@@ -3671,7 +3718,11 @@ Set `_cmcp.data_class` in the request `params` when a specific call touches data
 }
 ```
 
-The declared value can only raise the effective class for this call above the tool's catalogued floor, never lower it, and it composes with any labels a deployment has added under `sensitivity.vocabulary` in config. An unrecognised value is silently ignored rather than rejected, the same treatment an unrecognised built in content pattern tag gets: it simply cannot rank above the catalogued floor. The effective class, not the raw declaration, is what appears in the signed transcript for that call, and it also raises the session's own `max_sensitivity` for the rest of the session.
+The value you declare can only raise the sensitivity for this call, never lower it below the tool's catalogue level. It also raises the session's `max_sensitivity` for the rest of the session.
+
+Technical detail: how the declared class is combined
+
+The declared value composes with any labels a deployment has added under `sensitivity.vocabulary` in config. An unrecognised value is silently ignored rather than rejected, the same treatment an unrecognised built in content pattern tag gets: it simply cannot rank above the catalogued floor. The effective class, not the raw declaration, is what appears in the signed transcript for that call.
 
 ______________________________________________________________________
 
@@ -3724,7 +3775,7 @@ ______________________________________________________________________
 
 ## LangChain
 
-Use LangChain's `MCP` integration if available, or wrap the gateway with a custom tool:
+Use LangChain's MCP support if your version has it, or wrap the gateway in a custom tool:
 
 ```
 from langchain.tools import BaseTool
@@ -3834,7 +3885,7 @@ ______________________________________________________________________
 
 ## Handle denied calls
 
-When a call is denied by policy, the gateway returns HTTP 403:
+When your rules refuse a call, the gateway returns HTTP 403:
 
 ```
 {
@@ -3851,7 +3902,7 @@ When a call is denied by policy, the gateway returns HTTP 403:
 }
 ```
 
-`error_code` is either `POLICY_DENY` (a Cedar forbid rule matched) or `TOOL_NOT_IN_CATALOG` (the tool name is not in the approved catalog). The `advice` field, when present, carries annotations from the policy rule: these come from the hash-pinned policy bundle, not from caller input, so they are safe to log and act on.
+`error_code` is either `POLICY_DENY` (a `forbid` rule matched) or `TOOL_NOT_IN_CATALOG` (the tool is not in the approved catalog). The `advice` field, when present, holds notes from the rule. They come from your own policy files, whose fingerprint is fixed when the gateway starts, and never from the caller, so they are safe to log and act on.
 
 ______________________________________________________________________
 
@@ -3863,13 +3914,13 @@ ______________________________________________________________________
 | LangChain       | Custom `BaseTool` wrapping the HTTP call         |
 | LlamaIndex      | `FunctionTool.from_defaults` wrapping a closure  |
 
-Every tool call that passes through the gateway produces an `audit_entry_hash`. After the session ends, retrieve the full audit bundle at `GET /audit/export?session_id=<id>` and verify it with `GET /sessions/<id>/trace-claim`.
+Every tool call through the gateway gets an `audit_entry_hash`, its fingerprint in the log. After the session ends, download the full log from `GET /audit/export?session_id=<id>` and check it against the signed session record from `GET /sessions/<id>/trace-claim`.
 
-Related tutorials: [Cedar policy walkthrough](https://cmcp.agentrust-io.com/tutorials/cedar-policy-walkthrough/index.md): writing the policies that govern these calls. [Tool catalog authoring](https://cmcp.agentrust-io.com/tutorials/tool-catalog-authoring/index.md): what goes in `catalog.json` and how definition hashes are computed.
+Related tutorials: the [Cedar policy walkthrough](https://cmcp.agentrust-io.com/tutorials/cedar-policy-walkthrough/index.md) covers writing the rules that govern these calls, and [Tool catalog authoring](https://cmcp.agentrust-io.com/tutorials/tool-catalog-authoring/index.md) covers what goes in `catalog.json` and how each tool's fingerprint is computed.
 
 # Cedar Policy Walkthrough
 
-Write and test Cedar policies that control which tools a cMCP-governed agent can call.
+This page is for whoever decides what an AI agent is allowed to do through cMCP. You write the rules in Cedar, a small open-source language for access rules, and by the end you have a permissive rule set for local testing, a stricter one for production, and a way to test both before the gateway uses them.
 
 ## What you'll learn
 
@@ -3889,7 +3940,7 @@ ______________________________________________________________________
 
 ## Understand the entity model
 
-cMCP evaluates every tool call against Cedar policies using three entities:
+Every Cedar rule talks about three things: who is asking (the principal), what they want to do (the action) and what they want to do it to (the resource). cMCP fills these in for each tool call like this:
 
 | Entity role | cMCP type  | Example value                                               |
 | ----------- | ---------- | ----------------------------------------------------------- |
@@ -3897,17 +3948,21 @@ cMCP evaluates every tool call against Cedar policies using three entities:
 | `action`    | `Action`   | `Action::"ReadFile"` for `read_file`                        |
 | `resource`  | `Resource` | `Resource::"salesforce.contacts"` for that tool             |
 
-The runtime supplies entity identifiers, with no principal or resource attributes. Match a tool using its resource UID, not `resource.tool_name`. Session and workflow values belong to the `context` record, including `session_max_sensitivity` and `workflow_id`.
+The basic rule: a tool call is refused unless at least one `permit` rule matches it and no `forbid` rule does. A matching `forbid` always wins.
+
+Technical detail: how the runtime builds the Cedar request
+
+The runtime supplies entity identifiers only, with no principal or resource attributes. Match a tool using its resource UID, not `resource.tool_name`. Session and workflow values belong to the `context` record, including `session_max_sensitivity` and `workflow_id`.
 
 Actions are derived from the tool name by splitting on underscores, capitalizing each part, and joining them: `read_file` becomes `ReadFile`, and `crm.get_customer` becomes `Crm.getCustomer`. They are not a fixed `call_tool` action. The examples below use an action wildcard and constrain resources instead.
 
-A tool call is denied unless at least one `permit` rule matches and no `forbid` rule matches. Cedar evaluates `forbid` before `permit`, so a `forbid` always wins.
+Cedar evaluates `forbid` before `permit`, which is why a `forbid` always wins.
 
 ______________________________________________________________________
 
 ## Write a minimal allow-all policy
 
-This policy is appropriate for local development. It permits every tool call unconditionally.
+This policy is only for trying things on your own machine. It allows every tool call.
 
 Create `policies/allow-all.cedar`:
 
@@ -3919,7 +3974,7 @@ permit (
 );
 ```
 
-Add a `policies/manifest.json` so cMCP can compute the bundle hash:
+Add a `policies/manifest.json` so cMCP can compute the bundle hash, a fingerprint of all your policy files that goes into every signed record:
 
 ```
 {
@@ -3930,7 +3985,7 @@ Add a `policies/manifest.json` so cMCP can compute the bundle hash:
 }
 ```
 
-Add `policies/schema.cedarschema` for the three tools used below. The empty namespace matches the runtime; add action declarations for any additional tools you use. This schema describes these tutorial requests, not every context field the gateway may supply.
+Add `policies/schema.cedarschema`, which tells Cedar what the three tools used below look like. Add an action entry for any other tool you use. This schema covers only the requests in this tutorial, not every field the gateway may supply, and its empty namespace matches what the runtime expects.
 
 ```
 {"":{"entityTypes":{"Agent":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{}}},"Resource":{"memberOfTypes":[],"shape":{"type":"Record","attributes":{}}}},"actions":{"Crm.getCustomer":{"appliesTo":{"principalTypes":["Agent"],"resourceTypes":["Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}},"Kyc.verifyIdentity":{"appliesTo":{"principalTypes":["Agent"],"resourceTypes":["Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}},"Salesforce.contacts":{"appliesTo":{"principalTypes":["Agent"],"resourceTypes":["Resource"],"context":{"type":"Record","attributes":{"session_max_sensitivity":{"type":"String","required":true},"workflow_id":{"type":"String","required":true}}}}}}}}
@@ -3946,9 +4001,9 @@ ______________________________________________________________________
 
 ## Write a production policy
 
-Production policies should be explicit about what is permitted and deny everything else. This policy allows a specific workflow to call a named set of tools, blocks `salesforce.contacts` when PII is in session, and denies all other calls by default.
+A production policy should list exactly what is allowed and refuse everything else. This one lets one named workflow call a short list of tools, blocks `salesforce.contacts` once personal data (PII) has entered the session, and refuses every other call.
 
-Replace `policies/allow-all.cedar` with `policies/production.cedar`. Do not leave the development allow-all policy in the bundle: all `.cedar` files are evaluated together, and its broad permit would allow calls outside this workflow and tool list. Use enforcing mode to block denied calls; advisory mode logs them and forwards them.
+Replace `policies/allow-all.cedar` with `policies/production.cedar`. Do not leave the allow-all file in the folder: cMCP reads every `.cedar` file together, and its broad permit would let through calls outside this workflow and tool list. Run in enforcing mode to actually block refused calls; advisory mode only logs them and lets them through.
 
 Write `policies/production.cedar`:
 
@@ -3976,13 +4031,13 @@ when {
 };
 ```
 
-Cedar implicitly denies calls when no permit matches. Do not add an unconditional `forbid` as a default-deny rule: it overrides every permit, including approved calls. Removing all permits also denies everything. Any change to the policy bytes changes the bundle hash.
+Cedar already refuses any call that no `permit` matches, so you do not need a catch-all refusal. Do not add an unconditional `forbid` for that purpose: it would override every `permit` and block approved calls too. Removing all permits also refuses everything. Any change to a policy file, even one byte, changes the bundle hash.
 
 ______________________________________________________________________
 
 ## Test a policy with the cedar CLI
 
-Before loading a policy bundle into the runtime, test it locally with the `cedar` CLI. Install it with `cargo install cedar-policy-cli`. This lets you verify decisions without starting the gateway.
+You can check what your rules decide without starting the gateway, using the `cedar` command-line tool. Install it with `cargo install cedar-policy-cli`.
 
 ```
 cedar authorize \
@@ -3994,7 +4049,7 @@ cedar authorize \
   --context '{"session_max_sensitivity":"public","workflow_id":"customer_onboarding"}'
 ```
 
-Expected decision: `Allow`. These entity UIDs and context values match the runtime request.
+Expected decision: `Allow`. The names and values in this command match what the runtime sends for the same call.
 
 Test the forbid rule:
 
@@ -4014,7 +4069,7 @@ ______________________________________________________________________
 
 ## Common mistakes
 
-**Missing `when` condition on a permit rule.** A `permit` without a `when` block allows all matching calls unconditionally. Always scope permits to at least a `workflow_id` or tool name list:
+**Missing `when` condition on a permit rule.** A `permit` without a `when` block allows every call it matches, with no further check. Always limit a permit to at least a `workflow_id` or a list of tool names:
 
 ```
 // Wrong: permits every tool call from every principal
@@ -4032,23 +4087,23 @@ when {
 };
 ```
 
-**Overly permissive resource match.** If the `resource` clause is just `resource` (wildcard), the rule applies to every tool. In a production policy, always bind the resource to a specific tool name or a named list.
+**Resource match that is too broad.** If the `resource` part of a rule is just `resource`, the rule applies to every tool. In production, always name a specific tool or a list of tools.
 
-**Forgetting that `forbid` always wins.** If you have both a `permit` and a `forbid` that match the same call, the call is denied. Order in the policy file does not matter; Cedar semantics are: any `forbid` match overrides all `permit` matches.
+**Forgetting that `forbid` always wins.** If a `permit` and a `forbid` both match the same call, the call is refused. The order of rules in the file makes no difference.
 
-**Changing the schema without recomputing the bundle hash.** The bundle hash covers the schema file. Any change to `schema.cedarschema` changes the hash and invalidates `CMCP_POLICY_HASH`. After every schema or policy file change, recompute the bundle hash and update the env var before restarting the runtime.
+**Changing the schema without recomputing the bundle hash.** The bundle hash includes the schema file, so any change to `schema.cedarschema` changes the hash, and a pinned `CMCP_POLICY_HASH` no longer matches. After every schema or policy change, recompute the bundle hash and update that variable before restarting the runtime.
 
 ______________________________________________________________________
 
 ## Summary
 
-You wrote a minimal dev policy and a production policy with workflow scoping, a PII-triggered forbid, and Cedar’s implicit default-deny. You tested both with the `cedar` CLI before loading them into the runtime. Any change to the policy bundle changes the `policy_bundle.hash` field in TRACE Claims, making the active policy tamper-evident.
+You wrote an allow-all policy for testing and a production policy that is limited to one workflow, blocks a tool once personal data is present, and refuses everything else by default. You tested both with the `cedar` tool before the gateway used them. Because any change to the policy files changes the `policy_bundle.hash` field in the signed TRACE claim (cMCP's per-session record), anyone checking the claim can tell exactly which policy was running.
 
-Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md): confirm the policy hash in a produced claim matches what you deployed. [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md): run per-tenant policy bundles with separate hashes.
+Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md) shows how to confirm the policy hash in a claim matches what you deployed, and [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md) covers separate policies, each with its own hash, for different customers.
 
 # Verify a TRACE Claim
 
-Use `cmcp_verify` to confirm that a TRACE claim produced by cMCP is cryptographically valid, bound to the approved policy and catalog, and backed by a fresh attestation.
+This page is for whoever has to decide whether to trust what an agent did, such as an auditor or the next job in a pipeline. cMCP signs a record of each session, called a TRACE claim, and the `cmcp_verify` library checks it: that the signature is genuine, that the policy and tool list it names are the ones you approved, and that its hardware report (attestation) is recent. You get a clear verdict and a small script that refuses unverified records.
 
 ## What you'll learn
 
@@ -4068,7 +4123,7 @@ ______________________________________________________________________
 
 ## Install the verify library
 
-`cmcp_verify` ships as part of `cmcp-runtime`. No separate install is needed:
+`cmcp_verify` comes with `cmcp-runtime`, so there is nothing extra to install:
 
 ```
 from cmcp_verify import verify_trace_claim, ApprovedHashes
@@ -4078,14 +4133,14 @@ ______________________________________________________________________
 
 ## Obtain the approved hashes
 
-The expected hashes must come from artifacts your verifier trusts. The [quickstart](https://cmcp.agentrust-io.com/quickstart/#confirm-your-setup) computes them from local input files before startup. Gateway logs also print hashes, but those logs alone do not establish approval:
+To check a claim you need the fingerprints (hashes) of the policy and catalog you approved, and they must come from a source you trust. The [quickstart](https://cmcp.agentrust-io.com/quickstart/#confirm-your-setup) computes them from the local files before the gateway starts. The gateway's own logs print them too, but a log line from the gateway does not show that anyone approved those values:
 
 ```
 [cmcp] policy bundle loaded: sha256:abc123...
 [cmcp] catalog loaded: 3 tools, sha256:def456...
 ```
 
-In production, these values come from your deployment pipeline: not from the operator. The point of verification is to confirm the runtime loaded what your organization approved, without trusting the operator's assertion. Store the hashes in your CI artifact registry or secrets manager at bundle-build time and retrieve them at verification time.
+In production, take these values from your deployment pipeline, never from the operator. The whole point is to confirm the gateway loaded what your organisation approved without taking the operator's word for it. Save the hashes in your build system's artifact store or secrets manager when the policy is built, and read them back when you check a claim.
 
 ______________________________________________________________________
 
@@ -4109,9 +4164,9 @@ print(f"Unverified fields: {result.unverified_fields}")
 print(f"Details: {result.details}")
 ```
 
-This inspection script prints the result; it is not an acceptance gate. The software quickstart should report `partially_verified`. Use the consuming-job example below when evidence is required before processing output.
+This script only prints the result; it does not accept or reject anything. On the software quickstart it should report `partially_verified`. If a job must refuse output that lacks evidence, use the example at the end of this page.
 
-Integration sketch: the function also accepts optional parameters. Replace the key placeholder with a verifier-approved key before running:
+The function also takes optional parameters, sketched below. Replace the key placeholder with a key you have approved before running it:
 
 ```
 result = verify_trace_claim(
@@ -4126,7 +4181,7 @@ ______________________________________________________________________
 
 ## Verify a TPM claim from the CLI
 
-For a TPM 2.0 claim, supply the attestation-key CA certificates your verifier trusts:
+For a claim from a TPM 2.0 chip (the security chip in many servers and VMs), supply the certificate authority certificates you trust for that chip's attestation keys:
 
 ```
 cmcp verify claim.json \
@@ -4135,9 +4190,9 @@ cmcp verify claim.json \
   --trusted-tpm-ca /etc/cmcp/trust/tpm-ca-roots.pem
 ```
 
-The PEM file may contain one or more verifier-approved CA certificates. Keep it in a verifier-controlled trust store; do not obtain the trust bundle from the claim or the runtime that produced the claim. A valid CA bundle is one input to TPM verification, not a substitute for the signed quote and attestation-key evidence carried by the claim.
+The PEM file may hold one or more certificates you have approved. Keep it in a store you control, and never take it from the claim or from the gateway that made the claim. The certificates are one input to the TPM check; the claim still has to carry the signed TPM report (quote) and the attestation-key evidence.
 
-`--trusted-tpm-ca` is deliberately TPM-only. It does not configure AMD SEV-SNP or Intel TDX trust anchors, and it does not change how claims from those platforms are evaluated.
+`--trusted-tpm-ca` applies to TPM only, on purpose. It does not set the trusted roots for AMD SEV-SNP or Intel TDX, and it does not change how claims from those platforms are checked.
 
 ______________________________________________________________________
 
@@ -4161,7 +4216,7 @@ ______________________________________________________________________
 
 ## Understand partially_verified
 
-`partially_verified` means some checks passed and at least one failed. The most common reason in a correct deployment is that the gateway ran in software-only mode (`CMCP_DEV_MODE=1`): hardware attestation cannot be verified, but all cryptographic fields are valid.
+`partially_verified` means some checks passed and at least one did not. In a correctly set up test, the usual reason is that the gateway ran in software-only mode (`CMCP_DEV_MODE=1`): there is no hardware report to check, but the signatures and fingerprints are all valid.
 
 Example output for a dev-mode claim:
 
@@ -4174,17 +4229,17 @@ Attestation fresh:True
 Details:          {'hardware_attestation': 'software-only mode - not hardware-backed'}
 ```
 
-`hardware_attestation` is in `unverified_fields` but no `failure_reason` is set for it in isolation: the status rolls up to `partially_verified` because other fields were verified. A hardware deployment reaches `verified` only when the required checks pass; moving the process to a TEE alone is insufficient.
+`hardware_attestation` is listed in `unverified_fields`, with no `failure_reason` of its own, and the overall result is `partially_verified` because the other fields passed. A hardware deployment reaches `verified` only when all the required checks pass; just running the gateway on protected hardware (a TEE) is not enough.
 
-`unverified` (with no verified fields at all) means the claim is either malformed, signature-invalid, or the hashes do not match. Treat this as a hard rejection.
+`unverified` (no fields verified at all) means the claim is badly formed, its signature is wrong, or the fingerprints do not match. Always reject it.
 
 ______________________________________________________________________
 
 ## Integrate verification at job start
 
-If a consuming job requires fully verified evidence, reject **every** other status before processing agent output. `partially_verified` can include failures beyond missing hardware; freshness alone is not an acceptance rule.
+If a job that uses the agent's output needs fully verified evidence, it must reject **every** other result before it touches that output. `partially_verified` can hide failures other than missing hardware, and a recent timestamp on its own is not a reason to accept.
 
-Save the following as `accept_claim.py`. It uses the same two files as the inspection example. Supply `approved-hashes.json` through your deployment's trusted artifact channel. This is a result gate; configure any additional platform trust inputs required by your deployment when calling the verifier.
+Save the following as `accept_claim.py`. It uses the same two files as the earlier script. Deliver `approved-hashes.json` through a channel your deployment trusts. This script accepts or rejects; if your deployment needs extra trusted inputs for its hardware platform, pass them when calling the verifier.
 
 ```
 import json
@@ -4209,13 +4264,13 @@ if __name__ == "__main__":
     print(f"Claim verified. Tools called: {claim['gateway']['call_summary']['tools_invoked']}")
 ```
 
-Run `python accept_claim.py`. It must reject the software quickstart record with a nonzero exit and `CLAIM REJECTED: partially_verified`. A development workflow that permits software evidence needs an explicit, narrower acceptance policy and must preserve that distinction in its output.
+Run `python accept_claim.py`. On the software quickstart record it must fail with a nonzero exit and `CLAIM REJECTED: partially_verified`. If a development setup is allowed to accept software-only evidence, write that down as its own, narrower acceptance rule, and keep the difference visible in its output.
 
 Next: [Cedar policy walkthrough](https://cmcp.agentrust-io.com/tutorials/cedar-policy-walkthrough/index.md), [TEE attestation](https://cmcp.agentrust-io.com/tutorials/tee-attestation/index.md), and [verification library reference](https://cmcp.agentrust-io.com/spec/verification-library/index.md).
 
 # TEE Attestation
 
-Deploy cMCP on real Trusted Execution Environment hardware so TRACE claims carry hardware-backed measurements instead of software-only placeholders.
+This page is for operators moving cMCP from a laptop demo to protected hardware. A TEE (trusted execution environment) is a sealed-off area of a processor that the machine's owner cannot read or change, and it can produce a signed report, called an attestation, of exactly what software started inside it. Running cMCP in one means each signed session record (TRACE claim) carries that hardware report instead of a placeholder, and this page explains what that does and does not prove.
 
 ## What you'll learn
 
@@ -4237,7 +4292,7 @@ ______________________________________________________________________
 
 ## Understand the provider values
 
-The `provider` field in `cmcp-config.yaml` controls which TEE the runtime uses. Valid values (from the startup source):
+The `provider` field in `cmcp-config.yaml` sets which kind of protected hardware cMCP uses. The accepted values, taken from the startup code:
 
 | `provider` value | What it requires                                                                                            |
 | ---------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -4248,21 +4303,25 @@ The `provider` field in `cmcp-config.yaml` controls which TEE the runtime uses. 
 | `opaque`         | OPAQUE Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var.                                          |
 | `software-only`  | No hardware. Requires `CMCP_DEV_MODE=1`.                                                                    |
 
-`software-only` is rejected at startup unless `CMCP_DEV_MODE=1` is set. Do not set `CMCP_DEV_MODE=1` in production.
+cMCP refuses to start with `software-only` unless `CMCP_DEV_MODE=1` is set. Never set `CMCP_DEV_MODE=1` in production.
 
 ______________________________________________________________________
 
 ## Understand what hardware attestation proves
 
-When the runtime starts on real TEE hardware, the TEE produces an attestation report. This report:
+When cMCP starts on real TEE hardware, the processor produces an attestation report. The report:
 
-- Is signed by hardware-resident keys that the operator cannot access
-- Contains a measurement of the workload: a hash of the code and configuration loaded into the enclave
-- Commits a runtime-supplied nonce (which includes the Ed25519 signing key fingerprint) into the report, binding the report to the specific key that will sign TRACE claims
+- Is signed by keys built into the hardware, which the operator cannot get at
+- Contains a measurement: a fingerprint (hash) of the code and configuration that were loaded
+- Names the key cMCP will use to sign its TRACE claims, so the claims can be tied back to this report
 
-What this proves: the measurement in the TRACE claim was produced by a known workload running on the reported hardware platform. A verifier who trusts the hardware vendor's root certificates can confirm that no operator intervention occurred between enclave load and attestation.
+What this proves: the measurement in the TRACE claim came from a known piece of software running on the hardware named in the report. Someone who trusts the chip maker's root certificates can confirm that the operator did not interfere between start-up and the report.
 
-What this does not prove: the contents of individual tool call arguments or responses are not measured by the TEE. The TEE measures the workload binary and its startup configuration. Per-call evidence lives in the audit chain (hashed and chained by the workload), not in the TEE hardware report.
+What this does not prove: the hardware does not measure the contents of individual tool calls or responses. It measures the software and its start-up configuration. Evidence about each call lives in the audit chain (the gateway's linked, fingerprinted log), not in the hardware report.
+
+Technical detail: how the signing key is bound
+
+The runtime supplies a nonce that includes the Ed25519 signing key fingerprint, and the hardware commits that nonce into the report, binding the report to the specific key that will sign TRACE claims.
 
 ______________________________________________________________________
 
@@ -4280,7 +4339,7 @@ On a real TEE host:
 - `trace.runtime.measurement` is the real hardware measurement: a non-zero hash specific to the loaded workload
 - `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`
 
-The measurement value is deterministic for a given workload binary and startup config. If the workload binary changes (e.g., an update to `cmcp-runtime`) the measurement changes, and verifiers who pinned the previous measurement will see a mismatch.
+The same software and start-up config always give the same measurement. If the software changes (for example, an update to `cmcp-runtime`), the measurement changes, and anyone who pinned the old value will see a mismatch.
 
 ______________________________________________________________________
 
@@ -4313,6 +4372,10 @@ export CMCP_CATALOG_HASH="sha256:<catalog hash>"
 cmcp start --config cmcp-config.yaml
 ```
 
+At start-up cMCP asks the hardware for a report that includes a fingerprint of its signing key, so a checker can later confirm that the key which signed the claims belongs to this report.
+
+Technical detail: the SEV-SNP nonce
+
 At startup the runtime calls `get_attestation_report(nonce)` where the nonce encodes the signing key fingerprint in its first 32 bytes. The SEV-SNP hardware commits this nonce into the attestation report's `REPORT_DATA` field. The TRACE claim carries this nonce as `trace.runtime.nonce`. Verifiers re-derive the key fingerprint from `trace.cnf.jwk.x` and compare against `nonce[:32]` to confirm the signing key is bound to this specific attestation report.
 
 ______________________________________________________________________
@@ -4334,7 +4397,7 @@ After switching from software-only to SEV-SNP, the TRACE claim shows:
 }
 ```
 
-`measurement` is the value the SEV-SNP hardware measures at enclave load. Pin this value in `attestation.expected_measurement` to reject unknown workload versions at startup:
+`measurement` is the fingerprint the SEV-SNP hardware takes when cMCP starts. Write it into `attestation.expected_measurement` and cMCP will refuse to start as any other version:
 
 ```
 attestation:
@@ -4343,7 +4406,7 @@ attestation:
   expected_measurement: "sha384:7f3c9a1b2e4d8f6a0c5b7e9d3f1a4c8b2e6f0d4a8c1b3e5f7a9d2c4e6f8a0b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 ```
 
-If the deployed binary differs from the expected measurement, the runtime exits at startup rather than producing claims with an unexpected measurement.
+If the deployed software does not match, cMCP stops at start-up instead of signing claims with a measurement you did not expect.
 
 ______________________________________________________________________
 
@@ -4357,23 +4420,23 @@ Use `software-only` when:
 
 Use a real TEE in production when:
 
-- Consumers of TRACE claims need hardware-backed evidence (compliance requirements, contractual obligations, regulated data)
-- You need the signing key bound to the hardware report (CRYPTO-001 check in `verify_trace_claim`)
-- You are protecting against threat classes T1-T4 as defined in the threat model (operator tampering, policy substitution, catalog substitution, key substitution)
+- Whoever relies on your TRACE claims needs evidence backed by hardware (compliance rules, contracts, regulated data)
+- You need the signing key tied to the hardware report (the CRYPTO-001 check in `verify_trace_claim`)
+- You need protection against threats T1 to T4 in the threat model: the operator tampering with the gateway, or swapping its policy, its tool catalog or its signing key
 
-Software-only mode leaves all four threat classes open. The audit chain and policy hash checks still run and provide evidence, but nothing prevents an operator from restarting the runtime with a different policy bundle and a different key.
+Software-only mode leaves all four of those open. The log and policy fingerprint checks still run and still produce evidence, but nothing stops an operator from restarting cMCP with different rules and a different key.
 
 ______________________________________________________________________
 
 ## Summary
 
-You configured cMCP for AMD SEV-SNP, confirmed the `trace.runtime.platform` and `trace.runtime.measurement` fields reflect real hardware values, and pinned the expected measurement in config. On a real TEE host, `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`, providing hardware-backed assurance that the workload was not tampered with.
+You configured cMCP for AMD SEV-SNP, confirmed that `trace.runtime.platform` and `trace.runtime.measurement` show real hardware values, and pinned the expected measurement in the config. On a real TEE host, `verify_trace_claim` returns `status: "verified"` with `hardware_attestation` in `verified_fields`: the hardware vouches that the software was the version you expected.
 
-Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md): hardware attestation is one of the verification steps that determines overall status. [Multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md): each tenant's policy bundle hash is separate; the hardware measurement is shared across tenants on the same host.
+Related tutorials: [Verify a TRACE claim](https://cmcp.agentrust-io.com/tutorials/verifying-a-trace-claim/index.md) shows where the hardware check fits in the overall result, and in a [multi-tenant deployment](https://cmcp.agentrust-io.com/tutorials/multi-tenant-config/index.md) each tenant has its own policy fingerprint while tenants on the same host share the hardware measurement.
 
 # Deploy on Azure Confidential VMs
 
-Run cMCP on Azure hardware-attested infrastructure so TRACE claims carry real SEV-SNP or TDX measurements.
+This page is for operators who want to run cMCP on Microsoft Azure with hardware protection switched on. Azure Confidential VMs run on AMD SEV-SNP or Intel TDX processors, which keep the VM's memory sealed off from the cloud host and can produce a signed hardware report (an attestation) of the software that started. Following these steps, each signed session record cMCP produces (a TRACE claim) carries that hardware report instead of a software-only placeholder.
 
 ## What you'll learn
 
@@ -4398,9 +4461,9 @@ ______________________________________________________________________
 | Intel TDX             | DCesv6, DCedsv6                 | `tdx`            | Current-gen (v6); DCedsv5 is previous gen |
 | vTPM (Trusted Launch) | Any Gen2 VM with Trusted Launch | `tpm`            | All regions                               |
 
-SEV-SNP (DCasv5) is the most widely available. Use TDX (DCesv6) where your compliance requirements specify Intel.
+SEV-SNP (DCasv5) is the most widely available. Use TDX (DCesv6) where your compliance rules call for Intel. vTPM uses the VM's virtual security chip, which is a weaker guarantee than the other two.
 
-Region availability varies. Check which SKUs are available in your target region before creating a resource group:
+Not every region offers every VM size. Check what your region offers before creating a resource group:
 
 ```
 az vm list-skus --location eastus --size dc --output table
@@ -4438,7 +4501,7 @@ az vm create \
 
 ### TDX (DCesv6)
 
-DCesv6 is the current-gen Intel TDX series (5th Gen Intel). DCedsv5 (previous gen) also supports TDX but is superseded.
+DCesv6 is the current Intel TDX series (5th Gen Intel). The older DCedsv5 also supports TDX but has been replaced.
 
 ```
 # Verify DCesv6 availability in your region first:
@@ -4487,7 +4550,7 @@ ______________________________________________________________________
 
 ## Install cMCP on the VM
 
-SSH in and run the setup script from the repo:
+Connect to the VM over SSH and run the setup script from the repository:
 
 ```
 VM_IP=$(az vm show --resource-group cmcp-rg --name cmcp-gateway --show-details --query publicIps -o tsv)
@@ -4533,7 +4596,7 @@ listen_addr: "0.0.0.0:8443"
 
 For TDX, change `provider: sev-snp` to `provider: tdx`.
 
-Add a minimal policy bundle (replace with your actual policies):
+Add a minimal set of policy rules (replace them with your real ones):
 
 ```
 cat > policies/manifest.json <<'EOF'
@@ -4554,7 +4617,7 @@ cat > policies/schema.cedarschema <<'EOF'
 EOF
 ```
 
-Add a minimal catalog:
+Add a minimal catalog (the list of tools the gateway may call):
 
 ```
 cat > catalog.json <<'EOF'
@@ -4579,13 +4642,13 @@ Expected startup log on a real SEV-SNP VM:
 cMCP Runtime starting: TEE: sev-snp, listen: 0.0.0.0:8443
 ```
 
-The TEE field reads `sev-snp` (not `software-only`). If it reads `software-only`, the VM does not have an accessible SEV-SNP device: confirm the VM SKU and that `/dev/sev-guest` exists.
+The TEE field should read `sev-snp`. If it reads `software-only`, the gateway could not reach the SEV-SNP hardware: check the VM size and that `/dev/sev-guest` exists.
 
 ______________________________________________________________________
 
 ## Verify hardware attestation
 
-From your local machine, retrieve a TRACE claim and verify it:
+From your own computer, fetch a TRACE claim from the gateway and check it:
 
 ```
 # Start a session and retrieve its claim
@@ -4624,13 +4687,13 @@ Measurement:     sha384:<non-zero hardware measurement>
 Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain', 'hardware_attestation']
 ```
 
-`hardware_attestation` appearing in `verified_fields` confirms the measurement is hardware-backed. On a DCedsv5 with TDX, `platform` reads `intel-tdx`.
+If `hardware_attestation` appears in `verified_fields`, the measurement (the fingerprint of the software that started) came from the hardware. On a TDX VM (DCesv6, or the older DCedsv5), `platform` reads `intel-tdx`.
 
 ______________________________________________________________________
 
 ## Pin the expected measurement
 
-Once you've confirmed the measurement on a known-good deploy, pin it to reject unknown workload versions at startup:
+Once you have seen the measurement on a deployment you trust, write it into the config. The gateway will then refuse to start if the software is anything other than that exact version:
 
 ```
 attestation:
@@ -4639,7 +4702,7 @@ attestation:
   expected_measurement: "sha384:<measurement from claim>"
 ```
 
-If the cMCP binary is updated or the startup config changes, the measurement changes and the gateway exits at startup rather than producing claims with an unexpected value.
+If the cMCP software or its startup config changes, the measurement changes too, and the gateway stops at startup instead of signing claims with a value you did not expect.
 
 ______________________________________________________________________
 
@@ -4660,7 +4723,7 @@ ______________________________________________________________________
 
 # Deploy on GCP Confidential VMs
 
-Run cMCP on Google Cloud infrastructure with Intel TDX so TRACE claims carry hardware-backed measurements.
+This page is for operators who want to run cMCP on Google Cloud with hardware protection switched on. Google Cloud Confidential VMs run on Intel TDX or AMD SEV-SNP processors, which keep the VM's memory sealed off from the cloud host and can produce a signed hardware report (an attestation) of the software that started. Following these steps, each signed session record cMCP produces (a TRACE claim) carries that hardware report instead of a software-only placeholder.
 
 ## What you'll learn
 
@@ -4686,7 +4749,7 @@ ______________________________________________________________________
 
 ## Choose your hardware
 
-GCP Confidential VMs offer two TEE types:
+GCP Confidential VMs offer two kinds of protected hardware (TEE, trusted execution environment), plus an older option:
 
 | TEE type         | GCP machine type                           | `provider` value | Notes                                  |
 | ---------------- | ------------------------------------------ | ---------------- | -------------------------------------- |
@@ -4694,9 +4757,9 @@ GCP Confidential VMs offer two TEE types:
 | AMD SEV-SNP      | N2D (`n2d-standard-*`)                     | `sev-snp`        | Wider zone availability                |
 | AMD SEV (legacy) | N2D with `--confidential-compute-type=SEV` | `tpm` (vTPM)     | Use SEV-SNP or TDX for new deployments |
 
-C3 with TDX is the recommended path for highest assurance on GCP. N2D with SEV-SNP is more widely available by zone.
+C3 with TDX gives the strongest guarantee on GCP. N2D with SEV-SNP is available in more zones.
 
-Check which zones support C3 + TDX in your project:
+Check which zones offer C3 with TDX in your project:
 
 ```
 gcloud compute zones list --filter="name~us-central1" --format="table(name,status)"
@@ -4784,7 +4847,7 @@ ______________________________________________________________________
 
 ## Configure for TDX
 
-Confirm the hardware is accessible. On a GCP TDX VM the TDX RTMR (Runtime Measurement Register) device is available:
+Confirm the gateway can reach the hardware. On a GCP TDX VM the TDX guest device, which also exposes the RTMR (Runtime Measurement Register) values, is present:
 
 ```
 ls /dev/tdx_guest 2>/dev/null && echo "TDX present" || echo "TDX not found"
@@ -4815,7 +4878,7 @@ listen_addr: "0.0.0.0:8443"
 
 For SEV-SNP, change `provider: tdx` to `provider: sev-snp`.
 
-Add a minimal policy bundle:
+Add a minimal set of policy rules:
 
 ```
 cat > policies/manifest.json <<'EOF'
@@ -4857,13 +4920,13 @@ Expected startup log on a real TDX VM:
 cMCP Runtime starting: TEE: tdx, listen: 0.0.0.0:8443
 ```
 
-The TEE field reads `tdx`. If it reads `software-only`, the TDX device was not found: confirm the instance type and that `/dev/tdx_guest` exists.
+The TEE field should read `tdx`. If it reads `software-only`, the gateway could not find the TDX hardware: check the machine type and that `/dev/tdx_guest` exists.
 
 ______________________________________________________________________
 
 ## Verify hardware attestation
 
-From your local machine:
+From your own computer, fetch a TRACE claim from the gateway and check it:
 
 ```
 VM_IP=<external IP from above>
@@ -4903,13 +4966,13 @@ Measurement:     sha384:<non-zero hardware measurement>
 Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain', 'hardware_attestation']
 ```
 
-`hardware_attestation` in `verified_fields` confirms the measurement is hardware-backed.
+If `hardware_attestation` appears in `verified_fields`, the measurement (the fingerprint of the software that started) came from the hardware.
 
 ______________________________________________________________________
 
 ## Pin the expected measurement
 
-After confirming the measurement on a known-good deploy:
+Once you have seen the measurement on a deployment you trust, write it into the config:
 
 ```
 attestation:
@@ -4918,7 +4981,7 @@ attestation:
   expected_measurement: "sha384:<measurement from claim>"
 ```
 
-Any change to the cMCP binary or startup config produces a different measurement. The gateway exits at startup if the measurement does not match, rather than producing claims with an unknown value.
+Any change to the cMCP software or its startup config produces a different measurement. If the measurement does not match, the gateway stops at startup instead of signing claims with a value you did not expect.
 
 ______________________________________________________________________
 
@@ -4940,9 +5003,13 @@ ______________________________________________________________________
 
 # Hardware validation
 
-What has been verified against real confidential-computing hardware, what has not, and how to reproduce each run. [STATUS.md](https://github.com/agentrust-io/cmcp/blob/main/STATUS.md) links here rather than restating it.
+Confidential-computing chips (AMD SEV-SNP, Intel TDX and TPM security chips) can sign a report, called a quote, that says what software is running. cMCP includes a verifier, `cmcp_verify`, that checks those signed reports. This page records which chips we have tested the verifier against using real reports from real machines, which we have not, and how to repeat each test. It is for anyone deciding how far to trust cMCP's hardware claims.
+
+[STATUS.md](https://github.com/agentrust-io/cmcp/blob/main/STATUS.md) links here rather than restating it.
 
 The rule this page exists to enforce: no document describes cMCP as hardware-attested for a platform until a genuine quote from that platform has been verified end to end by `cmcp_verify`, and the run is recorded below.
+
+In plain terms, as of the dates below: AMD SEV-SNP on Azure and Intel TDX on Google Cloud both pass with real reports (for Intel, the main quote path only). TPM quotes on Azure pass the signature check, but checking the signing key back to a trusted root is not built yet, and on some Azure hosts it is not possible at all. NVIDIA GPU confidential computing is not implemented. And these tests check the verifier; they do not show cMCP serving real tool traffic from inside the protected hardware.
 
 ## Current state
 
@@ -4957,9 +5024,13 @@ The rule this page exists to enforce: no document describes cMCP as hardware-att
 
 ## Scope of the guarantee
 
+These checks protect against an attacker working remotely or a dishonest administrator. They do not protect against someone with their hands on the machine.
+
 Verification is bounded to a remote or rogue-admin adversary. It does not hold against an adversary with physical access to the hardware: [TEE.fail](https://tee.fail) demonstrates attestation-key extraction from fully-patched SEV-SNP and TDX with a sub-$1000 DDR5 interposer. See [LIMITATIONS.md](https://github.com/agentrust-io/cmcp/blob/main/LIMITATIONS.md).
 
 ## SEV-SNP, Azure confidential VM
+
+In short: a real AMD report from an Azure confidential VM checks out back to AMD's own root certificate.
 
 Evidence: an HCL report read from the vTPM NV index `0x01400001` on an Azure DCasv5 CVM (family 0x19 / model 0x01, Milan), plus the VCEK and the AMD ASK/ARK chain. Azure SEV-SNP is paravisor-mediated, so `REPORT_DATA` binds the vTPM attestation key rather than a cMCP-supplied nonce directly; the nonce is carried in the AK-signed TPM quote's `extraData` and the two are bound together by `cmcp_verify.azure_cvm.verify_azure_cvm_measurement`.
 
@@ -4972,6 +5043,8 @@ CMCP_AZURE_FIXTURE_DIR=<capture dir> pytest tests/unit/test_azure_cvm_verify.py
 The capture directory holds `hcl.bin`, `vcek.der` and `cert_chain.pem`. It is **not** committed: the SNP report's 64-byte `CHIP_ID` is a per-CPU hardware identifier. Zeroing it invalidates the signature, so a redacted vector cannot exercise the signature path, which is why this test is env-gated instead of running in CI.
 
 ## Live run inside a SEV-SNP confidential VM
+
+In short: the same check also passed while running inside the confidential VM itself, and a report with the wrong freshness value (nonce) was correctly rejected.
 
 The runs above appraise stored evidence. On 2026-07-27 the collector and the verifier were also run **inside** a real Azure confidential VM (`Standard_DC2ads_v5`, Ubuntu 24.04 CVM image, eastus; the guest reports `Detected confidential virtualization sev-snp` and `Memory Encryption Features active: AMD SEV`, with `SEV: Status: vTom` and no `/dev/sev-guest`, the expected paravisor shape).
 
@@ -4997,6 +5070,8 @@ What this still does not establish: cMCP serving live MCP traffic from inside th
 
 ## Intel TDX, GCP C3 confidential VM
 
+In short: a real Intel report from a Google Cloud confidential VM checks out back to Intel's root certificate. Running it also exposed a parsing bug that had made every real Intel report fail, which the earlier synthetic tests had missed.
+
 Evidence: a DCAP v4 ECDSA quote from a GCP C3 CVM (non-paravisor TDX, kernel 6.17, configfs-TSM `tdx_guest` provider). Non-paravisor TDX is guest-controlled, so `REPORTDATA` carries the value cMCP supplies.
 
 What the run checks: the attestation key's ECDSA-P256 signature over the quote header plus TD report body, the QE report binding (`report_data[:32] == sha256(att_pub || qe_auth)`), the PCK signature over the QE report, and the PCK chain to the pinned Intel SGX Root CA.
@@ -5007,11 +5082,13 @@ CMCP_TDX_FIXTURE_DIR=<capture dir> pytest tests/unit/test_tdx_quote_verify.py
 
 The capture directory holds `tdx_quote.bin`. Optional: `collateral/intel_root_ca.pem` to override the pinned root, and `report_data.hex` to assert the report_data binding. The quote is not committed: the PCK certificate identifies the CPU.
 
-What this run does not cover: the TDREPORT path. `verify_tdx_measurement()` parses the 1024-byte TDREPORT_STRUCT returned by the `TDX_CMD_GET_REPORT0` ioctl, which is a different artifact from the DCAP quote captured here, and no real TDREPORT has been checked against it. #371 found both of its field offsets wrong -- `MRTD` read from inside `REPORTMACSTRUCT.report_data` and `REPORTDATA` read from the leading RESERVED block -- and #527 corrected them against the published Intel TDX Module ABI. The correction is asserted against the ABI and against a property no hardware is needed to state (a measurement must not move when only the nonce moves), which is not the same as a capture. The row above covers quote verification; read it as covering measurement provenance only once a TDREPORT capture appears here.
+What this run does not cover: the TDREPORT path. `verify_tdx_measurement()` parses the 1024-byte TDREPORT_STRUCT returned by the `TDX_CMD_GET_REPORT0` ioctl, which is a different artifact from the DCAP quote captured here, and no real TDREPORT has been checked against it. #371 found both of its field offsets wrong (`MRTD` read from inside `REPORTMACSTRUCT.report_data` and `REPORTDATA` read from the leading RESERVED block), and #527 corrected them against the published Intel TDX Module ABI. The correction is asserted against the ABI and against a property no hardware is needed to state (a measurement must not move when only the nonce moves), which is not the same as a capture. The row above covers quote verification; read it as covering measurement provenance only once a TDREPORT capture appears here.
 
 This run is what found the parser defect fixed alongside this page. Real DCAP v4 quotes nest the Quoting Enclave material under a type-6 `QE_REPORT_CERTIFICATION_DATA` header; the parser read the QE report six bytes early, so every genuine quote was rejected with `attestation_key_not_bound_to_qe` while the synthetic tests, which emitted the same flat layout, passed. Failure was closed, so this was a false negative rather than an unsound accept, but the TDX path had never worked against real evidence. Synthetic self-consistency is not validation.
 
 ## TPM 2.0, Azure Trusted Launch vTPM
+
+In short: a TPM is a security chip (here a virtual one, a vTPM, provided by Azure) that can sign a record of what the machine booted. A real Azure TPM report parses correctly. Whether its signing key can be traced back to a trusted root depends on which of two Azure certificate setups the host happens to use.
 
 Evidence: a `TPMS_ATTEST` quote over PCRs 0-7 (SHA-256) from a `Standard_D2s_v7` Ubuntu 24.04 VM with Trusted Launch, vTPM and secure boot enabled, taken under a fresh 32-byte nonce.
 
@@ -5043,6 +5120,8 @@ Consequence for #431 and for any deployment: pinning the 2023 root does not make
 It remains true that this certificate certifies a different key than an in-guest `tpm2_createak` AK. The resolution is not to certify our own AK: it is to use the key Azure already certified, which is live at persistent handle `0x81000003`.
 
 ## TPM 2.0 quote signature, Azure Trusted Launch vTPM, 2026-07-31
+
+In short: the signature on a real Azure TPM report verifies, and altered copies are rejected. The test data is committed, so the check runs on every agent-manifest pull request.
 
 Evidence: an AK-signed quote from a `Standard_D2s_v5` Ubuntu 24.04 VM with Trusted Launch, vTPM and secure boot enabled, eastus. The guest reports TPM 2.0 with `TPM2_PT_MANUFACTURER` = `MSFT`. The attestation key was created with `tpm2_createek` followed by `tpm2_createak` (RSA, RSASSA, SHA-256), and the quote taken over PCRs 0-7 in the SHA-256 bank under a fresh 32-byte nonce:
 
@@ -5085,9 +5164,13 @@ Not yet implemented: the runtime does not read the NV certificate or use the per
 
 ## TCG event log availability, Azure Trusted Launch, 2026-07-31
 
+In short: Azure does not give the VM the boot-time log a TPM normally keeps, so the code that replays that log could not be tested on Azure.
+
 `/sys/kernel/security/tpm0/binary_bios_measurements` exists on this platform but is **zero bytes**. The Azure Gen2 UEFI does not hand a TCG log to the guest, so event-log replay cannot be exercised on an Azure vTPM at all. The replay code in `cmcp_verify.tcg_event_log` is covered by synthetic logs, and validating it against a real log needs a platform that publishes one, which in practice means physical client hardware. `#433` tracks that.
 
 ## Gateway measurement NV extend index, Azure Trusted Launch vTPM, 2026-08-01
+
+In short: the gateway records a fingerprint of itself in a TPM slot that can only be added to, never overwritten. This run confirmed on real hardware that the slot behaves that way.
 
 `Standard_D2s_v7`, Ubuntu 24.04, Trusted Launch with vTPM and secure boot, eastus2. This validates `cmcp_runtime.tee.measurement` (#432, #451), whose TPM calls had been written against the documented tpm2-pytss API without ever executing against a TPM. All of them work:
 
@@ -5099,6 +5182,8 @@ Not yet implemented: the runtime does not read the NV certificate or use the per
 Not covered by this run: the index value still travels as an ordinary NV read, which no signature covers, so it is a local integrity control and not yet remote-verifiable evidence. A later run exercised `TPM2_NV_Certify` directly, but the current TRACE schema and verifier still do not carry or appraise that startup pair as part of an ordinary claim.
 
 ## TPM2_NV_Certify for the gateway measurement, Azure Trusted Launch vTPM, 2026-08-01
+
+In short: the TPM can sign the value in that slot so someone else can check it. Testing this on real hardware found two bugs in code that had already been merged, both now fixed.
 
 `Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by #461). This run **found two defects in code that had already merged**, which is the argument for running it.
 
@@ -5124,6 +5209,8 @@ One limit on this run: the VM drew the `Global Virtual TPM CA - 03` hierarchy, w
 - **cMCP serving traffic from inside the TEE**: attestation collection and verification now run in situ on a CVM (above). A production gateway serving MCP traffic from inside the enclave, with the policy bundle measured at boot and TRACE Claims emitted per session, is still a separate milestone.
 - **TCB appraisal**: TCB status and QE identity need Intel PCS collateral by FMSPC and are reported in `unverified_fields`. Do not read a `verified=True` TDX result as a full TCB appraisal.
 # Project
+
+This page lists what cMCP does not protect against, where its promises stop, and what you have to handle with other controls. Read it before you rely on a cMCP receipt for a security or compliance decision. Each limit names the part of the system it applies to; terms such as TEE (sealed-off hardware) and attestation (a hardware-signed report of what is running) are explained in [the terms, in plain English](https://agentrust-io.com/#plain-terms).
 
 # Limitations
 
@@ -5295,6 +5382,8 @@ Expected component breakdown for a 10-rule policy bundle:
 These are targets from [the benchmark methodology](https://cmcp.agentrust-io.com/testing/benchmarks/). Actual results on real TEE hardware will vary by provider and payload size; benchmark results are committed per provider to `benchmarks/` in CI.
 
 # Sponsors
+
+This page says who pays for cMCP and how other organisations can help.
 
 cMCP is an open-source AgenTrust project. It is sponsored by OPAQUE Systems, which funds the engineering, infrastructure and confidential-computing work behind it and contributes to the project's confidential-computing integrations. Organisations that want to support the project are welcome to join as sponsors.
 

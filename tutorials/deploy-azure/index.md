@@ -1,6 +1,6 @@
 # Deploy on Azure Confidential VMs
 
-Run cMCP on Azure hardware-attested infrastructure so TRACE claims carry real SEV-SNP or TDX measurements.
+This page is for operators who want to run cMCP on Microsoft Azure with hardware protection switched on. Azure Confidential VMs run on AMD SEV-SNP or Intel TDX processors, which keep the VM's memory sealed off from the cloud host and can produce a signed hardware report (an attestation) of the software that started. Following these steps, each signed session record cMCP produces (a TRACE claim) carries that hardware report instead of a software-only placeholder.
 
 ## What you'll learn
 
@@ -25,9 +25,9 @@ ______________________________________________________________________
 | Intel TDX             | DCesv6, DCedsv6                 | `tdx`            | Current-gen (v6); DCedsv5 is previous gen |
 | vTPM (Trusted Launch) | Any Gen2 VM with Trusted Launch | `tpm`            | All regions                               |
 
-SEV-SNP (DCasv5) is the most widely available. Use TDX (DCesv6) where your compliance requirements specify Intel.
+SEV-SNP (DCasv5) is the most widely available. Use TDX (DCesv6) where your compliance rules call for Intel. vTPM uses the VM's virtual security chip, which is a weaker guarantee than the other two.
 
-Region availability varies. Check which SKUs are available in your target region before creating a resource group:
+Not every region offers every VM size. Check what your region offers before creating a resource group:
 
 ```
 az vm list-skus --location eastus --size dc --output table
@@ -65,7 +65,7 @@ az vm create \
 
 ### TDX (DCesv6)
 
-DCesv6 is the current-gen Intel TDX series (5th Gen Intel). DCedsv5 (previous gen) also supports TDX but is superseded.
+DCesv6 is the current Intel TDX series (5th Gen Intel). The older DCedsv5 also supports TDX but has been replaced.
 
 ```
 # Verify DCesv6 availability in your region first:
@@ -114,7 +114,7 @@ ______________________________________________________________________
 
 ## Install cMCP on the VM
 
-SSH in and run the setup script from the repo:
+Connect to the VM over SSH and run the setup script from the repository:
 
 ```
 VM_IP=$(az vm show --resource-group cmcp-rg --name cmcp-gateway --show-details --query publicIps -o tsv)
@@ -160,7 +160,7 @@ listen_addr: "0.0.0.0:8443"
 
 For TDX, change `provider: sev-snp` to `provider: tdx`.
 
-Add a minimal policy bundle (replace with your actual policies):
+Add a minimal set of policy rules (replace them with your real ones):
 
 ```
 cat > policies/manifest.json <<'EOF'
@@ -181,7 +181,7 @@ cat > policies/schema.cedarschema <<'EOF'
 EOF
 ```
 
-Add a minimal catalog:
+Add a minimal catalog (the list of tools the gateway may call):
 
 ```
 cat > catalog.json <<'EOF'
@@ -206,13 +206,13 @@ Expected startup log on a real SEV-SNP VM:
 cMCP Runtime starting: TEE: sev-snp, listen: 0.0.0.0:8443
 ```
 
-The TEE field reads `sev-snp` (not `software-only`). If it reads `software-only`, the VM does not have an accessible SEV-SNP device: confirm the VM SKU and that `/dev/sev-guest` exists.
+The TEE field should read `sev-snp`. If it reads `software-only`, the gateway could not reach the SEV-SNP hardware: check the VM size and that `/dev/sev-guest` exists.
 
 ______________________________________________________________________
 
 ## Verify hardware attestation
 
-From your local machine, retrieve a TRACE claim and verify it:
+From your own computer, fetch a TRACE claim from the gateway and check it:
 
 ```
 # Start a session and retrieve its claim
@@ -251,13 +251,13 @@ Measurement:     sha384:<non-zero hardware measurement>
 Verified fields: ['schema', 'signature', 'policy_bundle.hash', 'tool_catalog.hash', 'attestation_freshness', 'audit_chain', 'hardware_attestation']
 ```
 
-`hardware_attestation` appearing in `verified_fields` confirms the measurement is hardware-backed. On a DCedsv5 with TDX, `platform` reads `intel-tdx`.
+If `hardware_attestation` appears in `verified_fields`, the measurement (the fingerprint of the software that started) came from the hardware. On a TDX VM (DCesv6, or the older DCedsv5), `platform` reads `intel-tdx`.
 
 ______________________________________________________________________
 
 ## Pin the expected measurement
 
-Once you've confirmed the measurement on a known-good deploy, pin it to reject unknown workload versions at startup:
+Once you have seen the measurement on a deployment you trust, write it into the config. The gateway will then refuse to start if the software is anything other than that exact version:
 
 ```
 attestation:
@@ -266,7 +266,7 @@ attestation:
   expected_measurement: "sha384:<measurement from claim>"
 ```
 
-If the cMCP binary is updated or the startup config changes, the measurement changes and the gateway exits at startup rather than producing claims with an unexpected value.
+If the cMCP software or its startup config changes, the measurement changes too, and the gateway stops at startup instead of signing claims with a value you did not expect.
 
 ______________________________________________________________________
 

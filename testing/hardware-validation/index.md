@@ -1,8 +1,12 @@
 # Hardware validation
 
-What has been verified against real confidential-computing hardware, what has not, and how to reproduce each run. [STATUS.md](https://github.com/agentrust-io/cmcp/blob/main/STATUS.md) links here rather than restating it.
+Confidential-computing chips (AMD SEV-SNP, Intel TDX and TPM security chips) can sign a report, called a quote, that says what software is running. cMCP includes a verifier, `cmcp_verify`, that checks those signed reports. This page records which chips we have tested the verifier against using real reports from real machines, which we have not, and how to repeat each test. It is for anyone deciding how far to trust cMCP's hardware claims.
+
+[STATUS.md](https://github.com/agentrust-io/cmcp/blob/main/STATUS.md) links here rather than restating it.
 
 The rule this page exists to enforce: no document describes cMCP as hardware-attested for a platform until a genuine quote from that platform has been verified end to end by `cmcp_verify`, and the run is recorded below.
+
+In plain terms, as of the dates below: AMD SEV-SNP on Azure and Intel TDX on Google Cloud both pass with real reports (for Intel, the main quote path only). TPM quotes on Azure pass the signature check, but checking the signing key back to a trusted root is not built yet, and on some Azure hosts it is not possible at all. NVIDIA GPU confidential computing is not implemented. And these tests check the verifier; they do not show cMCP serving real tool traffic from inside the protected hardware.
 
 ## Current state
 
@@ -17,9 +21,13 @@ The rule this page exists to enforce: no document describes cMCP as hardware-att
 
 ## Scope of the guarantee
 
+These checks protect against an attacker working remotely or a dishonest administrator. They do not protect against someone with their hands on the machine.
+
 Verification is bounded to a remote or rogue-admin adversary. It does not hold against an adversary with physical access to the hardware: [TEE.fail](https://tee.fail) demonstrates attestation-key extraction from fully-patched SEV-SNP and TDX with a sub-$1000 DDR5 interposer. See [LIMITATIONS.md](https://github.com/agentrust-io/cmcp/blob/main/LIMITATIONS.md).
 
 ## SEV-SNP, Azure confidential VM
+
+In short: a real AMD report from an Azure confidential VM checks out back to AMD's own root certificate.
 
 Evidence: an HCL report read from the vTPM NV index `0x01400001` on an Azure DCasv5 CVM (family 0x19 / model 0x01, Milan), plus the VCEK and the AMD ASK/ARK chain. Azure SEV-SNP is paravisor-mediated, so `REPORT_DATA` binds the vTPM attestation key rather than a cMCP-supplied nonce directly; the nonce is carried in the AK-signed TPM quote's `extraData` and the two are bound together by `cmcp_verify.azure_cvm.verify_azure_cvm_measurement`.
 
@@ -32,6 +40,8 @@ CMCP_AZURE_FIXTURE_DIR=<capture dir> pytest tests/unit/test_azure_cvm_verify.py
 The capture directory holds `hcl.bin`, `vcek.der` and `cert_chain.pem`. It is **not** committed: the SNP report's 64-byte `CHIP_ID` is a per-CPU hardware identifier. Zeroing it invalidates the signature, so a redacted vector cannot exercise the signature path, which is why this test is env-gated instead of running in CI.
 
 ## Live run inside a SEV-SNP confidential VM
+
+In short: the same check also passed while running inside the confidential VM itself, and a report with the wrong freshness value (nonce) was correctly rejected.
 
 The runs above appraise stored evidence. On 2026-07-27 the collector and the verifier were also run **inside** a real Azure confidential VM (`Standard_DC2ads_v5`, Ubuntu 24.04 CVM image, eastus; the guest reports `Detected confidential virtualization sev-snp` and `Memory Encryption Features active: AMD SEV`, with `SEV: Status: vTom` and no `/dev/sev-guest`, the expected paravisor shape).
 
@@ -57,6 +67,8 @@ What this still does not establish: cMCP serving live MCP traffic from inside th
 
 ## Intel TDX, GCP C3 confidential VM
 
+In short: a real Intel report from a Google Cloud confidential VM checks out back to Intel's root certificate. Running it also exposed a parsing bug that had made every real Intel report fail, which the earlier synthetic tests had missed.
+
 Evidence: a DCAP v4 ECDSA quote from a GCP C3 CVM (non-paravisor TDX, kernel 6.17, configfs-TSM `tdx_guest` provider). Non-paravisor TDX is guest-controlled, so `REPORTDATA` carries the value cMCP supplies.
 
 What the run checks: the attestation key's ECDSA-P256 signature over the quote header plus TD report body, the QE report binding (`report_data[:32] == sha256(att_pub || qe_auth)`), the PCK signature over the QE report, and the PCK chain to the pinned Intel SGX Root CA.
@@ -67,11 +79,13 @@ CMCP_TDX_FIXTURE_DIR=<capture dir> pytest tests/unit/test_tdx_quote_verify.py
 
 The capture directory holds `tdx_quote.bin`. Optional: `collateral/intel_root_ca.pem` to override the pinned root, and `report_data.hex` to assert the report_data binding. The quote is not committed: the PCK certificate identifies the CPU.
 
-What this run does not cover: the TDREPORT path. `verify_tdx_measurement()` parses the 1024-byte TDREPORT_STRUCT returned by the `TDX_CMD_GET_REPORT0` ioctl, which is a different artifact from the DCAP quote captured here, and no real TDREPORT has been checked against it. #371 found both of its field offsets wrong -- `MRTD` read from inside `REPORTMACSTRUCT.report_data` and `REPORTDATA` read from the leading RESERVED block -- and #527 corrected them against the published Intel TDX Module ABI. The correction is asserted against the ABI and against a property no hardware is needed to state (a measurement must not move when only the nonce moves), which is not the same as a capture. The row above covers quote verification; read it as covering measurement provenance only once a TDREPORT capture appears here.
+What this run does not cover: the TDREPORT path. `verify_tdx_measurement()` parses the 1024-byte TDREPORT_STRUCT returned by the `TDX_CMD_GET_REPORT0` ioctl, which is a different artifact from the DCAP quote captured here, and no real TDREPORT has been checked against it. #371 found both of its field offsets wrong (`MRTD` read from inside `REPORTMACSTRUCT.report_data` and `REPORTDATA` read from the leading RESERVED block), and #527 corrected them against the published Intel TDX Module ABI. The correction is asserted against the ABI and against a property no hardware is needed to state (a measurement must not move when only the nonce moves), which is not the same as a capture. The row above covers quote verification; read it as covering measurement provenance only once a TDREPORT capture appears here.
 
 This run is what found the parser defect fixed alongside this page. Real DCAP v4 quotes nest the Quoting Enclave material under a type-6 `QE_REPORT_CERTIFICATION_DATA` header; the parser read the QE report six bytes early, so every genuine quote was rejected with `attestation_key_not_bound_to_qe` while the synthetic tests, which emitted the same flat layout, passed. Failure was closed, so this was a false negative rather than an unsound accept, but the TDX path had never worked against real evidence. Synthetic self-consistency is not validation.
 
 ## TPM 2.0, Azure Trusted Launch vTPM
+
+In short: a TPM is a security chip (here a virtual one, a vTPM, provided by Azure) that can sign a record of what the machine booted. A real Azure TPM report parses correctly. Whether its signing key can be traced back to a trusted root depends on which of two Azure certificate setups the host happens to use.
 
 Evidence: a `TPMS_ATTEST` quote over PCRs 0-7 (SHA-256) from a `Standard_D2s_v7` Ubuntu 24.04 VM with Trusted Launch, vTPM and secure boot enabled, taken under a fresh 32-byte nonce.
 
@@ -103,6 +117,8 @@ Consequence for #431 and for any deployment: pinning the 2023 root does not make
 It remains true that this certificate certifies a different key than an in-guest `tpm2_createak` AK. The resolution is not to certify our own AK: it is to use the key Azure already certified, which is live at persistent handle `0x81000003`.
 
 ## TPM 2.0 quote signature, Azure Trusted Launch vTPM, 2026-07-31
+
+In short: the signature on a real Azure TPM report verifies, and altered copies are rejected. The test data is committed, so the check runs on every agent-manifest pull request.
 
 Evidence: an AK-signed quote from a `Standard_D2s_v5` Ubuntu 24.04 VM with Trusted Launch, vTPM and secure boot enabled, eastus. The guest reports TPM 2.0 with `TPM2_PT_MANUFACTURER` = `MSFT`. The attestation key was created with `tpm2_createek` followed by `tpm2_createak` (RSA, RSASSA, SHA-256), and the quote taken over PCRs 0-7 in the SHA-256 bank under a fresh 32-byte nonce:
 
@@ -145,9 +161,13 @@ Not yet implemented: the runtime does not read the NV certificate or use the per
 
 ## TCG event log availability, Azure Trusted Launch, 2026-07-31
 
+In short: Azure does not give the VM the boot-time log a TPM normally keeps, so the code that replays that log could not be tested on Azure.
+
 `/sys/kernel/security/tpm0/binary_bios_measurements` exists on this platform but is **zero bytes**. The Azure Gen2 UEFI does not hand a TCG log to the guest, so event-log replay cannot be exercised on an Azure vTPM at all. The replay code in `cmcp_verify.tcg_event_log` is covered by synthetic logs, and validating it against a real log needs a platform that publishes one, which in practice means physical client hardware. `#433` tracks that.
 
 ## Gateway measurement NV extend index, Azure Trusted Launch vTPM, 2026-08-01
+
+In short: the gateway records a fingerprint of itself in a TPM slot that can only be added to, never overwritten. This run confirmed on real hardware that the slot behaves that way.
 
 `Standard_D2s_v7`, Ubuntu 24.04, Trusted Launch with vTPM and secure boot, eastus2. This validates `cmcp_runtime.tee.measurement` (#432, #451), whose TPM calls had been written against the documented tpm2-pytss API without ever executing against a TPM. All of them work:
 
@@ -159,6 +179,8 @@ Not yet implemented: the runtime does not read the NV certificate or use the per
 Not covered by this run: the index value still travels as an ordinary NV read, which no signature covers, so it is a local integrity control and not yet remote-verifiable evidence. A later run exercised `TPM2_NV_Certify` directly, but the current TRACE schema and verifier still do not carry or appraise that startup pair as part of an ordinary claim.
 
 ## TPM2_NV_Certify for the gateway measurement, Azure Trusted Launch vTPM, 2026-08-01
+
+In short: the TPM can sign the value in that slot so someone else can check it. Testing this on real hardware found two bugs in code that had already been merged, both now fixed.
 
 `Standard_D2s_v7`, eastus2. Validates the signed half of #432 (#459, corrected by #461). This run **found two defects in code that had already merged**, which is the argument for running it.
 

@@ -1,8 +1,8 @@
 # Specification index
 
-This page lists every specification file in the repository, what it covers, which phase it belongs to, and the schemas and conformance tests that go with it. For what cMCP is and where to start reading, see the [home page](https://cmcp.agentrust-io.com/index.md).
+This page lists every cMCP specification file: what each one covers, which phase it belongs to, and the data formats and conformance tests that go with it. Use it to find the right page when you are building against cMCP or reviewing its design. For what cMCP is and where to start, see the [home page](https://cmcp.agentrust-io.com/index.md); the main terms are explained [in plain English on the AgenTrust site](https://agentrust-io.com/#plain-terms).
 
-Issues in this repository track specification decisions rather than implementation bugs. Each issue corresponds to a design question, and is closed with a reference to the spec file that resolves it.
+Phase 1 is the gateway on the agent's side; Phase 2 adds protection on the tool provider's side. Issues in this repository record design questions about the specification, and each one is closed with a link to the spec file that answers it.
 
 ## Spec File Index
 
@@ -21,7 +21,6 @@ Issues in this repository track specification decisions rather than implementati
 | docs/spec/error-codes.md          | Central error code registry for all runtime and verification errors           | 1+2   | Draft v0.1 | -                       |
 | docs/spec/threat-model.md         | Assets, adversaries, STRIDE analysis per component                            | 1     | Draft v0.1 | #18, #24                |
 | docs/spec/verification-library.md | cmcp-verify Python library interface and per-provider verification steps      | 1     | Draft v0.1 | #25                     |
-| docs/spec/mcp-spec-strategy.md    | MCP spec monitoring and attestation extension contribution window             | 1+2   | Draft v0.1 | #30                     |
 | docs/spec/proxy-security.md       | Phase 2 proxy parser fuzzing DoD                                              | 2     | Draft v0.1 | #34                     |
 | docs/spec/phase2-server.md        | Provider-side attestation, 5 unique properties, streaming proxy, multi-tenant | 2     | Draft v0.1 | #17, #28, #29, #32, #42 |
 | docs/testing/benchmarks.md        | Latency targets and benchmark methodology                                     | 1     | Draft v0.1 | #27                     |
@@ -31,7 +30,7 @@ ______________________________________________________________________
 
 ## Schema Files
 
-Machine-readable schemas in `schemas/` let implementations validate their outputs before shipping.
+The `schemas/` folder holds machine-readable descriptions of each data format, so you can check your own output against them before you ship.
 
 | File                              | What it validates                         | Use with                                   |
 | --------------------------------- | ----------------------------------------- | ------------------------------------------ |
@@ -56,7 +55,7 @@ ______________________________________________________________________
 
 ## Conformance Tests
 
-`tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
+Conformance tests show whether an implementation behaves the way the specification requires. `tests/conformance/README.md` defines the conformance test suite: 22 test cases across 6 groups (ATTEST, POLICY, AUDIT, FAIL, INSP, TRACE). Each case specifies:
 
 - Input conditions
 - Expected behavior (pass/fail, error code, field values)
@@ -73,7 +72,7 @@ ______________________________________________________________________
 **Process:**
 
 1. Open an issue describing the spec gap or design question
-1. Discuss in the issue : the issue body captures the decision context
+1. Discuss in the issue: the issue body captures the decision context
 1. Submit a PR with the spec change, referencing the issue
 1. PR is merged when the spec change is accepted
 
@@ -82,6 +81,8 @@ ______________________________________________________________________
 ______________________________________________________________________
 
 ## Glossary
+
+Short definitions of terms used across these pages.
 
 | Term                | Definition                                                                                         |
 | ------------------- | -------------------------------------------------------------------------------------------------- |

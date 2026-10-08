@@ -4,6 +4,8 @@ Draft
 
 Status: Draft v0.1 · Stability: Unstable: expect breaking changes before v1.0
 
+Cedar is a small language for writing access rules, such as which agent may call which tool. This page defines how cMCP packages those rules, how it applies them to each tool call, and the modes that decide whether a denied call is blocked or only recorded. Read it if you write or review policies; the [Cedar policy walkthrough](https://cmcp.agentrust-io.com/tutorials/cedar-policy-walkthrough/index.md) covers the same ground by example.
+
 This document specifies the Cedar policy bundle format, policy expression examples, enforcement modes, evaluation decision flow, and related governance features for the cMCP Runtime.
 
 ______________________________________________________________________

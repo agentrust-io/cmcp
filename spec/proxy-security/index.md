@@ -6,6 +6,8 @@ Status: Draft v0.1 Last updated: 2026-08-27 Stability: Unstable , expect breakin
 
 ______________________________________________________________________
 
+Fuzzing means feeding a program large amounts of malformed input to find crashes and parsing bugs. This page lists the fuzzing work that must be finished before the Phase 2 proxy can be released. It is for contributors working on that parser.
+
 This document defines the fuzzing definition of done (DoD) for the Phase 2 proxy parser. No Phase 2 release ships without satisfying every item below.
 
 ## Fuzz Targets

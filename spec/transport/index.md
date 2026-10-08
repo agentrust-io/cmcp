@@ -8,6 +8,8 @@ ______________________________________________________________________
 
 Covers: Streamable HTTP scope, stdio gap analysis, SPIFFE-to-TEE attestation binding.
 
+Transport means how messages travel between cMCP and a tool server. This page lists the ways cMCP supports (web requests over HTTP, and local programs over stdio), the ones it rejects, and how much an agent's setup has to change to use the gateway.
+
 ## Current network transport
 
 cMCP speaks the stateless MCP 2026-07-28 Streamable HTTP contract to network servers. Every upstream request is a new POST carrying matching protocol metadata in the body and `MCP-Protocol-Version`, `Mcp-Method`, and (where applicable) `Mcp-Name` headers. The gateway advertises both JSON and SSE and accepts a request-scoped SSE stream only when it ends with the matching final JSON-RPC response. A missing response, malformed event, unsupported content type, or mismatched response id fails closed.
