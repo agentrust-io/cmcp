@@ -79,7 +79,7 @@ def _manifest(tool_manifest: dict[str, Any]) -> dict[str, Any]:
         "crypto_profile": "standard",
         "artifacts": {
             "system_prompt": {"hash": "sha256:" + "a" * 64},
-            "model_identity": {"version": "claude-3", "deployment_type": "api"},
+            "model_identity": {"version": "example-model", "deployment_type": "api"},
             "policy_bundle": {
                 "hash": POLICY_HASH,
                 "policy_language": "cedar",

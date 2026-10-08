@@ -24,8 +24,6 @@ At runtime startup, the process probes for TEE providers in the following fixed 
 probe_order = ["tpm", "sev-snp", "tdx"]
 ```
 
-The `opaque` (OPAQUE managed-runtime) provider is a recognized but not-yet-implemented placeholder. It is intentionally excluded from `probe_order`, so it is never auto-selected. Selecting it explicitly (`attestation.provider: opaque`) raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than reporting itself as "not detected".
-
 The detection loop:
 
 ```
@@ -99,20 +97,6 @@ Each value is a 48-byte SHA-384 digest encoded as lowercase hex (96 characters).
 
 The full TD report and quote are stored in `attestation_report.raw_evidence` for verifier use.
 
-#### OPAQUE (Highest Assurance)
-
-> **Not yet implemented.** This subsection describes the intended design. The current
-> `OpaqueProvider` is a placeholder: it is excluded from auto-detect and raises
-> `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` when selected explicitly. The conditions below
-> are the planned detection behavior, not shipped behavior.
-
-Detection conditions (planned):
-- The environment variable `OPAQUE_RUNTIME_ENDPOINT` is set and non-empty.
-
-What goes in `attestation_report.measurement`:
-
-The OPAQUE Managed Runtime provides a dedicated attestation API. The runtime calls `GET $OPAQUE_RUNTIME_ENDPOINT/v1/attestation` with the §3.3 nonce (`JWK_thumbprint(tee_public_key) || random_salt`) as a query parameter. The response includes an OPAQUE-specific measurement blob and a signed attestation certificate chain rooted in OPAQUE's hardware root of trust. The measurement field is set to the `measurement` field from the OPAQUE attestation response (format defined by the OPAQUE Runtime SDK; currently a 32-byte SHA-256 encoded as lowercase hex). The full response is stored in `attestation_report.raw_evidence`.
-
 ### 1.3 Software-Only Development Fallback
 
 When `CMCP_DEV_MODE=1` is set and no hardware TEE is detected:
@@ -141,7 +125,7 @@ Rules:
 
 At enclave startup, before accepting any connections:
 
-1. Generate an ephemeral Ed25519 keypair inside the TEE using a CSPRNG seeded from the hardware entropy source (TPM `TPM2_GetRandom`, SEV-SNP `RDRAND` + kernel `/dev/urandom` mix-in, TDX equivalent, or OPAQUE runtime entropy API).
+1. Generate an ephemeral Ed25519 keypair inside the TEE using a CSPRNG seeded from the hardware entropy source (TPM `TPM2_GetRandom`, SEV-SNP `RDRAND` + kernel `/dev/urandom` mix-in, or the TDX equivalent).
 2. The private key is held only in enclave memory (or equivalent protected region). It is never written to disk, never logged, never exported via any API.
 3. The public key is encoded as a 32-byte Ed25519 public key in base64url (no padding). This value is placed in the `tee_public_key` field of every TRACE Claim issued by this runtime instance.
 4. When the enclave exits (graceful shutdown or crash), the private key is zeroed from memory via a secure-erase routine before the memory region is released.
@@ -373,7 +357,7 @@ Because the public key is embedded in the claim and attested by the hardware rep
 
 For use cases requiring long-lived keys (e.g., participation in a key transparency log, or runtime restarts without breaking verifier trust):
 
-- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation; OPAQUE sealing via OPAQUE's key management API).
+- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation).
 - The sealed key blob is stored on disk. On restart, the enclave unseals the key. Unsealing succeeds only if the enclave's current measurement matches the measurement policy used when sealing.
 - Rotation: updating the enclave's code or configuration changes its measurement. The old sealed key cannot be unsealed by the new measurement. The new enclave generates a fresh keypair and seals it to its own measurement. Old TRACE Claims remain verifiable via their embedded public key. New claims use the new key.
 - A key rotation event should be logged in the operator's change management system.
@@ -526,12 +510,12 @@ Full set of fields relevant to attestation:
   "timestamp_utc": "<ISO8601>",
   "tee_public_key": "<base64url Ed25519 public key>",
   "attestation_report": {
-    "provider": "<'tpm' | 'sev-snp' | 'tdx' | 'opaque' | 'software-only'>",
+    "provider": "<'tpm' | 'sev-snp' | 'tdx' | 'software-only'>",
     "measurement": "<provider-specific, see Section 1>",
     "report_data": "<base64url nonce = JWK_thumbprint(tee_public_key) || random_salt>",
     "raw_evidence": "<base64url, full hardware attestation report>"
   },
-  "attestation_assurance": "<'medium' | 'high' | 'highest' | 'none'>",
+  "attestation_assurance": "<'medium' | 'high' | 'none'>",
   "attestation_generated_at": "<ISO8601>",
   "attestation_validity_seconds": 86400,
   "policy_bundle": {
@@ -554,7 +538,7 @@ Full set of fields relevant to attestation:
 }
 ```
 
-`attestation_assurance` values by provider: `tpm` = `"medium"`, `sev-snp` = `"high"`, `tdx` = `"high"`, `opaque` = `"highest"`, `software-only` = `"none"`.
+`attestation_assurance` values by provider: `tpm` = `"medium"`, `sev-snp` = `"high"`, `tdx` = `"high"`, `software-only` = `"none"`.
 
 ---
 
@@ -567,7 +551,7 @@ A relying party verifying a TRACE Claim must perform all of the following checks
 3. Verify attestation freshness: `now - attestation_generated_at < attestation_validity_seconds`.
 4. Verify key binding: `JWK_thumbprint(base64url_decode(cnf.jwk.x)) == base64url_decode(trace.runtime.nonce)[:32]`. Session linkage is checked separately via the signed `gateway.session_id` (§3.3.1).
 5. Verify hardware report: validate `attestation_report.raw_evidence` using the provider's verification SDK (e.g., AMD SEV-SNP `snp-validate`, Intel TDX `tdx-attest`, TPM quote verification via TSS2). Confirm the report's `report_data` field matches the nonce from step 4.
-6. Check `attestation_assurance` is acceptable for the use case (e.g., compliance use requires `"high"` or `"highest"`; reject `"none"`).
+6. Check `attestation_assurance` is acceptable for the use case (e.g., compliance use requires `"high"`; reject `"none"`).
 7. Verify `policy_bundle.hash` matches the policy bundle the verifier expects was in use.
 8. Verify `tool_catalog.hash` matches the catalog version the verifier expects.
 9. If auditing call detail: request the signed audit bundle (Section 2.4), verify its signature, reconstruct the hash chain, confirm `audit_chain_root` and `audit_chain_tip` match the TRACE Claim.

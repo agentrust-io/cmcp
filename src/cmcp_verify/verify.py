@@ -1434,24 +1434,6 @@ def verify_trace_claim(
                 details["tdx_failure"] = tdx_result.failure_reason
         unverified.extend(tdx_result.unverified_fields)
         details.update(tdx_result.details)
-    elif platform in ("opaque", "opaque-managed"):
-        from cmcp_verify.opaque import verify_opaque_measurement
-
-        raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
-        opaque_result = verify_opaque_measurement(
-            measurement=_runtime.get("measurement", ""),
-            raw_evidence=raw_bytes,
-        )
-        if opaque_result.verified:
-            verified.append("hardware_attestation")
-            verified.extend(opaque_result.verified_fields)
-        else:
-            unverified.append("hardware_attestation")
-            failure = failure or VerificationError.HARDWARE_ATTESTATION_FAILED
-            if opaque_result.failure_reason:
-                details["opaque_failure"] = opaque_result.failure_reason
-        unverified.extend(opaque_result.unverified_fields)
-        details.update(opaque_result.details)
     elif platform in _KNOWN_PLATFORMS:
         unverified.append("hardware_attestation")
         failure = failure or VerificationError.UNSUPPORTED_PROVIDER

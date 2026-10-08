@@ -63,7 +63,6 @@ _VALID_PROVIDERS: frozenset[str] = frozenset({
     "sev-snp",
     "azure-cvm-sev-snp",
     "tdx",
-    "opaque",
     "tpm",
     "software-only",
 })

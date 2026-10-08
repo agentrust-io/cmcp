@@ -79,7 +79,7 @@ Three things follow, and all three are gaps rather than theoretical concerns.
 
 What cMCP does carry across calls is `session_max_sensitivity`, a monotonic ratchet that a caller cannot lower. Where the sensitive read *does* go through the gateway, a policy denying external-destination calls above a sensitivity floor will stop the egress leg, and that is a real defence rather than a hypothetical one. It depends on the operator having written that policy, and it does not apply when the read bypasses the gateway, which is the common case for a coding assistant.
 
-Two things this entry deliberately does not claim. The study's compliance figures are an average over eleven models under one costume and one channel split, moving from 42% to 82%; several models complied with the blunt single-instruction version too, so "models refuse until you split it" is not accurate as a general statement. And while Claude Sonnet 4.6 and Opus 4.6 held at 0% across every split in the tabulated configuration, the same write-up reports a separate run in which Sonnet called the tool and redacted the obvious secrets while still returning proprietary source with a live key inside it. Model choice is not a control.
+Two things this entry deliberately does not claim. The study's compliance figures are an average over eleven models under one costume and one channel split, moving from 42% to 82%; several models complied with the blunt single-instruction version too, so "models refuse until you split it" is not accurate as a general statement. And while two of the models held at 0% across every split in the tabulated configuration, the same write-up reports a separate run in which one of them called the tool and redacted the obvious secrets while still returning proprietary source with a live key inside it. Model choice is not a control.
 
 **APM and telemetry payload capture**
 The TEE prevents plaintext from leaving the enclave to any destination not covered by the egress policy. This protection is structural only when the egress policy explicitly denies APM and telemetry endpoints. If the operator allowlists those endpoints in the Cedar policy, the TEE boundary does not prevent payload capture by the APM agent. A TRACE Claim with an egress policy that permits APM or SDK telemetry endpoints does not provide this protection. Verifiers must inspect the policy bundle hash and confirm the policy excludes those endpoints.
@@ -250,7 +250,6 @@ Attestation is a startup cost, not a per-call cost. Per-call gateway overhead co
 | TPM | less than 500ms (hardware I/O bound) |
 | SEV-SNP | less than 100ms (Azure DCasv5, AWS C6a Nitro) |
 | TDX | less than 100ms (Azure DCedsv5, GCP C3) |
-| OPAQUE Managed | less than 50ms |
 | software-only | negligible |
 
 ### Per-call gateway overhead

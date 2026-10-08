@@ -35,7 +35,7 @@ Agent developer environment
         v
 SaaS / Platform Provider
   +-----------------------------------------------+
-  |  OPAQUE TEE                                   |
+  |  TEE                                          |
   |  +------------------------------------------+ |
   |  |  Provider MCP Server                     | |
   |  |  (binary measured at startup)            | |

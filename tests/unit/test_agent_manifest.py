@@ -63,7 +63,7 @@ def _signed_manifest(
             # artifacts. This fixture previously omitted two and still verified,
             # because a nested omission was suppressing the check.
             "system_prompt": {"hash": "sha256:" + "a" * 64},
-            "model_identity": {"version": "claude-3", "deployment_type": "api"},
+            "model_identity": {"version": "example-model", "deployment_type": "api"},
             "policy_bundle": {
                 "hash": policy_hash,
                 "policy_language": "cedar",

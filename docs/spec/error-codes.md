@@ -10,7 +10,6 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 |---|---|---|---|---|
 | `ATTESTATION_REPORT_UNAVAILABLE` | 503 | FATAL | TEE provider did not return an attestation report within timeout | [failure-modes.md FM-1](failure-modes.md) |
 | `ATTESTATION_PROVIDER_UNSUPPORTED` | 500 | FATAL | No supported TEE provider detected and `CMCP_DEV_MODE` is not set | [attestation.md §1.1](attestation.md) |
-| `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` | 501 | FATAL | A recognized provider was explicitly selected but is not yet implemented (e.g. `opaque`) | [attestation.md §1.1](attestation.md) |
 | `POLICY_HASH_MISMATCH` | 500 | FATAL | Measured policy bundle hash does not match deployment manifest | [failure-modes.md FM-4](failure-modes.md) |
 | `POLICY_RELOAD_PINNED_HASH` | 500 | FATAL | `policy_reload_interval_seconds > 0` configured alongside a pinned `CMCP_POLICY_HASH`. Every reload is validated against that hash, so a changed bundle could never be installed; refused at startup rather than appearing to work | [policy-hot-reload.md](policy-hot-reload.md) |
 | `POLICY_SIGNATURE_INVALID` | 500 | FATAL | A policy bundle's manifest signature is absent, malformed, or does not verify under the pinned `CMCP_POLICY_SIGNING_KEY`; or its `version` did not increase, which would allow a genuinely signed older bundle to be replayed | [policy-hot-reload.md](policy-hot-reload.md) |

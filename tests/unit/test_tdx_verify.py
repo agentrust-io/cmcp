@@ -1,9 +1,8 @@
-"""Tests for TDX and Opaque attestation verification stubs (issue #70)."""
+"""Tests for TDX attestation verification (issue #70)."""
 from __future__ import annotations
 
 import ctypes
 import hashlib
-from unittest.mock import MagicMock, patch
 
 from cmcp_runtime.tee.tdreport import (
     MRTD_OFFSET,
@@ -13,7 +12,6 @@ from cmcp_runtime.tee.tdreport import (
     TDREPORT_SIZE,
     TdReport,
 )
-from cmcp_verify.opaque import verify_opaque_measurement
 from cmcp_verify.tdx import verify_tdx_measurement
 
 _MRTD_OFFSET = MRTD_OFFSET
@@ -219,72 +217,3 @@ def test_measurement_does_not_move_with_the_nonce(monkeypatch):
     window = slice(_OLD_MRTD_OFFSET, _OLD_MRTD_OFFSET + MRTD_SIZE)
     assert first_report[window] != second_report[window]
 
-
-def test_opaque_no_endpoint_configured(monkeypatch):
-    monkeypatch.delenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", raising=False)
-    result = verify_opaque_measurement("sha384:" + "a" * 96, None)
-    assert not result.verified
-    assert result.failure_reason == "opaque_endpoint_not_configured"
-    assert "opaque_managed_attestation" in result.unverified_fields
-
-
-def test_opaque_no_raw_evidence_fails_closed(monkeypatch):
-    monkeypatch.setenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", "https://attest.example.com/v1/verify")
-    result = verify_opaque_measurement("sha384:" + "a" * 96, None)
-    assert result.verified is False
-    assert result.failure_reason == "no_raw_evidence"
-    assert "raw_evidence not provided" in result.details.get("hint", "")
-
-
-def test_opaque_endpoint_returns_verified(monkeypatch):
-    monkeypatch.delenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", raising=False)
-    with patch("cmcp_verify.opaque.urllib.request.urlopen") as mock_open:
-        mock_resp = MagicMock()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_resp.read.return_value = b'{"verified": true, "measurement_matched": true}'
-        mock_open.return_value = mock_resp
-
-        result = verify_opaque_measurement(
-            "sha384:" + "a" * 96,
-            bytes(64),
-            opaque_endpoint="https://attest.example.com/v1/verify",
-        )
-
-    assert result.verified
-    assert "opaque_managed_attestation" in result.verified_fields
-
-
-def test_opaque_endpoint_returns_unverified(monkeypatch):
-    monkeypatch.delenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", raising=False)
-    with patch("cmcp_verify.opaque.urllib.request.urlopen") as mock_open:
-        mock_resp = MagicMock()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_resp.read.return_value = b'{"verified": false, "failure_reason": "measurement_unknown"}'
-        mock_open.return_value = mock_resp
-
-        result = verify_opaque_measurement(
-            "sha384:" + "a" * 96,
-            bytes(64),
-            opaque_endpoint="https://attest.example.com/v1/verify",
-        )
-
-    assert not result.verified
-    assert result.failure_reason == "measurement_unknown"
-    assert "opaque_managed_attestation" in result.unverified_fields
-
-
-def test_opaque_network_error(monkeypatch):
-    monkeypatch.delenv("CMCP_OPAQUE_ATTESTATION_ENDPOINT", raising=False)
-    with patch("cmcp_verify.opaque.urllib.request.urlopen", side_effect=OSError("timeout")):
-        result = verify_opaque_measurement(
-            "sha384:" + "a" * 96,
-            bytes(64),
-            opaque_endpoint="https://attest.example.com/v1/verify",
-        )
-
-    assert result.verified is False
-    assert result.failure_reason == "opaque_verification_error"
-    assert "opaque_managed_attestation" in result.unverified_fields
-    assert result.details.get("opaque_error") == "OSError"

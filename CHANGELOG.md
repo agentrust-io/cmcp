@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The `opaque` attestation provider and its verifier. `cmcp_runtime.tee.opaque`
+  was a placeholder that only raised, and `cmcp_verify.opaque` marked
+  `hardware_attestation` verified on an unsigned `verified: true` from a remote
+  endpoint, which is not evidence. Gone with them: `TEEProvider.OPAQUE`, the
+  `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` error, the `opaque` and
+  `opaque-managed` platform branches in `verify_trace_claim`, and the
+  `CMCP_OPAQUE_ATTESTATION_ENDPOINT` and `OPAQUE_API_KEY` variables. A config
+  naming `attestation.provider: opaque` now fails with the same `ConfigError`
+  as any unknown provider. The spec no longer lists a `highest` value for
+  `attestation_assurance`, which only that provider used.
+
 ### Changed
 
+- Test fixtures and docs use vendor-neutral example model names.
 - LICENSE and NOTICE name the copyright holder as AgenTrust Contributors. The
   previous LICENSE line credited Agentic AI Foundation contributors, but the
   foundation has not accepted the project. CHARTER.md and GOVERNANCE.md now say

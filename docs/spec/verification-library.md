@@ -19,7 +19,6 @@ class TEEProvider(Enum):
     TPM = "tpm"
     SEV_SNP = "sev-snp"
     TDX = "tdx"
-    OPAQUE = "opaque"
     SOFTWARE_ONLY = "software-only"
 
 class VerificationStatus(Enum):
@@ -197,12 +196,6 @@ unsupported physical-completion claims.
 5. Confirm TD_REPORT.MRTD || RTMR0 || RTMR1 || RTMR2 || RTMR3 == attestation_report.measurement (concatenated).
 6. If all checks pass: TEE identity is verified for TDX.
 
-### OPAQUE Managed Verification
-
-1. Call the OPAQUE attestation verification endpoint (provided at deployment time) with the attestation_report.raw_evidence as the request body.
-2. The endpoint returns: {verified: true|false, measurement_matched: true|false, error?: string}.
-3. If verified and measurement_matched: TEE identity is verified for OPAQUE Managed.
-
 ## What "partially_verified" means
 
 VerificationStatus.PARTIALLY_VERIFIED is returned when:
@@ -226,7 +219,7 @@ VerificationError enum:
 
 ## Phase 1 support matrix
 
-Phase 1 must support TPM and SEV-SNP at minimum. TDX is high priority for the first release. OPAQUE is handled by the managed runtime and does not require a separate implementation path.
+Phase 1 must support TPM and SEV-SNP at minimum. TDX is high priority for the first release.
 
 `SOFTWARE_ONLY` is a valid enum value for local development and CI environments. A claim with `provider: software-only` must always return `VerificationStatus.PARTIALLY_VERIFIED` with `failure_reason` set, never `VERIFIED`.
 

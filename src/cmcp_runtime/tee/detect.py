@@ -6,17 +6,12 @@ import logging
 
 from cmcp_runtime.config import Config
 from cmcp_runtime.config import TEEProvider as TEEProviderEnum
-from cmcp_runtime.errors import (
-    AttestationProviderNotImplemented,
-    AttestationProviderUnsupported,
-)
+from cmcp_runtime.errors import AttestationProviderUnsupported
 from cmcp_runtime.tee.base import SoftwareOnlyProvider, TEEProvider
 
 logger = logging.getLogger(__name__)
 
-# Detection probe order from docs/spec/attestation.md §1.1. The `opaque` provider is
-# intentionally excluded: it is a not-yet-implemented placeholder, so it is never
-# auto-selected. Selecting it explicitly raises AttestationProviderNotImplemented.
+# Detection probe order from docs/spec/attestation.md §1.1.
 # azure-cvm is probed first: Azure confidential VMs run SNP behind a paravisor,
 # expose no /dev/sev-guest, and would otherwise fall through to a plain TPM quote
 # that loses the SNP silicon root.
@@ -48,12 +43,6 @@ def _get_provider_impl(name: str, config: Config | None = None) -> TEEProvider |
         try:
             from cmcp_runtime.tee.tdx import TDXProvider
             return TDXProvider()
-        except ImportError:
-            return None
-    if name == "opaque":
-        try:
-            from cmcp_runtime.tee.opaque import OpaqueProvider
-            return OpaqueProvider()
         except ImportError:
             return None
     return None
@@ -93,9 +82,6 @@ def detect_provider(config: Config) -> TEEProvider:
                 f"Requested provider '{name}' not available on this host",
                 detail="Check that the TEE hardware is present and accessible",
             )
-        # A placeholder provider (e.g. opaque) raises AttestationProviderNotImplemented
-        # from detect(); let that explicit error propagate rather than collapsing it into
-        # a generic "not available on this host".
         if not impl.detect():
             raise AttestationProviderUnsupported(
                 f"Requested provider '{name}' not available on this host",
@@ -109,13 +95,7 @@ def detect_provider(config: Config) -> TEEProvider:
         impl = _get_provider_impl(name, config)
         if impl is None:
             continue
-        try:
-            available = impl.detect()
-        except AttestationProviderNotImplemented:
-            # Defensive: a not-yet-implemented provider must never be auto-selected.
-            logger.debug("Provider %s is not implemented; skipping in auto-detect", name)
-            continue
-        if available:
+        if impl.detect():
             logger.info("TEE provider: %s (auto-detected)", name)
             return impl
 

@@ -16,7 +16,7 @@ from cmcp_verify.verify import VerificationError, VerificationStatus, verify_tra
 from tests.unit.test_azure_cvm_verify import _build_evidence
 from tests.unit.test_evidence_envelope_all_platforms import _approved, _claim
 from tests.unit.test_snp_signature_verify import _signed_report, _synthetic_chain
-from tests.unit.test_tdx_opaque_verify import _make_tdreport
+from tests.unit.test_tdx_verify import _make_tdreport
 
 
 def _resign(claim: dict, key: SigningKey) -> None:
