@@ -63,6 +63,63 @@ Each row is a way data could leave the agent, and what stops or checks it.
 | Crash artifacts | Host core policy gate plus hard/soft `RLIMIT_CORE=0` on bridge and agent. The bridge's stdio tools inherit the host limit. Unsupported piped handlers refuse startup. |
 | Shutdown and restart | No automatic container restart. Each run gets a fresh container and trusted session configuration; cleanup stops the container even if its attach process failed. Gateway unavailability has no direct-network fallback. |
 
+## Execution scope and path sets
+
+The confinement model above describes how the gateway mediates specific routes. However, for a **protected effect** (e.g., creating an order), the relevant security question is broader:
+
+> For the declared effect domain, how is the set of paths capable of producing that effect identified, declared, and shown to be mediated?
+
+This is the **execution-scope** question. It distinguishes four different claims:
+
+1. **Authorization**: this tool call was authorized
+2. **Correlation**: this execution was correlated to that authorization
+3. **Observation**: this downstream evidence was observed for that execution
+4. **Complete mediation**: all paths capable of producing the protected effect are within the declared enforcement boundary
+
+The first three have existing cMCP mechanisms. The fourth is addressed by declaring an **effect-producing path set** for each protected effect.
+
+### Path classification
+
+Paths are classified by whether they are within the agent's enforcement domain:
+
+- **Agent-side paths**: originate from the agent/runtime, can be enforced and tested by the confinement machinery
+  - Example: gateway path, alternate endpoint, subprocess/external sink
+  - Coverage: can be established through confinement fixtures and adversarial tests
+
+- **Deployment-side paths**: outside the agent's enforcement domain
+  - Example: another service writing directly to the orders database
+  - Coverage: cannot be established by the agent confinement fixture alone
+  - Must be represented as a declared deployment boundary
+  - Coverage remains not established unless independently observed
+
+### Worked example: `order_create`
+
+Assume `order_create` is the protected effect. A declared path set for this effect would be:
+
+**Protected effect**: `order_create`
+
+**Declared path set**:
+
+| Path | Type | Mediator | Coverage |
+| --- | --- | --- | --- |
+| P1: agent → cMCP gateway → approved order tool | Agent-side | cMCP policy + sink ceilings | ENFORCED / TESTED |
+| P2: agent → alternate endpoint (direct network) | Agent-side | Container network isolation | ENFORCED / TESTED |
+| P3: agent → filesystem/subprocess → external sink | Agent-side | Container filesystem isolation + no host mounts + network namespace inheritance | ENFORCED / TESTED |
+| P4: external service → orders database (bypassing agent) | Deployment-side | Deployment boundary control | DECLARED / NOT ESTABLISHED |
+
+**Coverage explanation**:
+
+- **P1**: Validated by `test_confinement_and_fresh_restart` showing permitted tool delivery succeeds while denied sinks are blocked.
+- **P2**: Validated by `test_removed_restriction_is_detected_at_independent_sink` with network mutation, confirming that disabling network isolation allows direct network escape.
+- **P3**: Validated by `test_removed_restriction_is_detected_at_independent_sink` with filesystem mutation (direct file write) and network mutation (subprocess inherits network namespace and is also blocked). The adversarial agent attempts both file writes and subprocess network connections; both are blocked under confinement.
+- **P4**: This is a deployment-side path outside the agent's control. The fixture cannot test this path. Coverage for P4 requires independent deployment-level observation (e.g., database access logs, service mesh policies). Until such observation is provided, P4 remains "DECLARED / NOT ESTABLISHED".
+
+### Relationship to EABC
+
+This path-set declaration provides the cMCP-side representation needed for the EABC profile's `NON_BYPASSABILITY(B,E)` claim, but **only for the declared and covered execution scope**. The claim does not imply universal complete mediation—only that the declared paths within the agent's enforcement domain are mediated and tested.
+
+The gateway mediating MCP calls does not by itself prove that an application cannot create the same protected effect through another API, service, direct database operation, or privileged process. Those paths must be explicitly declared and independently observed.
+
 ## Crash-dump policy
 
 When a program crashes, Linux can save a copy of its memory (a core dump), which could

@@ -1,4 +1,8 @@
-"""Contract tests run on every OS; actual Docker evidence is in test_linux.py."""
+"""Contract tests run on every OS; actual Docker evidence is in test_linux.py.
+
+These unit tests validate the enforcement mechanisms that enable agent-side
+path coverage for the execution-scope model described in docs/confinement.md.
+"""
 
 import asyncio
 import json

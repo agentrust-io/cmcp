@@ -1,4 +1,17 @@
-"""Independent sink observations and deliberately weakened synthetic controls."""
+"""Independent sink observations and deliberately weakened synthetic controls.
+
+These tests validate the agent-side path coverage for the execution-scope
+model described in docs/confinement.md. For a protected effect such as
+order_create, the tests demonstrate:
+
+- P1 (agent → cMCP gateway → approved tool): validated by permitted tool delivery
+- P2 (agent → alternate endpoint): validated by network isolation mutation tests
+- P3 (agent → filesystem/subprocess → external sink): validated by filesystem
+  isolation tests (direct file write) and subprocess confinement (network isolation)
+
+Deployment-side paths (e.g., external service → database) cannot be tested
+by this fixture and require independent deployment-level observation.
+"""
 
 import asyncio
 import json
@@ -141,6 +154,15 @@ async def run_case(tmp_path, monkeypatch, *, mutation=None, mode="normal", unava
 
 
 async def test_confinement_and_fresh_restart(tmp_path, monkeypatch):
+    """Validates that the agent-side path through the gateway works (P1).
+
+    Maps to execution-scope path-set model:
+    - P1 (agent → cMCP gateway → approved tool): validated by successful
+      permitted tool delivery and denial of public sink
+
+    The test confirms that the mediated path works correctly and that
+    confinement blocks all alternate agent-side paths.
+    """
     for _ in range(2):
         observation, stats, refused = await run_case(tmp_path, monkeypatch)
         assert not refused
@@ -161,6 +183,18 @@ async def test_live_operator_policy_restricts_and_restores_without_label_reset(t
 
 @pytest.mark.parametrize("mutation", ["network", "filesystem", "logging", "sink"])
 async def test_removed_restriction_is_detected_at_independent_sink(tmp_path, monkeypatch, mutation):
+    """Tests that disabling confinement restrictions exposes agent-side paths.
+
+    Maps to execution-scope path-set model:
+    - network mutation: validates P2 (alternate endpoint path coverage) and
+      part of P3 (subprocess network escape, since subprocess inherits network namespace)
+    - filesystem mutation: validates P3 (direct file write path coverage)
+    - logging mutation: validates that logs are not a data leak path
+    - sink mutation: validates that denied sinks are blocked
+
+    When the restriction is removed, the canary leaks to the corresponding
+    independent sink, proving that the restriction was necessary for coverage.
+    """
     observation, _, refused = await run_case(tmp_path, monkeypatch, mutation=mutation)
     assert not refused
     assert observation["permitted"] == 1
