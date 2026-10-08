@@ -47,7 +47,7 @@ Upon host organization acceptance, governance transitions from the current Proje
 
 All contributions must be made under the terms of [LICENSE](LICENSE). Contributors must sign commits with the Developer Certificate of Origin (DCO). No contribution may incorporate material covered by a patent the contributor is unwilling to license royalty-free to conforming implementations.
 
-Code and schemas are licensed under Apache 2.0 with Patent Promise (see LICENSE).
+Code and schemas are licensed under the MIT License (see LICENSE).
 
 ## 5. Trademark Policy
 
