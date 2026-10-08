@@ -30,7 +30,6 @@ The `provider` field in `cmcp-config.yaml` sets which kind of protected hardware
 | `tpm`            | TPM 2.0 chip present and accessible.                                                                        |
 | `sev-snp`        | AMD SEV-SNP hardware. Requires `/dev/sev-guest` (device path is hardcoded; no env var override).            |
 | `tdx`            | Intel TDX hardware.                                                                                         |
-| `opaque`         | OPAQUE Managed Runtime. Requires `OPAQUE_ATTESTATION_URL` env var.                                          |
 | `software-only`  | No hardware. Requires `CMCP_DEV_MODE=1`.                                                                    |
 
 cMCP refuses to start with `software-only` unless `CMCP_DEV_MODE=1` is set. Never set `CMCP_DEV_MODE=1` in production.

@@ -252,14 +252,13 @@ ______________________________________________________________________
 
 ## 9. Attestation Provider Hierarchy
 
-| Provider | Hardware                                             | Assurance |
-| -------- | ---------------------------------------------------- | --------- |
-| tpm      | TPM 2.0 / vTPM                                       | Medium    |
-| sev-snp  | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro)            | High      |
-| tdx      | Intel TDX (Azure DCedsv5, GCP C3)                    | High      |
-| opaque   | OPAQUE Managed Runtime (opt-in; not yet implemented) | n/a       |
+| Provider | Hardware                                  | Assurance |
+| -------- | ----------------------------------------- | --------- |
+| tpm      | TPM 2.0 / vTPM                            | Medium    |
+| sev-snp  | AMD SEV-SNP (Azure DCasv5, AWS C6a Nitro) | High      |
+| tdx      | Intel TDX (Azure DCedsv5, GCP C3)         | High      |
 
-Auto-detection probe order: `tpm -> sev-snp -> tdx`. The first provider whose `detect()` succeeds is selected. `opaque` is a not-yet-implemented placeholder: it is excluded from auto-detect, and selecting it explicitly raises `ATTESTATION_PROVIDER_NOT_IMPLEMENTED` rather than falling through silently. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start. Default `enforcement_mode` is `enforcing`.
+Auto-detection probe order: `tpm -> sev-snp -> tdx`. The first provider whose `detect()` succeeds is selected. If no hardware provider is detected, the gateway starts only under `CMCP_DEV_MODE=1` (a non-attested software-only fallback) and otherwise refuses to start. Default `enforcement_mode` is `enforcing`.
 
 ______________________________________________________________________
 
@@ -284,7 +283,7 @@ In scope:
 - Session-context sensitivity tagging and bleed detection
 - Tool catalog binding (tool name to specific upstream server identity)
 - TRACE Claim generation and signing
-- Hardware attestation: TPM, SEV-SNP, TDX (OPAQUE Managed is an opt-in placeholder, not yet implemented)
+- Hardware attestation: TPM, SEV-SNP, TDX
 - Enforcement modes: enforcing, advisory, silent
 - Egress policy: allow/deny/redact per tool and per field
 - Per-session TRACE Claim with call summary
