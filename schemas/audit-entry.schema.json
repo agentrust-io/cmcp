@@ -25,6 +25,22 @@
     "prev_entry_hash",
     "entry_hash"
   ],
+  "if": {
+    "properties": {
+      "entry_type": {
+        "const": "tool_call"
+      }
+    },
+    "required": ["entry_type"]
+  },
+  "then": {
+    "properties": {
+      "call_id": {
+        "type": "string",
+        "format": "uuid"
+      }
+    }
+  },
   "properties": {
     "entry_id": {
       "type": "string",

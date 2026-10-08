@@ -65,7 +65,7 @@ def test_schema_declares_every_serialized_field(validator: Draft7Validator) -> N
 @pytest.mark.parametrize("entry_type", get_args(EntryType))
 def test_all_runtime_event_types_serialize_and_validate(validator, entry_type) -> None:
     chain = AuditChain(str(uuid4()))
-    chain.append(entry_type)
+    chain.append(entry_type, call_id=str(uuid4()) if entry_type == "tool_call" else None)
     for entry in chain.entries:
         validator.validate(json.loads(json.dumps(asdict(entry))))
     assert chain.verify_chain()
@@ -118,8 +118,20 @@ def test_invalid_record_mutants_are_rejected(validator, tool_call, field, value)
         validator.validate(mutant)
 
 
-def test_call_id_remains_required_even_when_null_is_allowed(validator, tool_call) -> None:
-    validator.validate({**tool_call, "call_id": None})
-    del tool_call["call_id"]
+def test_tool_call_rejects_null_call_id(validator, tool_call) -> None:
+    validator.validate(tool_call)
     with pytest.raises(ValidationError):
-        validator.validate(tool_call)
+        validator.validate({**tool_call, "call_id": None})
+
+
+@pytest.mark.parametrize("entry_type", [t for t in get_args(EntryType) if t != "tool_call"])
+def test_non_call_events_accept_null_call_id(validator, tool_call, entry_type) -> None:
+    validator.validate({**tool_call, "entry_type": entry_type, "call_id": None})
+
+
+@pytest.mark.parametrize("entry_type", ["tool_call", "session_start"])
+def test_call_id_is_required_for_call_and_non_call_events(validator, tool_call, entry_type) -> None:
+    record = {**tool_call, "entry_type": entry_type}
+    del record["call_id"]
+    with pytest.raises(ValidationError):
+        validator.validate(record)
