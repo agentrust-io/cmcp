@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cmcp.agentrust-io.com/schemas/audit-entry.schema.json",
   "title": "cMCP Audit Chain Entry",
-  "description": "A single entry in the append-only audit chain maintained inside the cMCP Gateway TEE.",
+  "description": "A single entry in the append-only audit chain maintained inside the cMCP Gateway TEE. The schema covers all serialized AuditEntry event types. Newly declared optional fields preserve validation of older entries that omit them; schema validation does not verify chain hashes or evidence authenticity.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -47,9 +47,12 @@
       "description": "Session to which this entry belongs."
     },
     "call_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "uuid",
-      "description": "Unique identifier for the tool call this entry records."
+      "description": "Unique identifier for the tool call this entry records; null for non-call events."
     },
     "entry_type": {
       "type": "string",
@@ -61,20 +64,35 @@
         "attestation_refresh",
         "policy_load",
         "catalog_load",
-        "fault"
+        "fault",
+        "egress_denied",
+        "suspicious_call_sequence",
+        "attestation_stale",
+        "catalog_drift",
+        "tool_observed_unadmitted",
+        "break_glass_used"
       ],
       "description": "Type of event recorded by this entry."
     },
     "tool_name": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Name of the tool invoked; null for non-tool-call entry types."
     },
     "server_identity": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Identity of the MCP server involved; null when not applicable."
     },
     "policy_decision": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "enum": [
         "allow",
         "deny",
@@ -89,24 +107,39 @@
       "description": "Cedar policy decision for this entry; null for non-evaluated entry types. step_up and defer are the AARM R4 decision types with no older cMCP equivalent, and redact carries AARM MODIFY; see cmcp_runtime.policy.decisions for the crosswalk. Widening this enum is additive, so entries written before it still validate."
     },
     "policy_rule_matched": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Cedar rule ID or name that produced the policy decision; null if no rule matched or not applicable."
     },
     "latency_us": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 0,
       "description": "End-to-end latency in microseconds for this tool call; null for non-call entries."
     },
     "request_payload_hash": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "SHA-256 of the canonical request payload; NOT the payload itself. Null when not applicable."
     },
     "response_payload_hash": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "SHA-256 of the canonical response payload. Null when not applicable."
     },
     "response_inspection_result": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "enum": [
         "pass",
         "injection_detected",
@@ -119,7 +152,10 @@
       "description": "Result of response inspection by the gateway; null for non-tool-call entries."
     },
     "external_execution_evidence": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
       "description": "Optional independent execution evidence bound to this call (issue #301). Distinct from response_payload_hash: response_payload_hash is what the gateway forwarded, this is what an independent authority (e.g. a safety controller) attested. Null when absent. Intentionally not in 'required' so entries that predate the field still validate.",
       "required": [
@@ -166,11 +202,17 @@
       }
     },
     "session_sensitivity_before": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Session sensitivity level before this entry was processed."
     },
     "session_sensitivity_after": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Session sensitivity level after this entry was processed."
     },
     "prev_entry_hash": {
@@ -180,6 +222,45 @@
     "entry_hash": {
       "type": "string",
       "description": "SHA-256 hex of this entry's canonical JSON, excluding the entry_hash field itself."
+    },
+    "detail": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      },
+      "description": "Optional structured event detail with scalar string, numeric or boolean values; null when absent."
+    },
+    "workflow_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional workflow correlation identifier; null when absent."
+    },
+    "evidence_class": {
+      "type": "string",
+      "description": "Evidence classification emitted by the runtime (for example hash-only or tls-pinned)."
+    },
+    "effective_data_class": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Effective data sensitivity classification for this call; null when absent."
+    },
+    "execution_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional session-independent execution correlation identifier; null when absent."
     }
   }
 }
