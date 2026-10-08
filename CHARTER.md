@@ -47,11 +47,11 @@ Upon host organization acceptance, governance transitions from the current Proje
 
 All contributions must be made under the terms of [LICENSE](LICENSE). Contributors must sign commits with the Developer Certificate of Origin (DCO). No contribution may incorporate material covered by a patent the contributor is unwilling to license royalty-free to conforming implementations.
 
-Code and schemas are licensed under Apache 2.0 with Patent Promise (see LICENSE).
+Code and schemas are licensed under the MIT License (see LICENSE).
 
 ## 5. Trademark Policy
 
-"cMCP" and "cMCP-compatible" as project and conformance marks are currently held by OPAQUE Systems, Inc. Upon host organization acceptance, trademark ownership transfers to AAIF under their standard trademark policy.
+"cMCP" and "cMCP-compatible" as project and conformance marks are currently held by the founding maintainer. Upon host organization acceptance, trademark ownership transfers to AAIF under their standard trademark policy.
 
 Use of "cMCP-compatible" to describe a gateway deployment requires that the implementation satisfies the hardware attestation and policy enforcement requirements defined in the project documentation for the version being claimed.
 

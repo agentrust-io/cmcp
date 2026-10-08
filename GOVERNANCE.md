@@ -8,7 +8,7 @@ This document describes how cMCP is governed: who holds what role, how decisions
 
 AAIF hosting for cMCP is **proposed, not accepted**. [CHARTER.md](CHARTER.md) is the
 authoritative record: it is a pre-acceptance draft, and the "cMCP" and "cMCP-compatible"
-marks are currently held by OPAQUE Systems, Inc.
+marks are currently held by the founding maintainer.
 
 On acceptance the Foundation would set overall direction for the agentrust-io ecosystem, hold
 the project's trademarks, and provide a neutral venue for resolving disputes that cannot be

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- LICENSE and NOTICE name the copyright holder as AgenTrust Contributors. The
+  previous LICENSE line credited Agentic AI Foundation contributors, but the
+  foundation has not accepted the project. CHARTER.md and GOVERNANCE.md now say
+  the "cMCP" and "cMCP-compatible" marks are held by the founding maintainer
+  until a host organization accepts the project.
+
 ## [0.7.0] - 2026-09-30
 
 ### Security
