@@ -25,7 +25,6 @@ class TEEProvider(StrEnum):
     TPM = "tpm"
     SEV_SNP = "sev-snp"
     TDX = "tdx"
-    OPAQUE = "opaque"
     AUTO = "auto"
     SOFTWARE_ONLY = "software-only"
 

@@ -30,7 +30,6 @@ _PROVIDER_MAP: dict[str, str] = {
     # vTPM-rooted rather than a guest-controlled SNP report_data.
     "azure-cvm-sev-snp": "azure-cvm-sev-snp",
     "tdx": "intel-tdx",
-    "opaque": "intel-tdx",
     "tpm": "tpm2",
     # Dev mode is its own platform value: a consumer keying trust on
     # runtime.platform must never mistake a non-attested record for TPM-backed.

@@ -72,6 +72,16 @@ def test_invalid_provider(config_file):
         load_config(path)
 
 
+def test_removed_opaque_provider_is_rejected_like_any_unknown_provider(config_file):
+    """The opaque provider was removed; naming it fails exactly like an unknown name."""
+    with pytest.raises(ConfigError) as unknown:
+        load_config(config_file("attestation:\n  provider: quantum\n"))
+    with pytest.raises(ConfigError) as removed:
+        load_config(config_file("attestation:\n  provider: opaque\n"))
+    assert str(removed.value) == str(unknown.value)
+    assert "opaque" not in str(removed.value)
+
+
 def test_invalid_enforcement_mode(config_file):
     path = config_file("attestation:\n  enforcement_mode: yolo\n")
     with pytest.raises(ConfigError, match="enforcement_mode"):

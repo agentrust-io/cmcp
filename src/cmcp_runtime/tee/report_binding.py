@@ -69,8 +69,7 @@ logger = logging.getLogger(__name__)
 # does not extend/re-certify that index and the ordinary TRACE schema does not carry
 # the pair. A False return for TPM therefore means "not handled by this mechanism";
 # it must not be read as evidence that the startup pair is current after a reload.
-# "opaque" is absent because its provider raises rather than producing a report,
-# and "software-only" is absent because there is no hardware to commit to -- the
+# "software-only" is absent because there is no hardware to commit to -- the
 # round trip is still exercised there through SoftwareOnlyProvider in tests.
 MEASUREMENT_BOUND_PROVIDERS: frozenset[str] = frozenset({
     "sev-snp",
