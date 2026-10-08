@@ -19,8 +19,7 @@ jobs:
   test:
     permissions:
       contents: read
-      id-token: write # The existing CI uploads coverage through Codecov OIDC.
-    uses: ./.github/workflows/ci.yml
+    uses: ./.github/workflows/release-validation.yml
 
   build:
     needs: test
