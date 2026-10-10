@@ -76,3 +76,33 @@ def test_signature_corruption_fails(case):
     receipt['signature'] = 'A' * 86
     with pytest.raises(ConfigError):
         check(case, receipt)
+
+
+@pytest.mark.parametrize('field,value', [
+    ('version', True), ('version', '1'), ('key_id', 'wrong'),
+    ('manifest_digest', 'sha256:invalid'), ('policy_hash', 'sha256:invalid'),
+    ('runtime_catalog_hash', 'sha256:invalid'), ('manifest_catalog_root', 'sha256:invalid'),
+    ('not_before', 'not-a-time'), ('expires_at', '2025-01-01T00:00:00Z'),
+    ('agent_id', None), ('manifest_id', []),
+])
+def test_malformed_signed_payload_rejected(case, field, value):
+    private, _, payload, _ = case
+    with pytest.raises(ConfigError):
+        sign_bridge(payload | {field: value}, private)
+
+
+def test_receipt_cannot_be_replayed_across_signers(case):
+    private, _, payload, _ = case
+    receipt = sign_bridge(payload, private)
+    different = Ed25519PrivateKey.generate()
+    wrong_public = different.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    with pytest.raises(ConfigError):
+        verify_bridge(receipt, {payload['key_id']: wrong_public},
+                      now=datetime(2026,10,10,tzinfo=UTC), **case[3])
+
+
+def test_not_yet_valid_receipt_rejected(case):
+    private, _, payload, _ = case
+    receipt = sign_bridge(payload, private)
+    with pytest.raises(ConfigError):
+        verify_bridge(receipt, case[1], now=datetime(2025,10,10,tzinfo=UTC), **case[3])

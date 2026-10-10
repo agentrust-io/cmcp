@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,7 +25,23 @@ def _canonical(obj: dict[str, Any]) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("ascii")
 
 
+def _validate_payload(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict) or set(payload) != FIELDS or type(payload["version"]) is not int or payload["version"] != 1:
+        raise ConfigError("Unsupported catalog bridge payload")
+    for field in FIELDS - {"version"}:
+        if not isinstance(payload[field], str) or not payload[field]:
+            raise ConfigError(f"Invalid catalog bridge field: {field}")
+    for field in ("manifest_digest", "policy_hash", "runtime_catalog_hash", "manifest_catalog_root"):
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", payload[field]) is None:
+            raise ConfigError(f"Invalid catalog bridge digest: {field}")
+    if re.fullmatch(r"[0-9a-f]{64}", payload["key_id"]) is None:
+        raise ConfigError("Invalid catalog bridge key identifier")
+    if _time(payload["not_before"]) >= _time(payload["expires_at"]):
+        raise ConfigError("Invalid catalog bridge validity interval")
+
+
 def _message(payload: dict[str, Any]) -> bytes:
+    _validate_payload(payload)
     return DOMAIN + _canonical(payload)
 
 
@@ -40,8 +57,6 @@ def _time(value: str) -> datetime:
 
 def sign_bridge(payload: dict[str, Any], private_key: Ed25519PrivateKey) -> dict[str, Any]:
     """Issuer-side signing; never called automatically during gateway startup."""
-    if set(payload) != FIELDS:
-        raise ConfigError("Catalog bridge fields are not canonical")
     signature = private_key.sign(_message(payload))
     return {"payload": payload, "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")}
 
@@ -53,8 +68,7 @@ def verify_bridge(receipt: dict[str, Any], trusted_keys: dict[str, bytes], *,
     if not isinstance(receipt, dict) or set(receipt) != {"payload", "signature"}:
         raise ConfigError("Invalid catalog bridge envelope")
     p = receipt["payload"]
-    if not isinstance(p, dict) or set(p) != FIELDS or p["version"] != 1:
-        raise ConfigError("Unsupported catalog bridge payload")
+    _validate_payload(p)
     expected = {"manifest_id": manifest_id, "manifest_digest": manifest_digest,
                 "agent_id": agent_id, "policy_hash": policy_hash,
                 "runtime_catalog_hash": runtime_catalog_hash,
