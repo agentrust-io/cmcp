@@ -57,6 +57,7 @@ def _write_agent_manifest_files(
     *,
     policy_hash: str,
     catalog_hash: str,
+    tools: list | None = None,
 ) -> tuple[Path, Path]:
     priv = Ed25519PrivateKey.generate()
     pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
@@ -78,7 +79,7 @@ def _write_agent_manifest_files(
             "system_prompt": {"hash": "sha256:" + "a" * 64},
             "model_identity": {"version": "example-model", "deployment_type": "api"},
             "policy_bundle": {"hash": policy_hash, "policy_language": "cedar"},
-            "tool_manifest": {"catalog_hash": catalog_hash},
+            "tool_manifest": {"catalog_hash": catalog_hash, **({"tools": tools} if tools is not None else {})},
         },
         "delegation_chain": [],
     }
@@ -651,3 +652,59 @@ def test_startup_fails_closed_on_unreadable_revocation_list(complete_setup):
     with pytest.raises(SystemExit) as exc_info:
         run_startup(str(config_path))
     assert exc_info.value.code == 1
+
+
+@pytest.mark.parametrize('attack', ['none', 'receipt_tampered', 'receipt_missing', 'wrong_catalog', 'wrong_policy', 'wrong_signer'])
+def test_optional_catalog_bridge_with_upstream_native_binding(complete_setup, attack, caplog):
+    """Native SDK catalog binding remains active; independent receipt is additive."""
+    from cmcp_runtime.catalog.authority_bridge import sign_bridge
+    from cmcp_runtime.manifest_catalog import manifest_catalog_binding
+    from cmcp_runtime.agent_manifest import signing_pre_image
+    config_path = Path(complete_setup)
+    tmp_path = config_path.parent
+    catalog = load_catalog(str(tmp_path / 'catalog.json'))
+    policy_hash = load_policy_bundle(str(tmp_path / 'policy')).bundle_hash
+    manifest_path, manifest_key = _write_agent_manifest_files(
+        tmp_path, policy_hash=policy_hash,
+        catalog_hash=manifest_catalog_binding(catalog)['catalog_hash'],
+        tools=manifest_catalog_binding(catalog)['tools'])
+    manifest = json.loads(manifest_path.read_text())
+    issuer = Ed25519PrivateKey.generate()
+    pub = issuer.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    key_id = hashlib.sha256(pub).hexdigest()
+    payload = dict(version=1, manifest_id=manifest['manifest_id'],
+        manifest_digest='sha256:' + hashlib.sha256(signing_pre_image(manifest)).hexdigest(),
+        agent_id=manifest['agent_id'], policy_hash=policy_hash,
+        runtime_catalog_hash=catalog.catalog_hash,
+        manifest_catalog_root=manifest_catalog_binding(catalog)['catalog_hash'],
+        not_before='2026-01-01T00:00:00Z', expires_at='2099-01-01T00:00:00Z', key_id=key_id)
+    receipt = sign_bridge(payload, issuer)
+    receipt_path = tmp_path / 'bridge.json'
+    receipt_path.write_text(json.dumps(receipt))
+    trust_path = tmp_path / 'bridge-key.json'
+    trust_path.write_text(json.dumps({'algorithm':'Ed25519','key_id':key_id,'public_key_base64url':_b64url(pub)}))
+    config_path.write_text(config_path.read_text() + '\nagent_manifest:\n'
+        + f'  path: {manifest_path}\n  trust_anchor_path: {manifest_key}\n'
+        + f'  authenticated_subject: {AGENT_ID}\n'
+        + f'  catalog_bridge_path: {receipt_path}\n'
+        + f'  catalog_bridge_trust_anchor_path: {trust_path}\n')
+    if attack == 'receipt_tampered':
+        receipt['payload']['agent_id'] = 'spiffe://different/agent'
+        receipt_path.write_text(json.dumps(receipt))
+    elif attack == 'receipt_missing':
+        receipt_path.unlink()
+    elif attack == 'wrong_catalog':
+        receipt['payload']['runtime_catalog_hash'] = 'sha256:'+'0'*64
+        receipt_path.write_text(json.dumps(receipt))
+    elif attack == 'wrong_policy':
+        receipt['payload']['policy_hash'] = 'sha256:'+'0'*64
+        receipt_path.write_text(json.dumps(receipt))
+    elif attack == 'wrong_signer':
+        trust_path.write_text(json.dumps({'algorithm':'Ed25519','key_id':key_id,
+            'public_key_base64url':_b64url(Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw,PublicFormat.Raw))}))
+    if attack == 'none':
+        assert run_startup(str(config_path)).agent_manifest is not None
+    else:
+        with pytest.raises(SystemExit) as exc:
+            run_startup(str(config_path))
+        assert exc.value.code == 1

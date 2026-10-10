@@ -121,6 +121,8 @@ class AgentManifestConfig:
     #: set, a manifest listed there is rejected at startup; a missing or
     #: malformed file aborts startup rather than being read as empty.
     revocation_list_path: str | None = None
+    catalog_bridge_path: str | None = None
+    catalog_bridge_trust_anchor_path: str | None = None
 
 
 @dataclass
@@ -211,6 +213,8 @@ _KNOWN_AGENT_MANIFEST_KEYS = {
     "trust_anchor_path",
     "authenticated_subject",
     "revocation_list_path",
+    "catalog_bridge_path",
+    "catalog_bridge_trust_anchor_path",
 }
 
 
@@ -516,6 +520,8 @@ def load_config(path: str) -> Config:
     trust_anchor_path = manifest_raw.get("trust_anchor_path")
     authenticated_subject = manifest_raw.get("authenticated_subject")
     revocation_list_path = manifest_raw.get("revocation_list_path")
+    bridge_path = manifest_raw.get("catalog_bridge_path")
+    bridge_key_path = manifest_raw.get("catalog_bridge_trust_anchor_path")
     if agent_manifest_path is not None and not isinstance(agent_manifest_path, str):
         raise ConfigError("agent_manifest.path must be a string")
     if trust_anchor_path is not None and not isinstance(trust_anchor_path, str):
@@ -540,6 +546,16 @@ def load_config(path: str) -> Config:
                 "agent_manifest.revocation_list_path requires agent_manifest.path"
             )
         _check_no_traversal("agent_manifest.revocation_list_path", revocation_list_path)
+
+    if bool(bridge_path) != bool(bridge_key_path):
+        raise ConfigError("Both catalog bridge receipt and trust anchor paths are required")
+    if bridge_path and not agent_manifest_path:
+        raise ConfigError("Catalog bridge requires Agent Manifest binding")
+    for label, path in (("catalog_bridge_path", bridge_path), ("catalog_bridge_trust_anchor_path", bridge_key_path)):
+        if path is not None:
+            if not isinstance(path, str) or not path:
+                raise ConfigError(f"agent_manifest.{label} must be a non-empty string")
+            _check_no_traversal(f"agent_manifest.{label}", path)
 
     profile = raw.get("conformance_profile")
     if profile is not None and (
@@ -576,6 +592,8 @@ def load_config(path: str) -> Config:
             trust_anchor_path=trust_anchor_path,
             authenticated_subject=authenticated_subject,
             revocation_list_path=revocation_list_path,
+            catalog_bridge_path=bridge_path,
+            catalog_bridge_trust_anchor_path=bridge_key_path,
         ),
         kill_switch=KillSwitchConfig(
             enabled=ks_enabled,
