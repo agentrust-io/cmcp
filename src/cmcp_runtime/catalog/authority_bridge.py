@@ -79,15 +79,15 @@ def verify_bridge(receipt: dict[str, Any], trusted_keys: dict[str, bytes], *,
     if not _time(p["not_before"]) <= current < _time(p["expires_at"]):
         raise ConfigError("Catalog bridge outside validity window")
     key = trusted_keys.get(p["key_id"])
-    if not isinstance(key, bytes) or len(key) != 32:
+    if not isinstance(key, bytes) or len(key) != 32 or hashlib.sha256(key).hexdigest() != p["key_id"]:
         raise ConfigError("Catalog bridge signing key not trusted")
     sig = receipt["signature"]
     if not isinstance(sig, str) or not sig or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_' for c in sig):
         raise ConfigError("Invalid catalog bridge signature encoding")
     try:
         raw = base64.urlsafe_b64decode(sig + '=' * (-len(sig) % 4))
-        if len(raw) != 64:
-            raise ValueError("Signature length")
+        if len(raw) != 64 or base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != sig:
+            raise ValueError("Noncanonical catalog bridge signature")
         Ed25519PublicKey.from_public_bytes(key).verify(raw, _message(p))
     except (ValueError, InvalidSignature, TypeError) as exc:
         raise ConfigError("Catalog bridge signature invalid") from exc

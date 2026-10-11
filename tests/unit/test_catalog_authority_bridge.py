@@ -1,7 +1,6 @@
 """Negative and positive cases for the independent catalog bridge receipt."""
 from __future__ import annotations
 
-import copy
 import hashlib
 from datetime import UTC, datetime
 
@@ -18,10 +17,10 @@ def case():
     private = Ed25519PrivateKey.generate()
     public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     key_id = hashlib.sha256(public).hexdigest()
-    payload = dict(version=1, manifest_id='manifest-1', manifest_digest='sha256:'+'a'*64,
-                   agent_id='spiffe://example/agent', policy_hash='sha256:'+'b'*64,
-                   runtime_catalog_hash='sha256:'+'c'*64, manifest_catalog_root='sha256:'+'d'*64,
-                   not_before='2026-01-01T00:00:00Z', expires_at='2027-01-01T00:00:00Z', key_id=key_id)
+    payload = {'version': 1, 'manifest_id': 'manifest-1', 'manifest_digest': 'sha256:'+'a'*64,
+                   'agent_id': 'spiffe://example/agent', 'policy_hash': 'sha256:'+'b'*64,
+                   'runtime_catalog_hash': 'sha256:'+'c'*64, 'manifest_catalog_root': 'sha256:'+'d'*64,
+                   'not_before': '2026-01-01T00:00:00Z', 'expires_at': '2027-01-01T00:00:00Z', 'key_id': key_id}
     expected = {k:payload[k] for k in ('manifest_id','manifest_digest','agent_id','policy_hash','runtime_catalog_hash','manifest_catalog_root')}
     return private, {key_id:public}, payload, expected
 
@@ -106,3 +105,22 @@ def test_not_yet_valid_receipt_rejected(case):
     receipt = sign_bridge(payload, private)
     with pytest.raises(ConfigError):
         verify_bridge(receipt, case[1], now=datetime(2025,10,10,tzinfo=UTC), **case[3])
+
+
+def test_noncanonical_base64url_signature_rejected(case):
+    private, _, payload, _ = case
+    receipt = sign_bridge(payload, private)
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    original = alphabet.index(receipt["signature"][-1])
+    receipt["signature"] = receipt["signature"][:-1] + alphabet[(original // 4) * 4 + ((original + 1) % 4)]
+    with pytest.raises(ConfigError):
+        check(case, receipt)
+
+
+def test_trust_anchor_key_id_must_match_public_key_digest(case):
+    private, _, payload, expected = case
+    public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    fake_id = "f" * 64 if hashlib.sha256(public).hexdigest() != "f" * 64 else "e" * 64
+    receipt = sign_bridge({**payload, "key_id": fake_id}, private)
+    with pytest.raises(ConfigError):
+        verify_bridge(receipt, {fake_id: public}, now=datetime(2026,10,10,tzinfo=UTC), **expected)
