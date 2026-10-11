@@ -657,9 +657,9 @@ def test_startup_fails_closed_on_unreadable_revocation_list(complete_setup):
 @pytest.mark.parametrize('attack', ['none', 'receipt_tampered', 'receipt_missing', 'wrong_catalog', 'wrong_policy', 'wrong_signer'])
 def test_optional_catalog_bridge_with_upstream_native_binding(complete_setup, attack, caplog):
     """Native SDK catalog binding remains active; independent receipt is additive."""
+    from cmcp_runtime.agent_manifest import signing_pre_image
     from cmcp_runtime.catalog.authority_bridge import sign_bridge
     from cmcp_runtime.manifest_catalog import manifest_catalog_binding
-    from cmcp_runtime.agent_manifest import signing_pre_image
     config_path = Path(complete_setup)
     tmp_path = config_path.parent
     catalog = load_catalog(str(tmp_path / 'catalog.json'))
@@ -672,12 +672,12 @@ def test_optional_catalog_bridge_with_upstream_native_binding(complete_setup, at
     issuer = Ed25519PrivateKey.generate()
     pub = issuer.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     key_id = hashlib.sha256(pub).hexdigest()
-    payload = dict(version=1, manifest_id=manifest['manifest_id'],
-        manifest_digest='sha256:' + hashlib.sha256(signing_pre_image(manifest)).hexdigest(),
-        agent_id=manifest['agent_id'], policy_hash=policy_hash,
-        runtime_catalog_hash=catalog.catalog_hash,
-        manifest_catalog_root=manifest_catalog_binding(catalog)['catalog_hash'],
-        not_before='2026-01-01T00:00:00Z', expires_at='2099-01-01T00:00:00Z', key_id=key_id)
+    payload = {"version": 1, "manifest_id": manifest['manifest_id'],
+        "manifest_digest": 'sha256:' + hashlib.sha256(signing_pre_image(manifest)).hexdigest(),
+        "agent_id": manifest['agent_id'], "policy_hash": policy_hash,
+        "runtime_catalog_hash": catalog.catalog_hash,
+        "manifest_catalog_root": manifest_catalog_binding(catalog)['catalog_hash'],
+        "not_before": '2026-01-01T00:00:00Z', "expires_at": '2099-01-01T00:00:00Z', "key_id": key_id}
     receipt = sign_bridge(payload, issuer)
     receipt_path = tmp_path / 'bridge.json'
     receipt_path.write_text(json.dumps(receipt))

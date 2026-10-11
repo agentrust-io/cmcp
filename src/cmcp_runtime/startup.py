@@ -760,6 +760,7 @@ def run_startup(config_path: str) -> RuntimeContext:
             )
             if config.agent_manifest.catalog_bridge_path is not None:
                 from pathlib import Path
+
                 from cmcp_runtime.agent_manifest import signing_pre_image
                 from cmcp_runtime.catalog.authority_bridge import verify_bridge
                 from cmcp_runtime.manifest_catalog import manifest_catalog_binding
