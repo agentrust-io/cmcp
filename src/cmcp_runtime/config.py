@@ -551,11 +551,11 @@ def load_config(path: str) -> Config:
         raise ConfigError("Both catalog bridge receipt and trust anchor paths are required")
     if bridge_path and not agent_manifest_path:
         raise ConfigError("Catalog bridge requires Agent Manifest binding")
-    for label, path in (("catalog_bridge_path", bridge_path), ("catalog_bridge_trust_anchor_path", bridge_key_path)):
-        if path is not None:
-            if not isinstance(path, str) or not path:
+    for label, bridge_value in (("catalog_bridge_path", bridge_path), ("catalog_bridge_trust_anchor_path", bridge_key_path)):
+        if bridge_value is not None:
+            if not isinstance(bridge_value, str) or not bridge_value:
                 raise ConfigError(f"agent_manifest.{label} must be a non-empty string")
-            _check_no_traversal(f"agent_manifest.{label}", path)
+            _check_no_traversal(f"agent_manifest.{label}", bridge_value)
 
     profile = raw.get("conformance_profile")
     if profile is not None and (

@@ -769,9 +769,10 @@ def run_startup(config_path: str) -> RuntimeContext:
                     receipt = json.loads(Path(config.agent_manifest.catalog_bridge_path).read_text())
                 except (OSError, ValueError) as exc:
                     raise ConfigError("Catalog authority bridge unreadable") from exc
-                bridge_keys = load_agent_manifest_trust_anchor(
-                    config.agent_manifest.catalog_bridge_trust_anchor_path
-                )
+                bridge_key_path = config.agent_manifest.catalog_bridge_trust_anchor_path
+                if bridge_key_path is None:
+                    raise ConfigError("Catalog bridge trust anchor is required")
+                bridge_keys = load_agent_manifest_trust_anchor(bridge_key_path)
                 manifest_digest = "sha256:" + hashlib.sha256(
                     loaded.envelope if loaded.envelope is not None
                     else signing_pre_image(loaded.manifest)
