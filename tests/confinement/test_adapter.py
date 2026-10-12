@@ -1,7 +1,7 @@
 """Contract tests run on every OS; actual Docker evidence is in test_linux.py.
 
-These unit tests validate the enforcement mechanisms that enable agent-side
-path coverage for the execution-scope model described in docs/confinement.md.
+These unit tests check adapter controls used by the synthetic confinement
+fixture. They do not establish order_create coverage or path-set completeness.
 """
 
 import asyncio

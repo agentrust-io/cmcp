@@ -76,7 +76,7 @@ This is the **execution-scope** question. It distinguishes four different claims
 3. **Observation**: this downstream evidence was observed for that execution
 4. **Complete mediation**: all paths capable of producing the protected effect are within the declared enforcement boundary
 
-The first three have existing cMCP mechanisms. The fourth is addressed by declaring an **effect-producing path set** for each protected effect.
+The first three have existing cMCP mechanisms. Declaring an **effect-producing path set** scopes the fourth claim; it does not prove that the set is complete or that every declared path is mediated.
 
 ### Path classification
 
@@ -84,39 +84,44 @@ Paths are classified by whether they are within the agent's enforcement domain:
 
 - **Agent-side paths**: originate from the agent/runtime, can be enforced and tested by the confinement machinery
   - Example: gateway path, alternate endpoint, subprocess/external sink
-  - Coverage: can be established through confinement fixtures and adversarial tests
+  - Coverage: a fixture can establish observations for the specific routes it exercises; effect-specific coverage needs tests of the actual effect-producing paths
 
 - **Deployment-side paths**: outside the agent's enforcement domain
   - Example: another service writing directly to the orders database
   - Coverage: cannot be established by the agent confinement fixture alone
   - Must be represented as a declared deployment boundary
-  - Coverage remains not established unless independently observed
+  - Coverage remains not established without independently assessed deployment controls and observations that address the claimed boundary; one observed effect alone does not establish completeness
 
 ### Worked example: `order_create`
 
-Assume `order_create` is the protected effect. A declared path set for this effect would be:
+Assume `order_create` is the protected effect. The following is an illustrative declaration, not an inventory established for an order service. The existing fixtures use synthetic canaries and `permitted.tool` / `public.tool`; they do not invoke an order API or observe an orders database.
 
 **Protected effect**: `order_create`
 
 **Declared path set**:
 
-| Path | Type | Mediator | Coverage |
+| Path | Type | Proposed mediator | Evidence for `order_create` |
 | --- | --- | --- | --- |
-| P1: agent → cMCP gateway → approved order tool | Agent-side | cMCP policy + sink ceilings | ENFORCED / TESTED |
-| P2: agent → alternate endpoint (direct network) | Agent-side | Container network isolation | ENFORCED / TESTED |
-| P3: agent → filesystem/subprocess → external sink | Agent-side | Container filesystem isolation + no host mounts + network namespace inheritance | ENFORCED / TESTED |
-| P4: external service → orders database (bypassing agent) | Deployment-side | Deployment boundary control | DECLARED / NOT ESTABLISHED |
+| P1: agent → cMCP gateway → approved order tool | Agent-side | cMCP policy + sink ceilings | NOT ESTABLISHED; generic permitted/denied tool analogue only |
+| P2: agent → alternate order endpoint (direct network) | Agent-side | Container network isolation | NOT ESTABLISHED; generic IPv4, IPv6 and UDP/DNS probes only |
+| P3a: agent → filesystem → order-producing consumer | Agent-side | Read-only root filesystem + no host mounts | NOT ESTABLISHED; generic `/export/leak.txt` write probe only |
+| P3b: agent child process → alternate order endpoint | Agent-side | Inherited network namespace | NOT ESTABLISHED; generic child IPv4 TCP probe only |
+| P4: external service → orders database (bypassing agent) | Deployment-side | Deployment boundary control | DECLARED / NOT ESTABLISHED; outside fixture scope |
 
 **Coverage explanation**:
 
-- **P1**: Validated by `test_confinement_and_fresh_restart` showing permitted tool delivery succeeds while denied sinks are blocked.
-- **P2**: Validated by `test_removed_restriction_is_detected_at_independent_sink` with network mutation, confirming that disabling network isolation allows direct network escape.
-- **P3**: Validated by `test_removed_restriction_is_detected_at_independent_sink` with filesystem mutation (direct file write) and network mutation (subprocess inherits network namespace and is also blocked). The adversarial agent attempts both file writes and subprocess network connections; both are blocked under confinement.
-- **P4**: This is a deployment-side path outside the agent's control. The fixture cannot test this path. Coverage for P4 requires independent deployment-level observation (e.g., database access logs, service mesh policies). Until such observation is provided, P4 remains "DECLARED / NOT ESTABLISHED".
+- **P1 analogue**: `test_confinement_and_fresh_restart` observes one permitted synthetic tool delivery and zero denied-sink deliveries. It does not observe an order commitment.
+- **P2 and P3b analogues**: The baseline records zero deliveries at the fixture's IPv4, IPv6 and DNS observers. The network mutation records two IPv4 deliveries (parent and child), one IPv6 delivery and one DNS question. These are specific escape probes, not every route to an order service.
+- **P3a analogue**: The baseline records no canary in `/export/leak.txt`; the filesystem mutation observes that canary when the read-only restriction and its admission check are deliberately removed. No order-producing file consumer is exercised.
+- **P4**: The fixture cannot test this deployment-side path. An effect-specific assessment needs a deployment inventory, control evidence and independent observation at the relevant boundary. Database logs or service-mesh policy alone do not prove that no unlisted writer exists.
+
+Logging and denied-sink mutations are additional canary confinement checks, not order-creation paths. Paired baseline and mutation observations show that the exercised controls matter for the tested probes. They do not prove path-set completeness.
+
+**Completeness and overall coverage**: Listing P1–P4 does not establish that no additional effect-producing paths exist. For this illustrative `order_create` declaration, both path-set completeness and the overall complete-mediation claim are **NOT ESTABLISHED**, including because P4 remains unassessed. Effect-specific tests and deployment evidence would be needed before changing that status.
 
 ### Relationship to EABC
 
-This path-set declaration provides the cMCP-side representation needed for the EABC profile's `NON_BYPASSABILITY(B,E)` claim, but **only for the declared and covered execution scope**. The claim does not imply universal complete mediation—only that the declared paths within the agent's enforcement domain are mediated and tested.
+The [EABC/cMCP profile discussion](https://github.com/agentrust-io/integrations/issues/290) uses `NON_BYPASSABILITY(B,E)` for a claim that protected effect `E` cannot occur outside declared enforcement boundary `B`. This table supplies a declaration for assessing such a claim; the generic fixture does not establish it for `order_create`. A scoped claim needs evidence both for the completeness of the effect-producing path set and for mediation of those paths.
 
 The gateway mediating MCP calls does not by itself prove that an application cannot create the same protected effect through another API, service, direct database operation, or privileged process. Those paths must be explicitly declared and independently observed.
 
