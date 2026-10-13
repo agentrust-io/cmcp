@@ -227,3 +227,35 @@ def test_startup_refuses_substituted_served_catalog(experimental_startup, substi
     with pytest.raises(SystemExit) as exc:
         run_startup(str(config_path))
     assert exc.value.code == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrong_seal", [False, True])
+async def test_synthetic_dispatch_only_after_authenticated_startup(
+    experimental_startup, wrong_seal
+):
+    """One actual proxy forwarding invocation only after the startup binding succeeds."""
+    from cmcp_runtime.startup import run_startup
+    from tests.unit.test_mcp_proxy import _make_proxy
+
+    config_path, manifest_path, manifest, key = experimental_startup
+    if wrong_seal:
+        manifest["evidence_requirements"]["components"][1]["expected_observed_digest"] = (
+            "sha256:" + "d" * 64
+        )
+    manifest_path.write_bytes(sdk.sign_cose_sign1(manifest, key))
+
+    forwarded = 0
+    if wrong_seal:
+        with pytest.raises(SystemExit) as exc:
+            run_startup(str(config_path))
+        assert exc.value.code == 1
+    else:
+        ctx = run_startup(str(config_path))
+        assert ctx.agent_manifest is not None
+        proxy, _, _ = _make_proxy(catalog=ctx.catalog)
+        response = await proxy.call_tool("synthetic-call-1", "test.tool", {})
+        assert response.allowed is True
+        forwarded = proxy._forward_to_upstream.await_count
+
+    assert forwarded == (0 if wrong_seal else 1)
