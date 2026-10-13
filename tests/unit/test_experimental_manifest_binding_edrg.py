@@ -194,3 +194,36 @@ def test_experimental_signed_catalog_is_enforced_by_real_startup(experimental_st
         ctx = run_startup(str(config_path))
         assert ctx.agent_manifest is not None
         assert ctx.agent_manifest.agent_id == manifest["agent_id"]
+
+
+@pytest.mark.parametrize("substitution", ["server_identity", "output_schema"])
+def test_startup_refuses_substituted_served_catalog(experimental_startup, substitution):
+    """A newly loaded catalog cannot silently supersede the signed sealed digest."""
+    import json
+
+    from cmcp_runtime.catalog.loader import _compute_definition_hash, load_catalog
+    from cmcp_runtime.startup import run_startup
+
+    config_path, manifest_path, manifest, key = experimental_startup
+    manifest_path.write_bytes(sdk.sign_cose_sign1(manifest, key))
+
+    catalog_path = config_path.parent / "catalog.json"
+    entries = json.loads(catalog_path.read_text())
+    if substitution == "server_identity":
+        entries[0]["server"]["url"] = "https://substituted.example.test/mcp"
+    else:
+        definition = entries[0]["approved_definition"]
+        definition["output_schema"] = {
+            "type": "object",
+            "properties": {"changed": {"type": "string"}},
+        }
+        entries[0]["definition_hash"] = _compute_definition_hash(definition)
+    catalog_path.write_text(json.dumps(entries))
+    assert (
+        load_catalog(str(catalog_path)).catalog_hash
+        != manifest["evidence_requirements"]["components"][1]["expected_observed_digest"]
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run_startup(str(config_path))
+    assert exc.value.code == 1
