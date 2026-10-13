@@ -126,3 +126,71 @@ def test_signed_experimental_profile_refuses_changes_after_good_twin(binding_pac
     else:
         with pytest.raises(ConfigError, match="policy bundle hash does not match runtime policy"):
             bind(binding_packet, policy="sha256:" + "e" * 64)
+
+
+@pytest.fixture
+def experimental_startup(tmp_path, monkeypatch, binding_packet):
+    """Real startup configuration using the generated COSE profile fixture."""
+    import base64
+    import json
+    from pathlib import Path
+
+    from cmcp_runtime.catalog.loader import load_catalog
+    from cmcp_runtime.policy.bundle import load_policy_bundle
+    from tests.unit.test_startup import complete_setup as setup_fixture
+
+    config_path = Path(setup_fixture.__wrapped__(tmp_path, monkeypatch))
+    runtime_catalog = load_catalog(str(tmp_path / "catalog.json"))
+    runtime_policy = load_policy_bundle(str(tmp_path / "policy"))
+    manifest, key, _ = binding_packet
+    manifest = copy.deepcopy(manifest)
+    manifest["artifacts"]["policy_bundle"]["hash"] = runtime_policy.bundle_hash
+    manifest["artifacts"]["tool_manifest"] = {
+        **manifest_catalog_binding(runtime_catalog),
+        "rug_pull_policy": "deny-and-alert",
+        "allow_dynamic_registration": False,
+        "bound_at": manifest["issued_at"],
+    }
+    manifest["evidence_requirements"]["components"][1]["expected_observed_digest"] = (
+        runtime_catalog.catalog_hash
+    )
+    manifest_path = tmp_path / "experimental.cose"
+    key_path = tmp_path / "experimental-trust.json"
+    key_path.write_text(
+        json.dumps(
+            {
+                "key_id": key.key_id,
+                "public_key_base64url": base64.urlsafe_b64encode(key.public_bytes)
+                .decode()
+                .rstrip("="),
+            }
+        )
+    )
+    config_path.write_text(
+        config_path.read_text()
+        + "\nagent_manifest:\n"
+        + f"  path: {manifest_path}\n"
+        + f"  trust_anchor_path: {key_path}\n"
+        + f"  authenticated_subject: {manifest['agent_id']}\n"
+    )
+    return config_path, manifest_path, manifest, key
+
+
+@pytest.mark.parametrize("wrong_seal", [False, True])
+def test_experimental_signed_catalog_is_enforced_by_real_startup(experimental_startup, wrong_seal):
+    from cmcp_runtime.startup import run_startup
+
+    config_path, manifest_path, manifest, key = experimental_startup
+    if wrong_seal:
+        manifest["evidence_requirements"]["components"][1]["expected_observed_digest"] = (
+            "sha256:" + "d" * 64
+        )
+    manifest_path.write_bytes(sdk.sign_cose_sign1(manifest, key))
+    if wrong_seal:
+        with pytest.raises(SystemExit) as exc:
+            run_startup(str(config_path))
+        assert exc.value.code == 1
+    else:
+        ctx = run_startup(str(config_path))
+        assert ctx.agent_manifest is not None
+        assert ctx.agent_manifest.agent_id == manifest["agent_id"]
