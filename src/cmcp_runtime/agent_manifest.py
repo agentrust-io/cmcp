@@ -178,44 +178,47 @@ def load_agent_manifest(path: str) -> dict[str, Any]:
     return load_agent_manifest_document(path).manifest
 
 
-def load_agent_manifest_trust_anchor(path: str) -> dict[str, bytes]:
-    """Load issuer public keys from a JSON trust anchor file."""
-    try:
-        with Path(path).open() as f:
-            raw = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigError(f"Cannot read Agent Manifest trust anchor: {exc}") from exc
+# SPIFFE ID grammar (SPIFFE ID specification, section 2): a non-empty trust
+# domain of lowercase letters, digits, ".", "-" and "_", with no userinfo, port,
+# query or fragment, then optional path segments of letters, digits, ".", "-"
+# and "_", none empty, "." or "..".
+_SPIFFE_SCHEME = "spiffe://"
+_SPIFFE_TRUST_DOMAIN = re.compile(r"[a-z0-9._-]{1,255}")
+_SPIFFE_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._-]+")
+_MAX_SPIFFE_ID_BYTES = 2048
 
-    anchors: dict[str, bytes] = {}
-    if isinstance(raw, dict) and "public_key_base64url" in raw:
-        public_key = _b64url_decode(str(raw["public_key_base64url"]))
-        key_id = str(raw.get("key_id") or _key_id(public_key))
-        anchors[key_id] = public_key
-        return anchors
-    if isinstance(raw, dict) and "keys" in raw and isinstance(raw["keys"], list):
-        for item in raw["keys"]:
-            if not isinstance(item, dict):
-                raise ConfigError("Agent Manifest trust anchor keys must be objects")
-            public_key = _b64url_decode(str(item.get("public_key_base64url", "")))
-            key_id = str(item.get("key_id") or _key_id(public_key))
-            anchors[key_id] = public_key
-        return anchors
-    raise ConfigError(
-        "Agent Manifest trust anchor must contain public_key_base64url or keys[]"
+
+def _is_spiffe_id(value: object) -> bool:
+    """Whether *value* is a well-formed SPIFFE ID."""
+    if not isinstance(value, str) or not value.startswith(_SPIFFE_SCHEME):
+        return False
+    if len(value.encode("utf-8")) > _MAX_SPIFFE_ID_BYTES:
+        return False
+    trust_domain, has_path, path = value[len(_SPIFFE_SCHEME) :].partition("/")
+    if not _SPIFFE_TRUST_DOMAIN.fullmatch(trust_domain):
+        return False
+    if not has_path:
+        return True
+    return all(
+        _SPIFFE_PATH_SEGMENT.fullmatch(segment) and segment not in {".", ".."}
+        for segment in path.split("/")
     )
 
 
-def load_agent_manifest_issuer_policy(path: str) -> dict[str, list[str]] | None:
-    """Load which issuers each trust-anchor key may sign for (spec 5.3.3).
+def load_agent_manifest_trust_policy(
+    path: str,
+) -> tuple[dict[str, bytes], dict[str, list[str]] | None]:
+    """Load a trust anchor's keys and its issuer policy (spec 5.3.3) in one parse.
 
-    Read from the same file as load_agent_manifest_trust_anchor: an
-    ``issuers`` list of SPIFFE URIs beside ``public_key_base64url``, in the
+    Each key is ``public_key_base64url`` with an optional ``key_id`` and an
+    optional ``issuers`` list of SPIFFE IDs that key may sign for, in the
     single-key form or on each entry of ``keys[]``. A key with no ``issuers``
     is authorized for no issuer.
 
-    Returns None when no key in the file declares ``issuers``, which is a
-    trust anchor written before issuer authorization existed. The binding
-    refuses that rather than reading it as "any issuer".
+    The policy is None when no key in the file declares ``issuers``, which is
+    a trust anchor written before issuer authorization existed. The binding
+    refuses that rather than reading it as "any issuer". A repeated key_id or
+    a malformed issuer is a ConfigError, so neither can enter the policy.
     """
     try:
         with Path(path).open() as f:
@@ -232,25 +235,37 @@ def load_agent_manifest_issuer_policy(path: str) -> dict[str, list[str]] | None:
             "Agent Manifest trust anchor must contain public_key_base64url or keys[]"
         )
 
+    anchors: dict[str, bytes] = {}
     policy: dict[str, list[str]] = {}
     declared = False
     for item in entries:
         if not isinstance(item, dict):
             raise ConfigError("Agent Manifest trust anchor keys must be objects")
+        public_key = _b64url_decode(str(item.get("public_key_base64url", "")))
+        key_id = str(item.get("key_id") or _key_id(public_key))
+        if key_id in anchors:
+            raise ConfigError(f"Agent Manifest trust anchor repeats key_id {key_id!r}")
+        anchors[key_id] = public_key
         if "issuers" not in item:
             continue
         declared = True
         issuers = item["issuers"]
-        if not isinstance(issuers, list) or not all(
-            isinstance(i, str) and i.startswith("spiffe://") for i in issuers
-        ):
+        if not isinstance(issuers, list) or not all(_is_spiffe_id(i) for i in issuers):
             raise ConfigError(
-                "Agent Manifest trust anchor issuers must be a list of SPIFFE URIs"
+                "Agent Manifest trust anchor issuers must be a list of SPIFFE IDs"
             )
-        public_key = _b64url_decode(str(item.get("public_key_base64url", "")))
-        key_id = str(item.get("key_id") or _key_id(public_key))
         policy[key_id] = list(issuers)
-    return policy if declared else None
+    return anchors, (policy if declared else None)
+
+
+def load_agent_manifest_trust_anchor(path: str) -> dict[str, bytes]:
+    """Load issuer public keys from a JSON trust anchor file."""
+    return load_agent_manifest_trust_policy(path)[0]
+
+
+def load_agent_manifest_issuer_policy(path: str) -> dict[str, list[str]] | None:
+    """Load which issuers each trust-anchor key may sign for (spec 5.3.3)."""
+    return load_agent_manifest_trust_policy(path)[1]
 
 
 # A revocation list is operator-supplied, so it is bounded the same way the
@@ -669,7 +684,7 @@ def verify_agent_manifest_binding(
     must also sign the sealed digest.
 
     *trusted_key_issuers* maps each trusted key_id to the issuers it may sign
-    for (load_agent_manifest_issuer_policy). It is required: spec 5.3.3 forbids
+    for (load_agent_manifest_trust_policy). It is required: spec 5.3.3 forbids
     a VALID manifest whose signing key has not been authorized for its declared
     issuer, so a binding without the policy is refused rather than accepted on
     the signature alone.

@@ -32,7 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anchor lists `issuers`, and when the signing key is not authorized for the
   manifest's `issuer`. `cmcp verify` and `verify_trace_claim` read the same
   policy (new `trusted_agent_manifest_key_issuers` argument) and report the
-  binding unverified without it. Found by @litzki-systems on
+  binding unverified without it. The trust anchor is parsed once for keys and
+  policy, and loading it fails on a malformed SPIFFE ID in `issuers` or a
+  repeated `key_id`. Found by @litzki-systems on
   agentrust-io/agent-manifest#493.
 - Test fixtures and docs use vendor-neutral example model names.
 - LICENSE and NOTICE name the copyright holder as AgenTrust Contributors. The

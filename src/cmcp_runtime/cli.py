@@ -254,8 +254,7 @@ def verify(
 
     from cmcp_runtime.agent_manifest import (
         load_agent_manifest,
-        load_agent_manifest_issuer_policy,
-        load_agent_manifest_trust_anchor,
+        load_agent_manifest_trust_policy,
     )
     from cmcp_verify import ApprovedHashes, verify_audit_bundle, verify_trace_claim
 
@@ -274,15 +273,10 @@ def verify(
     )
 
     manifest_json = load_agent_manifest(agent_manifest) if agent_manifest is not None else None
-    manifest_keys = (
-        load_agent_manifest_trust_anchor(agent_manifest_trust_anchor)
+    manifest_keys, manifest_key_issuers = (
+        load_agent_manifest_trust_policy(agent_manifest_trust_anchor)
         if agent_manifest_trust_anchor is not None
-        else None
-    )
-    manifest_key_issuers = (
-        load_agent_manifest_issuer_policy(agent_manifest_trust_anchor)
-        if agent_manifest_trust_anchor is not None
-        else None
+        else (None, None)
     )
     if agent_manifest is not None and agent_manifest_trust_anchor is None:
         click.echo(

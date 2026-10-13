@@ -16,9 +16,8 @@ from typing import Any
 from cmcp_runtime.agent_manifest import (
     AgentManifestBinding,
     load_agent_manifest_document,
-    load_agent_manifest_issuer_policy,
     load_agent_manifest_revocations,
-    load_agent_manifest_trust_anchor,
+    load_agent_manifest_trust_policy,
     verify_agent_manifest_binding,
 )
 from cmcp_runtime.audit.keys import SigningKey
@@ -734,10 +733,7 @@ def run_startup(config_path: str) -> RuntimeContext:
     if config.agent_manifest.path is not None and config.agent_manifest.trust_anchor_path is not None:
         try:
             loaded = load_agent_manifest_document(config.agent_manifest.path)
-            trusted_keys = load_agent_manifest_trust_anchor(
-                config.agent_manifest.trust_anchor_path
-            )
-            trusted_key_issuers = load_agent_manifest_issuer_policy(
+            trusted_keys, trusted_key_issuers = load_agent_manifest_trust_policy(
                 config.agent_manifest.trust_anchor_path
             )
             revocations = (
