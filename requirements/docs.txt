@@ -222,9 +222,9 @@ griffecli==2.3.0 \
     --hash=sha256:916fdc851cf51d38e9b5ab82550305df45e5981d5dfe65d346544464abedb3ec \
     --hash=sha256:f94653edcb52ebcac21eaeb3b7121b065a636174eddf2bd558b5935e72a553e8
     # via griffe
-griffelib==2.3.0 \
-    --hash=sha256:1b8f9cd525681c26b1d6d574faa1371651e8459ca51d209684f50b8096ae06e0 \
-    --hash=sha256:7b0952caf5bca6afa4bb5ee8c6a2d183fe3f21b62efc5f6c7243cb2b26d2d115
+griffelib==2.3.2 \
+    --hash=sha256:8e710afededd5607f95bf3c8ccc175ee306e7084459faf27b9f9f44ef2a7a274 \
+    --hash=sha256:df00c7a0dee3d86268d76788997a1859272cb1fb7b865658e043d2c0c3d52e60
     # via
     #   griffe
     #   griffecli
