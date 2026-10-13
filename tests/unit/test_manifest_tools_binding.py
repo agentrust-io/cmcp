@@ -114,6 +114,7 @@ def _bind(
         runtime_catalog=runtime,
         enforcement_mode=EnforcementMode.ENFORCING,
         envelope=envelope,
+        trusted_key_issuers={keypair.key_id: [ISSUER]},
     )
 
 

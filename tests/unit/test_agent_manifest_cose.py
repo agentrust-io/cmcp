@@ -97,6 +97,7 @@ def _bind(loaded, trusted_keys):
         tool_catalog_hash=CATALOG_HASH,
         enforcement_mode=EnforcementMode.ENFORCING,
         envelope=loaded.envelope,
+        trusted_key_issuers={key_id: [ISSUER] for key_id in trusted_keys},
     )
 
 
@@ -290,4 +291,5 @@ def test_experimental_profile_requires_the_served_catalog(catalog: str) -> None:
             policy_bundle_hash=POLICY_HASH,
             tool_catalog_hash=CATALOG_HASH,
             runtime_catalog=runtime,
+            trusted_key_issuers={},
         )

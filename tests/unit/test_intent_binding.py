@@ -87,6 +87,7 @@ def _bind(manifest: dict, keys: dict[str, bytes]):
         authenticated_subject=AGENT_ID,
         policy_bundle_hash=POLICY_HASH,
         tool_catalog_hash=CATALOG_HASH,
+        trusted_key_issuers={key_id: [manifest["issuer"]] for key_id in keys},
     )
 
 

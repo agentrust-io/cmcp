@@ -896,6 +896,7 @@ def verify_trace_claim(
     trusted_public_key_hex: str | None = None,
     agent_manifest: dict[str, Any] | None = None,
     trusted_agent_manifest_keys: dict[str, bytes] | None = None,
+    trusted_agent_manifest_key_issuers: dict[str, list[str]] | None = None,
     trusted_ark_pem: bytes | None = None,
     trusted_intel_root_pem: bytes | None = None,
     trusted_tpm_ca_pem: bytes | None = None,
@@ -1068,6 +1069,7 @@ def verify_trace_claim(
                     allow_dev_subject_from_manifest=(
                         agent_identity.get("subject_source") == "manifest-dev"
                     ),
+                    trusted_key_issuers=trusted_agent_manifest_key_issuers,
                 )
                 expected_identity = {
                     "manifest_id": binding.manifest_id,

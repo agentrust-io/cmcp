@@ -8,6 +8,7 @@ import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
@@ -39,6 +40,7 @@ from cmcp_verify.verify import (
 POLICY_HASH = "sha256:" + "a" * 64
 CATALOG_HASH = "sha256:" + "b" * 64
 AGENT_ID = "spiffe://factory.example/agent/material-movement/dev"
+MANIFEST_ISSUER = "spiffe://factory.example/signing-authority/development"
 MANIFEST_ID = "0197739a-8c00-7000-8000-000000000001"
 
 
@@ -158,7 +160,7 @@ def _signed_manifest(
         "version": "0.1",
         "issued_at": "2026-06-12T00:00:00Z",
         "expires_at": "2099-09-10T00:00:00Z",
-        "issuer": "spiffe://factory.example/signing-authority/development",
+        "issuer": MANIFEST_ISSUER,
         "crypto_profile": "standard",
         "artifacts": {
             # agent-manifest 0.12.0 (GHSA-6hjj-gh3c-r6wv) enforces the
@@ -281,8 +283,36 @@ def test_agent_manifest_binding_is_verified():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
     assert "agent_manifest.binding" in result.verified_fields
+
+
+@pytest.mark.parametrize(
+    "issuers",
+    [None, {"other": ["spiffe://factory.example/other-authority"]}],
+    ids=["no-issuer-policy", "key-not-authorized"],
+)
+def test_agent_manifest_binding_requires_issuer_authorization(issuers):
+    """Spec 5.3.3: the manifest signature under a trusted key does not bind the
+    claim unless the key is authorized for the manifest's issuer."""
+    priv, pub, key_id = _manifest_keypair()
+    manifest = _signed_manifest(priv, key_id)
+    identity = _agent_identity()
+    identity.issuer_key_id = key_id
+    claim_dict, _ = _make_signed_claim(agent_identity=identity)
+    if issuers is not None:
+        issuers = {key_id: issuers["other"]}
+    result = verify_trace_claim(
+        claim_dict,
+        _approved(),
+        agent_manifest=manifest,
+        trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers=issuers,
+    )
+    assert "agent_manifest.binding" in result.unverified_fields
+    assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
+    assert "5.3.3" in result.details["agent_manifest"]
 
 
 def test_agent_manifest_binding_mismatch_fails():
@@ -296,6 +326,7 @@ def test_agent_manifest_binding_mismatch_fails():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
     assert "agent_manifest.binding" in result.unverified_fields
     assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
@@ -331,6 +362,7 @@ def test_agent_manifest_binding_intent_hash_mismatch_fails():
     real_binding = verify_agent_manifest_binding(
         manifest,
         {key_id: pub},
+        trusted_key_issuers={key_id: [MANIFEST_ISSUER]},
         authenticated_subject=AGENT_ID,
         authenticated_subject_source="config",
         policy_bundle_hash=POLICY_HASH,
@@ -350,6 +382,7 @@ def test_agent_manifest_binding_intent_hash_mismatch_fails():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
     assert "agent_manifest.binding" in result.unverified_fields
     assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
@@ -368,6 +401,7 @@ def test_agent_manifest_binding_enforcement_mode_reaches_the_claim():
     real_binding = verify_agent_manifest_binding(
         manifest,
         {key_id: pub},
+        trusted_key_issuers={key_id: [MANIFEST_ISSUER]},
         authenticated_subject=AGENT_ID,
         authenticated_subject_source="config",
         policy_bundle_hash=POLICY_HASH,
@@ -386,6 +420,7 @@ def test_agent_manifest_binding_enforcement_mode_reaches_the_claim():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
     assert "agent_manifest.binding" in result.verified_fields
 
@@ -408,6 +443,7 @@ def test_agent_manifest_binding_enforcement_mode_mismatch_fails():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
     assert "agent_manifest.binding" in result.unverified_fields
     assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH
@@ -428,6 +464,7 @@ def test_agent_manifest_binding_declared_mode_missing_from_claim_fails():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
 
     assert "agent_manifest.binding" in result.unverified_fields
@@ -451,6 +488,7 @@ def test_agent_manifest_binding_without_enforcement_mode_still_works():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
     assert "agent_manifest.binding" in result.verified_fields
 
@@ -472,6 +510,7 @@ def test_agent_manifest_binding_garbled_enforcement_mode_fails_closed():
         _approved(),
         agent_manifest=manifest,
         trusted_agent_manifest_keys={key_id: pub},
+        trusted_agent_manifest_key_issuers={key_id: [MANIFEST_ISSUER]},
     )
     assert "agent_manifest.binding" in result.unverified_fields
     assert result.failure_reason == VerificationError.AGENT_MANIFEST_MISMATCH

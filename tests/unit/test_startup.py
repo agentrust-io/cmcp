@@ -99,6 +99,7 @@ def _write_agent_manifest_files(
             "algorithm": "Ed25519",
             "key_id": key_id,
             "public_key_base64url": _b64url(pub),
+            "issuers": [manifest["issuer"]],
         })
     )
     return manifest_path, key_path
@@ -280,6 +281,60 @@ def test_startup_fails_on_agent_manifest_subject_mismatch(complete_setup):
     with pytest.raises(SystemExit) as exc_info:
         run_startup(str(config_path))
     assert exc_info.value.code == 1
+
+
+def _bind_with_anchor_issuers(complete_setup, issuers):
+    """Bind a valid manifest whose trust anchor declares *issuers* (None: omit)."""
+    config_path = Path(complete_setup)
+    tmp_path = config_path.parent
+    policy_hash = load_policy_bundle(str(tmp_path / "policy")).bundle_hash
+    catalog_hash = load_catalog(str(tmp_path / "catalog.json")).catalog_hash
+    manifest_path, key_path = _write_agent_manifest_files(
+        tmp_path,
+        policy_hash=policy_hash,
+        catalog_hash=catalog_hash,
+    )
+    anchor = json.loads(key_path.read_text())
+    if issuers is None:
+        del anchor["issuers"]
+    else:
+        anchor["issuers"] = issuers
+    key_path.write_text(json.dumps(anchor))
+    config_path.write_text(
+        config_path.read_text()
+        + "\nagent_manifest:\n"
+        + f"  path: {manifest_path}\n"
+        + f"  trust_anchor_path: {key_path}\n"
+        + f"  authenticated_subject: {AGENT_ID}\n"
+    )
+    return run_startup(str(config_path))
+
+
+def test_startup_refuses_a_trust_anchor_that_authorizes_no_issuer(complete_setup, caplog):
+    """Spec 5.3.3: a signature from a trusted key is not enough. A trust anchor
+    written before issuer authorization existed names no issuer, so the gateway
+    cannot authorize the signing key for the manifest's issuer and refuses to
+    start rather than binding on the signature alone."""
+    with caplog.at_level("CRITICAL", logger="cmcp_runtime.startup"), pytest.raises(
+        SystemExit
+    ) as exc_info:
+        _bind_with_anchor_issuers(complete_setup, None)
+    assert exc_info.value.code == 1
+    assert any("5.3.3" in record.getMessage() for record in caplog.records)
+
+
+def test_startup_refuses_a_key_not_authorized_for_the_manifest_issuer(
+    complete_setup, caplog
+):
+    with caplog.at_level("CRITICAL", logger="cmcp_runtime.startup"), pytest.raises(
+        SystemExit
+    ) as exc_info:
+        _bind_with_anchor_issuers(complete_setup, ["spiffe://factory.example/other-authority"])
+    assert exc_info.value.code == 1
+    assert any(
+        "not authorized for the manifest issuer" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_startup_fails_on_missing_config(tmp_path):

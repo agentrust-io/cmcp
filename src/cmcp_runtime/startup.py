@@ -16,6 +16,7 @@ from typing import Any
 from cmcp_runtime.agent_manifest import (
     AgentManifestBinding,
     load_agent_manifest_document,
+    load_agent_manifest_issuer_policy,
     load_agent_manifest_revocations,
     load_agent_manifest_trust_anchor,
     verify_agent_manifest_binding,
@@ -736,6 +737,9 @@ def run_startup(config_path: str) -> RuntimeContext:
             trusted_keys = load_agent_manifest_trust_anchor(
                 config.agent_manifest.trust_anchor_path
             )
+            trusted_key_issuers = load_agent_manifest_issuer_policy(
+                config.agent_manifest.trust_anchor_path
+            )
             revocations = (
                 load_agent_manifest_revocations(config.agent_manifest.revocation_list_path)
                 if config.agent_manifest.revocation_list_path is not None
@@ -757,6 +761,7 @@ def run_startup(config_path: str) -> RuntimeContext:
                 enforcement_mode=config.attestation.enforcement_mode,
                 allow_dev_subject_from_manifest=config.dev_mode,
                 revocations=revocations,
+                trusted_key_issuers=trusted_key_issuers,
             )
         except ConfigError as exc:
             _fatal("AGENT_MANIFEST_BINDING_FAILED", str(exc), action="startup_aborted")

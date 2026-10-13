@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** an Agent Manifest binding now requires issuer key
+  authorization (Agent Manifest spec §5.3.3). The trust anchor at
+  `agent_manifest.trust_anchor_path` carries an `issuers` list of SPIFFE URIs
+  per key, and the gateway passes it to the SDK as `trusted_key_issuers`.
+  Before, cMCP passed no issuer policy and agent-manifest 0.15.0 skipped the
+  check, so any trusted key could sign a manifest naming any issuer. Startup
+  now stops with `AGENT_MANIFEST_BINDING_FAILED` when no key in the trust
+  anchor lists `issuers`, and when the signing key is not authorized for the
+  manifest's `issuer`. `cmcp verify` and `verify_trace_claim` read the same
+  policy (new `trusted_agent_manifest_key_issuers` argument) and report the
+  binding unverified without it. Found by @litzki-systems on
+  agentrust-io/agent-manifest#493.
 - Test fixtures and docs use vendor-neutral example model names.
 - LICENSE and NOTICE name the copyright holder as AgenTrust Contributors. The
   previous LICENSE line credited Agentic AI Foundation contributors, but the
