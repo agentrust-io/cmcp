@@ -4,9 +4,7 @@
 
 | Name | GitHub | Affiliation | Role |
 |------|--------|-------------|------|
-| Imran Siddique | @imran-siddique | OPAQUE Systems | Project Lead |
-| Rishabh Poddar | @podcastinator | OPAQUE Systems | Maintainer |
-| Aaron Fulkerson | @AaronRoeF | OPAQUE Systems | Maintainer |
+| Imran Siddique | @imran-siddique | AgenTrust-io | Project Lead |
 
 The Project Lead has final decision authority on architecture, conformance
 requirements, and Maintainer appointments.
@@ -37,6 +35,11 @@ To be considered for maintainer status you must:
 ## Emeritus
 
 Maintainers who are no longer active may move to emeritus status. Emeritus maintainers are listed here for recognition but do not hold merge rights or voting privileges.
+
+| Name | GitHub |
+|---|---|
+| Rishabh Poddar | @podcastinator |
+| Aaron Fulkerson | @AaronRoeF |
 
 ## Changes to This File
 

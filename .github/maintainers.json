@@ -7,11 +7,7 @@
     "carloshvp",
     "qubeena07",
     "zohebk8s",
-    "pforest",
-    "Qiang-Xu",
-    "rajnisht7",
-    "podcastinator",
-    "AaronRoeF"
+    "rajnisht7"
   ],
   "security_paths": [
     "src/cmcp_runtime/audit/",
