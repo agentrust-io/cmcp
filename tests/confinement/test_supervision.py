@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from examples.confinement.adapter import DockerSandbox
 
+from tests.confinement.cleanup import remove_if_present
 from tests.confinement.test_linux import observers
 
 pytestmark = pytest.mark.skipif(not os.environ.get("CMCP_CONFINEMENT_IMAGE"),
@@ -84,6 +85,4 @@ async def test_independent_lease_stops_container_after_bridge_failure(tmp_path, 
                 if failure.startswith("watchdog-pause"):
                     with suppress(ProcessLookupError):
                         os.kill(metadata["watchdog"], signal.SIGKILL)
-                containers = await observer.docker("ps", "--all", "--format", "{{.Names}}")
-                if metadata["container"].encode() in containers.splitlines():
-                    await observer.docker("rm", "--force", metadata["container"])
+                await remove_if_present(observer, metadata["container"])
