@@ -10,6 +10,12 @@ updates:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
+    # One PR per week for minor and patch updates. Majors still arrive
+    # one at a time so a breaking change is reviewed on its own.
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -17,10 +23,12 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # One PR per week for minor and patch updates. Majors still arrive
+    # one at a time so a breaking change is reviewed on its own.
     groups:
-      codeql-action:
-        patterns:
-          - "github/codeql-action*"
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Dockerfile base images are pinned by digest; this keeps the digest current.
   - package-ecosystem: "docker"
