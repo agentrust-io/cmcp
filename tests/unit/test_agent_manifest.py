@@ -349,6 +349,7 @@ def _write_anchor(tmp_path: Path, keys: list[dict]) -> str:
         "spiffe://factory.example/signing-authority/../other",
         "https://factory.example/signing-authority",
         "spiffe://factory.example/" + "a" * 2040,
+        "spiffe://factory.example/\ud800",
     ],
 )
 def test_trust_anchor_refuses_a_malformed_spiffe_issuer(tmp_path: Path, issuer: str) -> None:

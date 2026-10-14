@@ -192,7 +192,12 @@ def _is_spiffe_id(value: object) -> bool:
     """Whether *value* is a well-formed SPIFFE ID."""
     if not isinstance(value, str) or not value.startswith(_SPIFFE_SCHEME):
         return False
-    if len(value.encode("utf-8")) > _MAX_SPIFFE_ID_BYTES:
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        # A lone surrogate survives json.loads but is not a SPIFFE ID.
+        return False
+    if len(encoded) > _MAX_SPIFFE_ID_BYTES:
         return False
     trust_domain, has_path, path = value[len(_SPIFFE_SCHEME) :].partition("/")
     if not _SPIFFE_TRUST_DOMAIN.fullmatch(trust_domain):
