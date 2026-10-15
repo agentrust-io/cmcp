@@ -41,6 +41,8 @@ Maintainers who are no longer active may move to emeritus status. Emeritus maint
 | Rishabh Poddar | @podcastinator |
 | Aaron Fulkerson | @AaronRoeF |
 
+Rishabh Poddar and Aaron Fulkerson remain owners of the agentrust-io organization. That role covers organization administration and recovery, not routine review.
+
 ## Changes to This File
 
 Changes to MAINTAINERS.md must be approved by at least one existing maintainer.
