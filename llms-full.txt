@@ -73,7 +73,7 @@ A working laptop demo is not proof of hardware isolation. Read [how it works](ht
 
 Found a bug or have feedback on the specification? Open an [issue](https://github.com/agentrust-io/cmcp/issues) with the command that failed, the runtime version, and what you expected to happen. See [Contributing](https://github.com/agentrust-io/cmcp/blob/main/CONTRIBUTING.md).
 
-**Status:** cmcp-runtime 0.7.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · Sponsored by OPAQUE, which funds the engineering, infrastructure and confidential-computing work behind these projects.
+**Status:** cmcp-runtime 0.7.0 · MIT · hosting at the Agentic AI Foundation proposed, not accepted · AgenTrust is an independent open-source project. No company funds, owns or directs it; contributions are voluntary.
 
 # Quickstart - cMCP Runtime
 
@@ -5355,8 +5355,8 @@ These are targets from [the benchmark methodology](https://cmcp.agentrust-io.com
 
 # Sponsors
 
-This page says who pays for cMCP and how other organisations can help.
+AgenTrust is an independent open-source project. No company funds, owns or directs it; contributions are voluntary.
 
-cMCP is an open-source AgenTrust project. It is sponsored by OPAQUE Systems, which funds the engineering, infrastructure and confidential-computing work behind it and contributes to the project's confidential-computing integrations. Organisations that want to support the project are welcome to join as sponsors.
+OPAQUE Systems sponsored early development until October 2026.
 
-See the repository's [sponsor policy and recognition page](https://github.com/agentrust-io/cmcp/blob/main/SPONSORS.md) for details.
+See the repository's [sponsor recognition page](https://github.com/agentrust-io/cmcp/blob/main/SPONSORS.md) for details.

@@ -1,7 +1,7 @@
 # Sponsors
 
-This page says who pays for cMCP and how other organisations can help.
+AgenTrust is an independent open-source project. No company funds, owns or directs it; contributions are voluntary.
 
-cMCP is an open-source AgenTrust project. It is sponsored by OPAQUE Systems, which funds the engineering, infrastructure and confidential-computing work behind it and contributes to the project's confidential-computing integrations. Organisations that want to support the project are welcome to join as sponsors.
+OPAQUE Systems sponsored early development until October 2026.
 
-See the repository's [sponsor policy and recognition page](https://github.com/agentrust-io/cmcp/blob/main/SPONSORS.md) for details.
+See the repository's [sponsor recognition page](https://github.com/agentrust-io/cmcp/blob/main/SPONSORS.md) for details.
