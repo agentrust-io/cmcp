@@ -43,6 +43,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the "cMCP" and "cMCP-compatible" marks are held by the founding maintainer
   until a host organization accepts the project.
 
+### Fixed
+
+- The Agent Manifest tool projection (`cmcp_runtime.manifest_catalog`, added
+  in #713 after the v0.7.0 tag) now follows the restricted profile ruled on
+  agentrust-io/agent-manifest#340. `schema_hash` is SHA-256 over the JCS form
+  of `{"input_schema", "output_schema"}` instead of the input schema alone,
+  `description_hash` is over the description as a JCS string instead of its
+  raw UTF-8, and `endpoint_id` is the server's SPIFFE ID with no fallback to
+  its URL. **This changes every `schema_hash`, `description_hash` and
+  `catalog_hash` the projection produces**, so a manifest built from main
+  before this fix must be reissued. No release carries the old values.
+  Binding now joins the manifest's tools to the served catalog on exact
+  `tool_name` plus `endpoint_id`, one to one, rebuilds the root from the
+  manifest's `tool_id` and the served component hashes, and compares only that
+  root. A non-empty served catalog with any server lacking a `spiffe_id` raises
+  `ManifestCatalogOutOfProfile`, an outcome distinct from a failed join or a
+  root mismatch; the gateway still does not bind. Reported by
+  @asymx-mechanics (#719).
+
 ## [0.7.0] - 2026-09-30
 
 ### Security
