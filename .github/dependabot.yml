@@ -10,8 +10,8 @@ updates:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
-    # One PR per week for minor and patch updates. Majors still arrive
-    # one at a time so a breaking change is reviewed on its own.
+    # Group minor and patch updates into one weekly PR.
+    # Major Python updates remain ignored by the existing policy.
     groups:
       python:
         patterns: ["*"]
