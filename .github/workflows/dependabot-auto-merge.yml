@@ -1,11 +1,11 @@
 name: Dependabot auto-merge
 
-# Queues auto-merge on Dependabot PRs. It approves nothing: the PR still needs
-# a maintainer approval of the current head and every required check, and
-# GitHub merges it only once both are satisfied.
+# Queues auto-merge on classified minor/patch Dependabot PRs; approves nothing.
+# A maintainer must still approve the current head and every required check must
+# pass. GitHub merges only once the existing branch requirements are satisfied.
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, synchronize]
     branches: [main]
 
 permissions:
@@ -19,8 +19,25 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Read verified Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Enable auto-merge
-        run: gh pr merge --auto --squash "$PR_URL"
+        shell: bash
+        run: |
+          # Check every dependency in a group; unknown types stay manual too.
+          if ! jq -e 'type == "array" and length > 0 and all(.[];
+            .updateType == "version-update:semver-minor" or
+            .updateType == "version-update:semver-patch")' \
+            <<< "$UPDATED_DEPENDENCIES" > /dev/null; then
+            echo "Leaving major or unclassified updates for manual handling."
+            exit 0
+          fi
+          gh pr merge --auto --squash --match-head-commit "$PR_HEAD_SHA" "$PR_URL"
         env:
+          UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
