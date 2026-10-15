@@ -1,5 +1,7 @@
 # Contributing to cMCP
 
+AgenTrust is an independent open-source project. No company funds, owns or directs it; contributions are voluntary.
+
 Thank you for contributing. This document covers everything you need to get started.
 
 ## Before you start

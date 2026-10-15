@@ -24,7 +24,7 @@ The project lead is responsible for the technical direction of cMCP, final say o
 
 | Name | Affiliation | GitHub |
 |------|-------------|--------|
-| Imran Siddique | OPAQUE Systems | @imran-siddique |
+| Imran Siddique | AgenTrust-io | @imran-siddique |
 
 The project lead role is subject to Foundation confirmation. Succession is decided by a 2/3 maintainer vote, ratified by the Foundation.
 
