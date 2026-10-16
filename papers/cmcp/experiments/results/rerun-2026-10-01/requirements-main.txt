@@ -1,7 +1,7 @@
 agent-manifest==0.15.0
 agentrust-trace==0.11.0
 annotated-types==0.8.0
-anyio==4.15.1
+anyio==4.14.2
 ast-serialize==0.11.2
 attrs==26.1.0
 bandit==1.9.4
