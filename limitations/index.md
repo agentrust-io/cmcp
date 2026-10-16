@@ -4,6 +4,10 @@ This page lists what cMCP does not protect against, where its promises stop, and
 
 This document describes what cMCP does not prevent, where its guarantees end, and what operators and verifiers must address through separate controls.
 
+## Upstream HTTP bounds
+
+HTTP responses must honor identity content encoding and complete within an absolute 30-second deadline. The complete body is bounded by `max_response_size_bytes` before parsing; compressed replies are refused before decoding. See [the compatibility and assurance boundaries](https://cmcp.agentrust-io.com/upstream-http-bounds/).
+
 ## Optional sink sensitivity ceilings
 
 The optional `sink_policy` enforces operator-configured ceilings for tools and caller responses, using the accumulated session classification, catalog floor, and caller-declared class. It cannot discover unlabelled secrets, track exact data dependencies, or establish safe declassification of a summary. Equal-ranked labels are equivalent for this gate, not isolated compartments. Permitted remote tools still need their own confidentiality protections.
