@@ -2,6 +2,13 @@
 
 This document describes what cMCP does not prevent, where its guarantees end, and what operators and verifiers must address through separate controls.
 
+## Upstream HTTP bounds
+
+HTTP responses must honor identity content encoding and complete within an
+absolute 30-second deadline. The complete body is bounded by
+`max_response_size_bytes` before parsing; compressed replies are refused before
+decoding. See [the compatibility and assurance boundaries](docs/upstream-http-bounds.md).
+
 ## Optional sink sensitivity ceilings
 
 The optional `sink_policy` enforces operator-configured ceilings
