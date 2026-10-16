@@ -50,7 +50,7 @@ packageurl-python==0.17.6
 packaging==26.2
 pathspec==1.1.1
 pillow==12.3.0
-pip==25.0.1
+pip==26.2
 pip-api==0.0.34
 pip-audit==2.10.1
 pip-requirements-parser==32.0.1
