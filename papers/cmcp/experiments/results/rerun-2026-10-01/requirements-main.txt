@@ -16,7 +16,7 @@ click==8.5.0
 colorama==0.4.6
 contourpy==1.4.0
 coverage==7.16.2
-cryptography==50.0.2
+cryptography==50.0.0
 cycler==0.12.1
 cyclonedx-python-lib==11.12.0
 defusedxml==0.7.1
