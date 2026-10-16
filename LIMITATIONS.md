@@ -7,7 +7,7 @@ This document describes what cMCP does not prevent, where its guarantees end, an
 HTTP responses must honor identity content encoding and complete within an
 absolute 30-second deadline. The complete body is bounded by
 `max_response_size_bytes` before parsing; compressed replies are refused before
-decoding. See [the compatibility and assurance boundaries](docs/upstream-http-bounds.md).
+decoding. See [the compatibility and assurance boundaries](https://cmcp.agentrust-io.com/upstream-http-bounds/).
 
 ## Optional sink sensitivity ceilings
 
