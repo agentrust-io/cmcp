@@ -1,0 +1,18 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
+rootdir: <scratch>\cmcp
+configfile: pyproject.toml
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 86 items
+
+tests\unit\test_kill_switch.py .....................                     [ 24%]
+tests\unit\test_kill_switch_durable.py ..............                    [ 40%]
+tests\unit\test_kill_switch_evidence.py .............                    [ 55%]
+tests\unit\test_kill_switch_mid_session.py .........                     [ 66%]
+tests\confinement\test_adapter.py ...........................            [ 97%]
+tests\confinement\test_gateway.py ..                                     [100%]
+
+- generated xml file: <output>\pytest-baseline.xml -
+============================= 86 passed in 3.78s ==============================
+
+STDERR

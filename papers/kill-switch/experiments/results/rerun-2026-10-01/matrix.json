@@ -1,0 +1,27 @@
+[
+  {
+    "mutation": "none",
+    "exit_code": 0,
+    "expected_failure": null,
+    "observed_failures": [],
+    "matched_expectation": true
+  },
+  {
+    "mutation": "forget-block",
+    "exit_code": 1,
+    "expected_failure": "restart-retains-block",
+    "observed_failures": [
+      "restart-retains-block"
+    ],
+    "matched_expectation": true
+  },
+  {
+    "mutation": "disable-auto",
+    "exit_code": 1,
+    "expected_failure": "automatic-trip-refuses-allowed-tool",
+    "observed_failures": [
+      "automatic-trip-refuses-allowed-tool"
+    ],
+    "matched_expectation": true
+  }
+]

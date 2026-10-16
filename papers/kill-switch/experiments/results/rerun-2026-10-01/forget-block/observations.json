@@ -1,0 +1,99 @@
+[
+  {
+    "id": "allowed-tool-effect",
+    "passed": true,
+    "status": 200,
+    "body": {
+      "jsonrpc": "2.0",
+      "id": "before-trip",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before-trip"
+          }
+        ],
+        "_cmcp": {
+          "call_id": "3ece7c4c-5ff5-4545-91be-a1611d6d5325",
+          "audit_entry_hash": "8441d68664b9434a59857fe107286aa842bf5315ed280ecd80422c8ec477fa31",
+          "would_have_denied": false,
+          "latency_us": 919339,
+          "session_id": "6ba3b6f3-c11d-40f2-aea0-7cb0d36360e9"
+        }
+      }
+    }
+  },
+  {
+    "id": "agent-cannot-trip",
+    "passed": true,
+    "status": 401
+  },
+  {
+    "id": "tool-admitted-before-trip",
+    "passed": true
+  },
+  {
+    "id": "readiness-during-drain",
+    "status": 200
+  },
+  {
+    "id": "new-call-has-no-effect-during-drain",
+    "passed": true
+  },
+  {
+    "id": "queued-call-refused-after-drain",
+    "passed": true,
+    "status": 403
+  },
+  {
+    "id": "in-flight-effect-can-complete",
+    "passed": true
+  },
+  {
+    "id": "operator-trip-closes",
+    "passed": true,
+    "status": 200
+  },
+  {
+    "id": "signed-trigger-is-operator",
+    "passed": true
+  },
+  {
+    "id": "post-trip-no-tool-effect",
+    "passed": true
+  },
+  {
+    "id": "receipt-verifies",
+    "passed": true,
+    "errors": []
+  },
+  {
+    "id": "tampered-receipt-rejected",
+    "passed": true
+  },
+  {
+    "id": "tampered-claim-rejected",
+    "passed": true
+  },
+  {
+    "id": "whole-claim-schema",
+    "observation": "rejected",
+    "errors": [
+      "Additional properties are not allowed ('call_log_summary' was unexpected)",
+      "Additional properties are not allowed ('edges_represent' was unexpected)"
+    ]
+  },
+  {
+    "id": "bypass-counterexample",
+    "passed": true
+  },
+  {
+    "id": "agent-cannot-unblock",
+    "passed": true
+  },
+  {
+    "id": "restart-retains-block",
+    "passed": false,
+    "status": 200
+  }
+]

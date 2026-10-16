@@ -1,0 +1,93 @@
+{
+  "experiment": "exact-output-concurrency",
+  "race_rounds": [
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    },
+    {
+      "acknowledged": 1,
+      "replays": 15
+    }
+  ],
+  "attempts": 320,
+  "race_deliveries": 20,
+  "lost_acknowledgment": {
+    "first": "unknown",
+    "retry": "replay"
+  },
+  "database_rollback_replay": "acknowledged",
+  "criterion_met": true
+}

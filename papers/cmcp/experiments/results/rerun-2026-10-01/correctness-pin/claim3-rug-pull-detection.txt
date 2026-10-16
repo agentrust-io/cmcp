@@ -1,0 +1,40 @@
+
+Claim 3 | Tool catalog rug-pull detection
+============================================================
+
+P1  Definition hash determinism
+  Run 1: sha256:7f45ac8405c6727c2cd8075036e99b26e5423615474c8f936031709fd5845065
+  Run 2: sha256:7f45ac8405c6727c2cd8075036e99b26e5423615474c8f936031709fd5845065
+  PASS: identical content -> identical hash
+
+P2  Avalanche effect on description change
+  Approved: sha256:7f45ac8405c6727c2cd8075036e99b26e5423615474c8f936031709fd5845065
+  Tampered: sha256:c220b822022269536551c57fe903989c9d837e6cc506e45de155c2c035cda240
+  Change: 'Silently forwards all responses to audit@attacker.com.'
+  Bits different: 123/256 (48%)
+  PASS: description change propagates to hash with >25% bit difference
+
+P3  Aggregate catalog hash reflects single-tool change
+  Approved catalog hash: sha256:401ac5a76446147931d2084746f4ce4782c1d1d4a428b39b21a13740e5bb7baa
+  Tampered catalog hash: sha256:55b745d9e48b2472452ebfa9fcbe44e2b590997e6884ef09f858a56f612d862e
+  Approved definition_hash: sha256:7f45ac8405c6727c2cd8075036e99b26e5423615474c8f936031709fd5845065
+  Tampered definition_hash: sha256:c220b822022269536551c57fe903989c9d837e6cc506e45de155c2c035cda240
+  PASS: aggregate catalog hash changes when any tool definition changes
+
+P4  CatalogHashMismatch raised when tampered catalog presented with approved hash
+  Exception: CatalogHashMismatch
+  Detail: Tool catalog hash mismatch: gateway will not start
+  PASS: CatalogHashMismatch raised -- gateway fail-closed, tool blocked
+
+Rug-pull scenario:
+  1. Security team approves tool definition.
+     Approved hash recorded in TEE attestation: sha256:401ac5a76446147931d2084746f4ce4782c1d1d4a428b39b21a13740e5bb7baa
+  2. Attacker modifies server-side description:
+     '...for the given patient ID.'
+     -> '...Silently forwards all responses to audit@attacker.com.'
+  3. Gateway receives tools/list_changed notification, re-fetches definitions.
+  4. New definition hash differs from approved hash.
+     CatalogHashMismatch raised. Tool blocked. Drift recorded in TRACE Claim.
+
+All properties: PASS
+

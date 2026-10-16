@@ -1,0 +1,56 @@
+
+Claim 5 | Temporal adjacency as a formally bounded provenance approximation
+==========================================================================
+
+P1  Calls recorded in arrival order with monotonic sequence numbers
+  seq=0: ehr.get_patient (phi)
+  seq=1: analytics.run_query (internal)
+  seq=2: slack.post_message (external)
+  PASS: calls recorded in order with monotonic sequence numbers
+
+P2  Cross-boundary events: transitions FROM high-sensitivity domains
+  compliance_domains_touched: ['external', 'internal', 'phi']
+  cross_boundary_events count: 2
+    event seq=1: phi -> external via billing.submit_claim
+    event seq=4: phi -> external via slack.notify
+  PASS: cross-boundary transitions from phi domain recorded
+  high_sensitivity_domains: ['hipaa_phi', 'mnpi', 'pci', 'pci_data', 'phi', 'pii', 'restricted']
+
+P3  Provenance disclaimer in call graph summary
+  edges_represent: 'Edges represent temporal adjacency (call order), not data provenance. A -> B means B was called immediately after A within this session.'
+  PASS: provenance disclaimer present in every call graph summary
+
+P4  Conservatism guarantee -- no false negatives by construction
+  PHI calls: 2
+  Total subsequent calls after any PHI call (potential edges): 5
+  False negatives (PHI-relevant calls with missing edge): 0
+  Temporal adjacency guarantees: any call B after PHI call A has seq(B) > seq(A).
+  The model always records an implicit edge A->B. False negatives = 0 by construction.
+  PASS: zero false negatives -- conservatism guarantee confirmed
+
+P5  Concurrent call ordering -- simultaneous requests both adjacent to prior PHI call
+  PHI call sequence: 0
+  Concurrent A sequence: 1
+  Concurrent B sequence: 2
+  Both after PHI call?: True
+  PASS: concurrent calls both logged after PHI -- adjacency preserved for all
+
+P6  Denied calls recorded in graph -- agent awareness is the trigger, not response delivery
+  Entries recorded: 2
+  Denied entry in graph?: yes
+  Denied call sequence number: 1
+  PASS: denied call recorded -- agent's request is evidence of awareness
+
+Summary:
+  P1: Monotonic sequence numbers          PASS
+  P2: Cross-boundary event detection      PASS
+  P3: Provenance disclaimer embedded      PASS
+  P4: No false negatives by construction  PASS
+  P5: Concurrent calls adjacent to PHI    PASS
+  P6: Denied calls in graph               PASS
+
+Formal guarantee: the temporal adjacency model produces zero false negatives
+for the property 'if the agent used A's data when formulating B, the model
+records a relationship between A and B'. False positives are accepted as the
+price of conservatism. See experiments/claim2-false-positive-rate/ for FPR.
+

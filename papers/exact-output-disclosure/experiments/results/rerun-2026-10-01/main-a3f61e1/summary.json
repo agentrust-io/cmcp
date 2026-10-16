@@ -1,0 +1,271 @@
+{
+  "report": "exact-output-disclosure",
+  "started_utc": "2026-10-01T18:31:30Z",
+  "finished_utc": "2026-10-01T18:32:25Z",
+  "software_only": true,
+  "repository": "https://github.com/agentrust-io/cmcp",
+  "revision": "a3f61e1a4d866bcd4fd2a149fff4da34b7e68597",
+  "is_evaluated_revision": false,
+  "python": "3.12.10",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "machine": "ARM64",
+  "git": "git version 2.54.0.windows.1",
+  "package_versions": {
+    "cryptography": "50.0.2",
+    "pytest": "9.1.1",
+    "pytest-asyncio": "1.4.0",
+    "pydantic": "2.13.5",
+    "rfc8785": "0.1.4",
+    "httpx": "0.28.1",
+    "starlette": "1.7.0",
+    "cedarpy": "4.12.1",
+    "agent-manifest": "0.15.0",
+    "agentrust-trace": "0.11.0",
+    "pyyaml": "6.0.3",
+    "anyio": "4.15.1",
+    "click": "8.5.0",
+    "uvicorn": "0.54.0"
+  },
+  "all_installed_distributions": {
+    "agentrust-trace": "0.11.0",
+    "agent-manifest": "0.15.0",
+    "annotated-types": "0.8.0",
+    "anyio": "4.15.1",
+    "attrs": "26.1.0",
+    "cbor2": "6.1.5",
+    "cedarpy": "4.12.1",
+    "certifi": "2026.7.22",
+    "cffi": "2.1.1",
+    "click": "8.5.0",
+    "colorama": "0.4.6",
+    "cryptography": "50.0.2",
+    "h11": "0.16.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "idna": "3.20",
+    "iniconfig": "2.3.0",
+    "jsonschema": "4.26.0",
+    "jsonschema-specifications": "2025.9.1",
+    "packaging": "26.3",
+    "pip": "25.0.1",
+    "pluggy": "1.6.0",
+    "pycparser": "3.0",
+    "pydantic": "2.13.5",
+    "pydantic_core": "2.46.5",
+    "Pygments": "2.21.0",
+    "pytest": "9.1.1",
+    "pytest-asyncio": "1.4.0",
+    "PyYAML": "6.0.3",
+    "referencing": "0.37.0",
+    "rfc3986-validator": "0.1.1",
+    "rfc8785": "0.1.4",
+    "rpds-py": "2026.6.3",
+    "starlette": "1.7.0",
+    "typing_extensions": "4.16.0",
+    "typing-inspection": "0.4.4",
+    "uvicorn": "0.54.0"
+  },
+  "command": "python -B rerun.py --repo <repo> --output <output> --revision a3f61e1a4d866bcd4fd2a149fff4da34b7e68597",
+  "harness_sha256": {
+    "concurrency.py": "6306e931ace519e22ba7756aa88d42493d48c9cc18e5d67db6d65ae16ae53b6e",
+    "delivery_faults.py": "a0bc0ad3707de7b1df1045384f509ad707b8110aadd549f55287888b14a230dd",
+    "rerun.py": "ebdf590d1018116c4f4292f8a5d450b6d1005b162906d6e09e93a20a54967ef4"
+  },
+  "runs": [
+    {
+      "label": "baseline",
+      "kind": "suite",
+      "exit_code": 0,
+      "seconds": 2.5,
+      "command": "python -B -m pytest -p no:cacheprovider -p pytest_asyncio.plugin -q --tb=short tests/unit/test_disclosure.py",
+      "removal": null,
+      "tests": 46,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "failed_cases": [],
+      "valid": true
+    },
+    {
+      "label": "binding",
+      "kind": "suite",
+      "exit_code": 1,
+      "seconds": 2.4,
+      "command": "python -B -m pytest -p no:cacheprovider -p pytest_asyncio.plugin -q --tb=short tests/unit/test_disclosure.py",
+      "removal": {
+        "file": "src/cmcp_runtime/disclosure.py",
+        "fragment": "\"output_sha256\": hashlib.sha256(request.payload).hexdigest(),",
+        "replacement": "\"output_sha256\": \"omitted\",",
+        "applicable": true,
+        "original_sha256": "687544fc24ca6aa125b721c55cc6eea55893c5eb2f2f23237a094b9b35c2e523"
+      },
+      "tests": 46,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0,
+      "failed_cases": [
+        "test_independent_serialization_verifies",
+        "test_substitution_rejected_before_delivery[payload-synthetic confidential canary 660!]"
+      ],
+      "valid": true
+    },
+    {
+      "label": "replay",
+      "kind": "suite",
+      "exit_code": 1,
+      "seconds": 2.1,
+      "command": "python -B -m pytest -p no:cacheprovider -p pytest_asyncio.plugin -q --tb=short tests/unit/test_disclosure.py",
+      "removal": {
+        "file": "src/cmcp_runtime/disclosure.py",
+        "fragment": "if not self._store.consume(request.request_id):",
+        "replacement": "if False:",
+        "applicable": true,
+        "original_sha256": "687544fc24ca6aa125b721c55cc6eea55893c5eb2f2f23237a094b9b35c2e523"
+      },
+      "tests": 46,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0,
+      "failed_cases": [
+        "test_expiry_rechecked_after_storage_wait",
+        "test_replay_survives_reopen_and_failed_delivery",
+        "test_shared_store_concurrent_attempts_deliver_once",
+        "test_storage_failure_never_reaches_recipient"
+      ],
+      "valid": true
+    },
+    {
+      "label": "concurrency",
+      "kind": "experiment",
+      "script": "concurrency.py",
+      "exit_code": 0,
+      "criterion_met": true,
+      "cases_passed": null,
+      "cases_total": null,
+      "seconds": 1.8,
+      "command": "python -B concurrency.py run <scratch>",
+      "removal": null,
+      "valid": true
+    },
+    {
+      "label": "delivery-faults",
+      "kind": "experiment",
+      "script": "delivery_faults.py",
+      "exit_code": 0,
+      "criterion_met": true,
+      "cases_passed": 9,
+      "cases_total": 9,
+      "seconds": 21.9,
+      "command": "python -B delivery_faults.py run <scratch>",
+      "removal": null,
+      "valid": true
+    },
+    {
+      "label": "delivery-faults-control-skip-consumption",
+      "kind": "experiment",
+      "script": "delivery_faults.py",
+      "exit_code": 1,
+      "criterion_met": false,
+      "cases_passed": 0,
+      "cases_total": 9,
+      "seconds": 22.6,
+      "command": "python -B delivery_faults.py run <scratch>",
+      "removal": {
+        "file": "src/cmcp_runtime/disclosure.py",
+        "fragment": "if not self._store.consume(request.request_id):",
+        "replacement": "if False:",
+        "applicable": true,
+        "original_sha256": "687544fc24ca6aa125b721c55cc6eea55893c5eb2f2f23237a094b9b35c2e523"
+      },
+      "valid": true
+    }
+  ],
+  "comparison_with_recorded_values": {
+    "baseline": {
+      "expected": {
+        "tests": 46,
+        "failures": 0
+      },
+      "observed": {
+        "tests": 46,
+        "failures": 0
+      },
+      "matches": true
+    },
+    "binding": {
+      "expected": {
+        "tests": 46,
+        "failed_cases": [
+          "test_independent_serialization_verifies",
+          "test_substitution_rejected_before_delivery[payload-synthetic confidential canary 660!]"
+        ]
+      },
+      "observed": {
+        "tests": 46,
+        "failed_cases": [
+          "test_independent_serialization_verifies",
+          "test_substitution_rejected_before_delivery[payload-synthetic confidential canary 660!]"
+        ]
+      },
+      "matches": true
+    },
+    "replay": {
+      "expected": {
+        "tests": 46,
+        "failed_cases": [
+          "test_expiry_rechecked_after_storage_wait",
+          "test_replay_survives_reopen_and_failed_delivery",
+          "test_shared_store_concurrent_attempts_deliver_once",
+          "test_storage_failure_never_reaches_recipient"
+        ]
+      },
+      "observed": {
+        "tests": 46,
+        "failed_cases": [
+          "test_expiry_rechecked_after_storage_wait",
+          "test_replay_survives_reopen_and_failed_delivery",
+          "test_shared_store_concurrent_attempts_deliver_once",
+          "test_storage_failure_never_reaches_recipient"
+        ]
+      },
+      "matches": true
+    },
+    "concurrency": {
+      "expected": {
+        "criterion_met": true
+      },
+      "observed": {
+        "criterion_met": true
+      },
+      "matches": true
+    },
+    "delivery-faults": {
+      "expected": {
+        "cases_passed": 9,
+        "cases_total": 9,
+        "criterion_met": true
+      },
+      "observed": {
+        "cases_passed": 9,
+        "cases_total": 9,
+        "criterion_met": true
+      },
+      "matches": true
+    },
+    "delivery-faults-control-skip-consumption": {
+      "expected": {
+        "cases_passed": 0,
+        "cases_total": 9,
+        "criterion_met": false
+      },
+      "observed": {
+        "cases_passed": 0,
+        "cases_total": 9,
+        "criterion_met": false
+      },
+      "matches": true
+    }
+  },
+  "all_runs_valid": true,
+  "all_match_recorded_values": true
+}

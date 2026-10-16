@@ -1,0 +1,394 @@
+{
+  "note": "Recorded results this rerun is compared against: the selected tests and control removals of September 23, 2026, and the experiments of September 27, 2026, at the same source pin. Extracted from the original run records; timings are informational. Experiment labels were renamed to match this directory; the comparison ignores them.",
+  "pytest": {
+    "baseline": {
+      "exit_code": 0,
+      "tests": 86,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "failed_cases": []
+    },
+    "durable-block": {
+      "exit_code": 1,
+      "tests": 86,
+      "failures": 17,
+      "errors": 0,
+      "skipped": 0,
+      "failed_cases": [
+        "test_evaluator_trip_is_still_blocked_after_a_restart",
+        "test_tripping_close_returns_the_claim_and_later_calls_are_refused",
+        "test_close_and_reset_are_refused_while_halted",
+        "test_unblock_requires_the_operator_token",
+        "test_unblock_retry_resumes_after_a_failed_resume",
+        "test_gateway_starts_halted_when_its_identity_is_already_blocked",
+        "test_refusal_receipt_verifies_against_the_tripped_sessions_claim",
+        "test_an_altered_receipt_fails[agent_id-spiffe://example.com/agent/someone-else-signature verification failed]",
+        "test_an_altered_receipt_fails[refused_at-2020-01-01T00:00:00+00:00-signature verification failed]",
+        "test_an_altered_receipt_fails[claim_digest-sha256:0000000000000000000000000000000000000000000000000000000000000000-does not match the claim]",
+        "test_an_altered_receipt_fails[type-something/else-receipt type]",
+        "test_a_receipt_does_not_verify_against_another_gateways_claim",
+        "test_a_tampered_claim_fails_even_with_a_genuine_receipt",
+        "test_a_receipt_from_a_gateway_blocked_at_start_says_it_has_no_claim",
+        "test_session_is_sealed_at_the_call_that_trips_the_switch",
+        "test_unblock_after_a_mid_session_trip_resumes_service",
+        "test_operator_trip_stops_the_session_and_returns_its_claim"
+      ]
+    },
+    "receipt-signature": {
+      "exit_code": 1,
+      "tests": 86,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0,
+      "failed_cases": [
+        "test_an_altered_receipt_fails[agent_id-spiffe://example.com/agent/someone-else-signature verification failed]",
+        "test_an_altered_receipt_fails[refused_at-2020-01-01T00:00:00+00:00-signature verification failed]"
+      ]
+    }
+  },
+  "boundary": {
+    "reopened_stores": 20,
+    "blocks_retained": 20,
+    "independent_store_blocked": false,
+    "explicit_unblock_visible": true,
+    "limit": "A different store is not covered; this is not a global identity shutdown."
+  },
+  "experiment": {
+    "experiment": "slow-trip-and-fresh-observation",
+    "slow_operation_trips": [
+      {
+        "label": "cooperative-within-deadline",
+        "operation": "async",
+        "operation_seconds": 1.0,
+        "drain_deadline_seconds": 5.0,
+        "trip_status": 200,
+        "trip_returned_ms_after_start": 1036,
+        "slow_call_responses": [
+          "admitted",
+          "admitted",
+          "admitted",
+          "admitted"
+        ],
+        "slow_effects_completed_before_trip_returned": 4,
+        "slow_effects_completed_after_trip_returned": 0,
+        "slow_effects_never_completed": 0,
+        "last_completed_effect_ms_after_trip_start": 1010,
+        "late_call_sent_ms_after_trip_start": 70,
+        "late_call": "KILL_SWITCH_TRIPPED",
+        "after_trip_call": "KILL_SWITCH_TRIPPED",
+        "refusal_receipt_verifies_against_claim": true,
+        "effects_started_after_trip_start": [],
+        "unblock_status": 200,
+        "after_unblock_call": "admitted",
+        "ok": true
+      },
+      {
+        "label": "cooperative-past-deadline",
+        "operation": "async",
+        "operation_seconds": 3.0,
+        "drain_deadline_seconds": 0.3,
+        "trip_status": 200,
+        "trip_returned_ms_after_start": 339,
+        "slow_call_responses": [
+          "http-500",
+          "http-500",
+          "http-500",
+          "http-500"
+        ],
+        "slow_effects_completed_before_trip_returned": 0,
+        "slow_effects_completed_after_trip_returned": 0,
+        "slow_effects_never_completed": 4,
+        "last_completed_effect_ms_after_trip_start": null,
+        "late_call_sent_ms_after_trip_start": 54,
+        "late_call": "KILL_SWITCH_TRIPPED",
+        "after_trip_call": "KILL_SWITCH_TRIPPED",
+        "refusal_receipt_verifies_against_claim": true,
+        "effects_started_after_trip_start": [],
+        "unblock_status": 200,
+        "after_unblock_call": "admitted",
+        "ok": true
+      },
+      {
+        "label": "worker-thread-past-deadline",
+        "operation": "thread",
+        "operation_seconds": 1.5,
+        "drain_deadline_seconds": 0.3,
+        "trip_status": 200,
+        "trip_returned_ms_after_start": 332,
+        "slow_call_responses": [
+          "http-500",
+          "http-500",
+          "http-500",
+          "http-500"
+        ],
+        "slow_effects_completed_before_trip_returned": 0,
+        "slow_effects_completed_after_trip_returned": 4,
+        "slow_effects_never_completed": 0,
+        "last_completed_effect_ms_after_trip_start": 1502,
+        "late_call_sent_ms_after_trip_start": 59,
+        "late_call": "KILL_SWITCH_TRIPPED",
+        "after_trip_call": "KILL_SWITCH_TRIPPED",
+        "refusal_receipt_verifies_against_claim": true,
+        "effects_started_after_trip_start": [],
+        "unblock_status": 200,
+        "after_unblock_call": "admitted",
+        "ok": true
+      }
+    ],
+    "fresh_observation": {
+      "nonce_check": true,
+      "fresh_while_blocked": {
+        "accepted": true,
+        "blocked": true
+      },
+      "old_refusal_receipt_after_unblock_still_verifies": true,
+      "fresh_after_unblock": {
+        "accepted": true,
+        "blocked": false
+      },
+      "replayed_blocked_statement_for_new_nonce": {
+        "accepted": false,
+        "errors": [
+          "nonce mismatch (not fresh)"
+        ]
+      },
+      "statement_signed_by_other_key": {
+        "accepted": false,
+        "errors": [
+          "key is not the claim key"
+        ]
+      },
+      "independent_store_reports_blocked": false,
+      "ok": true
+    },
+    "cases_passed": 4,
+    "cases_total": 4,
+    "criterion_met": true
+  },
+  "controls": {
+    "halt-admission": {
+      "experiment": "slow-trip-and-fresh-observation",
+      "slow_operation_trips": [
+        {
+          "label": "cooperative-within-deadline",
+          "operation": "async",
+          "operation_seconds": 1.0,
+          "drain_deadline_seconds": 5.0,
+          "trip_status": 200,
+          "trip_returned_ms_after_start": 1023,
+          "slow_call_responses": [
+            "admitted",
+            "admitted",
+            "admitted",
+            "admitted"
+          ],
+          "slow_effects_completed_before_trip_returned": 4,
+          "slow_effects_completed_after_trip_returned": 0,
+          "slow_effects_never_completed": 0,
+          "last_completed_effect_ms_after_trip_start": 1006,
+          "late_call_sent_ms_after_trip_start": 41,
+          "late_call": "admitted",
+          "after_trip_call": "admitted",
+          "refusal_receipt_verifies_against_claim": false,
+          "effects_started_after_trip_start": [
+            "late-during-trip",
+            "after-trip"
+          ],
+          "unblock_status": 200,
+          "after_unblock_call": "admitted",
+          "ok": false
+        },
+        {
+          "label": "cooperative-past-deadline",
+          "operation": "async",
+          "operation_seconds": 3.0,
+          "drain_deadline_seconds": 0.3,
+          "trip_status": 200,
+          "trip_returned_ms_after_start": 339,
+          "slow_call_responses": [
+            "http-500",
+            "http-500",
+            "http-500",
+            "http-500"
+          ],
+          "slow_effects_completed_before_trip_returned": 0,
+          "slow_effects_completed_after_trip_returned": 0,
+          "slow_effects_never_completed": 4,
+          "last_completed_effect_ms_after_trip_start": null,
+          "late_call_sent_ms_after_trip_start": 64,
+          "late_call": "admitted",
+          "after_trip_call": "admitted",
+          "refusal_receipt_verifies_against_claim": false,
+          "effects_started_after_trip_start": [
+            "late-during-trip",
+            "after-trip"
+          ],
+          "unblock_status": 200,
+          "after_unblock_call": "admitted",
+          "ok": false
+        },
+        {
+          "label": "worker-thread-past-deadline",
+          "operation": "thread",
+          "operation_seconds": 1.5,
+          "drain_deadline_seconds": 0.3,
+          "trip_status": 200,
+          "trip_returned_ms_after_start": 316,
+          "slow_call_responses": [
+            "http-500",
+            "http-500",
+            "http-500",
+            "http-500"
+          ],
+          "slow_effects_completed_before_trip_returned": 0,
+          "slow_effects_completed_after_trip_returned": 4,
+          "slow_effects_never_completed": 0,
+          "last_completed_effect_ms_after_trip_start": 1502,
+          "late_call_sent_ms_after_trip_start": 65,
+          "late_call": "admitted",
+          "after_trip_call": "admitted",
+          "refusal_receipt_verifies_against_claim": false,
+          "effects_started_after_trip_start": [
+            "late-during-trip",
+            "after-trip"
+          ],
+          "unblock_status": 200,
+          "after_unblock_call": "admitted",
+          "ok": false
+        }
+      ],
+      "fresh_observation": {
+        "nonce_check": true,
+        "call_after_trip": "admitted",
+        "ok": false
+      },
+      "cases_passed": 0,
+      "cases_total": 4,
+      "criterion_met": false
+    },
+    "no-nonce-check": {
+      "experiment": "slow-trip-and-fresh-observation",
+      "slow_operation_trips": [
+        {
+          "label": "cooperative-within-deadline",
+          "operation": "async",
+          "operation_seconds": 1.0,
+          "drain_deadline_seconds": 5.0,
+          "trip_status": 200,
+          "trip_returned_ms_after_start": 1031,
+          "slow_call_responses": [
+            "admitted",
+            "admitted",
+            "admitted",
+            "admitted"
+          ],
+          "slow_effects_completed_before_trip_returned": 4,
+          "slow_effects_completed_after_trip_returned": 0,
+          "slow_effects_never_completed": 0,
+          "last_completed_effect_ms_after_trip_start": 1015,
+          "late_call_sent_ms_after_trip_start": 67,
+          "late_call": "KILL_SWITCH_TRIPPED",
+          "after_trip_call": "KILL_SWITCH_TRIPPED",
+          "refusal_receipt_verifies_against_claim": true,
+          "effects_started_after_trip_start": [],
+          "unblock_status": 200,
+          "after_unblock_call": "admitted",
+          "ok": true
+        },
+        {
+          "label": "cooperative-past-deadline",
+          "operation": "async",
+          "operation_seconds": 3.0,
+          "drain_deadline_seconds": 0.3,
+          "trip_status": 200,
+          "trip_returned_ms_after_start": 333,
+          "slow_call_responses": [
+            "http-500",
+            "http-500",
+            "http-500",
+            "http-500"
+          ],
+          "slow_effects_completed_before_trip_returned": 0,
+          "slow_effects_completed_after_trip_returned": 0,
+          "slow_effects_never_completed": 4,
+          "last_completed_effect_ms_after_trip_start": null,
+          "late_call_sent_ms_after_trip_start": 62,
+          "late_call": "KILL_SWITCH_TRIPPED",
+          "after_trip_call": "KILL_SWITCH_TRIPPED",
+          "refusal_receipt_verifies_against_claim": true,
+          "effects_started_after_trip_start": [],
+          "unblock_status": 200,
+          "after_unblock_call": "admitted",
+          "ok": true
+        },
+        {
+          "label": "worker-thread-past-deadline",
+          "operation": "thread",
+          "operation_seconds": 1.5,
+          "drain_deadline_seconds": 0.3,
+          "trip_status": 200,
+          "trip_returned_ms_after_start": 324,
+          "slow_call_responses": [
+            "http-500",
+            "http-500",
+            "http-500",
+            "http-500"
+          ],
+          "slow_effects_completed_before_trip_returned": 0,
+          "slow_effects_completed_after_trip_returned": 4,
+          "slow_effects_never_completed": 0,
+          "last_completed_effect_ms_after_trip_start": 1500,
+          "late_call_sent_ms_after_trip_start": 65,
+          "late_call": "KILL_SWITCH_TRIPPED",
+          "after_trip_call": "KILL_SWITCH_TRIPPED",
+          "refusal_receipt_verifies_against_claim": true,
+          "effects_started_after_trip_start": [],
+          "unblock_status": 200,
+          "after_unblock_call": "admitted",
+          "ok": true
+        }
+      ],
+      "fresh_observation": {
+        "nonce_check": false,
+        "fresh_while_blocked": {
+          "accepted": true,
+          "blocked": true
+        },
+        "old_refusal_receipt_after_unblock_still_verifies": true,
+        "fresh_after_unblock": {
+          "accepted": true,
+          "blocked": false
+        },
+        "replayed_blocked_statement_for_new_nonce": {
+          "accepted": true,
+          "errors": []
+        },
+        "statement_signed_by_other_key": {
+          "accepted": false,
+          "errors": [
+            "key is not the claim key"
+          ]
+        },
+        "independent_store_reports_blocked": false,
+        "ok": false
+      },
+      "cases_passed": 3,
+      "cases_total": 4,
+      "criterion_met": false
+    }
+  },
+  "recorded_versions_2026_09_23": {
+    "pytest": "9.1.1",
+    "pytest-asyncio": "1.4.0",
+    "cryptography": "50.0.1",
+    "pydantic": "2.13.5",
+    "rfc8785": "0.1.4",
+    "agent-manifest": "0.12.0",
+    "agentrust-trace": "0.5.0",
+    "cedarpy": "4.8.7",
+    "httpx": "0.28.1",
+    "starlette": "1.3.1"
+  },
+  "recorded_python_2026_09_23": "3.12.14"
+}

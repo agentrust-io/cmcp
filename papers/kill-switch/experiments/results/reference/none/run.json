@@ -1,0 +1,26 @@
+{
+  "source": "9db65b589610eb4e8455003197de592636678203",
+  "python": "3.12.10",
+  "platform": "Windows",
+  "mutation": "none",
+  "hardware_attestation": false,
+  "independent_operator": false,
+  "dependencies": {
+    "cmcp-runtime": "0.5.0",
+    "agent-manifest": "0.12.0",
+    "agentrust-trace": "0.10.0",
+    "cryptography": "50.0.1",
+    "cedarpy": "4.8.7",
+    "httpx": "0.28.1",
+    "jsonschema": "4.26.0",
+    "uvicorn": "0.52.4"
+  },
+  "harness_sha256": {
+    "check_artifacts.py": "c4483b626ff498d8eecf4f8593a3ff1835f9ac517493fd6605d6060bad129850",
+    "gateway.py": "87cf8a2743820b8178176a1141c9f799bcd794947f01aacbe6be76066376a4c3",
+    "matrix.py": "3281854d1970eab9dec9cbf22163d3e6d56d3871faed721308d32bec221d1c39",
+    "run.py": "1ae147aa23739bc875b6b8ce0b9a31a71cb399023a41fac59c965fb1344919e0"
+  },
+  "outcome": "pass",
+  "checks": 27
+}

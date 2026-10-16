@@ -1,0 +1,136 @@
+\section{Security Properties}
+\label{sec:claims}
+
+We state six security properties of cMCP. Each property corresponds to a reproducible
+experiment in Section~\ref{sec:eval}. The properties are stated as informal invariants
+over the cMCP runtime; formal proofs are left for future work.
+
+\begin{property}[TEE-Measured Policy Enforcement]
+\label{prop:policy-hash}
+Let $B$ be the Cedar policy bundle loaded at TEE startup, and let $h_B$ be its
+SHA-256 hash recorded in TEE-protected memory. For any tool call processed after startup:
+\begin{enumerate}[leftmargin=1.5em,label=(\alph*)]
+  \item The gateway starts only if the hash of the loaded bundle equals the configured
+    expected value; a bundle swapped on disk before startup raises
+    \texttt{PolicyHashMismatch}. The measured revision does not re-hash the bundle in
+    memory before each call.
+  \item The TRACE Claim for the session carries $h_B$ in the \texttt{policy.bundle\_hash}
+    field. A verifier who independently hashes the policy files can confirm they match.
+  \item Altering the bundle hash in a signed TRACE Claim invalidates its Ed25519
+    signature. A claim that the gateway itself signs over a different bundle verifies; it
+    is caught by comparing its \texttt{policy.bundle\_hash} with the approved value.
+\end{enumerate}
+\end{property}
+
+\begin{property}[Session Sensitivity Tracking]
+\label{prop:session-sensitivity}
+Let $S$ be a session, and let $T_{\text{phi}}$ be the first tool call in $S$ whose
+response is tagged with a sensitivity level in
+$\{\text{hipaa\_phi}, \text{mnpi}, \text{trade\_secret}\}$.
+\begin{enumerate}[leftmargin=1.5em,label=(\alph*)]
+  \item After $T_{\text{phi}}$, \texttt{max\_sensitivity} is raised to the highest tag
+    observed and never decreases below that level for the remainder of $S$.
+  \item Any subsequent Cedar evaluation in $S$ that uses the current session sensitivity as
+    context will observe the raised level, allowing policies to enforce cross-boundary
+    restrictions on all calls after $T_{\text{phi}}$.
+  \item Per-call sensitivity evaluation (evaluating each call independently without session
+    context) cannot enforce such restrictions, because the PHI sensitivity is in the session
+    state, not in the parameters of the subsequent call.
+\end{enumerate}
+The operational cost of this guarantee is a nonzero false-discovery proportion: calls after
+$T_{\text{phi}}$ that are provably unrelated to the PHI are nonetheless flagged.
+We quantify this cost empirically in Section~\ref{sec:eval}.
+\end{property}
+
+\begin{property}[Tool Catalog Rug-Pull Detection]
+\label{prop:rug-pull}
+Let $C$ be the approved tool catalog loaded and hash-pinned at TEE startup. For any tool
+call to tool $t$:
+\begin{enumerate}[leftmargin=1.5em,label=(\alph*)]
+  \item If $C$ still hashes to its startup value and $t$ is in $C$, the call proceeds to
+    Cedar evaluation, and the agent only ever sees $t$'s approved definition.
+  \item If $C$ differs from the approved hash at load, \texttt{CatalogHashMismatch} is
+    raised and the gateway does not start. If the in-memory catalog changes after startup,
+    the call is refused before dispatch and is not propagated to the upstream server.
+  \item The per-tool hash function has the avalanche property: a single-character change
+    in any field changes approximately half the bits of the output hash.
+\end{enumerate}
+\end{property}
+
+\begin{property}[TRACE Claim Key Binding]
+\label{prop:nonce}
+Let $K$ be the TEE keypair generated at startup. The attestation nonce is
+$n = \text{TP}(K_{\text{pub}}) \,\|\, s$, where $\text{TP}(K_{\text{pub}})$ is the
+32-byte RFC~7638 JWK Thumbprint of the public key and $s$ is a 32-byte random salt
+drawn once per enclave startup. The report a session claim carries uses
+$s = \text{SHA-256}(\text{chain\_root})$ instead. The nonce is committed into the hardware
+report's \texttt{report\_data} field. The session identifier $\sigma$ is also covered by
+the Ed25519-signed claim body.
+\begin{enumerate}[leftmargin=1.5em,label=(\alph*)]
+  \item $\text{TP}(K_{\text{pub}})$ is deterministic and re-derivable by any verifier
+    from the \texttt{cnf.jwk} public key, so the verifier confirms
+    $\text{report\_data}[{:}32] = \text{TP}(K_{\text{pub}})$ (key binding).
+  \item The salt $s$ makes nonces distinct across startups that share a key, with
+    overwhelming probability. Freshness against a verifier's own challenge is not
+    provided by $s$ and requires a verifier-supplied nonce.
+  \item Distinct gateway instances produce distinct key thumbprints
+    ($K_1 \neq K_2 \Rightarrow \text{TP}(K_{1,\text{pub}}) \neq \text{TP}(K_{2,\text{pub}})$
+    with overwhelming probability), so a claim cannot be presented under a different
+    TEE instance's identity.
+  \item Session binding: $\sigma$ is covered by the Ed25519 signature over the claim body.
+    Replacing $\sigma$ invalidates the signature, so a claim valid for session $\sigma_1$
+    cannot be replayed as $\sigma_2$.
+  \item Modifying any field of a TRACE Claim invalidates the Ed25519 signature computed
+    over the canonical JSON serialization of the claim body.
+  \item Removing audit entries from an exported, signed audit bundle changes its hash and
+    invalidates the export signature. A verifier holding the claim can also recompute the
+    chain tip from the entries it receives and compare it with the signed tip.
+\end{enumerate}
+\end{property}
+
+\begin{property}[Temporal Adjacency Provenance Approximation]
+\label{prop:temporal}
+Let $L$ be the \texttt{SessionCallLog} for session $S$. Each entry $e_i \in L$ has a
+monotonically increasing sequence number $\text{seq}(e_i)$.
+\begin{enumerate}[leftmargin=1.5em,label=(\alph*)]
+  \item Sequence numbers are strictly increasing: $i < j \Rightarrow \text{seq}(e_i) < \text{seq}(e_j)$.
+  \item A cross-boundary event is recorded whenever a call to a tool in domain $D_2$ follows
+    any call to a tool in a high-sensitivity domain $D_1 \in \{\text{phi}, \text{pii},
+    \text{pci}, \text{restricted}\}$, and $D_2 \neq D_1$. (Current releases add
+    \texttt{hipaa\_phi}, \texttt{mnpi} and \texttt{pci\_data} to this set.)
+  \item Every call graph summary includes a \texttt{edges\_represent} field stating
+    explicitly that edges represent temporal adjacency, not data provenance.
+  \item Zero false negatives by construction: if call $B$ follows call $A$ and $A$ touched
+    a high-sensitivity domain, then $\text{seq}(B) > \text{seq}(A)$, so $B$ is necessarily
+    included in the set of calls adjacent to $A$.
+  \item False positives are possible: a call $B$ that is temporally adjacent to a PHI call
+    $A$ but provably carries no PHI in its parameters or response is still attributed as
+    PHI-adjacent.
+  \item Denied calls are recorded in the graph with their policy decision, because the
+    agent's attempt to make the call is itself evidence of awareness of the PHI context.
+\end{enumerate}
+\end{property}
+
+\begin{property}[Cross-Organizational Attestation Chain]
+\label{prop:cross-org}
+Let $(K_1, \sigma_1)$ be the gateway TEE keypair and session identifier (Phase~1), and
+$(K_2, \sigma_2)$ be the server TEE keypair and session identifier (Phase~2), with
+$\sigma_1 = \sigma_2 = \sigma$.
+\begin{enumerate}[leftmargin=1.5em,label=(\alph*)]
+  \item $K_1$ and $K_2$ are generated independently; they are distinct with overwhelming
+    probability.
+  \item Both claims reference $\sigma$, providing the linkage without sharing private key
+    material.
+  \item Each phase's nonce binds its own key: $n_1 = \text{TP}(K_{1,\text{pub}}) \| s_1$
+    and $n_2 = \text{TP}(K_{2,\text{pub}}) \| s_2$ are distinct because $K_1 \neq K_2$.
+    The shared $\sigma$, carried in both signed claim bodies, provides the linkage. (The
+    software experiment uses the older form $\text{SHA-256}(K_{\text{pub}} \| \sigma)$; see
+    Section~\ref{sec:eval}.)
+  \item Each claim is independently verifiable against its own public key.
+  \item Tampering with the Phase~1 claim invalidates its Ed25519 signature but does not
+    affect the validity of the Phase~2 claim.
+  \item A server binary swap (loading a different TEE image) changes the TEE measurement
+    in the Phase~2 attestation report, which a verifier who checks the expected measurement
+    will detect.
+\end{enumerate}
+\end{property}

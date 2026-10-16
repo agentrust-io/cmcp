@@ -1,0 +1,3 @@
+# Published source packages: keep their bytes exactly as released, so each
+# package manifest and SHA256SUMS still verifies after checkout.
+* -text

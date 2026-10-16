@@ -1,0 +1,11 @@
+{
+  "received": "2026-10-11",
+  "from": "the external evaluator, by email, as cMCP-Kill-Switch-Evaluation-Return.zip",
+  "zip_sha256": "3b0c45004efb668b9926b692fa193e062e6e991a8ec4f406753de7c3fcdb77da",
+  "summary_pdf_sha256": "a5aa5cf2959c375cbd91b474d658966ecef4b2eda05f2bdbaa73d3baa9b329ee",
+  "files_in_zip": 145,
+  "files_retained_here": 62,
+  "retained_unchanged": "every retained file matches its SHA-256 in manifest-sha256.json, the evaluator's own list for the whole ZIP",
+  "not_retained": "install and test logs, JUnit XML, environment record, reviewer tools and the evaluator copy; they carry workstation details. Component totals from the JUnit files: cMCP 81 tests, cA2A 38 tests, 0 failures, 0 errors, 0 skipped.",
+  "author_check": "On 2026-10-11 the author checked the ZIP manifest (144 files, no mismatch), the run.json source pin and evaluator hashes against this directory's evaluator, the per-assertion outcomes against reference/ (no difference in any case), and each refusal receipt with cmcp_verify at the pinned revision (all valid; restart refusals unbound, as in reference/)."
+}

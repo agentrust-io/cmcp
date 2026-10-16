@@ -1,0 +1,15 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
+rootdir: <cmcp-checkout>
+configfile: pyproject.toml
+plugins: anyio-4.15.1, asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 81 items
+
+tests\unit\test_kill_switch.py .....................                     [ 25%]
+tests\unit\test_kill_switch_durable.py ..............                    [ 43%]
+tests\unit\test_kill_switch_mid_session.py .........                     [ 54%]
+tests\unit\test_kill_switch_evidence.py .............                    [ 70%]
+tests\unit\test_policy_key_revocation.py ........................        [100%]
+
+============================= 81 passed in 14.58s =============================

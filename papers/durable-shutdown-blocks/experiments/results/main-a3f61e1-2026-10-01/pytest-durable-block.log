@@ -1,0 +1,224 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
+rootdir: <scratch>\copy-durable-block
+configfile: pyproject.toml
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 88 items
+
+tests\unit\test_kill_switch.py .....................                     [ 23%]
+tests\unit\test_kill_switch_durable.py ...FFF.F....FF                    [ 39%]
+tests\unit\test_kill_switch_evidence.py ....FFFFFFFF.                    [ 54%]
+tests\unit\test_kill_switch_mid_session.py F.FF.....                     [ 64%]
+tests\confinement\test_adapter.py .............................          [ 97%]
+tests\confinement\test_gateway.py ..                                     [100%]
+
+================================== FAILURES ===================================
+____________ test_evaluator_trip_is_still_blocked_after_a_restart _____________
+tests\unit\test_kill_switch_durable.py:159: in test_evaluator_trip_is_still_blocked_after_a_restart
+    assert after.is_blocked(_AGENT_ID)
+E   AssertionError: assert False
+E    +  where False = is_blocked('spiffe://example.com/agent/rogue-bot')
+E    +    where is_blocked = <cmcp_runtime.kill_switch.KillSwitchEvaluator object at 0x000002B67E20FCB0>.is_blocked
+______ test_tripping_close_returns_the_claim_and_later_calls_are_refused ______
+tests\unit\test_kill_switch_durable.py:176: in test_tripping_close_returns_the_claim_and_later_calls_are_refused
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=6f9723e7-b58a-4396-b813-4ca9127450e5
+WARNING  cmcp_runtime.session.manager:manager.py:449 Kill switch triggered: agent_id=spiffe://example.com/agent/rogue-bot deny_rate exceeded threshold. Future sessions for this identity will be rejected.
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=b26689b5-0a71-48c2-a012-99fe364af809
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=95fc595b-781b-4819-ae35-2569a0c29421 error=Object of type MagicMock is not JSON serializable
+________________ test_close_and_reset_are_refused_while_halted ________________
+tests\unit\test_kill_switch_durable.py:191: in test_close_and_reset_are_refused_while_halted
+    assert close.status_code == 409
+E   assert 404 == 409
+E    +  where 404 = <Response [404 Not Found]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=5b5ec4ba-dd2c-4419-b13a-9dbf795c2ecf
+WARNING  cmcp_runtime.session.manager:manager.py:449 Kill switch triggered: agent_id=spiffe://example.com/agent/rogue-bot deny_rate exceeded threshold. Future sessions for this identity will be rejected.
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=257acb49-ca7d-41ff-a64d-64aad05c402a
+__________________ test_unblock_requires_the_operator_token ___________________
+tests\unit\test_kill_switch_durable.py:233: in test_unblock_requires_the_operator_token
+    assert server._proxy.halted_identity == _AGENT_ID
+E   AssertionError: assert None == 'spiffe://example.com/agent/rogue-bot'
+E    +  where None = <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E20FF20>.halted_identity
+E    +    where <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E20FF20> = <cmcp_runtime.mcp.server.MCPServer object at 0x000002B67DF02FC0>._proxy
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=b99e8b9c-ac00-411a-a00b-64c7cceec926
+WARNING  cmcp_runtime.session.manager:manager.py:449 Kill switch triggered: agent_id=spiffe://example.com/agent/rogue-bot deny_rate exceeded threshold. Future sessions for this identity will be rejected.
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=d30f6c50-9c5f-48f4-a61f-5f1c9f8e24c4
+WARNING  cmcp_runtime.mcp.server:server.py:350 AUTH_FAILURE: invalid bearer token from Address(host='127.0.0.1', port=123)
+______________ test_unblock_retry_resumes_after_a_failed_resume _______________
+tests\unit\test_kill_switch_durable.py:268: in test_unblock_retry_resumes_after_a_failed_resume
+    assert failed.status_code == 500
+E   assert 200 == 500
+E    +  where 200 = <Response [200 OK]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=8cbce6bd-6819-4a02-a7b6-ca2fc49109ca
+WARNING  cmcp_runtime.session.manager:manager.py:449 Kill switch triggered: agent_id=spiffe://example.com/agent/rogue-bot deny_rate exceeded threshold. Future sessions for this identity will be rejected.
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=dbd20a69-1007-44e2-8b64-8538d72a3bff
+WARNING  cmcp_runtime.mcp.server:server.py:1434 KILL_SWITCH_UNBLOCKED: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='false positive' session=dbd20a69-1007-44e2-8b64-8538d72a3bff
+_______ test_gateway_starts_halted_when_its_identity_is_already_blocked _______
+tests\unit\test_kill_switch_durable.py:290: in test_gateway_starts_halted_when_its_identity_is_already_blocked
+    assert server._proxy.halted_identity == _AGENT_ID
+E   AssertionError: assert None == 'spiffe://example.com/agent/rogue-bot'
+E    +  where None = <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E8E6120>.halted_identity
+E    +    where <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E8E6120> = <cmcp_runtime.mcp.server.MCPServer object at 0x000002B67E8E6180>._proxy
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=142330b4-71b6-449f-ad30-5ee24b8357dc
+______ test_refusal_receipt_verifies_against_the_tripped_sessions_claim _______
+tests\unit\test_kill_switch_evidence.py:112: in test_refusal_receipt_verifies_against_the_tripped_sessions_claim
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=ed014323-5486-4f2c-a50f-f02ad1f9a781
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=28d527a8-2214-4143-91c0-a80a63aed91d
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=ed014323-5486-4f2c-a50f-f02ad1f9a781
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=6fb76286-d38f-4f67-9aed-13f28f25f764 error=Object of type MagicMock is not JSON serializable
+_ test_an_altered_receipt_fails[agent_id-spiffe://example.com/agent/someone-else-signature verification failed] _
+tests\unit\test_kill_switch_evidence.py:135: in test_an_altered_receipt_fails
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=05816d5a-276a-4c2a-8305-9b44757a9921
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=583e08e1-6d16-4fee-ac88-dba39fc5748e
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=05816d5a-276a-4c2a-8305-9b44757a9921
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=f6c4da8d-abc1-4758-8795-e184447c5d89 error=Object of type MagicMock is not JSON serializable
+_ test_an_altered_receipt_fails[refused_at-2020-01-01T00:00:00+00:00-signature verification failed] _
+tests\unit\test_kill_switch_evidence.py:135: in test_an_altered_receipt_fails
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=8732a149-6552-41dc-96fe-1a145185ba0f
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=ca01bd67-d03e-449d-bdd7-8895927ade15
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=8732a149-6552-41dc-96fe-1a145185ba0f
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=d03399ac-1b61-4459-9c19-0ed39e6c5ea3 error=Object of type MagicMock is not JSON serializable
+_ test_an_altered_receipt_fails[claim_digest-sha256:0000000000000000000000000000000000000000000000000000000000000000-does not match the claim] _
+tests\unit\test_kill_switch_evidence.py:135: in test_an_altered_receipt_fails
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=fe15c44f-1b0a-4f68-969a-3c8eab5d7977
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=df29cec4-aaeb-4b3a-a5d7-1f959037206f
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=fe15c44f-1b0a-4f68-969a-3c8eab5d7977
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=b3fa0f96-725c-419b-b803-4e81baa07d8b error=Object of type MagicMock is not JSON serializable
+_______ test_an_altered_receipt_fails[type-something/else-receipt type] _______
+tests\unit\test_kill_switch_evidence.py:135: in test_an_altered_receipt_fails
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=2dd38cca-2bcd-4a5c-9161-a3cccf7388c3
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=252cbdf5-151a-4abf-b33b-9a482e4e4928
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=2dd38cca-2bcd-4a5c-9161-a3cccf7388c3
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=42ac0217-bfe9-4e31-a96e-c1d7d51dc232 error=Object of type MagicMock is not JSON serializable
+________ test_a_receipt_does_not_verify_against_another_gateways_claim ________
+tests\unit\test_kill_switch_evidence.py:148: in test_a_receipt_does_not_verify_against_another_gateways_claim
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=c854bcb0-fc96-4241-bced-612a3413299b
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=16dd312b-d4bf-4f52-ab99-11113d5022f5
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=ddb55b96-906d-49b5-a4f7-df5d3700755e
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=c854bcb0-fc96-4241-bced-612a3413299b
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=e6655ca6-8541-4361-8979-65a8f934eae7 error=Object of type MagicMock is not JSON serializable
+___________ test_a_tampered_claim_fails_even_with_a_genuine_receipt ___________
+tests\unit\test_kill_switch_evidence.py:161: in test_a_tampered_claim_fails_even_with_a_genuine_receipt
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=603d38cb-b93f-4e3e-93ea-e21aebc6cbe9
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=287334b7-6cce-40e0-a922-c7c4ff3855fb
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=603d38cb-b93f-4e3e-93ea-e21aebc6cbe9
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=d2141cac-14e1-4d1b-b3c9-ca4e1467e078 error=Object of type MagicMock is not JSON serializable
+_____ test_a_receipt_from_a_gateway_blocked_at_start_says_it_has_no_claim _____
+tests\unit\test_kill_switch_evidence.py:177: in test_a_receipt_from_a_gateway_blocked_at_start_says_it_has_no_claim
+    receipt = await _refusal(client)
+              ^^^^^^^^^^^^^^^^^^^^^^
+tests\unit\test_kill_switch_evidence.py:53: in _refusal
+    assert resp.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=19d4f017-af73-4ea7-b4f8-2d8cb427cb1e
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=d2fe97e2-2000-4d1b-b4f2-8c204a5a12bb error=Object of type MagicMock is not JSON serializable
+__________ test_session_is_sealed_at_the_call_that_trips_the_switch ___________
+tests\unit\test_kill_switch_mid_session.py:82: in test_session_is_sealed_at_the_call_that_trips_the_switch
+    assert server._proxy.halted_identity == _AGENT_ID
+E   AssertionError: assert None == 'spiffe://example.com/agent/rogue-bot'
+E    +  where None = <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E8DD2B0>.halted_identity
+E    +    where <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E8DD2B0> = <cmcp_runtime.mcp.server.MCPServer object at 0x000002B67E8DF9E0>._proxy
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=39568e0d-d05c-4184-8b65-cb9de4684d5d
+WARNING  cmcp_runtime.session.manager:manager.py:618 Kill switch triggered mid-session: agent_id=spiffe://example.com/agent/rogue-bot call_id=e4effa88-973f-4098-aed5-16ed300d348e. The session is sealed now and future sessions are rejected.
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=d257df8d-1da8-4706-af3c-e8aa8201e71a
+____________ test_unblock_after_a_mid_session_trip_resumes_service ____________
+tests\unit\test_kill_switch_mid_session.py:126: in test_unblock_after_a_mid_session_trip_resumes_service
+    assert server._proxy.halted_identity == _AGENT_ID
+E   AssertionError: assert None == 'spiffe://example.com/agent/rogue-bot'
+E    +  where None = <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E9B5010>.halted_identity
+E    +    where <cmcp_runtime.mcp.proxy.CMCPProxy object at 0x000002B67E9B5010> = <cmcp_runtime.mcp.server.MCPServer object at 0x000002B67E9B4BF0>._proxy
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=03f3afb4-5f13-421e-b61d-57b9a5618b17
+WARNING  cmcp_runtime.session.manager:manager.py:618 Kill switch triggered mid-session: agent_id=spiffe://example.com/agent/rogue-bot call_id=159e2213-1b94-469d-8ccc-8923140dbc7d. The session is sealed now and future sessions are rejected.
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=be9054d7-111d-49a2-80d5-c5cc62486cfb
+_________ test_operator_trip_stops_the_session_and_returns_its_claim __________
+tests\unit\test_kill_switch_mid_session.py:165: in test_operator_trip_stops_the_session_and_returns_its_claim
+    assert refused.status_code == 403
+E   assert 500 == 403
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=d0fb1529-6e6c-42ae-a748-1535266e975a
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=488e8bf4-8e9c-4c00-ab76-ef3e7b935e97
+WARNING  cmcp_runtime.mcp.server:server.py:1346 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=d0fb1529-6e6c-42ae-a748-1535266e975a
+ERROR    cmcp_runtime.mcp.server:server.py:846 TEE_FAULT during call_tool: call_id=aed3b25f-45ef-4074-8f10-a363425c0d09 error=Object of type MagicMock is not JSON serializable
+- generated xml file: <output>\pytest-durable-block.xml -
+=========================== short test summary info ===========================
+FAILED tests/unit/test_kill_switch_durable.py::test_evaluator_trip_is_still_blocked_after_a_restart
+FAILED tests/unit/test_kill_switch_durable.py::test_tripping_close_returns_the_claim_and_later_calls_are_refused
+FAILED tests/unit/test_kill_switch_durable.py::test_close_and_reset_are_refused_while_halted
+FAILED tests/unit/test_kill_switch_durable.py::test_unblock_requires_the_operator_token
+FAILED tests/unit/test_kill_switch_durable.py::test_unblock_retry_resumes_after_a_failed_resume
+FAILED tests/unit/test_kill_switch_durable.py::test_gateway_starts_halted_when_its_identity_is_already_blocked
+FAILED tests/unit/test_kill_switch_evidence.py::test_refusal_receipt_verifies_against_the_tripped_sessions_claim
+FAILED tests/unit/test_kill_switch_evidence.py::test_an_altered_receipt_fails[agent_id-spiffe://example.com/agent/someone-else-signature verification failed]
+FAILED tests/unit/test_kill_switch_evidence.py::test_an_altered_receipt_fails[refused_at-2020-01-01T00:00:00+00:00-signature verification failed]
+FAILED tests/unit/test_kill_switch_evidence.py::test_an_altered_receipt_fails[claim_digest-sha256:0000000000000000000000000000000000000000000000000000000000000000-does not match the claim]
+FAILED tests/unit/test_kill_switch_evidence.py::test_an_altered_receipt_fails[type-something/else-receipt type]
+FAILED tests/unit/test_kill_switch_evidence.py::test_a_receipt_does_not_verify_against_another_gateways_claim
+FAILED tests/unit/test_kill_switch_evidence.py::test_a_tampered_claim_fails_even_with_a_genuine_receipt
+FAILED tests/unit/test_kill_switch_evidence.py::test_a_receipt_from_a_gateway_blocked_at_start_says_it_has_no_claim
+FAILED tests/unit/test_kill_switch_mid_session.py::test_session_is_sealed_at_the_call_that_trips_the_switch
+FAILED tests/unit/test_kill_switch_mid_session.py::test_unblock_after_a_mid_session_trip_resumes_service
+FAILED tests/unit/test_kill_switch_mid_session.py::test_operator_trip_stops_the_session_and_returns_its_claim
+======================== 17 failed, 71 passed in 5.04s ========================
+
+STDERR

@@ -1,0 +1,43 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
+rootdir: <scratch>\copy-receipt-signature
+configfile: pyproject.toml
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 86 items
+
+tests\unit\test_kill_switch.py .....................                     [ 24%]
+tests\unit\test_kill_switch_durable.py ..............                    [ 40%]
+tests\unit\test_kill_switch_evidence.py .....FF......                    [ 55%]
+tests\unit\test_kill_switch_mid_session.py .........                     [ 66%]
+tests\confinement\test_adapter.py ...........................            [ 97%]
+tests\confinement\test_gateway.py ..                                     [100%]
+
+================================== FAILURES ===================================
+_ test_an_altered_receipt_fails[agent_id-spiffe://example.com/agent/someone-else-signature verification failed] _
+tests\unit\test_kill_switch_evidence.py:139: in test_an_altered_receipt_fails
+    assert any(expected in e for e in result.errors), result.errors
+E   AssertionError: ['receipt names a different agent identity than the claim']
+E   assert False
+E    +  where False = any(<generator object test_an_altered_receipt_fails.<locals>.<genexpr> at 0x00000209252B25A0>)
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=20838173-0aa3-4008-9cc4-3033ce2446f9
+WARNING  cmcp_runtime.mcp.server:server.py:1018 KILL_SWITCH_HALTED: session=20838173-0aa3-4008-9cc4-3033ce2446f9 closed with no successor; agent_id=spiffe://example.com/agent/rogue-bot is blocked until an operator unblocks it
+WARNING  cmcp_runtime.mcp.server:server.py:1239 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=20838173-0aa3-4008-9cc4-3033ce2446f9
+WARNING  cmcp_runtime.mcp.server:server.py:743 KILL_SWITCH_REFUSED: agent_id=spiffe://example.com/agent/rogue-bot tool=any.tool session=20838173-0aa3-4008-9cc4-3033ce2446f9
+_ test_an_altered_receipt_fails[refused_at-2020-01-01T00:00:00+00:00-signature verification failed] _
+tests\unit\test_kill_switch_evidence.py:138: in test_an_altered_receipt_fails
+    assert not result.valid
+E   AssertionError: assert not True
+E    +  where True = KillSwitchRefusalResult(valid=True, agent_id='spiffe://example.com/agent/rogue-bot', session_id='e4843a23-d301-41ff-b2c4-da6733945304', refused_at='2020-01-01T00:00:00+00:00', errors=[]).valid
+------------------------------ Captured log call ------------------------------
+WARNING  cmcp_runtime.session.manager:manager.py:181 AUDIT-006: per-session TEE provider returned a MagicMock, not an AttestationReport - chain root is not hardware-bound into report_data. session_id=e4843a23-d301-41ff-b2c4-da6733945304
+WARNING  cmcp_runtime.mcp.server:server.py:1018 KILL_SWITCH_HALTED: session=e4843a23-d301-41ff-b2c4-da6733945304 closed with no successor; agent_id=spiffe://example.com/agent/rogue-bot is blocked until an operator unblocks it
+WARNING  cmcp_runtime.mcp.server:server.py:1239 KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://example.com/agent/rogue-bot authorized_by='oncall' reason='exfiltration attempt reported by SOC' session=e4843a23-d301-41ff-b2c4-da6733945304
+WARNING  cmcp_runtime.mcp.server:server.py:743 KILL_SWITCH_REFUSED: agent_id=spiffe://example.com/agent/rogue-bot tool=any.tool session=e4843a23-d301-41ff-b2c4-da6733945304
+- generated xml file: <output>\pytest-receipt-signature.xml -
+=========================== short test summary info ===========================
+FAILED tests/unit/test_kill_switch_evidence.py::test_an_altered_receipt_fails[agent_id-spiffe://example.com/agent/someone-else-signature verification failed]
+FAILED tests/unit/test_kill_switch_evidence.py::test_an_altered_receipt_fails[refused_at-2020-01-01T00:00:00+00:00-signature verification failed]
+======================== 2 failed, 84 passed in 4.68s =========================
+
+STDERR

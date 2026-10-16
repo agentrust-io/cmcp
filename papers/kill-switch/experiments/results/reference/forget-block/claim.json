@@ -1,0 +1,105 @@
+{
+  "cmcp_version": "1.0",
+  "trace": {
+    "eat_profile": "tag:agentrust-io.com,2026:trace-v0.2",
+    "iat": 1789881527,
+    "subject": "spiffe://cmcp.gateway/tee/b444c497256bd470",
+    "runtime": {
+      "platform": "software-only",
+      "measurement": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "firmware_version": "software-only-dev-mode"
+    },
+    "policy": {
+      "bundle_hash": "sha256:59f1aea1409012794afc9b3f580fe2306ad03c7eaa59e0ba1ed060f005f0dd15",
+      "enforcement_mode": "enforce",
+      "version": "1.0.0"
+    },
+    "data_class": "public",
+    "tool_transcript": {
+      "hash": "sha256:931161fe782b73224e66f8590f2728e178d5cff1a0f2e880f167694f7836e842",
+      "call_count": 2,
+      "entries": [
+        {
+          "tool_name": "observe.tool",
+          "data_class": "public",
+          "decision": "allow"
+        },
+        {
+          "tool_name": "observe.tool",
+          "data_class": "public",
+          "decision": "allow"
+        }
+      ]
+    },
+    "cnf": {
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "tETElyVr1HDEsaIrRGiEam4d16_WPNykzAx3kpHpDDc",
+        "kid": "cmcp-b444c497"
+      }
+    }
+  },
+  "gateway": {
+    "session_id": "41d0a060-4055-4e86-b8f7-795324dce151",
+    "gateway_version": "0.5.0",
+    "sequence_number": 1,
+    "audit_chain": {
+      "root": "57f83fbcebed86b0e94dffc0d904105e83ad2797dbda46a9465efde2dbf9014e",
+      "tip": "931161fe782b73224e66f8590f2728e178d5cff1a0f2e880f167694f7836e842",
+      "length": 5
+    },
+    "call_summary": {
+      "tool_calls_total": 2,
+      "tool_calls_allowed": 2,
+      "tool_calls_denied": 0,
+      "tool_calls_faulted": 0,
+      "tools_invoked": [
+        "observe.tool"
+      ],
+      "session_max_sensitivity": "public",
+      "call_graph_summary": {
+        "compliance_domains_touched": [
+          "external"
+        ],
+        "cross_boundary_events": [],
+        "edges_represent": "Edges represent temporal adjacency (call order), not data provenance. A -> B means B was called immediately after A within this session."
+      }
+    },
+    "catalog": {
+      "hash": "sha256:43910a98da30dde8271b736a0b85f4ff33e691c2f3f8f06b471c07a8564360f8",
+      "drift_detected": false
+    },
+    "attestation_generated_at": "2026-09-20T05:18:44.631961+00:00",
+    "attestation_validity_seconds": 86400,
+    "attestation_stale": false,
+    "catalog_exceptions": [],
+    "call_log_summary": {
+      "total_calls": 2,
+      "tools_called": [
+        "observe.tool"
+      ],
+      "suspicious_sequences_detected": 0
+    },
+    "agent_identity": {
+      "manifest_id": "0197739a-8c00-7000-8000-000000000001",
+      "agent_id": "spiffe://evaluation.example/agent/worker",
+      "authenticated_subject": "spiffe://evaluation.example/agent/worker",
+      "subject_source": "config",
+      "issuer": "spiffe://evaluation.example/issuer",
+      "issuer_key_id": "24a4f2f47d2750b031e490a223b0ffd70a3459856d6c8cdd8beaf5ae3f6fff18",
+      "policy_bundle_hash": "sha256:59f1aea1409012794afc9b3f580fe2306ad03c7eaa59e0ba1ed060f005f0dd15",
+      "tool_catalog_hash": "sha256:43910a98da30dde8271b736a0b85f4ff33e691c2f3f8f06b471c07a8564360f8",
+      "enforcement_mode": "enforcing"
+    },
+    "kill_switch_triggered": true,
+    "kill_switch": {
+      "enabled": true,
+      "window_seconds": 300,
+      "deny_rate_threshold": 0.9,
+      "min_calls": 5,
+      "trigger": "operator"
+    }
+  },
+  "signature": "4wxDaKWTd8aC5raz_oi6TWAlrrS1njLlacebd8PzZxGYs5tf0lsDXASECEgkpqP_iCkWSWf2R4ndpoI9R-VaCQ"
+}

@@ -1,0 +1,36 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+cMCP is a TEE-based gateway for Model Context Protocol that provides verifiable governance
+properties at the tool-call boundary. We have stated and experimentally validated six
+security properties: TEE-measured policy enforcement, session sensitivity tracking, tool
+catalog rug-pull detection, TRACE Claim nonce binding, temporal adjacency provenance
+approximation, and cross-organizational attestation chains.
+
+The key design decisions and their consequences are:
+
+\textbf{Hardware binding over software assertion.} The nonce construction ties each TRACE
+Claim to a specific TEE startup instance and session. A claim presented as evidence cannot
+be replayed from a different instance or session without breaking the Ed25519 signature or
+the nonce-report\_data binding.
+
+\textbf{Monotonic session state over per-call evaluation.} The session sensitivity state
+machine catches cross-boundary PHI violations that per-call policy evaluation structurally
+cannot. The cost is a quantified false-discovery proportion (69\% overall in our evaluation) that
+motivates Phase~2 agent-cooperative tagging.
+
+\textbf{Fail-closed catalog pinning over advisory warnings.} A catalog that differs from
+its approved hash stops the gateway at load time, and a change to the in-memory catalog
+after startup stops the call. This prevents rug-pull attacks at the cost of requiring catalog updates to go through
+a re-attestation cycle.
+
+\textbf{Open problems.} Three problems are left open. First, Phase~2 server TEE deployment
+is in progress; the dual-TEE cross-organizational protocol has been simulated but not
+demonstrated with physical hardware. Second, the runtime now accepts a per-call \texttt{\_cmcp.data\_class}
+declaration, but that is declared sensitivity; an SDK-level convention for agents to prove
+PHI lineage does not yet exist.
+Third, semantic attacks, where a compliant-looking tool response causes harmful agent
+behavior, are outside the scope of the current inspection pipeline.
+
+The cMCP implementation and all experiments are available at
+\url{https://github.com/agentrust-io/cmcp} under the MIT license.

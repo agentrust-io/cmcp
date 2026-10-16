@@ -1,0 +1,8 @@
+{
+  "type": "cmcp.kill-switch.refusal/v1",
+  "agent_id": "spiffe://evaluation.example/agent/worker",
+  "session_id": "b25984b6-b019-4572-8731-12b2d36256dc",
+  "refused_at": "2026-10-11T14:27:44.310002+00:00",
+  "gateway_key": "VhCVt076SIJt7p-WtO5dE0WJc1YoyK2MfIJUXG8f5Ok",
+  "signature": "rap4IDhYMoYdTD19Pum9aYi3aBtkfTC_fygA6sf3bNDKWpgyUZnKNnKAy5KE_ARIUnpaBe0AlxPYJGEni_T8DQ"
+}

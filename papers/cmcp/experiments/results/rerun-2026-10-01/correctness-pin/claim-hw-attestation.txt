@@ -1,0 +1,9 @@
+
+Hardware TEE attestation | real attestation report + verification
+========================================================================
+
+SKIP: no hardware TEE detected on this host.
+This experiment requires a confidential VM (AMD SEV-SNP, Intel TDX,
+or a TPM 2.0 device). See experiments/claim-hw-attestation/README.md
+for Azure / GCP deployment steps. Exiting 0 so CI and dev hosts pass.
+

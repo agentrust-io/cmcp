@@ -1,0 +1,128 @@
+{
+  "experiment": "cmcp-perf",
+  "provider": "software-only",
+  "hardware_tee": false,
+  "timestamp": "2026-10-01T19:02:24Z",
+  "python": "3.12.10",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "cedar_backend": "cedarpy (native, mode=auto)",
+  "calls_measured": 8000,
+  "warmup": 1000,
+  "latency_breakdown": {
+    "policy_rules_count": 12,
+    "calls_measured": 8000,
+    "cedar_eval_us": {
+      "p50": 589.3,
+      "p95": 1632.65,
+      "p99": 3378.12,
+      "mean": 732.64,
+      "min": 333.1
+    },
+    "audit_entry_us": {
+      "p50": 51.25,
+      "p95": 110.72,
+      "p99": 506.42,
+      "mean": 68.66,
+      "min": 32.7
+    },
+    "cedar_throughput_eval_per_s": 1364.9
+  },
+  "rule_count_sweep": [
+    {
+      "rules": 4,
+      "permit_rules": 2,
+      "cedar_eval_us": {
+        "p50": 487.5,
+        "p95": 1332.72,
+        "p99": 3116.56,
+        "mean": 618.0,
+        "min": 230.1
+      },
+      "throughput_eval_per_s": 1618.1
+    },
+    {
+      "rules": 7,
+      "permit_rules": 5,
+      "cedar_eval_us": {
+        "p50": 513.95,
+        "p95": 1528.6,
+        "p99": 2990.44,
+        "mean": 655.48,
+        "min": 248.3
+      },
+      "throughput_eval_per_s": 1525.6
+    },
+    {
+      "rules": 14,
+      "permit_rules": 12,
+      "cedar_eval_us": {
+        "p50": 589.35,
+        "p95": 1471.14,
+        "p99": 2385.27,
+        "mean": 706.8,
+        "min": 309.6
+      },
+      "throughput_eval_per_s": 1414.8
+    },
+    {
+      "rules": 27,
+      "permit_rules": 25,
+      "cedar_eval_us": {
+        "p50": 722.8,
+        "p95": 2082.81,
+        "p99": 4013.48,
+        "mean": 949.38,
+        "min": 461.7
+      },
+      "throughput_eval_per_s": 1053.3
+    },
+    {
+      "rules": 52,
+      "permit_rules": 50,
+      "cedar_eval_us": {
+        "p50": 1540.0,
+        "p95": 5966.77,
+        "p99": 10996.74,
+        "mean": 2206.47,
+        "min": 793.7
+      },
+      "throughput_eval_per_s": 453.2
+    },
+    {
+      "rules": 102,
+      "permit_rules": 100,
+      "cedar_eval_us": {
+        "p50": 2743.5,
+        "p95": 5988.27,
+        "p99": 9828.94,
+        "mean": 3143.16,
+        "min": 1378.0
+      },
+      "throughput_eval_per_s": 318.2
+    },
+    {
+      "rules": 202,
+      "permit_rules": 200,
+      "cedar_eval_us": {
+        "p50": 6292.1,
+        "p95": 13669.81,
+        "p99": 21467.26,
+        "mean": 7310.34,
+        "min": 2741.9
+      },
+      "throughput_eval_per_s": 136.8
+    },
+    {
+      "rules": 402,
+      "permit_rules": 400,
+      "cedar_eval_us": {
+        "p50": 10771.35,
+        "p95": 18105.21,
+        "p99": 26801.5,
+        "mean": 11496.65,
+        "min": 4478.1
+      },
+      "throughput_eval_per_s": 87.0
+    }
+  ]
+}

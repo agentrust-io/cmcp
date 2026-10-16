@@ -1,0 +1,79 @@
+\section{Introduction}
+\label{sec:intro}
+
+AI agents that use tools are rapidly becoming the dominant pattern for deploying language
+models in production. A single user request may cause an agent to invoke a dozen tools:
+reading email, querying a database, calling an external API, posting to a messaging system.
+Each tool call crosses a trust boundary. The tool may be provided by a third party, run on
+a different server, or handle regulated data. Yet the agent's orchestration layer has no
+standard mechanism for verifying what policies governed the call, who authorized the
+invocation, or whether the returned data places compliance obligations on everything the
+agent does next.
+
+Model Context Protocol (MCP)~\citep{mcp2024} formalizes this interaction as a JSON-RPC
+protocol with standardized tool discovery and invocation semantics. MCP has seen rapid
+adoption: within a year of publication, hundreds of MCP servers expose tools ranging from
+filesystem access to medical record retrieval. This adoption makes the governance gap concrete.
+When an agent calls \texttt{ehr.get\_patient} through an MCP server and the response contains
+protected health information, nothing in the MCP protocol tells the agent, its orchestrator,
+or a downstream auditor: which policy authorized this call; whether the response sensitivity
+has been tracked; whether the tool definition matches what was reviewed at deployment time.
+
+cMCP addresses this gap. It is a TEE-based gateway that sits between an MCP client and one or
+more MCP servers. Every tool call passes through cMCP, which evaluates Cedar~\citep{cedar2023}
+policies before dispatch and, after the call completes, appends a signed entry to a
+hash-chained audit log. At session close, cMCP produces a TRACE Claim~\citep{trace2025}: a
+cryptographically signed attestation that binds the session's call record to the TEE instance
+that processed it and to the policy bundle in effect at startup.
+
+The central thesis of this paper is that hardware attestation, applied at the MCP boundary,
+can provide verifiable governance properties that cannot be achieved through software-only
+interception. We validate six such properties through reproducible experiments, each backed by
+unit tests that run in CI without hardware TEE; the experiments establish the
+software-checkable behavior of each property, while the binding to physical hardware is
+architectural and is stated as a limitation (Section~\ref{sec:eval}).
+
+\subsection*{Contributions}
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{cMCP architecture.} A TEE gateway design that is transparent to existing MCP
+    clients and servers, requiring no protocol changes.
+
+  \item \textbf{TEE-measured policy enforcement (Property~\ref{prop:policy-hash}).} Policy
+    bundles are measured into the TEE at startup. Any runtime modification raises
+    \texttt{PolicyHashMismatch} and invalidates the TRACE Claim signature.
+
+  \item \textbf{Session sensitivity tracking (Property~\ref{prop:session-sensitivity}).}
+    A monotonically increasing session sensitivity state machine detects PHI cross-boundary
+    violations that per-call policy evaluation cannot see, at a quantified false-discovery cost.
+
+  \item \textbf{Rug-pull detection (Property~\ref{prop:rug-pull}).} Tool catalog entries are
+    hash-pinned at TEE startup. Any post-approval modification to a tool's description or
+    input schema triggers fail-closed rejection before the call is dispatched.
+
+  \item \textbf{TRACE Claim key binding (Property~\ref{prop:nonce}).} Each TRACE Claim
+    carries a nonce formed from the RFC~7638 JWK Thumbprint of the TEE public key and a
+    random salt, committed into the hardware report; the per-session report replaces the
+    salt with a hash of the session's audit-chain root. A verifier re-derives the
+    thumbprint from the claim's confirmation key to bind the report to the signing key, and
+    the session identifier is covered by the claim signature. Detecting replay and omission
+    additionally needs a freshness check and an expected session boundary.
+
+  \item \textbf{Temporal adjacency provenance (Property~\ref{prop:temporal}).} cMCP
+    records a call graph where edges represent temporal adjacency. This is a conservative
+    provenance approximation: zero false negatives by construction, with a quantified false
+    positive rate.
+
+  \item \textbf{Cross-organizational attestation chains (Property~\ref{prop:cross-org}).}
+    A dual-TEE protocol links independent Phase~1 (gateway) and Phase~2 (server) TRACE
+    Claims through a shared session identifier and independently verifiable nonces.
+\end{itemize}
+
+\subsection*{Paper structure}
+
+Section~\ref{sec:background} covers MCP mechanics, TEE attestation, the TRACE standard,
+Cedar policies, and the threat model. Section~\ref{sec:design} describes the cMCP
+architecture and its key mechanisms. Section~\ref{sec:claims} formally states the six
+security properties. Section~\ref{sec:eval} presents experimental validation of each
+property with quantitative results. Section~\ref{sec:related} surveys related work.
+Section~\ref{sec:conclusion} concludes.

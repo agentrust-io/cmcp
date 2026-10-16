@@ -1,0 +1,29 @@
+1. The tests were run automatically on the evaluator’s Windows workstation using the supplied evaluator and unchanged source versions. The results and review decision are prepared for Mohammed Zoheb to review before submission.
+
+2. The paper and supplied author-operated results were read before reproduction, as this reproduction request directs. This was not a blind study. The supplemental verifier was written after inspecting the canonicalization format and expected observations; it is independent of cMCP verifier function calls, not an independent human or clean-room implementation.
+
+3. Gateway and effect observer are separate software components but share one workstation and administrator. The observer is outside gateway audit, not outside operator control. No administrative independence is claimed.
+
+4. The supplied run.py unconditionally emits independent_operator=false. That value is preserved in all raw run.json files; it is not rewritten to claim independence. Public attribution and the report authors’ classification of this disclosed reproduction remain subject to separate agreement.
+
+5. Fresh signing keys were generated locally for each matrix case and differ from the supplied author keys. The fixture uses its unchanged, public development-token labels rather than personal or cloud credentials. No author private key or production account was used.
+
+6. Initial virtual-environment creation was blocked by sandbox filesystem access and was retried with authorized access. The matrix and component suites ran with authorized loopback/filesystem access; No cloud VMs or unrelated services were started.
+
+7. The first two component-suite invocations had an incorrectly split PowerShell JUnit output argument. Both exited 4 with zero tests collected. Corrected invocations, with no subject or test edits, passed 81 and 38 tests. Both failed invocation logs and successful retry logs are retained.
+
+8. Dependencies were installed with the supplied exact locks and --require-hashes from public PyPI. Editable pinned subjects were installed separately with --no-deps, as directed. Isolated build tooling for editable installs was not covered by the supplied runtime/development locks; verbose build logs and install reports are retained.
+
+9. Absolute paths were adapted to Windows PowerShell. Result timestamps and ports are fresh and necessarily differ from author records. UTC here is the workstation clock, not signed trusted time.
+
+10. README.md says Windows cleanup uses taskkill /PID /T; the supplied run.py actually uses Popen.terminate(), followed by kill() only on timeout. It was left unchanged. The final process and temporary-directory inventory found no remaining evaluation gateway processes or kill-switch temporary directories.
+
+11. The selected run records some status/boolean observations rather than a complete raw HTTP transcript. The automatic receipt is verified by the supplied evaluator but not exported as a separate JSON file; its signed claim and verification observation are retained. Mutated runs stop at the named failing assertion and therefore do not have all baseline tail artifacts.
+
+12. No optional distributed-withdrawal extension, Windows/Linux cross-platform replication, load/latency bound, independent hostile-operator test or unrequested subject repair was performed.
+
+13. A separate three-case repeat used fresh random local agent and operator bearer tokens. The wrapper changed only BEARER and OPERATOR in the loaded evaluator module; the supplied files and assertions were unchanged. Both original and supplemental results are retained. Every case generated new signing keys. Token values and private keys are not included.
+
+14. A read-only GitHub check succeeded with credential helpers, global/system configuration and interactive prompts disabled. The original clone commands supplied no login or token, but their logs do not trace cached credential-helper activity. This confirms public access, not a retrospective audit of authentication during the earlier downloads. GitHub credentials do not participate in the kill-switch tests.
+
+15. In the sharing copy, local evaluation-directory prefixes in unsigned command logs and metadata were replaced with <EVALUATION_ROOT>. Original and shared hashes are listed in shared-copy-transformations.json. Originals remain on the evaluator’s machine. Signed JSON records, source pins, evaluator code and dependency locks are unchanged.

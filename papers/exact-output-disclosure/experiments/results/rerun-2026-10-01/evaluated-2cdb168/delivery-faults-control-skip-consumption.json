@@ -1,0 +1,183 @@
+{
+  "experiment": "exact-output-delivery-faults",
+  "cases": [
+    {
+      "case": "kill-before_commit",
+      "first_attempt": "adapter_acknowledged",
+      "first_exit": 0,
+      "rows_after_kill": 0,
+      "receipts_after_kill": 1,
+      "retry": "adapter_acknowledged",
+      "final": 2,
+      "expected": {
+        "rows_after_kill": 0,
+        "receipts_after_kill": 0,
+        "retry": "adapter_acknowledged",
+        "final": 1
+      },
+      "ok": false
+    },
+    {
+      "case": "kill-after_commit",
+      "first_attempt": "adapter_acknowledged",
+      "first_exit": 0,
+      "rows_after_kill": 0,
+      "receipts_after_kill": 1,
+      "retry": "adapter_acknowledged",
+      "final": 2,
+      "expected": {
+        "rows_after_kill": 1,
+        "receipts_after_kill": 0,
+        "retry": "replay",
+        "final": 0
+      },
+      "ok": false
+    },
+    {
+      "case": "kill-during_delivery",
+      "first_attempt": "process-killed",
+      "first_exit": 1,
+      "rows_after_kill": 0,
+      "receipts_after_kill": 1,
+      "retry": "adapter_acknowledged",
+      "final": 2,
+      "expected": {
+        "rows_after_kill": 1,
+        "receipts_after_kill": 1,
+        "retry": "replay",
+        "final": 1
+      },
+      "ok": false
+    },
+    {
+      "case": "kill-ack_dropped",
+      "first_attempt": "delivery_unknown",
+      "first_exit": 0,
+      "rows_after_kill": 0,
+      "receipts_after_kill": 1,
+      "retry": "adapter_acknowledged",
+      "final": 2,
+      "expected": {
+        "rows_after_kill": 1,
+        "receipts_after_kill": 1,
+        "retry": "replay",
+        "final": 1
+      },
+      "ok": false
+    },
+    {
+      "case": "storage-locked-8-competing",
+      "during_lock": [
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged"
+      ],
+      "after_lock": [
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged"
+      ],
+      "receipts": 16,
+      "ok": false
+    },
+    {
+      "case": "approval-expires-while-waiting-8-competing",
+      "outcomes": [
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged",
+        "adapter_acknowledged"
+      ],
+      "rows": 0,
+      "receipts": 8,
+      "ok": false
+    },
+    {
+      "case": "corrupt-ledger",
+      "outcome": "adapter_acknowledged",
+      "receipts": 1,
+      "ok": false
+    },
+    {
+      "case": "error-reported-after-commit",
+      "outcome": "adapter_acknowledged",
+      "rows": 0,
+      "retry": "adapter_acknowledged",
+      "receipts": 2,
+      "ok": false
+    },
+    {
+      "case": "process-race-10x8",
+      "rounds": [
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        },
+        {
+          "acknowledged": 8,
+          "replay": 0,
+          "receipts": 8
+        }
+      ],
+      "ok": false
+    }
+  ],
+  "cases_passed": 0,
+  "cases_total": 9,
+  "criterion_met": false
+}

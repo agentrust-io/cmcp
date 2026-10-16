@@ -1,0 +1,36 @@
+
+Claim 2 | False positive rate of the monotonic sensitivity model
+========================================================================
+
+Persona                          Blocked   TP   FP    FPR
+---------------------------------------------------------
+Clinical Decision Support              2    2    0     0%
+Billing Agent                          4    0    4   100%
+Compliance Reporter                    3    2    1    33%
+Mixed Workflow                         3    1    2    67%
+Batch Notification Processor           4    0    4   100%
+---------------------------------------------------------
+Overall                               16    5   11    69%
+
+Legend:
+  TP  = blocked call where phi_in_agent_context is True (justified)
+  FP  = blocked call where phi_in_agent_context is False (unnecessary)
+  FPR = FP / (FP + TP) -- fraction of blocks that are unnecessary
+
+Key finding:
+  Overall FPR: 69% (11/16 blocked calls)
+
+  In 2 of 5 workflow patterns (Billing Agent, Batch Processor), every blocked
+  call is a false positive. PHI is accessed once for identity or batch retrieval,
+  then the workflow pivots entirely. The monotonic model cannot distinguish these
+  patterns from workflows where PHI genuinely flows throughout.
+
+  The Clinical Decision Support pattern shows the model working as intended:
+  0% FPR because PHI is referenced in every downstream call.
+
+  Implication: Phase 2 agent-cooperative tagging would reduce FPR to 0% by
+  letting the agent report which prior call IDs are in its context window.
+  Until Phase 2 is available, operators can reduce FPR by:
+  (a) partitioning PHI-retrieval and downstream workflows into separate sessions,
+  (b) using operator-credentialed session resets between workflow phases.
+

@@ -1,0 +1,230 @@
+\section{cMCP Design}
+\label{sec:design}
+
+\subsection{Architecture Overview}
+
+cMCP is a transparent MCP proxy. An MCP client connects to cMCP as if connecting to an MCP
+server; cMCP connects to one or more upstream MCP servers as an MCP client. The client
+requires no modification. Figure~\ref{fig:arch} sketches the component layout.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[round]},
+  endpoint/.style={draw, rounded corners, minimum width=2.2cm, minimum height=2.6em, align=center, fill=gray!8},
+  stage/.style={draw, rounded corners, minimum width=4.0cm, minimum height=2.0em, align=center, fill=blue!5},
+  tee/.style={draw, dashed, thick, rounded corners, draw=blue!55!black, inner sep=12pt},
+  note/.style={align=center, font=\scriptsize\itshape, text=black!70},
+]
+% Gateway internal pipeline (vertical)
+\node[stage] (catalog) {1.\ Catalog check (hash-pinned)};
+\node[stage, below=0.45cm of catalog] (cedar) {2.\ Cedar policy evaluation};
+\node[stage, below=0.45cm of cedar] (dispatch) {3.\ Dispatch};
+\node[stage, below=0.45cm of dispatch] (inspect) {4, 5.\ Inspect + session sensitivity};
+\node[stage, below=0.45cm of inspect] (audit) {6, 7.\ Audit chain + TRACE Claim};
+
+% TEE boundary
+\begin{scope}[on background layer]
+  \node[tee, fit=(catalog)(cedar)(dispatch)(inspect)(audit),
+        label={[text=blue!55!black]above left:\textbf{cMCP Gateway (TEE)}}] (gw) {};
+\end{scope}
+
+% External endpoints
+\node[endpoint, left=1.4cm of cedar] (client) {MCP\\Client};
+\node[endpoint, right=1.4cm of dispatch] (server) {MCP\\Server(s)};
+\node[endpoint, below=1.0cm of audit, fill=green!6] (verifier) {Verifier};
+
+% Request / response flow
+\draw[->] (client.east) -- (catalog.west);
+\draw[->] (catalog) -- (cedar);
+\draw[->] (cedar) -- (dispatch);
+\draw[->] (dispatch.east) -- node[note, above, pos=0.75]{call} (server.west);
+\draw[->] (server.south) to[out=270,in=0] node[note, right, pos=0.3]{response} (inspect.east);
+\draw[->] (inspect) -- (audit);
+
+% Startup measurement and output
+\node[note, above=0.9cm of gw.north] (meas)
+  {bound at startup: key thumbprint $\|$ salt $\rightarrow$ \texttt{REPORT\_DATA}; per session: thumbprint $\|$ H(chain root)};
+\draw[->, dotted, thick] (meas) -- (gw.north);
+\draw[->] (audit.south) -- node[note, right, pos=0.75]{signed TRACE Claim} (verifier.north);
+\end{tikzpicture}
+\caption{cMCP interposes on every tool call between an MCP client and upstream MCP
+servers. The numbered stages correspond to the tool-call flow in
+Section~\ref{sec:design}. The gateway key is bound into the attestation report at startup,
+and each session's report also commits the audit-chain root; policy-bundle and catalog
+hashes travel in the signed TRACE Claim, which lets an external verifier confirm what
+governed the session.}
+\label{fig:arch}
+\end{figure}
+
+At startup, cMCP performs four initialization steps before accepting any connections: (1) it
+generates a fresh Ed25519 keypair whose private half never leaves TEE memory; (2) it loads
+the Cedar policy bundle, records its SHA-256 hash, and refuses to start if the hash differs
+from a configured expected value; (3) it loads the operator-approved tool catalog file,
+records the aggregate catalog hash, and applies the same expected-hash check; and (4) it
+obtains an attestation report from the TEE with \texttt{REPORT\_DATA} set to the key
+nonce described below. The policy and catalog hashes are carried in
+the signed claim body rather than in \texttt{REPORT\_DATA} at the measured revision.
+
+\subsection{Tool Call Flow}
+
+When the MCP client sends a \texttt{tools/call} request, cMCP executes the following
+sequence:
+
+\begin{enumerate}[leftmargin=1.5em]
+  \item \textbf{Catalog check.} Verify that the requested tool is in the pinned catalog and
+    that the in-memory catalog hash still equals the startup hash. If it does not, the
+    session is marked \texttt{catalog\_drift} and the call is refused.
+  \item \textbf{Cedar evaluation.} Evaluate the Cedar policy bundle against the call
+    context. If the decision is \texttt{forbid}, return a policy-denial response immediately
+    without forwarding the call.
+  \item \textbf{Dispatch.} Forward the call to the upstream MCP server.
+  \item \textbf{Inspection.} Pass the response through the \texttt{InspectionPipeline},
+    which classifies sensitivity tags (e.g., \texttt{hipaa\_phi}, \texttt{pii}) and detects
+    prompt-injection patterns.
+  \item \textbf{Session state update.} Call \texttt{update\_from\_inspection()} on the
+    session's \texttt{SessionState}, which may raise the session sensitivity level.
+  \item \textbf{Audit append.} Append a hash-chained entry to the session's audit log,
+    recording the tool name, policy decision, sensitivity tags, and the previous entry's
+    hash.
+  \item \textbf{Call log record.} Record the call in the session's \texttt{SessionCallLog}
+    with a monotonically increasing sequence number, for temporal adjacency tracking.
+\end{enumerate}
+
+Steps 1 and 2 must both pass for the call to proceed. A Cedar allow decision does not
+bypass the catalog check, and a clean catalog does not bypass Cedar.
+
+\subsection{Session Sensitivity State Machine}
+
+Each session maintains a \texttt{SessionState} object with a \texttt{max\_sensitivity}
+field. The sensitivity order is:
+
+\[
+  \text{public}(0) < \text{pii}(1) < \text{confidential}(2) < \text{hipaa\_phi} = \text{mnpi} = \text{trade\_secret}(3)
+\]
+
+\texttt{max\_sensitivity} is initialized to \texttt{public} and transitions only upward:
+whenever the inspection pipeline tags a response with a higher sensitivity level, the state
+machine raises \texttt{max\_sensitivity} to that level and records which call triggered the
+transition. The session sensitivity never decreases automatically. An operator reset, which
+rotates the session identifier, is the only way to lower it.
+
+This monotonic design is the source of both its guarantee and its cost. It guarantees that
+once PHI enters the session context, every subsequent external call is attributed as
+potentially PHI-adjacent. It causes false positives when a subsequent external call is
+provably unrelated to the PHI. Calls can now declare a sensitivity class through
+\texttt{\_cmcp.data\_class}, but the declaration is agent-cooperative input rather than an
+independently proven lineage fact.
+
+\subsection{Tool Catalog Pinning}
+
+At startup, cMCP computes a definition hash for each tool:
+
+\[
+  h_{\text{tool}} = \text{SHA-256}(\text{tool\_name} \| \text{description} \| \text{inputSchema})
+\]
+
+where the fields are serialized as canonical JSON with sorted keys. The aggregate catalog
+hash is SHA-256 of the sorted concatenation of all per-tool hashes. Both hashes are stored
+in TEE-protected memory.
+
+The approved catalog is an operator-curated file, not a live fetch. A catalog whose hash
+differs from the expected value raises \texttt{CatalogHashMismatch} at load time and the
+gateway does not start. Clients receive \texttt{tools/list} from the approved catalog, so a
+description an upstream server changes after approval never reaches the agent. Before every
+\texttt{tools/call}, the gateway compares the in-memory catalog hash with the startup value
+and refuses the call on a mismatch. At the measured revision it does not compare the
+upstream server's own \texttt{tools/list} with the approved entry; that comparison was added
+later (Section~\ref{sec:eval}, Limitations). Hashing a definition cannot detect a server
+that keeps its advertised definition and changes its behavior.
+
+\subsection{TRACE Claim Generation}
+
+At session close (or on demand), cMCP produces a TRACE Claim by:
+
+\begin{enumerate}[leftmargin=1.5em]
+  \item Computing the session nonce:
+    $\text{nonce} = \text{TP}(\text{pubkey}) \,\|\, \text{SHA-256}(\text{chain\_root})$, the
+    32-byte RFC~7638 JWK Thumbprint of the gateway public key followed by the hash of the
+    session's first audit entry, which records the session identifier. The startup report
+    uses a 32-byte random salt in place of the chain-root hash.
+  \item Requesting an attestation report from the TEE with \texttt{REPORT\_DATA} set to the
+    64-byte nonce (which fills the field exactly). This happens when the session opens; if
+    the call fails, the claim falls back to the startup report and the verifier reports the
+    chain-root binding as missing.
+  \item Assembling the \texttt{RuntimeClaim} Pydantic model with the attestation report,
+    policy bundle hash, catalog hash, session call summary, and audit chain tip.
+  \item Signing the canonical JSON serialization (sorted keys, no whitespace) of the claim
+    body with the TEE's Ed25519 private key.
+  \item Embedding the signature as a base64url-encoded field in the claim.
+\end{enumerate}
+
+The nonce construction binds the attestation report to the TEE instance: the first 32
+bytes are the RFC~7638 JWK Thumbprint of the gateway public key, which a verifier
+re-derives from the claim's \texttt{cnf.jwk} and compares to \texttt{REPORT\_DATA}$[{:}32]$,
+confirming the report belongs to the key that signed the claim. The second half,
+\texttt{REPORT\_DATA}$[32{:}64]$, commits the session's audit-chain root, so in hardware
+mode the session is bound twice: by the hardware report and by the Ed25519 signature over
+\texttt{session\_id}. Without the chain-root commitment an operator holding the signing
+path could rebuild an internally consistent chain and re-sign it; this binding was added
+in cMCP PR~\#368, before the measured revision.
+
+\subsection{Cross-Organizational Attestation (Phase 2)}
+
+When an MCP server also runs inside a TEE, the dual-TEE protocol extends the trust chain to
+the server side (Figure~\ref{fig:dual-tee}). In Phase~2:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item The server TEE generates its own Ed25519 keypair (Phase~2 key).
+  \item At session start, both TEEs exchange public keys and agree on the shared session
+    identifier.
+  \item The Phase~2 nonce is the \emph{server} key thumbprint followed by its own salt,
+    structurally identical to the Phase~1 nonce but bound to a different key. Both phases
+    carry the shared session identifier in their signed claim bodies.
+  \item The server TEE produces an independent TRACE Claim signed with the Phase~2 key.
+\end{itemize}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[round]},
+  tee/.style={draw, dashed, thick, rounded corners, align=center, minimum width=4.3cm,
+              minimum height=4.2em, inner sep=8pt},
+  claim/.style={draw, rounded corners, fill=blue!5, align=center, minimum height=2.0em},
+  note/.style={font=\scriptsize\itshape, text=black!70},
+]
+\node[tee, draw=blue!55!black] (gw)
+  {\textbf{Phase 1: Gateway TEE}\\[2pt] key $K_1$\\ $n_1=\text{TP}(K_{1,\text{pub}})\,\|\,s_1$};
+\node[tee, draw=orange!75!black, right=3.0cm of gw] (srv)
+  {\textbf{Phase 2: Server TEE}\\[2pt] key $K_2$\\ $n_2=\text{TP}(K_{2,\text{pub}})\,\|\,s_2$};
+
+% shared session identifier link
+\draw[<->, thick] (gw.north) to[out=60,in=120]
+  node[note, above, pos=0.5]{shared session id $\sigma$} (srv.north);
+
+\node[claim, below=0.9cm of gw] (c1) {TRACE Claim 1\\ signed by $K_1$};
+\node[claim, below=0.9cm of srv] (c2) {TRACE Claim 2\\ signed by $K_2$};
+\draw[->] (gw) -- (c1);
+\draw[->] (srv) -- (c2);
+
+\node[draw, rounded corners, fill=green!6, align=center, minimum height=2.0em,
+      below=0.9cm of $(c1)!0.5!(c2)$] (ver) {Verifier:\ links via $\sigma$,\ verifies $K_1,K_2$ independently};
+\draw[->] (c1.south) -- (ver.north west);
+\draw[->] (c2.south) -- (ver.north east);
+\end{tikzpicture}
+\caption{The dual-TEE attestation chain (Property~\ref{prop:cross-org}). Two
+independently generated TEE keys produce two TRACE Claims linked by a shared
+session identifier $\sigma$ but verifiable independently: tampering with one
+claim does not affect the other.}
+\label{fig:dual-tee}
+\end{figure}
+
+A verifier who holds both claims can confirm: (a) both claims reference the same session
+identifier; (b) the Phase~1 nonce is bound to the gateway TEE key; (c) the Phase~2 nonce
+is bound to the server TEE key; (d) tampering with one claim does not affect the validity
+of the other. The two claims are linked but independently verifiable.
+
+Phase~2 server TEE deployment is in progress; the experiment in Section~\ref{sec:eval}
+simulates the protocol in software.

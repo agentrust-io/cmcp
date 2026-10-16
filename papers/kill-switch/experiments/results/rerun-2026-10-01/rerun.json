@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-01",
+  "operator": "author's audit session (not independent)",
+  "procedure": "README.md 'Reproduce on a new machine': fresh Python 3.12 venvs, hash-pinned requirements/dev.txt, editable subject installed with --no-deps; matrix.py against the clean pinned cMCP checkout; pytest on the five named cMCP files and cA2A tests/unit/test_revocation.py",
+  "cmcp_source": "9db65b589610eb4e8455003197de592636678203",
+  "ca2a_source": "540a578c462a413e829bed84aff0235b9018f676",
+  "platform": "Windows, Python 3.12.10",
+  "deviations": [
+    "subject checkouts were cloned outside the paper directory instead of subjects/; --source pointed at that clean checkout",
+    "every command was started from a parent process created with CREATE_NO_WINDOW so that no console window opened; the evaluator files were not modified and their hashes match run.json",
+    "pytest run with -p no:cacheprovider so that no cache is written into the pinned checkouts",
+    "gateway stderr logs written by run.py are not retained, matching the reference layout; logs redact local paths only"
+  ],
+  "matrix": [
+    {"mutation": "none", "exit_code": 0, "expected_failure": null, "observed_failures": [], "matched_expectation": true},
+    {"mutation": "forget-block", "exit_code": 1, "expected_failure": "restart-retains-block", "observed_failures": ["restart-retains-block"], "matched_expectation": true},
+    {"mutation": "disable-auto", "exit_code": 1, "expected_failure": "automatic-trip-refuses-allowed-tool", "observed_failures": ["automatic-trip-refuses-allowed-tool"], "matched_expectation": true}
+  ],
+  "matrix_json_identical_to_reference": true,
+  "live_assertions_passed": 27,
+  "live_assertions_total": 27,
+  "assertion_ids_match_reference": true,
+  "readiness_during_drain": {"id": "readiness-during-drain", "status": 200},
+  "whole_claim_schema": {
+    "id": "whole-claim-schema",
+    "observation": "rejected",
+    "errors": [
+      "Additional properties are not allowed ('call_log_summary' was unexpected)",
+      "Additional properties are not allowed ('edges_represent' was unexpected)"
+    ]
+  },
+  "later_schema_check": {
+    "cmcp_main": "a3f61e1a4d866bcd4fd2a149fff4da34b7e68597",
+    "result": "the four emitted claims from this rerun (none/claim.json, none/automatic-claim.json, forget-block/claim.json, disable-auto/claim.json) validate with 0 errors against schemas/trace-claim.schema.json at cMCP main a3f61e1 and with 2 errors each against the pinned schema"
+  },
+  "differences_from_reference": "Only per-run values differ (session and call identifiers, audit hashes, latency, keys and signatures). Every assertion id, pass result and the two unscored observations match the reference and the 2026-09-27 rerun.",
+  "cmcp_component_tests": {"passed": 81, "failed": 0},
+  "ca2a_component_tests": {"passed": 38, "failed": 0}
+}

@@ -1,0 +1,46 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
+rootdir: <scratch>\copy-replay-2
+configfile: pyproject.toml
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 46 items
+
+tests\unit\test_disclosure.py ......................F....FF............. [ 91%]
+F...                                                                     [100%]
+
+================================== FAILURES ===================================
+__________________ test_expiry_rechecked_after_storage_wait ___________________
+tests\unit\test_disclosure.py:140: in test_expiry_rechecked_after_storage_wait
+    assert DisclosureGate(**options).release(request, approve()).reason == "replay"
+E   AssertionError: assert 'adapter_acknowledged' == 'replay'
+E     
+E     - replay
+E     + adapter_acknowledged
+_______________ test_replay_survives_reopen_and_failed_delivery _______________
+tests\unit\test_disclosure.py:170: in test_replay_survives_reopen_and_failed_delivery
+    assert DisclosureGate(**options).release(request, approve()).reason == "replay"
+E   AssertionError: assert 'adapter_acknowledged' == 'replay'
+E     
+E     - replay
+E     + adapter_acknowledged
+_____________ test_shared_store_concurrent_attempts_deliver_once ______________
+tests\unit\test_disclosure.py:181: in test_shared_store_concurrent_attempts_deliver_once
+    assert sum(result.delivery == "acknowledged" for result in results) == 1
+E   assert 6 == 1
+E    +  where 6 = sum(<generator object test_shared_store_concurrent_attempts_deliver_once.<locals>.<genexpr> at 0x000001D87E018FB0>)
+________________ test_storage_failure_never_reaches_recipient _________________
+tests\unit\test_disclosure.py:248: in test_storage_failure_never_reaches_recipient
+    assert (result.disposition, result.reason) == ("unavailable", "replay_storage")
+E   AssertionError: assert ('authorized_...acknowledged') == ('unavailable...play_storage')
+E     
+E     At index 0 diff: 'authorized_disclosure' != 'unavailable'
+E     Use -v to get more diff
+- generated xml file: <scratch>\replay.xml -
+=========================== short test summary info ===========================
+FAILED tests/unit/test_disclosure.py::test_expiry_rechecked_after_storage_wait
+FAILED tests/unit/test_disclosure.py::test_replay_survives_reopen_and_failed_delivery
+FAILED tests/unit/test_disclosure.py::test_shared_store_concurrent_attempts_deliver_once
+FAILED tests/unit/test_disclosure.py::test_storage_failure_never_reaches_recipient
+======================== 4 failed, 42 passed in 0.69s =========================
+
+STDERR
