@@ -49,7 +49,7 @@ def test_optional_and_required_attestation_policies_keep_authentication_independ
 
     optional = variants["optional"]
     assert optional["verifier_disposition"] == "continue_to_policy"
-    assert optional["attestation_claim"] is None
+    assert optional["positive_attestation_claim"] is False
     assert optional["evidence_status"] == "not_established"
     assert optional["reason"] == not_established_reason
     assert optional["refusal"] is False
@@ -57,7 +57,7 @@ def test_optional_and_required_attestation_policies_keep_authentication_independ
 
     required = variants["required"]
     assert required["verifier_disposition"] == "refuse_before_upstream"
-    assert required["attestation_claim"] is None
+    assert required["positive_attestation_claim"] is False
     assert required["evidence_status"] == "not_established"
     assert required["reason"] == not_established_reason
     assert required["refusal"] is True
@@ -77,6 +77,8 @@ def test_absence_and_unverifiable_evidence_are_not_verified_contradictions() -> 
     assert unverifiable["policy_variants"][1]["evidence_status"] == "not_established"
 
     assert contradiction["evidence_condition"] == "verified_contradiction"
+    assert contradiction["authentication_standing"] == "authenticated"
+    assert contradiction["positive_attestation_claim"] is False
     assert contradiction["evidence_status"] == "contradictory"
     assert contradiction["reason"] == "runtime_attestation_binding_mismatch"
     assert contradiction["verifier_disposition"] == "refuse_on_attestation_boundary"

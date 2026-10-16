@@ -15,7 +15,7 @@
     {
       "attestation_policy": "optional",
       "verifier_disposition": "continue_to_policy",
-      "attestation_claim": null,
+      "positive_attestation_claim": false,
       "evidence_status": "not_established",
       "reason": "runtime_attestation_absent",
       "refusal": false,
@@ -25,7 +25,7 @@
     {
       "attestation_policy": "required",
       "verifier_disposition": "refuse_before_upstream",
-      "attestation_claim": null,
+      "positive_attestation_claim": false,
       "evidence_status": "not_established",
       "reason": "runtime_attestation_absent",
       "refusal": true,

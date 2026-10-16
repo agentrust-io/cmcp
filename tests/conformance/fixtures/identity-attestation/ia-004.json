@@ -15,7 +15,7 @@
     {
       "attestation_policy": "optional",
       "verifier_disposition": "continue_to_policy",
-      "attestation_claim": null,
+      "positive_attestation_claim": false,
       "evidence_status": "not_established",
       "reason": "runtime_attestation_unverifiable",
       "refusal": false,
@@ -25,7 +25,7 @@
     {
       "attestation_policy": "required",
       "verifier_disposition": "refuse_before_upstream",
-      "attestation_claim": null,
+      "positive_attestation_claim": false,
       "evidence_status": "not_established",
       "reason": "runtime_attestation_unverifiable",
       "refusal": true,
@@ -35,6 +35,8 @@
   ],
   "verified_contradiction_control": {
     "evidence_condition": "verified_contradiction",
+    "authentication_standing": "authenticated",
+    "positive_attestation_claim": false,
     "evidence_status": "contradictory",
     "reason": "runtime_attestation_binding_mismatch",
     "verifier_disposition": "refuse_on_attestation_boundary",
