@@ -85,7 +85,7 @@ tomli-w==1.2.0
 types-pyyaml==6.0.12.20260518
 typing-extensions==4.15.0
 typing-inspection==0.4.2
-urllib3==2.7.0
+urllib3==2.8.0
 uv==0.12.21
 uvicorn==0.49.0
 yarl==1.24.2
