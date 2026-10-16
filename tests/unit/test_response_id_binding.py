@@ -74,11 +74,12 @@ async def test_proxy_reply_binding_retains_one_terminal_outcome(media_type, matc
         "jsonrpc": "2.0", "id": "current" if matching else "different",
         "result": {"content": [{"type": "text", "text": "nonsecret-result"}]},
     }
-    client = MagicMock()
-    client.post = AsyncMock(return_value=_response(reply, media_type))
-    proxy._client_for_upstream = MagicMock(return_value=client)
-
-    result = await proxy.call_tool("current", "test.echo", {})
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: _response(reply, media_type)),
+        trust_env=False,
+    ) as client:
+        proxy._client_for_upstream = MagicMock(return_value=client)
+        result = await proxy.call_tool("current", "test.echo", {})
 
     assert result.allowed is matching
     terminal, = _terminals(chain)
