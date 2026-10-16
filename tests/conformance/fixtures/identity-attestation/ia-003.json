@@ -1,0 +1,36 @@
+{
+  "case_id": "IA-003",
+  "title": "authentication succeeds while runtime-attestation evidence is absent",
+  "independent_dimensions": [
+    "workload_identity",
+    "represented_user",
+    "token_audience",
+    "proof_of_possession_binding",
+    "delegation_reference",
+    "runtime_attestation"
+  ],
+  "authentication_standing": "authenticated",
+  "evidence_condition": "absent",
+  "policy_variants": [
+    {
+      "attestation_policy": "optional",
+      "verifier_disposition": "continue_to_policy",
+      "attestation_claim": null,
+      "evidence_status": "not_established",
+      "reason": "runtime_attestation_absent",
+      "refusal": false,
+      "upstream_calls": "policy_dependent",
+      "boundary_bypass_control": "absence_must_not_create_attestation_claim"
+    },
+    {
+      "attestation_policy": "required",
+      "verifier_disposition": "refuse_before_upstream",
+      "attestation_claim": null,
+      "evidence_status": "not_established",
+      "reason": "runtime_attestation_absent",
+      "refusal": true,
+      "upstream_calls": 0,
+      "boundary_bypass_control": "must_fail_if_required_attestation_check_is_bypassed"
+    }
+  ]
+}
