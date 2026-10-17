@@ -14,6 +14,8 @@ from typing import Any
 
 import agent_manifest as sdk
 import pytest
+from agent_manifest._merkle import build_catalog_tree
+from agent_manifest.models import ToolEntry
 
 from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
 from cmcp_runtime.catalog.loader import (
@@ -24,23 +26,28 @@ from cmcp_runtime.catalog.loader import (
 )
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
-from cmcp_runtime.manifest_catalog import manifest_catalog_binding
+from cmcp_runtime.manifest_catalog import (
+    ManifestCatalogOutOfProfile,
+    manifest_catalog_binding,
+)
 
 POLICY_HASH = "sha256:" + "a" * 64
 SEALED_HASH = "sha256:" + "b" * 64
 AGENT_ID = "spiffe://factory.example/agent/material-movement/dev"
 ISSUER = "spiffe://factory.example/signing-authority/development"
 MISMATCH = "tool catalog hash does not match runtime catalog"
+JOIN = "does not join the runtime catalog on tool_name and endpoint_id"
+SERVER_SPIFFE = "spiffe://factory.example/mcp/inventory"
 
 
-def _entry(name: str, description: str) -> CatalogEntry:
+def _entry(name: str, description: str, spiffe_id: str | None = SERVER_SPIFFE) -> CatalogEntry:
     return CatalogEntry(
         tool_name=name,
         server=ServerIdentity(
             display_name="Fixture",
             url="https://fixture.invalid/mcp",
             tls_fingerprint="SHA256:" + "A" * 43 + "=",
-            spiffe_id=None,
+            spiffe_id=spiffe_id,
             transport="http-sse",
             rotation_mode="key-pinned",
         ),
@@ -149,7 +156,7 @@ def test_legacy_manifest_still_binds_when_no_runtime_catalog_is_given() -> None:
     ids=["subset", "superset", "renamed"],
 )
 def test_manifest_listing_a_different_tool_set_fails(listed_tools: dict[str, str]) -> None:
-    with pytest.raises(ConfigError, match=MISMATCH):
+    with pytest.raises(ConfigError, match=JOIN):
         _bind(_listed(_catalog(**listed_tools)), _catalog(**SERVED))
 
 
@@ -162,7 +169,7 @@ def test_tampered_description_in_the_served_catalog_fails() -> None:
 
 def test_explicit_empty_list_is_an_empty_catalog_not_the_legacy_form() -> None:
     empty = _listed(_catalog())
-    with pytest.raises(ConfigError, match=MISMATCH):
+    with pytest.raises(ConfigError, match=JOIN):
         _bind(empty, _catalog(**SERVED))
     assert _bind(empty, _catalog()).tool_catalog_hash == empty["catalog_hash"]
 
@@ -193,3 +200,41 @@ def test_runtime_catalog_must_be_the_one_behind_the_sealed_digest() -> None:
     served = _catalog(**SERVED)
     with pytest.raises(ConfigError, match="needs the runtime catalog"):
         _bind(_listed(served), served, sealed="sha256:" + "c" * 64)
+
+
+def test_reverse_domain_tool_ids_bind_through_the_join() -> None:
+    """tool_id is the manifest's; the join is on tool_name plus endpoint_id."""
+    served = _catalog(**SERVED)
+    listed = _listed(served)
+    for tool in listed["tools"]:
+        tool["tool_id"] = "com.factory." + tool["tool_name"]
+    listed["catalog_hash"] = build_catalog_tree(
+        [ToolEntry.model_validate(t) for t in listed["tools"]]
+    )
+    assert _bind(listed, served).tool_catalog_hash == listed["catalog_hash"]
+
+
+def test_listed_tool_on_another_endpoint_does_not_join() -> None:
+    """Same name, schema and description served from another SPIFFE ID."""
+    listed = _listed(_catalog(**SERVED))
+    elsewhere = ToolCatalog(
+        entries={
+            name: _entry(name, text, "spiffe://factory.example/mcp/elsewhere")
+            for name, text in SERVED.items()
+        },
+        catalog_hash=SEALED_HASH,
+    )
+    with pytest.raises(ConfigError, match=JOIN):
+        _bind(listed, elsewhere)
+
+
+def test_served_catalog_without_spiffe_is_out_of_profile() -> None:
+    """Its own outcome: not a join failure and not a root mismatch."""
+    listed = _listed(_catalog(**SERVED))
+    no_spiffe = ToolCatalog(
+        entries={name: _entry(name, text, None) for name, text in SERVED.items()},
+        catalog_hash=SEALED_HASH,
+    )
+    with pytest.raises(ManifestCatalogOutOfProfile, match="out of profile") as caught:
+        _bind(listed, no_spiffe)
+    assert MISMATCH not in str(caught.value) and JOIN not in str(caught.value)
