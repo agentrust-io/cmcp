@@ -1,0 +1,120 @@
+{
+  "cmcp_version": "1.0",
+  "trace": {
+    "eat_profile": "tag:agentrust-io.com,2026:trace-v0.2",
+    "iat": 1789881518,
+    "subject": "spiffe://cmcp.gateway/tee/74b9f8b63df74888",
+    "runtime": {
+      "platform": "software-only",
+      "measurement": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "firmware_version": "software-only-dev-mode"
+    },
+    "policy": {
+      "bundle_hash": "sha256:59f1aea1409012794afc9b3f580fe2306ad03c7eaa59e0ba1ed060f005f0dd15",
+      "enforcement_mode": "enforce",
+      "version": "1.0.0"
+    },
+    "data_class": "public",
+    "tool_transcript": {
+      "hash": "sha256:812e94223a6f342d400ab9dae705260cd2c893c78626f8cd4a9fabb63366402c",
+      "call_count": 5,
+      "entries": [
+        {
+          "tool_name": "absent.tool",
+          "data_class": "unknown",
+          "decision": "deny"
+        },
+        {
+          "tool_name": "absent.tool",
+          "data_class": "unknown",
+          "decision": "deny"
+        },
+        {
+          "tool_name": "absent.tool",
+          "data_class": "unknown",
+          "decision": "deny"
+        },
+        {
+          "tool_name": "absent.tool",
+          "data_class": "unknown",
+          "decision": "deny"
+        },
+        {
+          "tool_name": "absent.tool",
+          "data_class": "unknown",
+          "decision": "deny"
+        }
+      ]
+    },
+    "cnf": {
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "dLn4tj33SIgjNN0oWE0Vpp2gXuqEpinPmKfBt75ceE8",
+        "kid": "cmcp-74b9f8b6"
+      }
+    }
+  },
+  "gateway": {
+    "session_id": "46eb34cb-4953-43c6-ae06-3e71ed8611e8",
+    "gateway_version": "0.5.0",
+    "sequence_number": 1,
+    "audit_chain": {
+      "root": "b23dbde56620474c8f784af453f65eb398363cdb79c4bf929ba292a18a67504d",
+      "tip": "812e94223a6f342d400ab9dae705260cd2c893c78626f8cd4a9fabb63366402c",
+      "length": 10
+    },
+    "call_summary": {
+      "tool_calls_total": 5,
+      "tool_calls_allowed": 0,
+      "tool_calls_denied": 5,
+      "tool_calls_faulted": 0,
+      "tools_invoked": [
+        "absent.tool"
+      ],
+      "session_max_sensitivity": "public",
+      "call_graph_summary": {
+        "compliance_domains_touched": [
+          "unknown"
+        ],
+        "cross_boundary_events": [],
+        "edges_represent": "Edges represent temporal adjacency (call order), not data provenance. A -> B means B was called immediately after A within this session."
+      }
+    },
+    "catalog": {
+      "hash": "sha256:560f1f5479ab3255a7eb37de71873a3dd747084bbe7fdd52f240454697f55f4d",
+      "drift_detected": false
+    },
+    "attestation_generated_at": "2026-09-20T05:18:38.278189+00:00",
+    "attestation_validity_seconds": 86400,
+    "attestation_stale": false,
+    "catalog_exceptions": [],
+    "call_log_summary": {
+      "total_calls": 5,
+      "tools_called": [
+        "absent.tool"
+      ],
+      "suspicious_sequences_detected": 2
+    },
+    "agent_identity": {
+      "manifest_id": "0197739a-8c00-7000-8000-000000000001",
+      "agent_id": "spiffe://evaluation.example/agent/worker",
+      "authenticated_subject": "spiffe://evaluation.example/agent/worker",
+      "subject_source": "config",
+      "issuer": "spiffe://evaluation.example/issuer",
+      "issuer_key_id": "ac214f6def850e773aa6e4893a8cef1c97b4ac769b78a9d0edf8278adc94afe1",
+      "policy_bundle_hash": "sha256:59f1aea1409012794afc9b3f580fe2306ad03c7eaa59e0ba1ed060f005f0dd15",
+      "tool_catalog_hash": "sha256:560f1f5479ab3255a7eb37de71873a3dd747084bbe7fdd52f240454697f55f4d",
+      "enforcement_mode": "enforcing"
+    },
+    "kill_switch_triggered": true,
+    "kill_switch": {
+      "enabled": true,
+      "window_seconds": 300,
+      "deny_rate_threshold": 0.9,
+      "min_calls": 5,
+      "trigger": "deny_rate"
+    }
+  },
+  "signature": "oC40aot8oRuLMkbZ61FslfrtrgtkxMz1TFfxiT6ioRsz7iatc6zU2Qd8jrp1bQcDz2TApkkUp9ad7FV333GoAA"
+}

@@ -1,0 +1,14 @@
+# Environment (Python 3.12), from a clone of agentrust-io/cmcp
+git -C <source> checkout --detach a3f61e1a4d866bcd4fd2a149fff4da34b7e68597
+python -m venv <venv>
+<venv>/Scripts/python -m pip install --require-hashes -r <source>/requirements/dev.txt
+# Run (from this report's directory)
+<venv>/Scripts/python -B experiments/run.py --source <source> --commit a3f61e1a4d866bcd4fd2a149fff4da34b7e68597 --output <output>
+# Individual commands, as executed
+python -B -m pytest -p no:cacheprovider -p pytest_asyncio.plugin -q --tb=short --basetemp=<scratch>\baseline-tmp --junitxml=<output>\pytest-baseline.xml tests/unit/test_kill_switch.py tests/unit/test_kill_switch_durable.py tests/unit/test_kill_switch_evidence.py tests/unit/test_kill_switch_mid_session.py tests/confinement/test_adapter.py tests/confinement/test_gateway.py
+python -B -m pytest -p no:cacheprovider -p pytest_asyncio.plugin -q --tb=short --basetemp=<scratch>\durable-block-tmp --junitxml=<output>\pytest-durable-block.xml tests/unit/test_kill_switch.py tests/unit/test_kill_switch_durable.py tests/unit/test_kill_switch_evidence.py tests/unit/test_kill_switch_mid_session.py tests/confinement/test_adapter.py tests/confinement/test_gateway.py
+python -B -m pytest -p no:cacheprovider -p pytest_asyncio.plugin -q --tb=short --basetemp=<scratch>\receipt-signature-tmp --junitxml=<output>\pytest-receipt-signature.xml tests/unit/test_kill_switch.py tests/unit/test_kill_switch_durable.py tests/unit/test_kill_switch_evidence.py tests/unit/test_kill_switch_mid_session.py tests/confinement/test_adapter.py tests/confinement/test_gateway.py
+python -B experiments/store_scope.py <scratch>
+python -B experiments/trip_and_observation.py run <scratch> 
+python -B experiments/trip_and_observation.py run <scratch> 
+python -B experiments/trip_and_observation.py run <scratch> --no-nonce-check

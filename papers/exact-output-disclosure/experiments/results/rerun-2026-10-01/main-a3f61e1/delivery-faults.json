@@ -1,0 +1,183 @@
+{
+  "experiment": "exact-output-delivery-faults",
+  "cases": [
+    {
+      "case": "kill-before_commit",
+      "first_attempt": "process-killed",
+      "first_exit": 71,
+      "rows_after_kill": 0,
+      "receipts_after_kill": 0,
+      "retry": "adapter_acknowledged",
+      "final": 1,
+      "expected": {
+        "rows_after_kill": 0,
+        "receipts_after_kill": 0,
+        "retry": "adapter_acknowledged",
+        "final": 1
+      },
+      "ok": true
+    },
+    {
+      "case": "kill-after_commit",
+      "first_attempt": "process-killed",
+      "first_exit": 72,
+      "rows_after_kill": 1,
+      "receipts_after_kill": 0,
+      "retry": "replay",
+      "final": 0,
+      "expected": {
+        "rows_after_kill": 1,
+        "receipts_after_kill": 0,
+        "retry": "replay",
+        "final": 0
+      },
+      "ok": true
+    },
+    {
+      "case": "kill-during_delivery",
+      "first_attempt": "process-killed",
+      "first_exit": 1,
+      "rows_after_kill": 1,
+      "receipts_after_kill": 1,
+      "retry": "replay",
+      "final": 1,
+      "expected": {
+        "rows_after_kill": 1,
+        "receipts_after_kill": 1,
+        "retry": "replay",
+        "final": 1
+      },
+      "ok": true
+    },
+    {
+      "case": "kill-ack_dropped",
+      "first_attempt": "delivery_unknown",
+      "first_exit": 0,
+      "rows_after_kill": 1,
+      "receipts_after_kill": 1,
+      "retry": "replay",
+      "final": 1,
+      "expected": {
+        "rows_after_kill": 1,
+        "receipts_after_kill": 1,
+        "retry": "replay",
+        "final": 1
+      },
+      "ok": true
+    },
+    {
+      "case": "storage-locked-8-competing",
+      "during_lock": [
+        "replay_storage",
+        "replay_storage",
+        "replay_storage",
+        "replay_storage",
+        "replay_storage",
+        "replay_storage",
+        "replay_storage",
+        "replay_storage"
+      ],
+      "after_lock": [
+        "adapter_acknowledged",
+        "replay",
+        "replay",
+        "replay",
+        "replay",
+        "replay",
+        "replay",
+        "replay"
+      ],
+      "receipts": 1,
+      "ok": true
+    },
+    {
+      "case": "approval-expires-while-waiting-8-competing",
+      "outcomes": [
+        "approval_expired_or_early",
+        "replay",
+        "replay",
+        "replay",
+        "replay",
+        "replay",
+        "replay",
+        "replay"
+      ],
+      "rows": 1,
+      "receipts": 0,
+      "ok": true
+    },
+    {
+      "case": "corrupt-ledger",
+      "outcome": "replay_storage",
+      "receipts": 0,
+      "ok": true
+    },
+    {
+      "case": "error-reported-after-commit",
+      "outcome": "replay_storage",
+      "rows": 1,
+      "retry": "replay",
+      "receipts": 0,
+      "ok": true
+    },
+    {
+      "case": "process-race-10x8",
+      "rounds": [
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        },
+        {
+          "acknowledged": 1,
+          "replay": 7,
+          "receipts": 1
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "cases_passed": 9,
+  "cases_total": 9,
+  "criterion_met": true
+}

@@ -1,0 +1,39 @@
+============================================================
+Experiment: Policy Bundle Hash Binding
+Claim 1: cMCP TEE-measured policy enforcement
+============================================================
+
+[1. Hash determinism: same bundle, same hash across loads]
+    bundle-v1 hash (load 1): sha256:349427f3b8d8d6aa3c71d0d42d2a4076a7dfb927386b9d6919cf774549c5fe36
+    bundle-v1 hash (load 2): sha256:349427f3b8d8d6aa3c71d0d42d2a4076a7dfb927386b9d6919cf774549c5fe36
+    Deterministic: YES  OK
+
+[2. Avalanche effect: one character changed in cedar comment]
+    bundle-v1 hash: sha256:349427f3b8d8d6aa3c71d0d42d2a4076a7dfb927386b9d6919cf774549c5fe36
+    bundle-v2 hash: sha256:58170409c01ae5fcfed20bbcebf1a753189599f799a565101af512f5939825ff
+    Change: line 1 of cedar file: '// Approved policy v1.0.0: allow EHR tool access for authorized principals' -> '// approved policy v1.0.0: allow EHR tool access for authorized principals'
+    Bits changed (of 256): 131 (51%)
+    Hex chars changed (of 64): 60
+    Hashes differ: YES: tamper detectable  OK
+
+[3. Tamper detection: load bundle-v2 with expected_hash of bundle-v1]
+    (simulates an admin swapping the bundle after approval)
+    PolicyHashMismatch raised: YES  OK
+    Error detail: Policy bundle hash mismatch: gateway will not start...
+    Correct hash (bundle-v1 / h1): passes without error  OK
+
+[4. TRACE Claim signature tamper detection]
+    (TRACE Claim is signed with TEE-sealed key; any field change breaks the sig)
+    Original claim signature: VALID  OK
+    Claim with tampered bundle_hash: INVALID (rejected)  OK
+
+============================================================
+Result: ALL 4 PROPERTIES CONFIRMED
+
+Interpretation:
+  A policy bundle substitution attack is detectable because:
+  - bundle-v1 (approved) hash: sha256:349427f3b8d8d6aa3c71d0d42d2a4076a7dfb927386b9d6919cf774549c5fe36
+  - bundle-v2 (tampered) hash: sha256:58170409c01ae5fcfed20bbcebf1a753189599f799a565101af512f5939825ff
+  - 131/256 bits differ from one character change
+  - load_policy_bundle raises PolicyHashMismatch on mismatch
+  - TRACE Claim signature is invalidated by any hash field change

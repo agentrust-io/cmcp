@@ -1,0 +1,150 @@
+[
+  {
+    "id": "allowed-tool-effect",
+    "passed": true,
+    "status": 200,
+    "body": {
+      "jsonrpc": "2.0",
+      "id": "before-trip",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "before-trip"
+          }
+        ],
+        "_cmcp": {
+          "call_id": "8a2a40f9-faf5-4bc9-9ccf-643e6e200ff8",
+          "audit_entry_hash": "b9c7dcce540d9630f6564c80bce440e914918fb1ea83fecff57e6a77a4c99609",
+          "would_have_denied": false,
+          "latency_us": 567766,
+          "session_id": "d5c04774-bf90-4e4e-82c0-c669cf36d963"
+        }
+      }
+    }
+  },
+  {
+    "id": "agent-cannot-trip",
+    "passed": true,
+    "status": 401
+  },
+  {
+    "id": "tool-admitted-before-trip",
+    "passed": true
+  },
+  {
+    "id": "readiness-during-drain",
+    "status": 200
+  },
+  {
+    "id": "new-call-has-no-effect-during-drain",
+    "passed": true
+  },
+  {
+    "id": "queued-call-refused-after-drain",
+    "passed": true,
+    "status": 403
+  },
+  {
+    "id": "in-flight-effect-can-complete",
+    "passed": true
+  },
+  {
+    "id": "operator-trip-closes",
+    "passed": true,
+    "status": 200
+  },
+  {
+    "id": "signed-trigger-is-operator",
+    "passed": true
+  },
+  {
+    "id": "post-trip-no-tool-effect",
+    "passed": true
+  },
+  {
+    "id": "receipt-verifies",
+    "passed": true,
+    "errors": []
+  },
+  {
+    "id": "tampered-receipt-rejected",
+    "passed": true
+  },
+  {
+    "id": "tampered-claim-rejected",
+    "passed": true
+  },
+  {
+    "id": "whole-claim-schema",
+    "observation": "rejected",
+    "errors": [
+      "Additional properties are not allowed ('call_log_summary' was unexpected)",
+      "Additional properties are not allowed ('edges_represent' was unexpected)"
+    ]
+  },
+  {
+    "id": "bypass-counterexample",
+    "passed": true
+  },
+  {
+    "id": "agent-cannot-unblock",
+    "passed": true
+  },
+  {
+    "id": "restart-retains-block",
+    "passed": true,
+    "status": 403
+  },
+  {
+    "id": "restart-receipt-not-bound-to-old-claim",
+    "passed": true,
+    "has_claim_digest": false
+  },
+  {
+    "id": "operator-recovers",
+    "passed": true,
+    "status": 200
+  },
+  {
+    "id": "recovered-tool-effect",
+    "passed": true
+  },
+  {
+    "id": "old-receipt-still-verifies-after-recovery",
+    "passed": true
+  },
+  {
+    "id": "automatic-deny-0",
+    "passed": true
+  },
+  {
+    "id": "automatic-deny-1",
+    "passed": true
+  },
+  {
+    "id": "automatic-deny-2",
+    "passed": true
+  },
+  {
+    "id": "automatic-deny-3",
+    "passed": true
+  },
+  {
+    "id": "automatic-deny-4",
+    "passed": true
+  },
+  {
+    "id": "automatic-trip-refuses-allowed-tool",
+    "passed": true,
+    "error_code": "KILL_SWITCH_TRIPPED"
+  },
+  {
+    "id": "automatic-receipt-verifies",
+    "passed": true
+  },
+  {
+    "id": "signed-trigger-is-deny-rate",
+    "passed": true
+  }
+]

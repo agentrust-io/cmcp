@@ -280,7 +280,7 @@ async def test_http_status_failure_records_transport_response_received() -> None
     request = httpx.Request("POST", "https://local.invalid/mcp")
     response = httpx.Response(503, request=request, content=b'{"error":"unavailable"}')
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.stream.return_value.__aenter__.return_value = response
     proxy._client_for_upstream = MagicMock(return_value=client)
 
     result = await proxy.call_tool("status-fault", "test.echo", {})
@@ -301,7 +301,7 @@ async def test_parse_failure_records_transport_response_received() -> None:
     request = httpx.Request("POST", "https://local.invalid/mcp")
     response = httpx.Response(200, request=request, content=b'{"jsonrpc":"2.0"}')
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.stream.return_value.__aenter__.return_value = response
     proxy._client_for_upstream = MagicMock(return_value=client)
 
     with (
@@ -539,7 +539,7 @@ async def test_tls_pin_mismatch_resets_to_proven_pre_send() -> None:
     proxy = _make_proxy(chain)
     proxy._check_provenance = AsyncMock(return_value=_provenance(meets_requirement=True))
     client = MagicMock()
-    client.post = AsyncMock(
+    client.stream = MagicMock(
         side_effect=tls_pinning.TLSPinMismatchError(
             expected="SHA256:" + "A" * 43 + "=",
             actual="SHA256:" + "B" * 43 + "=",
@@ -550,7 +550,7 @@ async def test_tls_pin_mismatch_resets_to_proven_pre_send() -> None:
     result = await proxy.call_tool("tls-mismatch", "test.echo", {})
 
     assert result.allowed is False
-    assert client.post.await_count == 1
+    assert client.stream.call_count == 1
     terminal = _terminals(chain)[0]
     assert terminal.detail["terminal_disposition"] == "not_attempted"
     assert terminal.detail["failure_stage"] == "tls_pin_verification_pre_send"
@@ -563,7 +563,7 @@ async def test_request_construction_failure_is_pre_transport() -> None:
     proxy = _make_proxy(chain)
     proxy._check_provenance = AsyncMock(return_value=_provenance(meets_requirement=True))
     client = MagicMock()
-    client.post = AsyncMock()
+    client.stream = MagicMock()
     proxy._client_for_upstream = MagicMock(return_value=client)
 
     with (
@@ -575,7 +575,7 @@ async def test_request_construction_failure_is_pre_transport() -> None:
     ):
         await proxy.call_tool("request-fault", "test.echo", {})
 
-    assert client.post.await_count == 0
+    assert client.stream.call_count == 0
     terminal = _terminals(chain)[0]
     assert terminal.detail["terminal_disposition"] == "not_attempted"
     assert terminal.detail["effect_boundary_state"] == "pre_transport"
@@ -605,7 +605,7 @@ async def test_header_construction_failure_is_pre_transport() -> None:
     proxy = _make_proxy(chain)
     proxy._check_provenance = AsyncMock(return_value=_provenance(meets_requirement=True))
     client = MagicMock()
-    client.post = AsyncMock()
+    client.stream = MagicMock()
     proxy._client_for_upstream = MagicMock(return_value=client)
 
     with (
@@ -617,7 +617,7 @@ async def test_header_construction_failure_is_pre_transport() -> None:
     ):
         await proxy.call_tool("header-fault", "test.echo", {})
 
-    assert client.post.await_count == 0
+    assert client.stream.call_count == 0
     terminal = _terminals(chain)[0]
     assert terminal.detail["terminal_disposition"] == "not_attempted"
     assert terminal.detail["effect_boundary"] == "not_reached"

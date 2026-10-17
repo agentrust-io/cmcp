@@ -1,0 +1,48 @@
+
+Claim 4 | TRACE Claim key binding and disclosure resistance
+========================================================================
+
+P1  JWK thumbprint determinism
+  thumbprint run 1: b23f62f5d6ee7dc5b6eaad0af31f8eff3cb81ca92926ab80e650ccd51fa1b0ed
+  thumbprint run 2: b23f62f5d6ee7dc5b6eaad0af31f8eff3cb81ca92926ab80e650ccd51fa1b0ed
+  PASS: thumbprint is deterministic and re-derivable from cnf.jwk.x
+
+P2  report_data[:32] equals the thumbprint (key binding)
+  nonce: b23f62f5d6ee7dc5b6eaad0af31f8eff3cb81ca92926ab80e650ccd51fa1b0ed1111111111111111111111111111111111111111111111111111111111111111
+  report_data[:32]: b23f62f5d6ee7dc5b6eaad0af31f8eff3cb81ca92926ab80e650ccd51fa1b0ed
+  PASS: report is bound to this gateway key
+
+P3  Instance binding -- different TEE key -> different thumbprint
+  key 1 thumbprint: b23f62f5d6ee7dc5b6eaad0af31f8eff3cb81ca92926ab80e650ccd51fa1b0ed
+  key 2 thumbprint: cea61568c7d94fc20db80a756381a446ca0d4a1e0bd69619cb11c160a7aa265c
+  PASS: nonce[:32] changes with the TEE key
+
+P4  Freshness -- different salt -> different nonce
+  nonce (salt A): b23f62f5d6ee7dc5b6eaad0af31f8eff3cb81ca92926ab80e650ccd51fa1b0ed1111111111111111111111111111111111111111111111111111111111111111
+  nonce (salt B): b23f62f5d6ee7dc5b6eaad0af31f8eff3cb81ca92926ab80e650ccd51fa1b0ed2222222222222222222222222222222222222222222222222222222222222222
+  PASS: per-startup salt makes each instance nonce distinct
+
+P5  Session binding -- session_id tamper breaks the Ed25519 signature
+  signature on original claim (session-A): VALID
+  signature after replacing session_id: INVALID
+  PASS: a claim cannot be presented under a different session
+
+P6  Selective disclosure resistance -- removing one audit entry breaks export hash
+  Full audit (5 entries) bundle_hash: sha256:b67d8d965002c500fe3c4d1d376167c61ae98a1f3393887c286aa96863f1a688
+  After removing call-2 (4 entries): sha256:bd898904adde29ec45de00db78b3f198cce39f9dfa0d40dd1ebdb4ed04626d84
+  Hashes match?: False
+  Export signature valid on modified bundle?: False
+  PASS: removing one audit entry changes bundle_hash, signature fails
+
+Summary:
+  P1: Thumbprint deterministic / re-derivable     PASS
+  P2: report_data[:32] binds the TEE key          PASS
+  P3: Thumbprint changes with TEE key             PASS
+  P4: Salt makes each instance nonce fresh        PASS
+  P5: session_id tamper breaks Ed25519 sig        PASS
+  P6: Entry removal breaks export signature       PASS
+
+In hardware TEE mode, the nonce is committed into the hardware-signed
+report_data field. The operator cannot forge a thumbprint for a different
+key without compromising the TEE.
+

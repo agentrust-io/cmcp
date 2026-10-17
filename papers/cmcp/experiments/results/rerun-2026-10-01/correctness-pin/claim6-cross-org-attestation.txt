@@ -1,0 +1,53 @@
+
+Claim 6 | Cross-organizational attestation chains for B2B AI tool access
+==========================================================================
+
+P1  Independent keypairs -- Phase 1 (gateway) and Phase 2 (server) have different keys
+  Gateway key (first 16): 947a69585eb51961...
+  Server  key (first 16): f65ebd85efaa45f4...
+  PASS: independent keypairs confirmed
+
+P2  Same session_id in both claims -- linkage established
+  Phase 1 session_id: session-cross-org-abc123
+  Phase 2 session_id: session-cross-org-abc123
+  PASS: both claims carry the same session_id
+
+P3 + P4  Independent nonces, each bound to its own key + the shared session_id
+  Phase 1 nonce (expected): sha256:1eebfbf2d86d8800...
+  Phase 1 nonce (in claim): sha256:1eebfbf2d86d8800...
+  Phase 2 nonce (expected): sha256:a66f5199418330cf...
+  Phase 2 nonce (in claim): sha256:a66f5199418330cf...
+  PASS: each nonce binds its claim to (own_key, shared_session_id)
+
+P5  Verifier independently checks each claim against its own key
+  Phase 1 signature valid?: yes
+  Phase 2 signature valid?: yes
+  PASS: each claim independently verifiable against its own TEE public key
+
+P6  Tampering with Phase 1 does not affect Phase 2 validity (independent keys)
+  Phase 1 signature after tamper: invalid
+  Phase 2 signature unchanged?: yes
+  PASS: Phase 1 tamper invalidates only Phase 1; Phase 2 unaffected
+
+P7  Server binary swap detection -- different measurement -> different Phase 2 claim
+  Approved binary measurement: sha256:f2d70b941bd27cd212993af71a7892ac4...
+  Tampered binary measurement: sha256:bffaca65974d3370c2055c05836a5ba68...
+  Phase 2 (approved) measurement: sha256:f2d70b941bd27cd212993af71a7892ac4...
+  Phase 2 (tampered) measurement: sha256:bffaca65974d3370c2055c05836a5ba68...
+  PASS: binary change produces different measurement and different signature
+        A verifier holding the approved measurement sha256 would reject the tampered claim.
+
+Cross-org verification protocol:
+  1. Enterprise (party A) receives tool call result from SaaS vendor (party B).
+  2. Enterprise requests party B's Phase 2 TRACE Claim for the session.
+  3. Enterprise verifies:
+     a. Phase 1 claim (own gateway): sig valid, nonce = SHA-256(gateway_key || session_id)
+     b. Phase 2 claim (vendor server): sig valid, nonce = SHA-256(server_key || session_id)
+     c. Both session_ids match.
+     d. Phase 2 measurement = pre-approved server binary hash.
+     e. Phase 2 tool_catalog_hash = independently-reviewed catalog hash.
+  Neither party needs to trust the other's infrastructure.
+  In hardware mode, each nonce is hardware-signed by the TEE provider.
+
+All properties: PASS
+

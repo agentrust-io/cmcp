@@ -1,0 +1,10 @@
+Running in development mode: attestation is not hardware-backed. TRACE Claims produced here must not be used for compliance purposes.
+SPIFFE SVID not available (SPIRE agent socket not found at /tmp/spire-agent/public/api.sock) - gateway will use self-signed TLS for mTLS
+CMCP_NRAS_API_KEY is not set -- skipping NRAS post-attestation appraisal. The TRACE Trust Record appraisal field will be empty. Set CMCP_NRAS_API_KEY to enable hardware appraisal (Phase 2 / v0.2).
+TLS_PIN_UNENFORCED: server=http://127.0.0.1:56077/mcp: upstream is not https, TLS fingerprint pinning is impossible - plain-http upstreams are for local dev/demo only
+AUTH_FAILURE: invalid bearer token from Address(host='127.0.0.1', port=63203)
+KILL_SWITCH_HALTED: session=8761dc54-333f-4710-8897-e1228ed1567f closed with no successor; agent_id=spiffe://evaluation.example/agent/worker is blocked until an operator unblocks it
+KILL_SWITCH_OPERATOR_TRIP: agent_id=spiffe://evaluation.example/agent/worker authorized_by='evaluator' reason='evaluation' session=8761dc54-333f-4710-8897-e1228ed1567f
+KILL_SWITCH_REFUSED: agent_id=spiffe://evaluation.example/agent/worker tool=observe.tool session=8761dc54-333f-4710-8897-e1228ed1567f
+KILL_SWITCH_REFUSED: agent_id=spiffe://evaluation.example/agent/worker tool=observe.tool session=8761dc54-333f-4710-8897-e1228ed1567f
+AUTH_FAILURE: invalid bearer token from Address(host='127.0.0.1', port=63203)

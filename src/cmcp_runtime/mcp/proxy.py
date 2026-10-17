@@ -37,6 +37,7 @@ from cmcp_runtime.config import Config, DriftPolicy, EnforcementMode
 from cmcp_runtime.errors import (
     KillSwitchTripped,
     PolicyDeny,
+    ResponseSizeExceeded,
     SessionCloseIncomplete,
     SessionDrainIncomplete,
     UpstreamToolError,
@@ -44,6 +45,10 @@ from cmcp_runtime.errors import (
 )
 from cmcp_runtime.execution import valid_execution_id
 from cmcp_runtime.mcp import tls_pinning
+from cmcp_runtime.mcp.bounded_http import (
+    UPSTREAM_HTTP_RESPONSE_TIMEOUT_SECONDS,
+    read_bounded_response,
+)
 from cmcp_runtime.mcp.discovery import DiscoveryError, collect_tools
 from cmcp_runtime.mcp.stdio import StdioServer
 from cmcp_runtime.mcp.streamable_http import (
@@ -889,14 +894,15 @@ class CMCPProxy:
 
         async def fetch_page(request_id: str, params: dict[str, Any]) -> dict[str, Any]:
             payload, headers = build_request(request_id, "tools/list", params)
+            headers["Accept-Encoding"] = "identity"
             client = self._client_for_upstream(entry)
-            resp = await client.post(
-                entry.server.url,
-                json=payload,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            return parse_response(resp, request_id)
+            async with (
+                asyncio.timeout(UPSTREAM_HTTP_RESPONSE_TIMEOUT_SECONDS),
+                client.stream("POST", entry.server.url, json=payload, headers=headers) as resp,
+            ):
+                resp.raise_for_status()
+                bounded = await read_bounded_response(resp, self._config.max_response_size_bytes)
+                return parse_response(bounded, request_id)
 
         try:
             return await collect_tools(fetch_page)
@@ -1113,18 +1119,26 @@ class CMCPProxy:
             name=tool_name,
         )
         headers.update(parameter_headers(entry.approved_definition.input_schema, arguments))
+        headers["Accept-Encoding"] = "identity"
         self._trace_before_transport(finalization, entry, tool_name, arguments)
         if finalization is not None:
             finalization.failure_stage = "http_transport"
             finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_MAY_HAVE_STARTED
         try:
-            resp = await client.post(entry.server.url, json=payload, headers=headers)
-            if finalization is not None:
-                finalization.effect_boundary_state = (
-                    _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
-                )
-            resp.raise_for_status()
-            body = parse_response(resp, call_id)
+            async with (
+                asyncio.timeout(UPSTREAM_HTTP_RESPONSE_TIMEOUT_SECONDS),
+                client.stream("POST", entry.server.url, json=payload, headers=headers) as resp,
+            ):
+                if finalization is not None:
+                    finalization.effect_boundary_state = (
+                        _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
+                    )
+                    finalization.failure_stage = "http_response_read"
+                resp.raise_for_status()
+                bounded = await read_bounded_response(resp, self._config.max_response_size_bytes)
+                if finalization is not None:
+                    finalization.failure_stage = "http_response_parse"
+                body = parse_response(bounded, call_id)
         except tls_pinning.TLSPinMismatchError as exc:
             if finalization is not None:
                 finalization.failure_stage = "tls_pin_verification_pre_send"
@@ -1140,9 +1154,11 @@ class CMCPProxy:
                 f"Upstream MCP server unreachable: {entry.server.url}",
                 detail=str(exc),
             ) from exc
+        except TimeoutError as exc:
+            raise UpstreamUnavailable("Upstream HTTP response deadline exceeded") from exc
         except ValueError as exc:
             raise UpstreamUnavailable(
-                f"Upstream returned non-JSON body: {entry.server.url}",
+                f"Upstream returned an invalid HTTP response: {entry.server.url}",
                 detail=str(exc),
             ) from exc
         if not isinstance(body, dict):
@@ -2027,6 +2043,7 @@ class CMCPProxy:
                     audit_entry_hash=self._audit.chain_tip,
                 )
         _finalization.failure_stage = "upstream_invocation"
+        response_size_exceeded = False
         try:
             response_text = await self._forward_to_upstream(
                 call_id,
@@ -2036,6 +2053,11 @@ class CMCPProxy:
                 finalization=_finalization,
             )
             _finalization.effect_boundary_state = _EffectBoundaryState.TRANSPORT_RESPONSE_RECEIVED
+        except ResponseSizeExceeded:
+            # Reuse the ordinary size-denial path without parsing or scanning a
+            # partial body, or pretending that the upstream was never invoked.
+            response_size_exceeded = True
+            response_text = ""
         except (UpstreamUnavailable, UpstreamToolError) as exc:
             # An upstream error message can contain the complete private input.
             logger.warning("Upstream call failed: tool=%s code=%s", tool_name, exc.code)
@@ -2084,7 +2106,7 @@ class CMCPProxy:
 
         # Step 3c: response size guard (DOS-002) before scanning.
         _finalization.failure_stage = "response_size_check"
-        if len(response_text.encode()) > self._config.max_response_size_bytes:
+        if response_size_exceeded or len(response_text.encode()) > self._config.max_response_size_bytes:
             self._append_call_terminal(
                 _finalization,
                 "tool_call",
@@ -2095,6 +2117,12 @@ class CMCPProxy:
                 policy_rule_matched="response_size_exceeded",
                 request_payload_hash=request_payload_hash,
                 response_inspection_result="size_exceeded",
+                detail={
+                    "error_code": "RESPONSE_SIZE_EXCEEDED",
+                    "effect_boundary_state": _finalization.effect_boundary_state.value,
+                    "terminal_disposition": _finalization.terminal_disposition,
+                    "external_execution_evidence_state": "unavailable_or_unbound",
+                },
                 session_sensitivity_before=sensitivity_before,
                 session_sensitivity_after=self._session.max_sensitivity,
                 workflow_id=workflow_id,

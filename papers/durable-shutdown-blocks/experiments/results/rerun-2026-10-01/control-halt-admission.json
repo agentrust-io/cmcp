@@ -1,0 +1,100 @@
+{
+  "experiment": "slow-trip-and-fresh-observation",
+  "slow_operation_trips": [
+    {
+      "label": "cooperative-within-deadline",
+      "operation": "async",
+      "operation_seconds": 1.0,
+      "drain_deadline_seconds": 5.0,
+      "trip_status": 200,
+      "trip_returned_ms_after_start": 1011,
+      "slow_call_responses": [
+        "admitted",
+        "admitted",
+        "admitted",
+        "admitted"
+      ],
+      "slow_effects_completed_before_trip_returned": 4,
+      "slow_effects_completed_after_trip_returned": 0,
+      "slow_effects_never_completed": 0,
+      "last_completed_effect_ms_after_trip_start": 1001,
+      "late_call_sent_ms_after_trip_start": 66,
+      "late_call": "admitted",
+      "after_trip_call": "admitted",
+      "refusal_receipt_verifies_against_claim": false,
+      "effects_started_after_trip_start": [
+        "late-during-trip",
+        "after-trip"
+      ],
+      "unblock_status": 200,
+      "after_unblock_call": "admitted",
+      "ok": false
+    },
+    {
+      "label": "cooperative-past-deadline",
+      "operation": "async",
+      "operation_seconds": 3.0,
+      "drain_deadline_seconds": 0.3,
+      "trip_status": 200,
+      "trip_returned_ms_after_start": 318,
+      "slow_call_responses": [
+        "http-500",
+        "http-500",
+        "http-500",
+        "http-500"
+      ],
+      "slow_effects_completed_before_trip_returned": 0,
+      "slow_effects_completed_after_trip_returned": 0,
+      "slow_effects_never_completed": 4,
+      "last_completed_effect_ms_after_trip_start": null,
+      "late_call_sent_ms_after_trip_start": 71,
+      "late_call": "admitted",
+      "after_trip_call": "admitted",
+      "refusal_receipt_verifies_against_claim": false,
+      "effects_started_after_trip_start": [
+        "late-during-trip",
+        "after-trip"
+      ],
+      "unblock_status": 200,
+      "after_unblock_call": "admitted",
+      "ok": false
+    },
+    {
+      "label": "worker-thread-past-deadline",
+      "operation": "thread",
+      "operation_seconds": 1.5,
+      "drain_deadline_seconds": 0.3,
+      "trip_status": 200,
+      "trip_returned_ms_after_start": 322,
+      "slow_call_responses": [
+        "http-500",
+        "http-500",
+        "http-500",
+        "http-500"
+      ],
+      "slow_effects_completed_before_trip_returned": 0,
+      "slow_effects_completed_after_trip_returned": 4,
+      "slow_effects_never_completed": 0,
+      "last_completed_effect_ms_after_trip_start": 1500,
+      "late_call_sent_ms_after_trip_start": 58,
+      "late_call": "admitted",
+      "after_trip_call": "admitted",
+      "refusal_receipt_verifies_against_claim": false,
+      "effects_started_after_trip_start": [
+        "late-during-trip",
+        "after-trip"
+      ],
+      "unblock_status": 200,
+      "after_unblock_call": "admitted",
+      "ok": false
+    }
+  ],
+  "fresh_observation": {
+    "nonce_check": true,
+    "call_after_trip": "admitted",
+    "ok": false
+  },
+  "cases_passed": 0,
+  "cases_total": 4,
+  "criterion_met": false
+}

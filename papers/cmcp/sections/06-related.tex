@@ -1,0 +1,67 @@
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{MCP security.}
+The MCP specification~\citep{mcp2024} defines the transport, the tool invocation
+protocol, and OAuth-based authorization of a client to a server, but leaves per-call policy
+to implementors. Concurrent work has identified
+prompt-injection and tool-poisoning risks in MCP deployments~\citep{mcpsecurity2025}, where
+malicious tool descriptions or responses cause an agent to take unintended actions. cMCP
+addresses tool-poisoning through catalog hash pinning (Property~\ref{prop:rug-pull}) but
+does not claim to prevent all prompt-injection attacks; the inspection pipeline detects
+known patterns but cannot make semantic judgments about agent intent.
+
+\paragraph{TEE-based policy enforcement.}
+Using TEEs to enforce policies at runtime has been studied in the context of database
+systems~\citep{teedb2017}, open enclave frameworks~\citep{keystone2020}, and network
+functions~\citep{teefw2019}. The common pattern is to measure a policy into the TEE at
+startup and use remote attestation to let a verifier confirm which policy was in effect.
+cMCP applies this pattern to the MCP boundary, adding the dimension of session-level state
+(the sensitivity state machine) that persists across multiple tool calls within a session,
+rather than evaluating each request independently.
+
+\paragraph{Agent governance frameworks.}
+The Agent Governance Toolkit (AGT)~\citep{agt2026} provides the policy engine, identity
+layer (SPIFFE/SVID), and Cedar policy bundle format that cMCP uses for enforcement.
+cMCP acts as an enforcement point for AGT policies at the MCP boundary. Other agent
+governance frameworks~\citep{guardrails2023,nemo2023} focus on output filtering and input
+validation rather than tool-call interception, and do not provide hardware-backed
+attestation of enforcement.
+
+\paragraph{Attestation standards.}
+RATS (Remote ATtestation procedureS)~\citep{rats2021} defines the roles and information
+flows for remote attestation: Attester (the device producing evidence), Verifier (who
+appraises it), and Relying Party (who makes trust decisions). TRACE~\citep{trace2025}
+implements the RATS model for AI agent deployments. The TRACE Claim produced by cMCP is
+an Attestation Result in RATS terminology, combining hardware evidence (the TEE
+measurement report) with application-level evidence (the session call summary and audit
+chain). EAT (Entity Attestation Token)~\citep{eat2023} provides the underlying token
+format that TRACE extends.
+
+\paragraph{Cryptographic audit logs.}
+Hash-chained audit logs are well-studied in the context of certificate
+transparency~\citep{ct2013} and secure logging~\citep{seclog2000}. The cMCP audit chain
+is a linear hash chain in the style of Schneier and Kelsey: each entry commits to the hash
+of its predecessor, so any deletion or modification of an entry changes the chain tip,
+which is embedded in the TRACE Claim. Certificate transparency instead uses a Merkle tree,
+which gives logarithmic inclusion and consistency proofs that a linear chain does not.
+cMCP chains are also per-session rather than global.
+
+\paragraph{Data provenance.}
+Provenance tracking in distributed systems has a long history~\citep{prov2013}; PROV-DM
+provides a data model for expressing provenance relationships. Temporal adjacency, as used
+in cMCP, is a weak form of provenance: it asserts that call $B$ \emph{could} be
+PHI-adjacent because it followed a PHI call, but does not assert that $B$ \emph{actually}
+carries PHI-derived data. This is analogous to conservative call graph approximations in
+static analysis~\citep{reps1995}, which accept false edges to achieve soundness. The
+provenance disclaimer in every cMCP call graph summary (Property~\ref{prop:temporal}(c))
+makes this distinction explicit.
+
+\paragraph{Confidential computing for AI.}
+Prior work applies confidential computing to machine learning~\citep{confai2024}, and
+cryptographic protocols such as homomorphic encryption protect transformer inference
+without trusted hardware~\citep{teeinference2023}. cMCP's use of TEEs is orthogonal: it
+protects the governance layer (policy enforcement, audit) rather than the model itself.
+The two approaches are composable: a model running in a TEE and a cMCP gateway both
+running in TEEs can exchange mutual attestation reports, establishing end-to-end hardware
+trust across the full inference-to-tool-call path.

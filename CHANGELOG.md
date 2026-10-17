@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The operator token was measured.** Only the bearer token was excluded from
+  the measured configuration, so `CMCP_OPERATOR_TOKEN` fed the gateway digest
+  (since #629): rotating it changed the digest, and a digest over it reached the
+  measurement index and, on `sev-snp`, `tdx` and `azure-cvm-sev-snp`, the report
+  nonce. A verifier recomputing an expected digest also needed the production
+  token. The configuration digest changes once for every deployment, since the
+  field leaves the measured payload. A deployment that used a low-entropy
+  operator token should rotate it after upgrading.
 - Agent Manifest v0.2: the SDK appraised the COSE envelope, but the binding
   fields were read from the decoded dict the caller passed, and nothing checked
   that the two were the same document. A valid envelope paired with a dict

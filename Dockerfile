@@ -1,6 +1,6 @@
 # Pinned to the multi-arch index digest of the tag, so a republished tag cannot
 # change what the image is built from without a reviewed change here.
-FROM python:3.11.17-slim-bookworm@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS builder
+FROM python:3.11.17-slim-bookworm@sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89 AS builder
 
 WORKDIR /build
 
@@ -14,7 +14,7 @@ COPY src/ src/
 RUN python -m pip wheel --disable-pip-version-check --no-deps --wheel-dir /wheels .
 
 
-FROM python:3.11.17-slim-bookworm@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
+FROM python:3.11.17-slim-bookworm@sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

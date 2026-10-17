@@ -1,0 +1,5 @@
+Running in development mode: attestation is not hardware-backed. TRACE Claims produced here must not be used for compliance purposes.
+SPIFFE SVID not available (SPIRE agent socket not found at /tmp/spire-agent/public/api.sock) - gateway will use self-signed TLS for mTLS
+CMCP_NRAS_API_KEY is not set -- skipping NRAS post-attestation appraisal. The TRACE Trust Record appraisal field will be empty. Set CMCP_NRAS_API_KEY to enable hardware appraisal (Phase 2 / v0.2).
+AUDIT-001: 1 session(s) have no session_end entry in the audit DB - gateway may have restarted mid-session. Orphaned session IDs: ['dd44f1d9-25b5-4e2e-9c0d-56c2471720b6']
+TLS_PIN_UNENFORCED: server=http://127.0.0.1:55375/mcp: upstream is not https, TLS fingerprint pinning is impossible - plain-http upstreams are for local dev/demo only

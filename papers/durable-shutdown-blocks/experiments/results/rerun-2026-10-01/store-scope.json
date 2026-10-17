@@ -1,0 +1,7 @@
+{
+  "reopened_stores": 20,
+  "blocks_retained": 20,
+  "independent_store_blocked": false,
+  "explicit_unblock_visible": true,
+  "limit": "A different store is not covered; this is not a global identity shutdown."
+}

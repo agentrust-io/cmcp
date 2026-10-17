@@ -108,6 +108,13 @@ def parameter_headers(
     return headers
 
 
+def _matches_response_id(body: dict[str, Any], request_id: str) -> bool:
+    # This gateway sends string IDs. JSON numbers, booleans and null must not
+    # become a matching string through coercion in either response format.
+    response_id = body.get("id")
+    return isinstance(response_id, str) and response_id == request_id
+
+
 def parse_response(response: httpx.Response, request_id: str) -> dict[str, Any]:
     """Parse a JSON or request-scoped SSE response and return the final reply."""
     media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -115,6 +122,8 @@ def parse_response(response: httpx.Response, request_id: str) -> dict[str, Any]:
         body = response.json()
         if not isinstance(body, dict):
             raise ValueError("MCP JSON response is not an object")
+        if not _matches_response_id(body, request_id):
+            raise ValueError("MCP JSON response ID does not match request")
         return body
     if media_type != "text/event-stream":
         raise ValueError(f"unsupported MCP response content type: {media_type or 'missing'}")
@@ -127,7 +136,7 @@ def parse_response(response: httpx.Response, request_id: str) -> dict[str, Any]:
                 data_lines.clear()
                 if (
                     isinstance(event, dict)
-                    and str(event.get("id")) == str(request_id)
+                    and _matches_response_id(event, request_id)
                     and ("result" in event or "error" in event)
                 ):
                     return event

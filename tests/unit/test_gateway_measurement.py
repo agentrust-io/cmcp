@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from cmcp_runtime.tee.measurement import (
+    _CONFIG_SECRET_KEYS,
     DEFAULT_MEASUREMENT_NV_INDEX,
     ExtendResult,
     GatewayMeasurement,
@@ -130,6 +131,52 @@ def test_config_digest_excludes_the_bearer_token() -> None:
     """
     with_token = _Config(bearer_token="s3cret")
     assert config_digest(_Config()) == config_digest(with_token)
+
+
+def _config_field_names(cls: type) -> set[str]:
+    """Every field name of a config dataclass and of the dataclasses nested in it."""
+    import dataclasses
+    import typing
+
+    names: set[str] = set()
+    hints = typing.get_type_hints(cls)
+    for f in dataclasses.fields(cls):
+        names.add(f.name)
+        for t in (hints[f.name], *typing.get_args(hints[f.name])):
+            if dataclasses.is_dataclass(t):
+                names |= _config_field_names(t)
+    return names
+
+
+def test_every_credential_field_of_the_real_config_is_excluded() -> None:
+    """A credential added to Config, at any depth, must also be added to the list.
+
+    The list is matched by name, so this finds credentials by name too: it catches
+    the usual spellings, not every possible one.
+    """
+    from cmcp_runtime.config import Config
+
+    credentials = {
+        name
+        for name in _config_field_names(Config)
+        if name.endswith(("token", "secret", "password", "api_key"))
+    }
+    assert credentials, "naming heuristic matched nothing; update this test"
+    assert not credentials - _CONFIG_SECRET_KEYS
+
+
+@pytest.mark.parametrize("name", sorted(_CONFIG_SECRET_KEYS))
+def test_config_digest_ignores_each_excluded_field_of_the_real_config(name: str) -> None:
+    """Setting or rotating an excluded credential leaves the digest unchanged.
+
+    The digest reaches the measurement index and the report nonce, so a token
+    rotation must not move it, and a verifier recomputing it must not need the token.
+    """
+    from cmcp_runtime.config import Config
+
+    unset = config_digest(Config())
+    assert config_digest(Config(**{name: "a"})) == unset
+    assert config_digest(Config(**{name: "b"})) == unset
 
 
 # ── code digest ───────────────────────────────────────────────────────────────

@@ -1,0 +1,224 @@
+{
+  "comparisons": [
+    {
+      "author_record": "reference",
+      "local_record": "fresh-results",
+      "case": "none",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true,
+        "same_tool_markers": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "reference",
+      "local_record": "fresh-results",
+      "case": "forget-block",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "reference",
+      "local_record": "fresh-results",
+      "case": "disable-auto",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "reference",
+      "local_record": "local-credentials-results",
+      "case": "none",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true,
+        "same_tool_markers": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "reference",
+      "local_record": "local-credentials-results",
+      "case": "forget-block",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "reference",
+      "local_record": "local-credentials-results",
+      "case": "disable-auto",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "rerun-2026-09-27",
+      "local_record": "fresh-results",
+      "case": "none",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true,
+        "same_tool_markers": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "rerun-2026-09-27",
+      "local_record": "fresh-results",
+      "case": "forget-block",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "rerun-2026-09-27",
+      "local_record": "fresh-results",
+      "case": "disable-auto",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "rerun-2026-09-27",
+      "local_record": "local-credentials-results",
+      "case": "none",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true,
+        "same_tool_markers": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "rerun-2026-09-27",
+      "local_record": "local-credentials-results",
+      "case": "forget-block",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    },
+    {
+      "author_record": "rerun-2026-09-27",
+      "local_record": "local-credentials-results",
+      "case": "disable-auto",
+      "checks": {
+        "same_matrix": true,
+        "same_assertion_names_and_verdicts": true,
+        "same_all_normalized_observations": true,
+        "same_recorded_software_and_outcome": true
+      },
+      "match": true
+    }
+  ],
+  "components": [
+    {
+      "component": "cmcp",
+      "local": {
+        "tests": 81,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "author_passed": 81,
+      "match": true
+    },
+    {
+      "component": "ca2a",
+      "local": {
+        "tests": 38,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "author_passed": 38,
+      "match": true
+    }
+  ],
+  "local_credentials_signatures": [
+    {
+      "case": "none",
+      "checks": {
+        "claim_signature": true,
+        "receipt_signature": true,
+        "same_key": true,
+        "claim_digest": true,
+        "identity": true,
+        "session": true,
+        "automatic_claim_signature": true,
+        "restart_signature": true,
+        "restart_remains_unbound": true
+      },
+      "match": true
+    },
+    {
+      "case": "forget-block",
+      "checks": {
+        "claim_signature": true,
+        "receipt_signature": true,
+        "same_key": true,
+        "claim_digest": true,
+        "identity": true,
+        "session": true
+      },
+      "match": true
+    },
+    {
+      "case": "disable-auto",
+      "checks": {
+        "claim_signature": true,
+        "receipt_signature": true,
+        "same_key": true,
+        "claim_digest": true,
+        "identity": true,
+        "session": true,
+        "restart_signature": true,
+        "restart_remains_unbound": true
+      },
+      "match": true
+    }
+  ],
+  "new_keys_for_supplemental_cases": true,
+  "input_manifest_unchanged": true,
+  "normalization": "Only session_id, call_id, audit_entry_hash and latency_us removed from observation comparisons. Fresh keys, timestamps and signatures are intentionally different in signed records; their validity is checked separately.",
+  "conclusion": "All compared assertion results, unscored observations, mutation outcomes, software metadata and component totals match both retained author runs.",
+  "passed": true
+}

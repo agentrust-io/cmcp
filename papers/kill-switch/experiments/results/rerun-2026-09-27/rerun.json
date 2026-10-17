@@ -1,0 +1,64 @@
+{
+  "date": "2026-09-27",
+  "operator": "author (not independent)",
+  "procedure": "README.md 'Reproduce on a new machine': fresh Python 3.12 venvs, hash-pinned requirements/dev.txt, editable subject installed with --no-deps; matrix.py against the clean pinned cMCP checkout; pytest on the five named cMCP files and cA2A tests/unit/test_revocation.py",
+  "cmcp_source": "9db65b589610eb4e8455003197de592636678203",
+  "ca2a_source": "540a578c462a413e829bed84aff0235b9018f676",
+  "platform": "Windows, Python 3.12.10",
+  "deviations": [
+    "cbor2 6.1.4 from the hash-pinned lock imported normally; no substitution was needed",
+    "pytest run with -p no:cacheprovider so that no cache is written into the pinned checkouts",
+    "gateway stderr logs written by run.py are not retained, matching the reference layout; logs redact local paths only"
+  ],
+  "matrix": [
+    {
+      "mutation": "none",
+      "exit_code": 0,
+      "expected_failure": null,
+      "observed_failures": [],
+      "matched_expectation": true
+    },
+    {
+      "mutation": "forget-block",
+      "exit_code": 1,
+      "expected_failure": "restart-retains-block",
+      "observed_failures": [
+        "restart-retains-block"
+      ],
+      "matched_expectation": true
+    },
+    {
+      "mutation": "disable-auto",
+      "exit_code": 1,
+      "expected_failure": "automatic-trip-refuses-allowed-tool",
+      "observed_failures": [
+        "automatic-trip-refuses-allowed-tool"
+      ],
+      "matched_expectation": true
+    }
+  ],
+  "live_assertions_passed": 27,
+  "live_assertions_total": 27,
+  "assertion_ids_match_reference": true,
+  "readiness_during_drain": {
+    "id": "readiness-during-drain",
+    "status": 200
+  },
+  "whole_claim_schema": {
+    "id": "whole-claim-schema",
+    "observation": "rejected",
+    "errors": [
+      "Additional properties are not allowed ('call_log_summary' was unexpected)",
+      "Additional properties are not allowed ('edges_represent' was unexpected)"
+    ]
+  },
+  "differences_from_reference": "Only per-run values differ (session and call identifiers, audit hashes, latency, keys and signatures). Every assertion id, pass result and the two unscored observations match the reference.",
+  "cmcp_component_tests": {
+    "passed": 81,
+    "failed": 0
+  },
+  "ca2a_component_tests": {
+    "passed": 38,
+    "failed": 0
+  }
+}

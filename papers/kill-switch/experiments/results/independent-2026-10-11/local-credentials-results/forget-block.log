@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "<EVALUATION_ROOT>\local_credentials_run.py", line 20, in <module>
+    module.main()
+  File "<EVALUATION_ROOT>\kit\experiments\run.py", line 559, in main
+    observations = exercise(source, a.output, a.mutation)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<EVALUATION_ROOT>\kit\experiments\run.py", line 441, in exercise
+    check(
+  File "<EVALUATION_ROOT>\kit\experiments\run.py", line 278, in check
+    raise AssertionError(name)
+AssertionError: restart-retains-block

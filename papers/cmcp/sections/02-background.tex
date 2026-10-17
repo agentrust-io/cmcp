@@ -1,0 +1,108 @@
+\section{Background}
+\label{sec:background}
+
+\subsection{Model Context Protocol}
+
+Model Context Protocol (MCP)~\citep{mcp2024} is a JSON-RPC~2.0 protocol that standardizes
+how AI agents discover and invoke tools hosted on external servers. A \emph{tool} is a named
+function with a JSON Schema describing its parameters. MCP defines three primitive operations:
+\texttt{tools/list} to enumerate available tools, \texttt{tools/call} to invoke one, and
+\texttt{resources/read} to retrieve structured data.
+
+An MCP session begins when a client establishes a transport connection (Streamable HTTP,
+which replaced HTTP with Server-Sent Events in the 2025-03-26 revision, or stdio) to an MCP
+server and exchanges \texttt{initialize} messages.
+The server advertises its tool catalog; the client may cache it. Subsequent tool calls are
+stateless from the protocol's perspective: each \texttt{tools/call} carries the tool name
+and a JSON argument object and receives a JSON content array in response.
+
+MCP's authorization specification, added in the 2025-03-26 revision, uses OAuth 2.1 to
+authorize a client's access to a server. It does not define a per-call policy decision over
+tool arguments or session history, does not require any audit record of calls made, and
+does not provide a mechanism for a client to verify that the tool definition it cached at
+session start is still the definition the server will execute. These gaps are the governance problem
+cMCP addresses.
+
+\subsection{Trusted Execution Environments}
+
+A Trusted Execution Environment (TEE) is a CPU-enforced isolation boundary that provides
+two guarantees relevant to this paper: \emph{confidentiality} (memory within the TEE is
+inaccessible to software outside, including the hypervisor and OS) and
+\emph{remote attestation} (the TEE can produce a hardware-signed measurement report that
+proves, to a remote verifier, which code is running inside).
+
+The measurement report is the key primitive. On AMD SEV-SNP~\citep{amdsevsnp2023}, the
+report is signed by the AMD attestation key (VCEK) and includes a 64-byte
+\texttt{REPORT\_DATA} field that the guest can set to arbitrary bytes. On Intel
+TDX~\citep{inteltdx2023}, the equivalent field is the 64-byte \texttt{REPORTDATA}. cMCP uses this field to bind application-level
+context (specifically, the session nonce) to the hardware attestation, as described in
+Section~\ref{sec:design}.
+
+In software-only mode, cMCP substitutes a software-generated key and produces a synthetic
+attestation report marked with \texttt{platform: software-only}. Software-only TRACE Claims
+carry \texttt{attestation\_assurance: none} and must not be used for compliance decisions.
+All experiments in this paper run in software-only mode.
+
+\subsection{TRACE Standard}
+
+TRACE (Trust Runtime Attestation and Compliance Evidence)~\citep{trace2025} is an open
+attestation standard for agentic AI. A TRACE Claim is a JSON document with two top-level
+sections: a canonical \emph{trace} envelope (eat\_profile, issued-at timestamp, subject
+identifier, runtime measurement, policy reference, data classification, confirmation key)
+and a profile-specific addenda section that carries deployment context.
+
+The cMCP profile of TRACE adds a \emph{gateway addenda} section containing: the session
+identifier, gateway version, a monotonically increasing sequence number for claim ordering,
+an audit chain summary (root hash, tip hash, chain length), a call summary (total calls,
+allowed, denied, faulted, tools invoked, maximum session sensitivity), a catalog hash, and
+attestation freshness fields. The claim is signed with an Ed25519 key whose public half
+appears in the \texttt{cnf} (confirmation key) field, allowing any verifier to check the
+signature without contacting the gateway.
+
+\subsection{Cedar Policy Language}
+
+Cedar~\citep{cedar2023} is a policy language and evaluation engine developed by AWS. Cedar
+policies express access control decisions as \texttt{permit} or \texttt{forbid} rules over
+a triple of \emph{principal} (who is making the request), \emph{action} (what is being
+requested), and \emph{resource} (what is being acted on), with optional \texttt{when}
+conditions evaluated against a context object.
+
+cMCP evaluates Cedar policies at tool-call time. The principal is the agent's SPIFFE
+identity~\citep{spiffe2018}, the action is the tool name, and the resource is the MCP server
+URL. The context includes the tool's compliance domain (e.g., \texttt{phi}, \texttt{pii},
+\texttt{confidential}), the current session sensitivity level, and the call's input
+parameters. Cedar's structural typing ensures that policy evaluation is decidable in
+bounded time, a property important for a gateway that must not add unbounded latency.
+
+\subsection{Threat Model}
+
+cMCP assumes the following attacker capabilities:
+
+\textbf{T1: Policy modification.} An attacker with access to the gateway host can modify
+the Cedar policy files after TEE startup, attempting to relax enforcement for subsequent
+calls.
+
+\textbf{T2: Tool catalog tampering.} An attacker can modify an MCP server's tool
+definitions after the gateway has cached them, replacing a benign implementation with one
+that exfiltrates data or behaves differently than the approved specification.
+
+\textbf{T3: Claim replay.} An attacker intercepts a TRACE Claim produced for one session
+and presents it as evidence for a different session, a different TEE instance, or a future
+point in time.
+
+\textbf{T4: Selective disclosure.} An attacker selectively presents audit entries from a
+TRACE Claim, omitting evidence of non-compliant calls while presenting evidence of compliant
+ones.
+
+\textbf{T5: Cross-boundary data exfiltration.} An agent that has processed regulated data
+(PHI, PII) subsequently calls external tools in a way that the orchestrator cannot detect,
+because the PHI was in an intermediate agent state rather than in the tool call parameters.
+
+\textbf{T6: Binary substitution.} In a cross-organizational setting, the server-side TEE
+binary is swapped after the gateway has verified the server's attestation report, allowing
+the new binary to behave differently without re-attestation.
+
+cMCP does not address denial-of-service against the gateway itself, compromise of the CPU
+manufacturer's signing key, or attacks that require the TEE's measurement to be forged. It
+also does not address semantic attacks where a malicious tool produces a compliant-looking
+response that causes the agent to take harmful downstream actions.

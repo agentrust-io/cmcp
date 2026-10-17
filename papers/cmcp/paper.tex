@@ -1,0 +1,110 @@
+\documentclass[10pt,letterpaper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{iftex}
+% mathptmx has no TU-encoded faces, so under XeTeX (Tectonic) earlier versions fell back
+% to Latin Modern regular and lost every bold and italic. Use Termes there.
+\ifPDFTeX\usepackage{mathptmx}\else\usepackage{fontspec}\setmainfont{texgyretermes}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]\fi
+\usepackage{textcomp}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
+\usepackage{natbib}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{caption}
+
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+
+\lstset{
+  basicstyle=\small\ttfamily,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny,
+  xleftmargin=2em,
+  framexleftmargin=1.5em,
+  backgroundcolor=\color{gray!8},
+}
+
+\definecolor{claimcolor}{RGB}{0,70,140}
+\newcounter{claim}
+\newenvironment{property}[1][]{%
+  \refstepcounter{claim}%
+  \vspace{4pt}%
+  \noindent\fbox{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{%
+    \textbf{\textcolor{claimcolor}{Property \theclaim} (#1).}
+}}\par\vspace{2pt}%
+}{\vspace{4pt}}
+
+\title{\textbf{cMCP: Verifiable Policy Enforcement for AI Agent Tool Calls}}
+
+\author{
+  Rishabh Poddar \quad Aaron Fulkerson \quad Imran Siddique \\
+  OPAQUE Systems \\[4pt]
+  \normalsize \url{https://github.com/agentrust-io/cmcp}
+}
+
+\date{October 1, 2026 \\ \small Technical report, version 2}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+cMCP (Confidential MCP) proposes a gateway for policy evaluation at the
+Model Context Protocol tool-call boundary. The gateway evaluates Cedar policies
+before dispatch and emits signed records binding policy measurements, session
+identifiers, and tool-call evidence. Its design combines policy hashing,
+monotonic session sensitivity, tool-catalog pinning, and audit-chain checks.
+This technical report preserves software-only experiments for those mechanisms,
+including synthetic healthcare call traces and simulated attestation paths.
+The measurements illustrate behavior under the stated inputs and assumptions;
+they do not validate a hardware TEE, establish complete information-flow tracking,
+or show that every tool invocation was captured. Hardware provenance requires
+independent attestation appraisal and signing-key binding. Replay and omission
+detection additionally depend on freshness checks and an expected session or log
+boundary. The report distinguishes these deployment requirements from the
+software behavior measured here.
+\end{abstract}
+
+\paragraph{Scope of this edition.}
+This is an author-prepared technical report, not peer reviewed and not a
+normative specification. Version 2 corrects version 1 (September 27, 2026) where the
+text did not match the code or the experiments: the size of the hardware
+\texttt{REPORT\_DATA} field, the nonce the session claim carries, when the catalog check
+runs, trial counts the experiments do not perform, two misattributed citations, and two
+misread performance figures. It restores bold and italic type that the Tectonic build had dropped, and names the measured revision and the published
+security advisories that affect it. Every experiment was rerun on October 1, 2026 against
+cMCP commit \texttt{6f12cce} (\texttt{cmcp-runtime} 0.3.0 plus four commits, the
+repository state when the performance numbers were recorded); correctness results are
+unchanged. Version 1 revised a manuscript dated June 23, 2026. Architectural requirements describe intended checks, not proof that
+the historical SDK implements every check. Consult the linked project
+specification and limitations before implementing the design.
+
+\noindent\textbf{Patent Pending.}
+
+\tableofcontents
+\newpage
+
+\input{sections/01-intro}
+\input{sections/02-background}
+\input{sections/03-design}
+\input{sections/04-claims}
+\input{sections/05-evaluation}
+\input{sections/06-related}
+\input{sections/07-conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}

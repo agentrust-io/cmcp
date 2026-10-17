@@ -122,7 +122,7 @@ _DIGEST_PREFIX = b"cmcp-gateway-measurement-v1"
 
 # Config keys never measured: they carry secrets, or they vary per process without
 # changing what code or policy is running.
-_CONFIG_SECRET_KEYS = frozenset({"bearer_token"})
+_CONFIG_SECRET_KEYS = frozenset({"bearer_token", "operator_token"})
 
 
 class MeasurementUnavailable(CMCPError):
@@ -342,9 +342,10 @@ def policy_digest(policy_bundle_path: str) -> str:
 def config_digest(config: Any) -> str:
     """Digest the effective configuration, excluding secrets.
 
-    The bearer token is excluded: it authenticates callers rather than describing
-    what is running, and extending a secret's digest into an index that is read
-    back in evidence would leak an oracle for it.
+    The bearer and operator tokens are excluded: they authenticate callers rather
+    than describing what is running, and extending a secret's digest into an index
+    that is read back in evidence would leak an oracle for it. Rotating either one
+    must not change the gateway measurement.
     """
     return _sha256_hex(
         json.dumps(_config_payload(config), separators=(",", ":"), sort_keys=True).encode()

@@ -40,7 +40,7 @@ import json
 import logging
 import sqlite3
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -183,14 +183,43 @@ class SqliteSessionStateStore:
     async def exclusive(self, session_id: str) -> AsyncIterator[None]:
         # Taken in a worker thread: sqlite3 blocks, and blocking the event loop
         # while another instance holds the lock would stall every other call.
-        await asyncio.to_thread(self._begin_immediate)
+        cancelled = await self._finish_sqlite_operation(self._begin_immediate)
+        if cancelled is not None:
+            # Cancelling an await cannot stop the SQLite worker. Once it has
+            # acquired the transaction, we own rollback even if yield never ran.
+            await self._finish_sqlite_operation(self._rollback)
+            raise cancelled
         try:
             yield
         except BaseException:
-            await asyncio.to_thread(self._rollback)
+            # Finish cleanup before propagating the original body failure.
+            await self._finish_sqlite_operation(self._rollback)
             raise
         else:
-            await asyncio.to_thread(self._commit)
+            cancelled = await self._finish_sqlite_operation(self._commit)
+            if cancelled is not None:
+                raise cancelled
+
+    @staticmethod
+    async def _finish_sqlite_operation(
+        operation: Callable[[], None],
+    ) -> asyncio.CancelledError | None:
+        """Wait for the worker, retaining cancellation for the transaction owner.
+
+        Shielding alone lets the caller leave before its worker finishes. Keep
+        waiting through repeated cancellation so acquisition can be rolled back
+        and finalization can release its lock. Operation failures still surface.
+        The executor future is private and is never cancelled by this caller.
+        """
+        worker = asyncio.get_running_loop().run_in_executor(None, operation)
+        cancelled = None
+        while True:
+            try:
+                await asyncio.shield(worker)
+                return cancelled
+            except asyncio.CancelledError as exc:
+                if cancelled is None:
+                    cancelled = exc
 
     def _begin_immediate(self) -> None:
         self._thread_lock.acquire()

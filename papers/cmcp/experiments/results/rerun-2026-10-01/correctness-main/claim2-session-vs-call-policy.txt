@@ -1,0 +1,38 @@
+========================================================================
+Experiment: Session-Level vs. Per-Call Policy: The Compliance Gap
+Claim 2: cMCP monotonic session sensitivity state
+========================================================================
+
+Session trace: 5 calls, PHI contamination at calls 1 and 4
+------------------------------------------------------------------------
+ #  Tool                     Domain       Payload tags       Per-call   Session  Gap
+------------------------------------------------------------------------
+ 1  ehr.get_patient          hipaa_phi    hipaa_phi, pii     ALLOW      ALLOW    -
+ 2  slack.post_message       external     (clean)            ALLOW      DENY     MISSED
+ 3  analytics.run_query      internal     confidential       ALLOW      ALLOW    -
+ 4  ehr.get_patient          hipaa_phi    hipaa_phi, pii     ALLOW      ALLOW    -
+ 5  external_webhook.post    external     (clean)            ALLOW      DENY     MISSED
+------------------------------------------------------------------------
+
+Summary
+-------
+True cross-boundary violations (PHI session + external non-BAA call): 2
+Per-call policy caught:    0 / 2  (0%)
+Session policy caught:     2 / 2  (100%)
+Violations MISSED by per-call: 2  (calls [2, 5])
+
+session_max_sensitivity after call 5: 'hipaa_phi'
+sensitivity_raised_by_call: 'call-1'
+
+Conclusion
+----------
+Per-call policy detected 0/2 cross-boundary violations.
+Session policy detected  2/2 cross-boundary violations.
+
+The gap exists because per-call policy evaluates each call in isolation.
+Calls 2 and 5 have clean outbound payloads -- per-call inspection sees
+nothing wrong. But the agent's context window contains PHI from calls 1
+and 4. Session policy blocks calls 2 and 5 because session_max_sensitivity
+== 'hipaa_phi' and those destinations are external and not BAA-covered.
+Call 3 (internal analytics) is correctly permitted: internal destinations
+are a different compliance boundary from external ones.
