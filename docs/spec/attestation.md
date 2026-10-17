@@ -132,6 +132,8 @@ At enclave startup, before accepting any connections:
 
 The attestation report's `report_data` (nonce) is bound to this key, ensuring the hardware-attested report and the signing key are cryptographically linked (see Section 3.3).
 
+**Sealed key (TPM tier, opt-in).** With `attestation.seal_signing_key`, steps 1 and 3 run once, on the first start on a TPM. Later starts get the same key back from a seed the TPM unseals under the gateway digest (Section 4.2). The private key is still held only in process memory; what is on disk is a blob only that TPM can open.
+
 ### 2.2 Audit Entry Format
 
 Each MCP tool call interception produces one audit entry. The canonical format is:
@@ -302,7 +304,7 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || gateway_measurement.digest 
 
 **Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3 and collects its NV pair separately. The pair's pre-value may reflect an append-only history within one index incarnation, but a stateless verifier does not approve that history or rule out owner-authorized redefinition.
 
-**Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config.
+**Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config. This is why a sealed, persistent key (Section 4.2) is TPM tier only: the TPM keeps the salt, so a key that survives restarts costs it no freshness.
 
 **Refreshed on every policy-bundle reload.** `report_data` holds one value and no history, so a report produced before a bundle reload still looks well-formed on its own, and nothing in it says whether it is current. The gateway re-attests on **every** reload, including a reload that finds the bundle unchanged: the same digest signed now and that digest signed an hour ago are different assertions, and only the latest report reaches a verifier. The hook is `PolicyEvaluator._maybe_reload` calling `refresh_measurement_binding`, fired whenever `PolicyStore.reload_if_stale` reports that the bundle was re-read.
 
@@ -338,7 +340,7 @@ The signed claim body includes `gateway.session_id`. Any change to it invalidate
 
 ### 4.1 Phase 1: Ephemeral Keys
 
-In Phase 1, the runtime uses a single ephemeral Ed25519 keypair per enclave instance. Properties:
+The default on every provider. The runtime uses a single ephemeral Ed25519 keypair per enclave instance. Properties:
 
 - Generated at enclave startup (see Section 2.1).
 - Exists only in enclave memory. Never exported, never persisted.
@@ -353,27 +355,44 @@ Verification of historical TRACE Claims: a verifier holds a TRACE Claim containi
 
 Because the public key is embedded in the claim and attested by the hardware report, there is no need for a separate key transparency log in Phase 1.
 
-### 4.2 Phase 2: Persistent Keys (Future)
+### 4.2 Persistent Keys on the TPM Tier
 
-For use cases requiring long-lived keys (e.g., participation in a key transparency log, or runtime restarts without breaking verifier trust):
+Opt-in with `attestation.seal_signing_key`, on the `tpm` provider only, which has to be named explicitly. It keeps one key across restarts, so a relying party can pin it with `cmcp verify --trusted-key`. The implementation is `cmcp_runtime.tee.seal` (#462).
 
-- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation).
-- The sealed key blob is stored on disk. On restart, the enclave unseals the key. Unsealing succeeds only if the enclave's current measurement matches the measurement policy used when sealing.
-- Rotation: updating the enclave's code or configuration changes its measurement. The old sealed key cannot be unsealed by the new measurement. The new enclave generates a fresh keypair and seals it to its own measurement. Old TRACE Claims remain verifiable via their embedded public key. New claims use the new key.
-- A key rotation event should be logged in the operator's change management system.
+**What the key is sealed under.** The Ed25519 seed is sealed with `TPM2_Create` under `TPM2_PolicyNV(gate == digest)`, where `digest` is the gateway measurement digest and the gate is an ordinary owner NV index (`0x01500433`, next to the measurement index). It is not sealed to the measurement index itself: that index is a `TPM_NT_EXTEND` chain that moves on every start, so a policy over it matches one start only. It is not sealed to PCRs either (see "Not covered" below).
+
+**One start.** The public key is read from the store first, since the attestation nonce and the certify pair around the measurement extend commit it. After the extend, the gateway writes the computed digest into the gate, unseals, and overwrites the gate with a sentinel. Between starts the gate holds the sentinel, so a process with TPM access has to write the gate itself, with owner authorization, to unseal.
+
+**State.** The store (`attestation.sealed_key_dir`) holds the public key and the blobs: the one for the current digest and the one before it. Nothing in it is secret. A lock file keeps a second process off the same store, and a second store on the same TPM cannot provision because the gate already exists, so there is one sealed gateway per TPM. The storage parent is recreated from a fixed template on each use and never made persistent, and the sessions that carry the seed are salted with it and encrypt that parameter.
+
+**Provisioning.** A key is minted only on a TPM with no gate and no store. Any other state is an unseal or a startup error with its own code: `SEALED_KEY_DIGEST_MISMATCH` (no blob for this digest, or the TPM refused with `TPM_RC_POLICY` or `TPM_RC_POLICY_FAIL`; any other TPM failure is `SEALED_KEY_UNAVAILABLE`), `SEALED_KEY_TPM_CHANGED` (the TPM answers `TPM_RC_HANDLE` for the gate index, or `TPM_RC_INTEGRITY` when loading the blob under its storage parent: another host, after `TPM2_Clear`, or an altered store; a TPM that fails any other way is `SEALED_KEY_UNAVAILABLE`), `SEALED_KEY_MISSING` (a gate with no store), `SEALED_KEY_PUBLIC_KEY_MISMATCH`, `SEALED_KEY_LOCKED` and `SEALED_KEY_UNAVAILABLE`. Nothing is minted to recover from them: minting on a mismatch would hand a changed gateway a working key, and sealing would enforce nothing.
+
+**When the digest changes.** The digest covers code, policy and configuration, so an upgrade, a policy reload and a policy signing key revocation all change it. The key stays the same through every one of them; only `cmcp key rotate` makes a new one.
+
+- Policy reload: after a verified reload the running gateway seals the key it holds to the new digest. It takes code and configuration from the startup measurement and recomputes only policy. A failed reseal is logged; the gateway keeps serving, and the next start refuses until `cmcp key reseal` is run.
+- Upgrade: with the gateway stopped, `cmcp key reseal` seals the same key to the new build's digest, which `cmcp measure` prints. The previous blob is kept, so a rollback still starts.
+- Rotation: `cmcp key rotate` replaces the key on purpose and drops every blob, and it is the recovery for a lost store. Relying parties pinning the old key must be told.
+
+This replaces the rule that stood here before: that an upgrade mints a fresh key sealed to the new measurement. Minting on a measurement change is the same as minting on a mismatch.
+
+**What it guarantees.** The blob is useless on any other TPM. A gateway whose measured inputs differ from the sealed digest, with its measurement code intact, does not get the key and does not start. The key survives restarts, so claims from a restart pass a pin to the first key and claims from a re-provisioned key fail it.
+
+**What it does not.** Anyone who can issue owner-authorized TPM commands can write an approved digest into the gate and unseal; on Azure, guest root can. A modified gateway that reports the approved digest gets the key. The extend index has the same limits. The key is sealed data, so a verifier cannot confirm from evidence that it is sealed, and no claim field says so.
+
+**Not covered.** `TPM2_PolicyPCR` over boot state is deferred to P4 (`tpm-security-model.md`): with the TCG event log at 0 bytes on cloud vTPMs, PCR values after a firmware or kernel update cannot be predicted, so a PCR-bound key could not be resealed ahead of the reboot and every host update would be an outage. Also not covered: configurable owner authorization, `TPM2_PolicyAuthorize` tickets, a maximum key age, key transparency, and the other tiers.
 
 ### 4.3 Compromise Response
 
 If an enclave instance is suspected to be compromised:
 
-1. Shut down the enclave immediately. This destroys the in-memory private key (Phase 1) or leaves the sealed key on disk (Phase 2, sealed key should be deleted).
+1. Shut down the enclave immediately. This destroys the in-memory private key. A sealed key (Section 4.2) also survives on disk as a blob: run `cmcp key rotate` before restarting, which replaces the key and drops every blob of the old one.
 2. Invalidate all active sessions that were served by the compromised enclave.
 3. TRACE Claims issued by the compromised enclave (identifiable by their `tee_public_key`) should be flagged in the incident log. They cannot be cryptographically revoked (the signature remains valid), but their provenance is suspect.
 4. Verifiers should be notified of the compromised `tee_public_key` value so they can reject or quarantine claims bearing it.
-5. Start a new enclave instance. The new instance generates a fresh keypair with a new measurement.
+5. Start a new enclave instance. The new instance generates a fresh keypair, or with a sealed key unseals the one `cmcp key rotate` made.
 6. Conduct a post-incident review of all audit entries from the compromised enclave period using the signed bundle export mechanism (Section 2.4).
 
-There is no online revocation mechanism for Phase 1 keys. Revocation is handled out-of-band via incident notification to verifiers.
+There is no online revocation mechanism for either kind of key. Revocation is handled out-of-band via incident notification to verifiers.
 
 ---
 
@@ -492,7 +511,7 @@ The catalog does not support hot-reload in Phase 1. Updates require:
 3. Commit the updated catalog to version control. This creates an auditable record of who approved the change and when.
 4. Compute the new `catalog_hash` locally and record it in the commit message or PR description for pre-deployment verification.
 5. Deploy the new runtime configuration. This requires an enclave restart.
-6. On restart, the new enclave measures the new catalog hash. Subsequent TRACE Claims will contain the new `tool_catalog.hash`.
+6. On restart, the gateway loads the new catalog and checks it against the pinned `CMCP_CATALOG_HASH`. Subsequent TRACE Claims will contain the new `tool_catalog.hash`. The catalog is not part of the gateway measurement, which covers code, policy and configuration, so no hardware report or NV index commits it; a verifier checks it through `tool_catalog.hash` and its approved hashes.
 7. Verify: after startup, call `GET /v1/status` which returns the active `catalog_hash`. Confirm it matches the expected value from step 4.
 
 There is no partial catalog update. The entire catalog is replaced atomically at restart. This prevents a TOCTOU window between loading individual tool definitions.

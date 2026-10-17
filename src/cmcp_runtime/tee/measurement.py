@@ -88,6 +88,7 @@ import csv
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
@@ -362,7 +363,9 @@ def _config_payload(value: Any, *, _depth: int = 0) -> Any:
             for name in sorted(value.__dataclass_fields__)
             if name not in _CONFIG_SECRET_KEYS
         }
-    if isinstance(value, dict):
+    # Mapping, not dict: config freezes some mappings in a MappingProxyType, and
+    # falling through to str() below would measure its insertion order.
+    if isinstance(value, Mapping):
         return {
             str(k): _config_payload(v, _depth=_depth + 1)
             for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
@@ -378,11 +381,24 @@ def _config_payload(value: Any, *, _depth: int = 0) -> Any:
 
 def gateway_measurement(config: Any) -> GatewayMeasurement:
     """Compute the digest over installed code, the policy bundle, and the config."""
-    components = {
-        "code": code_digest(),
-        "policy": policy_digest(config.policy_bundle_path),
-        "config": config_digest(config),
-    }
+    return measurement_from_components(
+        {
+            "code": code_digest(),
+            "policy": policy_digest(config.policy_bundle_path),
+            "config": config_digest(config),
+        }
+    )
+
+
+def measurement_from_components(components: dict[str, str]) -> GatewayMeasurement:
+    """The gateway digest over already-computed code, policy and config digests.
+
+    Separate from :func:`gateway_measurement` so a running gateway can recompute the
+    digest after a policy reload from the code and config it measured at startup,
+    rather than from whatever is on disk now.
+    """
+    if set(components) != {"code", "policy", "config"}:
+        raise ValueError("a gateway measurement has exactly code, policy and config")
     canonical = json.dumps(components, separators=(",", ":"), sort_keys=True).encode()
     return GatewayMeasurement(
         digest=hashlib.sha256(_DIGEST_PREFIX + b"|" + canonical).digest(),

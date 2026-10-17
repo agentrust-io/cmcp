@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A sealed TRACE signing key on the TPM tier (#462), off by default.** With
+  `attestation.seal_signing_key` and `provider: tpm`, the signing key survives
+  restarts, sealed under `TPM2_PolicyNV` over a gate NV index (`0x01500433`)
+  that holds the gateway digest, so a relying party can pin it with
+  `cmcp verify --trusted-key`. A gateway whose measured inputs differ from the
+  sealed digest does not get the key and does not start; each failure has its
+  own `SEALED_KEY_*` code, and nothing is minted to recover. A verified policy
+  reload reseals the key to the new digest. ATTEST-004 applies only with
+  sealing off. See `docs/spec/attestation.md` 4.2 for what it does and does not
+  guarantee.
+- `cmcp measure` prints the gateway digest and its components. `cmcp key public`,
+  `cmcp key reseal` and `cmcp key rotate` manage the sealed key.
+- A `tpm` extra for tpm2-pytss. On Linux, CI's test job installs it and runs the
+  TPM tier against swtpm.
+
+### Fixed
+
+- **The test suite could write to the developer's TPM.** With tpm2-pytss
+  installed, tests that expected the degraded path opened the default TCTI and
+  defined and extended the measurement index on the machine's real TPM. The
+  suite now refuses any ESAPI context that is not a simulator.
+- `sink_policy.tool_max_sensitivity` was measured as its printed form, in YAML
+  order, so reordering the tools changed the configuration digest. It is now
+  measured as a mapping; the digest changes once for deployments that set
+  `sink_policy`.
+
 ### Security
 
 - **The operator token was measured.** Only the bearer token was excluded from

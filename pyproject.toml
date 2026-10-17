@@ -55,6 +55,13 @@ otel = [
     "opentelemetry-sdk>=1.25",
     "opentelemetry-exporter-otlp-proto-http>=1.25",
 ]
+# The TPM tier's library (#432, #462): the measurement extend, the certify pair
+# and the sealed signing key. Without it the tpm provider falls back to the
+# tpm2-tools subprocess path and can neither extend nor seal. It ships an sdist
+# only, so installing it needs the TSS headers (libtss2-dev).
+tpm = [
+    "tpm2-pytss>=3.0",
+]
 dev = [
     "mcp>=1.28.1,<3.0",
     "pytest>=8.0",
