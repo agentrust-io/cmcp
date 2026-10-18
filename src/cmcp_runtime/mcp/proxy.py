@@ -25,7 +25,7 @@ from typing import Any, NoReturn
 import httpx
 import rfc8785
 
-from cmcp_runtime.audit.chain import AuditChain
+from cmcp_runtime.audit.chain import AuditChain, InspectionResult
 from cmcp_runtime.catalog.loader import (
     CatalogEntry,
     ToolCatalog,
@@ -44,6 +44,7 @@ from cmcp_runtime.errors import (
     UpstreamUnavailable,
 )
 from cmcp_runtime.execution import valid_execution_id
+from cmcp_runtime.inspection.pipeline import _stage2_schema_validation
 from cmcp_runtime.mcp import tls_pinning
 from cmcp_runtime.mcp.bounded_http import (
     UPSTREAM_HTTP_RESPONSE_TIMEOUT_SECONDS,
@@ -120,6 +121,7 @@ class _CallFinalizationState:
     effect_boundary_state: _EffectBoundaryState = _EffectBoundaryState.PRE_TRANSPORT
     request_payload_hash: str | None = None
     response_payload_hash: str | None = None
+    response_inspection_result: InspectionResult | None = None
     server_identity: str | None = None
     external_execution_evidence: dict[str, str] | None = None
     terminal_entry_id: str | None = None
@@ -1337,6 +1339,7 @@ class CMCPProxy:
             )
         # #565: every terminal for a correlated call carries its execution_id.
         # Set from one place so no per-branch call site has to remember it.
+        fields.setdefault("response_inspection_result", finalization.response_inspection_result)
         fields.setdefault("execution_id", finalization.execution_id)
         entry = self._audit.append(entry_type, **fields)  # type: ignore[arg-type]
         finalization.terminal_entry_id = entry.entry_id
@@ -2159,6 +2162,7 @@ class CMCPProxy:
         )
         injection_detected = bool(scan.threats)
         if not scan.allowed:
+            _finalization.response_inspection_result = "injection_detected"
             await self._session.apply_inspection(
                 call_id=call_id,
                 sensitivity_tags=(
@@ -2212,6 +2216,66 @@ class CMCPProxy:
             )
         # Scanner may have sanitized the content (ResponsePolicy.SANITIZE).
         agt_result: str = scan.content if scan.content is not None else response_text
+
+        # Scanner sanitization is not schema-surplus stripping. Validate the
+        # scanned content and bind only the bytes that may reach egress.
+        _finalization.failure_stage = "response_schema"
+        schema_result, schema_bytes = _stage2_schema_validation(agt_result.encode(), entry)
+        if schema_result.decision == "deny":
+            _finalization.response_inspection_result = "schema_violation"
+            await self._session.apply_inspection(
+                call_id=call_id,
+                sensitivity_tags=(
+                    [entry.sensitivity_level, declared_data_class]
+                    if declared_data_class is not None
+                    else [entry.sensitivity_level]
+                ),
+                injection_detected=injection_detected,
+                for_reset_count=_finalization.reset_count,
+                response_allowed=False,
+            )
+            self._append_call_terminal(
+                _finalization,
+                "tool_call",
+                call_id=call_id,
+                tool_name=tool_name,
+                server_identity=entry.server.url,
+                policy_decision="deny",
+                policy_rule_matched="response_schema_violation",
+                request_payload_hash=request_payload_hash,
+                session_sensitivity_before=sensitivity_before,
+                session_sensitivity_after=self._session.max_sensitivity,
+                workflow_id=workflow_id,
+                effective_data_class=effective_data_class,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self._record_call(
+                tool_name=tool_name,
+                called_at=called_at,
+                duration_ms=elapsed_ms,
+                allowed=False,
+                sensitivity_before=sensitivity_before,
+                stage_results={"schema": "deny"},
+                call_id=call_id,
+                catalog_entry=entry,
+                policy_decision="deny",
+            )
+            return CallResult(
+                call_id=call_id,
+                tool_name=tool_name,
+                allowed=False,
+                would_have_denied=would_have_denied,
+                response=None,
+                deny_reason="response_schema_violation",
+                latency_us=int(elapsed_ms * 1000),
+                audit_entry_hash=self._audit.chain_tip,
+            )
+        _finalization.response_inspection_result = (
+            "surplus_stripped"
+            if schema_result.stripped_fields and entry.schema_validation_mode == "redact"
+            else "pass"
+        )
+        agt_result = schema_bytes.decode()
 
         # Bind post-scan facts before any cancellable or fallible session/egress
         # processing. The hash is bound first so an evidence-parser failure still

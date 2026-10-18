@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Gateway audit records now distinguish responses inspected successfully (`pass`)
+  from calls with no response inspection (`null`). The gateway runs the existing
+  catalog schema stage after scanning: schema refusal records `schema_violation`,
+  actual surplus removal in redact mode records `surplus_stripped`, and log-only
+  surplus and scanner sanitization record `pass`. Egress refusals and later faults
+  retain the completed inspection result. The existing schema-stage behavior
+  is reused without changing its validation rules. Audit field
+  names, vocabulary, historical entries and session-start `n/a` remain unchanged
+  (#764).
+
 ### Security
 
 - **The operator token was measured.** Only the bearer token was excluded from

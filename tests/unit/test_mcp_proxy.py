@@ -791,3 +791,116 @@ async def test_concurrent_first_use_spawns_exactly_one_stdio_child(monkeypatch):
     assert len(spawned) == 1, f"expected exactly one spawn, got {len(spawned)}"
     assert server_a is server_b
     assert proxy._stdio_servers[_server_execution_key(entry)] is server_a
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "payload", "allowed", "label"),
+    [
+        ("redact", {"result": "ok"}, True, "pass"),
+        ("redact", {"result": "ok", "debug": "secret"}, True, "surplus_stripped"),
+        ("strict", {"result": "ok", "debug": "secret"}, False, "schema_violation"),
+        ("redact", {"result": 7}, False, "schema_violation"),
+        ("redact", {}, False, "schema_violation"),
+        ("log", {"result": "ok", "debug": "secret"}, True, "pass"),
+    ],
+)
+async def test_gateway_emits_schema_inspection_result(mode, payload, allowed, label):
+    entry = _make_entry()
+    entry.approved_definition.output_schema = {
+        "type": "object", "properties": {"result": {"type": "string"}},
+        "required": ["result"],
+    }
+    entry.schema_validation_mode = mode
+    entry.sensitivity_level = "pii"
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    proxy, session, chain = _make_proxy(catalog=catalog)
+    wire_mock_gateway(proxy, response_text=json.dumps(payload))
+
+    result = await proxy.call_tool("schema", "test.tool", {})
+
+    terminal = [e for e in chain.entries if e.call_id == "schema"]
+    assert len(terminal) == 1
+    assert result.allowed is allowed
+    assert terminal[0].response_inspection_result == label
+    assert terminal[0].policy_decision == ("allow" if allowed else "deny")
+    assert session.max_sensitivity == "pii"
+    assert chain.verify_chain()
+    if allowed:
+        expected = {"result": "ok"} if label == "surplus_stripped" else payload
+        assert json.loads(result.response) == expected
+        assert terminal[0].response_payload_hash == _sha256_of_text(result.response)
+        assert proxy._policy.authorize_egress.call_args.args[1] == result.response.encode()
+    else:
+        assert result.response is None
+        assert terminal[0].response_payload_hash is None
+        proxy._policy.authorize_egress.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sanitized", [False, True])
+async def test_scanner_success_is_pass_even_without_schema(sanitized):
+    proxy, _, chain = _make_proxy()
+    wire_mock_gateway(proxy, response_text="original", scan_content="sanitized" if sanitized else None)
+    result = await proxy.call_tool("scan", "test.tool", {})
+    assert result.allowed
+    assert chain.entries[-1].response_inspection_result == "pass"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strip_surplus", [False, True])
+async def test_inspection_label_survives_egress_refusal(strip_surplus):
+    entry = _make_entry()
+    if strip_surplus:
+        entry.approved_definition.output_schema = {
+            "type": "object", "properties": {"result": {"type": "string"}},
+        }
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    proxy, _, chain = _make_proxy(catalog=catalog)
+    wire_mock_gateway(proxy, response_text='{"result":"ok","debug":"secret"}')
+    proxy._policy.authorize_egress.side_effect = PolicyDeny("egress refused")
+    result = await proxy.call_tool("egress", "test.tool", {})
+    assert not result.allowed
+    assert chain.entries[-1].response_inspection_result == (
+        "surplus_stripped" if strip_surplus else "pass"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ingress_refusal_has_no_response_inspection():
+    proxy, _, chain = _make_proxy(evaluator=_make_evaluator(allow=False))
+    result = await proxy.call_tool("ingress", "test.tool", {})
+    assert not result.allowed
+    assert chain.entries[-1].response_inspection_result is None
+    proxy._mcp_gateway.intercept_tool_response.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scanner_refusal_does_not_become_schema_surplus():
+    entry = _make_entry()
+    entry.approved_definition.output_schema = {
+        "type": "object", "properties": {"result": {"type": "string"}},
+    }
+    catalog = ToolCatalog(entries={"test.tool": entry}, catalog_hash="sha256:" + "1" * 64)
+    proxy, _, chain = _make_proxy(catalog=catalog)
+    wire_mock_gateway(
+        proxy, response_text='{"result":"ok","debug":"bad"}', scan_allowed=False,
+        threats=[{"category": "prompt_injection"}],
+    )
+    result = await proxy.call_tool("blocked", "test.tool", {})
+    assert not result.allowed
+    assert result.response is None
+    assert chain.entries[-1].response_inspection_result == "injection_detected"
+    proxy._policy.authorize_egress.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_inspection_result_preserved_when_session_update_faults():
+    proxy, session, chain = _make_proxy()
+    from unittest.mock import AsyncMock
+
+    session.apply_inspection = AsyncMock(side_effect=RuntimeError("session failed"))
+    with pytest.raises(RuntimeError, match="session failed"):
+        await proxy.call_tool("fault", "test.tool", {})
+    assert chain.entries[-1].policy_decision == "fault"
+    assert chain.entries[-1].response_inspection_result == "pass"
