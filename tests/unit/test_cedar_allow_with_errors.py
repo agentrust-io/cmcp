@@ -31,13 +31,15 @@ FORBID_MISSING_ATTR = PERMIT + (
     "};\n"
 )
 
-# Each phase carries one of the two attributes, so the forbid errors in both.
-FORBID_SPLIT_ACROSS_PHASES = PERMIT + (
+# Before both phases carried one context contract, each phase carried only one
+# of these two attributes, so this forbid errored in both.
+FORBID_ONCE_SPLIT_ACROSS_PHASES = PERMIT + (
     "forbid(principal, action, resource) when {\n"
     "    context.response_size_bytes > 10 &&\n"
     '    context.compliance_domain == "external"\n'
     "};\n"
 )
+
 
 CONTEXT = {
     "tool_name": "lookup",
@@ -142,14 +144,26 @@ def test_advisory_evaluator_flags_would_have_denied_as_plain_deny():
     assert "workflow_allowed_tools" in (decision.rule_matched or "")
 
 
-def test_split_attribute_forbid_denies_at_ingress_and_at_egress():
-    evaluator = PolicyEvaluator(_bundle(FORBID_SPLIT_ACROSS_PHASES), _make_config())
+def test_missing_attribute_forbid_denies_at_ingress_and_at_egress():
+    evaluator = PolicyEvaluator(_bundle(FORBID_MISSING_ATTR), _make_config())
     with pytest.raises(PolicyDeny) as ingress:
-        evaluator.evaluate({**CONTEXT, "compliance_domain": "external"})
-    assert "response_size_bytes" in str(ingress.value.detail)
+        evaluator.evaluate(CONTEXT)
+    assert "workflow_allowed_tools" in str(ingress.value.detail)
     with pytest.raises(PolicyDeny) as egress:
         evaluator.authorize_egress("lookup", b"x" * 64, SessionState(session_id="s"))
-    assert "compliance_domain" in str(egress.value.detail)
+    assert "workflow_allowed_tools" in str(egress.value.detail)
+
+
+def test_once_split_forbid_now_evaluates_cleanly_in_both_phases():
+    """Both keys exist in both phases, so the forbid decides instead of erroring."""
+    evaluator = PolicyEvaluator(_bundle(FORBID_ONCE_SPLIT_ACROSS_PHASES), _make_config())
+    ingress = evaluator.evaluate(
+        {**CONTEXT, "compliance_domain": "external", "response_size_bytes": 0}
+    )
+    assert ingress.allowed is True
+    with pytest.raises(PolicyDeny) as egress:
+        evaluator.authorize_egress("lookup", b"x" * 64, SessionState(session_id="s"))
+    assert "evaluation error" not in str(egress.value.detail)
 
 
 # -- proxy -----------------------------------------------------------------
