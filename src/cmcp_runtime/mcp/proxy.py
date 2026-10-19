@@ -939,9 +939,12 @@ class CMCPProxy:
         for tool_name, kind in drifted:
             classification = kind
             if self._catalog_scanner is not None and (offered := by_name.get(tool_name)):
+                # Classify against the drifted tool's own entry; the earlier
+                # loop variable is whichever catalog entry happened to be last.
+                drifted_entry = self._catalog.entries[tool_name]
                 result = self._catalog_scanner.check_drift(
                     tool_name=tool_name,
-                    server_name=catalog_entry.server.display_name or catalog_entry.server.url,
+                    server_name=drifted_entry.server.display_name or drifted_entry.server.url,
                     current_definition=offered,
                 )
                 if result.available and result.threats:
