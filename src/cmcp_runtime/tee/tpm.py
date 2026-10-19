@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import logging
+import socket
 import subprocess  # nosec B404
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,6 +53,62 @@ _PLATFORM_AK_CERT_NV_INDEX = 0x01C101D0
 # Azure guarantee.
 _AIA_FETCH_TIMEOUT_SECONDS = 5
 _AIA_MAX_DEPTH = 6
+# The AIA URL comes from a certificate that is not trusted yet, so the fetch is
+# bounded: only publicly routable destinations, a few redirects that are checked
+# the same way, and a response size far above any real issuer certificate or
+# PKCS#7 bundle (Azure's are under 2 KiB).
+_AIA_MAX_RESPONSE_BYTES = 64 * 1024
+_AIA_MAX_REDIRECTS = 3
+
+
+def _aia_destination_allowed(url: str) -> bool:
+    """True when ``url`` is http(s) and every address its host resolves to is global.
+
+    Loopback, private, link-local (including cloud metadata endpoints), reserved
+    and multicast addresses are refused. The resolution here and the one urllib
+    performs are separate lookups, so this does not defend against DNS rebinding.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return False
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        infos = socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP)
+        addresses = {ipaddress.ip_address(str(info[4][0]).split("%")[0]) for info in infos}
+    except (OSError, ValueError, UnicodeError):
+        return False
+    return bool(addresses) and all(address.is_global for address in addresses)
+
+
+class _AiaRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow at most a few redirects, each to a destination that passes the same check."""
+
+    max_redirections = _AIA_MAX_REDIRECTS
+
+    def redirect_request(  # type: ignore[no-untyped-def]
+        self, req, fp, code, msg, headers, newurl
+    ):
+        if not _aia_destination_allowed(newurl):
+            raise urllib.error.HTTPError(
+                newurl, code, "AIA redirect to a disallowed destination", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _fetch_aia(url: str) -> bytes | None:
+    """Fetch one AIA caIssuers URL, or return None when it is refused or too large."""
+    if not _aia_destination_allowed(url):
+        logger.warning("AIA fetch refused for %s: not a publicly routable destination", url)
+        return None
+    opener = urllib.request.build_opener(_AiaRedirectHandler)
+    with opener.open(url, timeout=_AIA_FETCH_TIMEOUT_SECONDS) as response:  # nosec B310
+        data: bytes = response.read(_AIA_MAX_RESPONSE_BYTES + 1)
+    if len(data) > _AIA_MAX_RESPONSE_BYTES:
+        logger.warning(
+            "AIA response from %s exceeds %d bytes; ignored", url, _AIA_MAX_RESPONSE_BYTES
+        )
+        return None
+    return data
 
 # TPM2_NV_Read is bounded by TPM2_PT_NV_BUFFER_MAX; query it and cap by this.
 _NV_READ_CHUNK_BYTES = 512
@@ -308,8 +369,6 @@ class TPMProvider(TEEProvider):
         If neither produces an issuer the walk stops, and whatever was gathered is
         returned so a partial chain still travels rather than being discarded.
         """
-        import urllib.request
-
         from cryptography import x509
         from cryptography.hazmat.primitives.serialization import pkcs7
 
@@ -365,13 +424,9 @@ class TPMProvider(TEEProvider):
             )
             issuer = None
             for url in urls:
-                if not url.startswith(("http://", "https://")):
-                    continue
                 try:
-                    with urllib.request.urlopen(  # noqa: S310  # nosec B310 - http(s) only, checked above
-                        url, timeout=_AIA_FETCH_TIMEOUT_SECONDS
-                    ) as response:
-                        found = load_any(response.read())
+                    data = _fetch_aia(url)
+                    found = load_any(data) if data is not None else []
                     if found:
                         issuer = found[0]
                         break
