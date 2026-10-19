@@ -112,7 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `forbid` reading a context attribute the current phase does not carry could
   not stop a matching `permit`. `CedarBackend` now denies any Allow that comes
   with evaluation errors, and the error reaches the `tool_call` or
-  `egress_denied` audit row.
+  `egress_denied` audit row. So that a policy written for one phase does not
+  deny in the other, both phases now carry the same context keys: egress adds
+  `session_max_sensitivity` (the label string), `arguments`, `baa_covered`,
+  `compliance_domain`, `server_identity`, `destination_class` and
+  `attestation_platform`, and ingress adds `egress` (false),
+  `sensitivity_level`, `injection_events`, `reset_count` and
+  `response_size_bytes` (0). Without this the shipped BFSi demo denied every
+  response at egress. A policy that reads a key outside that set, or
+  `workflow_id` when the caller declared none, now denies.
 - **The TPM AIA certificate fetch was unbounded** (GHSA-mrcx-xvv4-m7f8). The
   chain walk followed redirects to any address and read responses without a
   limit. It now refuses destinations that do not resolve to global addresses,

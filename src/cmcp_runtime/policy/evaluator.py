@@ -13,12 +13,28 @@ from cmcp_runtime.policy.annotations import parse_policy_annotations
 from cmcp_runtime.policy.bundle import PolicyBundle, PolicyStore
 from cmcp_runtime.policy.cedar import CedarBackend
 from cmcp_runtime.policy.decisions import Decision, decision_for_deny
-from cmcp_runtime.session.state import effective_sensitivity_order
+from cmcp_runtime.session.state import _max_sensitivity, effective_sensitivity_order
 
 if TYPE_CHECKING:
     from cmcp_runtime.session.state import SessionState
 
 logger = logging.getLogger(__name__)
+
+#: Context keys both policy phases carry, with the value egress uses when the
+#: caller has no per-call context to pass. CedarBackend denies an Allow that
+#: comes with evaluation errors, so a key present in one phase and absent in
+#: the other turns a policy written for one phase into a deny in the other.
+#: Defaults are the conservative reading: an unknown destination is external
+#: and not BAA covered. PolicyProxy._build_cedar_context supplies the same keys
+#: at ingress; tests/unit/test_cedar_context_contract.py holds both to it.
+EGRESS_CONTEXT_DEFAULTS: dict[str, Any] = {
+    "arguments": {},
+    "server_identity": "",
+    "compliance_domain": "external",
+    "baa_covered": False,
+    "destination_class": "external",
+    "attestation_platform": "unknown",
+}
 
 
 @dataclass
@@ -180,7 +196,13 @@ class PolicyEvaluator:
         context must contain at minimum:
           - tool_name: str
           - session_max_sensitivity: str
-          - workflow_id: str  (defaults to "default")
+          - workflow_id: str  (only when the caller declared one)
+
+        The runtime builds the same keys in both phases: tool_name, resource,
+        arguments, server_identity, compliance_domain, baa_covered,
+        destination_class, session_max_sensitivity, attestation_platform,
+        egress, sensitivity_level, injection_events, reset_count and
+        response_size_bytes (0 at ingress). See egress_context().
 
         Raises PolicyDeny if enforcement_mode is ENFORCING and Cedar denies.
         In ADVISORY mode, always returns allowed=True but sets would_have_denied.
@@ -257,19 +279,63 @@ class PolicyEvaluator:
             decision=denied_as,
         )
 
+    def egress_context(
+        self,
+        tool_name: str,
+        response_bytes: bytes,
+        session: SessionState,
+        workflow_id: str | None = None,
+        call_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build the egress Cedar context: the ingress keys plus the response.
+
+        call_context is the context the proxy builds for this call at ingress
+        (PolicyProxy._build_cedar_context), rebuilt after the response so its
+        session_max_sensitivity reflects what the session holds now. Without
+        it the call keys take EGRESS_CONTEXT_DEFAULTS, so a policy that reads
+        context.session_max_sensitivity, context.arguments or
+        context.baa_covered evaluates at egress instead of erroring into a deny.
+        """
+        context: dict[str, Any] = {**EGRESS_CONTEXT_DEFAULTS, **(call_context or {})}
+        # Never lower what the session already holds.
+        declared = context.get("session_max_sensitivity")
+        max_sensitivity = (
+            _max_sensitivity(declared, session.max_sensitivity, self._sensitivity_order)
+            if isinstance(declared, str)
+            else session.max_sensitivity
+        )
+        context.update({
+            "tool_name": tool_name,
+            # Same resource entity as ingress (see PolicyProxy._build_cedar_context)
+            # so a resource-scoped permit matches at egress too; without it an
+            # allowed tool response would be denied on the way back.
+            "resource": tool_name,
+            "egress": True,
+            "session_max_sensitivity": max_sensitivity,
+            "sensitivity_level": self._sensitivity_order.get(max_sensitivity, 0),
+            "injection_events": len(session.injection_events),
+            "reset_count": session.reset_count,
+            "response_size_bytes": len(response_bytes),
+        })
+        if workflow_id is not None:
+            context["workflow_id"] = workflow_id
+        return context
+
     def authorize_egress(
         self,
         tool_name: str,
         response_bytes: bytes,
         session: SessionState,
         workflow_id: str | None = None,
+        call_context: dict[str, Any] | None = None,
     ) -> PolicyDecision:
         """
         Evaluate Cedar egress policies after a tool response is received.
 
-        Uses the same CedarBackend as ingress evaluation but passes egress-specific
-        context fields so Cedar policies can distinguish direction.  The principal
-        and action are implicit in the context dict the backend receives.
+        Uses the same CedarBackend as ingress evaluation with the same context
+        keys (see egress_context), plus egress=True and the response size, so
+        a policy written for either phase evaluates cleanly in both and can
+        still tell them apart.
 
         workflow_id carries the same call identity as the ingress evaluation:
         without it, workflow-scoped permits (default-deny bundles with no
@@ -279,21 +345,12 @@ class PolicyEvaluator:
         raises PolicyDeny; in ADVISORY/SILENT a deny is flagged via would_have_denied.
         """
         self._maybe_reload()
-        context: dict[str, Any] = {
-            "tool_name": tool_name,
-            # Same resource entity as ingress (see PolicyProxy._build_cedar_context)
-            # so a resource-scoped permit matches at egress too; without it an
-            # allowed tool response would be denied on the way back.
-            "resource": tool_name,
-            "egress": True,
-            "sensitivity_level": self._sensitivity_order.get(session.max_sensitivity, 0),
-            "injection_events": len(session.injection_events),
-            "reset_count": session.reset_count,
-            "response_size_bytes": len(response_bytes),
-        }
-        if workflow_id is not None:
-            context["workflow_id"] = workflow_id
-        return self.evaluate(context)
+        return self.evaluate(
+            self.egress_context(
+                tool_name, response_bytes, session,
+                workflow_id=workflow_id, call_context=call_context,
+            )
+        )
 
     @property
     def bundle_hash(self) -> str:
