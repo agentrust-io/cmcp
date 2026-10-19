@@ -11,8 +11,8 @@ Every experiment in the paper, rerun in fresh virtual environments.
 
 The pin environment was resolved with `uv pip install --exclude-newer 2026-07-02`, so its
 dependencies are the versions available on the day of the published run
-(`requirements-pin.txt`: agent-governance-toolkit-core 4.1.0, cedarpy 4.8.6). The main
-environment uses current releases (`requirements-main.txt`: cedarpy 4.12.1, no AGT
+(`pip-freeze-pin.list`: agent-governance-toolkit-core 4.1.0, cedarpy 4.8.6). The main
+environment uses current releases (`pip-freeze-main.list`: cedarpy 4.12.1, no AGT
 dependency).
 
 Host: Windows 11 build 26200, CPython 3.12.10 (AMD64), the same platform string as the
@@ -106,3 +106,5 @@ distinguished from noise. The published 202-rule p50 (16% above 102 rules) is th
 - `claim-hw-attestation` needs a confidential VM (SEV-SNP, TDX or TPM). It SKIPs here.
 - The Azure SEV-SNP capture in the cMCP repo
   (`experiments/hardware-validation/cmcp-in-tee-azure-2026-07-27/`) was not re-executed.
+
+The two environment records were renamed from `requirements-*.txt` to `pip-freeze-*.list` on 2026-10-19 so Dependabot stops reading them as installable manifests (it treats any `.txt` or `.in` file whose lines all parse as requirements as one); their contents are unchanged from the published source.
