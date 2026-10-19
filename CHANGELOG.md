@@ -103,6 +103,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   root mismatch; the gateway still does not bind. Reported by
   @asymx-mechanics (#719).
 
+## [0.7.1] - 2026-10-19
+
+### Security
+
+- **A Cedar Allow reached with evaluation errors was enforced as Allow**
+  (GHSA-frxc-7f57-6f4r). Cedar skips a policy whose condition errors, so a
+  `forbid` reading a context attribute the current phase does not carry could
+  not stop a matching `permit`. `CedarBackend` now denies any Allow that comes
+  with evaluation errors, and the error reaches the `tool_call` or
+  `egress_denied` audit row.
+- **The TPM AIA certificate fetch was unbounded** (GHSA-mrcx-xvv4-m7f8). The
+  chain walk followed redirects to any address and read responses without a
+  limit. It now refuses destinations that do not resolve to global addresses,
+  checks every redirect the same way, follows at most three and ignores
+  responses over 64 KiB. An on-prem CA whose AIA host has a private address
+  falls back to the vendored bundle.
+- **Upstream drift was classified against the wrong catalog entry**
+  (GHSA-2p85-666x-xm7x). The scanner received the server of whichever entry was
+  last in the catalog. Detection and fail-closed denial were not affected; only
+  the classification written to the audit row was.
+
 ## [0.7.0] - 2026-09-30
 
 ### Security
