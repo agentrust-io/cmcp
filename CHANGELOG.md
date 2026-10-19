@@ -29,8 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chain walk followed redirects to any address and read responses without a
   limit. It now refuses destinations that do not resolve to global addresses,
   checks every redirect the same way, follows at most three and ignores
-  responses over 64 KiB. An on-prem CA whose AIA host has a private address
-  falls back to the vendored bundle.
+  responses over 64 KiB. Each hop's host is resolved once and the connection
+  goes to the checked address (the request still names the host, and HTTPS
+  still verifies the certificate against it), so a second DNS answer cannot
+  point the fetch somewhere else. The fetch no longer uses environment proxies.
+  An on-prem CA whose AIA host has a private address falls back to the
+  vendored bundle.
 - **Upstream drift was classified against the wrong catalog entry**
   (GHSA-2p85-666x-xm7x). The scanner received the server of whichever entry was
   last in the catalog. Detection and fail-closed denial were not affected; only
