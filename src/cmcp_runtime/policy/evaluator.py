@@ -215,8 +215,13 @@ class PolicyEvaluator:
         advice = self._advice_for_deny(tuple(getattr(result, "policy_ids", ())))
 
         if self._mode == EnforcementMode.ENFORCING:
+            message = f"Policy denied tool call: {context.get('tool_name', '?')}"
+            if getattr(result, "error", None):
+                # The proxy records str(exc) in the audit row; without the
+                # error there, a fail-closed deny reads like a matched forbid.
+                message = f"{message} ({rule})"
             raise PolicyDeny(
-                f"Policy denied tool call: {context.get('tool_name', '?')}",
+                message,
                 detail=f"rule={rule} eval_ms={evaluation_ms:.2f}",
                 advice=advice,
             )
