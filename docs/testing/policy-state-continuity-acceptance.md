@@ -4,7 +4,7 @@ Status: informative support for Rajnish's design in [#675](https://github.com/ag
 
 ## Preserve the two identities
 
-The current [session manager](../../src/cmcp_runtime/session/manager.py) creates a fresh session ID. Both [sensitivity storage](../../src/cmcp_runtime/session/store.py) and the [audit chain](../../src/cmcp_runtime/audit/chain.py) use session identity. Reusing an old audit ID is not a safe shortcut to policy resumption: chain initialization and sequence handling are not a reviewed audit-resume protocol.
+The current [session manager](https://github.com/agentrust-io/cmcp/blob/3b2af0ba6c028094b63828978e23e79d9a084f9d/src/cmcp_runtime/session/manager.py) creates a fresh session ID. Both [sensitivity storage](https://github.com/agentrust-io/cmcp/blob/3b2af0ba6c028094b63828978e23e79d9a084f9d/src/cmcp_runtime/session/store.py) and the [audit chain](https://github.com/agentrust-io/cmcp/blob/3b2af0ba6c028094b63828978e23e79d9a084f9d/src/cmcp_runtime/audit/chain.py) use session identity. Reusing an old audit ID is not a safe shortcut to policy resumption: chain initialization and sequence handling are not a reviewed audit-resume protocol.
 
 The [maintainer direction](https://github.com/agentrust-io/cmcp/issues/675#issuecomment-5807567156) keeps audit IDs fresh and asks for a separate authenticated policy-state scope. A manifest identity or digest supplies context, not permission to resume. The design owner remains Rajnish; these criteria support independent verification of his proposed contract.
 
