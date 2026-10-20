@@ -127,7 +127,10 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(
         self, target: _AiaTarget, timeout: float, context: ssl.SSLContext | None = None
     ) -> None:
-        self._tls = context or ssl.create_default_context()
+        if context is None:
+            context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+        self._tls = context
         super().__init__(target.host, target.port, timeout=timeout, context=self._tls)
         self._address = target.address
 

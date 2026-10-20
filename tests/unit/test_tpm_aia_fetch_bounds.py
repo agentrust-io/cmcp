@@ -10,6 +10,7 @@ import datetime
 import http.server
 import ipaddress
 import socket
+import ssl
 import threading
 from collections.abc import Iterator
 
@@ -281,6 +282,10 @@ def test_https_connects_to_the_checked_address_with_sni_on_the_host_name(
     sentinel = object()
 
     class Context:
+        # http.client reads these in HTTPSConnection.__init__ on current patch releases.
+        verify_mode = ssl.CERT_REQUIRED
+        check_hostname = True
+
         def wrap_socket(self, sock, server_hostname=None):  # type: ignore[no-untyped-def]
             wrapped.append(server_hostname)
             return sock
