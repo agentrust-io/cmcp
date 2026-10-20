@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-19
+
+### Changed
+
+- `agent-manifest` is now pinned `>=0.12.0,<0.13`. 0.13.0 changed the canonicalization and binding checks the 0.7 line was built against, so a fresh install that pulled 0.13 or later reported every Agent Manifest binding as unverified. The 0.8 line on main tracks current agent-manifest.
+
+### Security
+
+- **A Cedar Allow reached with evaluation errors was enforced as Allow**
+  (GHSA-frxc-7f57-6f4r). Cedar skips a policy whose condition errors, so a
+  `forbid` reading a context attribute the current phase does not carry could
+  not stop a matching `permit`. `CedarBackend` now denies any Allow that comes
+  with evaluation errors, and the error reaches the `tool_call` or
+  `egress_denied` audit row. So that a policy written for one phase does not
+  deny in the other, both phases now carry the same context keys: egress adds
+  `session_max_sensitivity` (the label string), `arguments`, `baa_covered`,
+  `compliance_domain`, `server_identity`, `destination_class` and
+  `attestation_platform`, and ingress adds `egress` (false),
+  `sensitivity_level`, `injection_events`, `reset_count` and
+  `response_size_bytes` (0). Without this the shipped BFSi demo denied every
+  response at egress. A policy that reads a key outside that set, or
+  `workflow_id` when the caller declared none, now denies.
+- **The TPM AIA certificate fetch was unbounded** (GHSA-mrcx-xvv4-m7f8). The
+  chain walk followed redirects to any address and read responses without a
+  limit. It now refuses destinations that do not resolve to global addresses,
+  checks every redirect the same way, follows at most three and ignores
+  responses over 64 KiB. Each hop's host is resolved once and the connection
+  goes to the checked address (the request still names the host, and HTTPS
+  still verifies the certificate against it), so a second DNS answer cannot
+  point the fetch somewhere else. The fetch no longer uses environment proxies.
+  An on-prem CA whose AIA host has a private address falls back to the
+  vendored bundle.
+- **Upstream drift was classified against the wrong catalog entry**
+  (GHSA-2p85-666x-xm7x). The scanner received the server of whichever entry was
+  last in the catalog. Detection and fail-closed denial were not affected; only
+  the classification written to the audit row was.
+
 ## [0.7.0] - 2026-09-30
 
 ### Security

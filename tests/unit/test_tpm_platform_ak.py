@@ -111,23 +111,7 @@ def _build_chain(depth: int) -> list[x509.Certificate]:
     return certs
 
 
-class _FakeAiaResponse:
-    """Minimal urlopen() context manager stand-in serving one certificate's DER."""
-
-    def __init__(self, data: bytes) -> None:
-        self._data = data
-
-    def __enter__(self) -> _FakeAiaResponse:
-        return self
-
-    def __exit__(self, *args: object) -> bool:
-        return False
-
-    def read(self) -> bytes:
-        return self._data
-
-
-def _fake_urlopen_for(certs: list[x509.Certificate]):
+def _fake_fetch_for(certs: list[x509.Certificate]):
     """Serve certs[i] DER bytes for the URL _build_chain() gave cert i-1's AIA."""
     der_by_url = {
         f"https://example.test/cert{i + 1}.der": certs[i + 1].public_bytes(
@@ -136,10 +120,10 @@ def _fake_urlopen_for(certs: list[x509.Certificate]):
         for i in range(len(certs) - 1)
     }
 
-    def _urlopen(url: str, timeout: float | None = None) -> _FakeAiaResponse:
-        return _FakeAiaResponse(der_by_url[url])
+    def _fetch(url: str) -> bytes | None:
+        return der_by_url[url]
 
-    return _urlopen
+    return _fetch
 
 
 def test_nv_read_chunks_within_the_buffer_limit() -> None:
@@ -226,7 +210,7 @@ def test_chain_walk_reaches_root_deeper_than_previously_known_azure_depth() -> N
     be truncated by the widened depth cap."""
     certs = _build_chain(5)
 
-    with patch("urllib.request.urlopen", side_effect=_fake_urlopen_for(certs)):
+    with patch("cmcp_runtime.tee.tpm._fetch_aia", side_effect=_fake_fetch_for(certs)):
         chain = TPMProvider._chain_from_leaf(certs[0].public_bytes(serialization.Encoding.DER))
 
     loaded = x509.load_pem_x509_certificates(chain)
@@ -245,7 +229,7 @@ def test_chain_walk_past_the_depth_cap_logs_a_truncation_warning(
     certs = _build_chain(3)
 
     with (
-        patch("urllib.request.urlopen", side_effect=_fake_urlopen_for(certs)),
+        patch("cmcp_runtime.tee.tpm._fetch_aia", side_effect=_fake_fetch_for(certs)),
         caplog.at_level(logging.WARNING, logger="cmcp_runtime.tee.tpm"),
     ):
         chain = TPMProvider._chain_from_leaf(certs[0].public_bytes(serialization.Encoding.DER))
