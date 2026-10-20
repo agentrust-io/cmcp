@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - release/0.7.x
   pull_request:
     branches:
       - main
+      - release/0.7.x
   schedule:
     - cron: '15 3 * * 0'
 
