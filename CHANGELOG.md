@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.1] - 2026-10-19
 
+### Changed
+
+- `agent-manifest` is now pinned `>=0.12.0,<0.13`. 0.13.0 changed the canonicalization and binding checks the 0.7 line was built against, so a fresh install that pulled 0.13 or later reported every Agent Manifest binding as unverified. The 0.8 line on main tracks current agent-manifest.
+
 ### Security
 
 - **A Cedar Allow reached with evaluation errors was enforced as Allow**
