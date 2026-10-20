@@ -103,8 +103,8 @@
 <a id=__codelineno-6-4 name=__codelineno-6-4 href=#__codelineno-6-4></a>  resource
 <a id=__codelineno-6-5 name=__codelineno-6-5 href=#__codelineno-6-5></a>)
 <a id=__codelineno-6-6 name=__codelineno-6-6 href=#__codelineno-6-6></a>when {
-<a id=__codelineno-6-7 name=__codelineno-6-7 href=#__codelineno-6-7></a>  context.session_sensitivity == "hipaa_phi" &amp;&amp;
-<a id=__codelineno-6-8 name=__codelineno-6-8 href=#__codelineno-6-8></a>  resource.server_domain == "uncovered"
+<a id=__codelineno-6-7 name=__codelineno-6-7 href=#__codelineno-6-7></a>  context.session_max_sensitivity == "hipaa_phi" &amp;&amp;
+<a id=__codelineno-6-8 name=__codelineno-6-8 href=#__codelineno-6-8></a>  !context.baa_covered
 <a id=__codelineno-6-9 name=__codelineno-6-9 href=#__codelineno-6-9></a>};
 </code></pre></div> <h3 id=per-workflow-scope>Per-Workflow Scope<a class=headerlink href=#per-workflow-scope title="Permanent link">&para;</a></h3> <p>Permit tool calls only when the tool is in the workflow's allowed set:</p> <div class=highlight><pre><span></span><code><a id=__codelineno-7-1 name=__codelineno-7-1 href=#__codelineno-7-1></a>permit(
 <a id=__codelineno-7-2 name=__codelineno-7-2 href=#__codelineno-7-2></a>  principal,
@@ -130,40 +130,49 @@
 </code></pre></div> <p>The error does not include the matched rule name or policy text, to avoid leaking policy internals to the agent.</p> <hr> <p><a id=cmcp-policy-evaluation></a></p> <h2 id=section-4-policy-evaluation-decision-flow>Section 4 : Policy Evaluation Decision Flow<a class=headerlink href=#section-4-policy-evaluation-decision-flow title="Permanent link">&para;</a></h2> <div class=highlight><pre><span></span><code><a id=__codelineno-10-1 name=__codelineno-10-1 href=#__codelineno-10-1></a>1.  Receive MCP tool call request
 <a id=__codelineno-10-2 name=__codelineno-10-2 href=#__codelineno-10-2></a>      inputs: tool_name, arguments, session_id, workflow_id (if present)
 <a id=__codelineno-10-3 name=__codelineno-10-3 href=#__codelineno-10-3></a>
-<a id=__codelineno-10-4 name=__codelineno-10-4 href=#__codelineno-10-4></a>2.  Build Cedar evaluation context:
+<a id=__codelineno-10-4 name=__codelineno-10-4 href=#__codelineno-10-4></a>2.  Build Cedar evaluation context (the same keys at ingress and at egress):
 <a id=__codelineno-10-5 name=__codelineno-10-5 href=#__codelineno-10-5></a>      {
-<a id=__codelineno-10-6 name=__codelineno-10-6 href=#__codelineno-10-6></a>        tool_name,
+<a id=__codelineno-10-6 name=__codelineno-10-6 href=#__codelineno-10-6></a>        arguments,                // the call's arguments
 <a id=__codelineno-10-7 name=__codelineno-10-7 href=#__codelineno-10-7></a>        server_identity,
-<a id=__codelineno-10-8 name=__codelineno-10-8 href=#__codelineno-10-8></a>        server_domain,
-<a id=__codelineno-10-9 name=__codelineno-10-9 href=#__codelineno-10-9></a>        session_sensitivity,
-<a id=__codelineno-10-10 name=__codelineno-10-10 href=#__codelineno-10-10></a>        workflow_id,
-<a id=__codelineno-10-11 name=__codelineno-10-11 href=#__codelineno-10-11></a>        workflow_allowed_tools,
-<a id=__codelineno-10-12 name=__codelineno-10-12 href=#__codelineno-10-12></a>        user_identity           // if available
-<a id=__codelineno-10-13 name=__codelineno-10-13 href=#__codelineno-10-13></a>      }
-<a id=__codelineno-10-14 name=__codelineno-10-14 href=#__codelineno-10-14></a>
-<a id=__codelineno-10-15 name=__codelineno-10-15 href=#__codelineno-10-15></a>3.  Evaluate Cedar policies against:
-<a id=__codelineno-10-16 name=__codelineno-10-16 href=#__codelineno-10-16></a>      (principal, Action::"call_tool", resource) with context
-<a id=__codelineno-10-17 name=__codelineno-10-17 href=#__codelineno-10-17></a>
-<a id=__codelineno-10-18 name=__codelineno-10-18 href=#__codelineno-10-18></a>4.  If decision = permit:
-<a id=__codelineno-10-19 name=__codelineno-10-19 href=#__codelineno-10-19></a>        proceed to egress DLP check (see egress policy documentation)
-<a id=__codelineno-10-20 name=__codelineno-10-20 href=#__codelineno-10-20></a>
-<a id=__codelineno-10-21 name=__codelineno-10-21 href=#__codelineno-10-21></a>5.  If decision = deny:
-<a id=__codelineno-10-22 name=__codelineno-10-22 href=#__codelineno-10-22></a>        enforce per enforcement_mode (see Section 3)
+<a id=__codelineno-10-8 name=__codelineno-10-8 href=#__codelineno-10-8></a>        compliance_domain,
+<a id=__codelineno-10-9 name=__codelineno-10-9 href=#__codelineno-10-9></a>        baa_covered,
+<a id=__codelineno-10-10 name=__codelineno-10-10 href=#__codelineno-10-10></a>        destination_class,
+<a id=__codelineno-10-11 name=__codelineno-10-11 href=#__codelineno-10-11></a>        session_max_sensitivity,  // string label
+<a id=__codelineno-10-12 name=__codelineno-10-12 href=#__codelineno-10-12></a>        attestation_platform,
+<a id=__codelineno-10-13 name=__codelineno-10-13 href=#__codelineno-10-13></a>        egress,                   // false at ingress, true at egress
+<a id=__codelineno-10-14 name=__codelineno-10-14 href=#__codelineno-10-14></a>        sensitivity_level,        // integer rank of session_max_sensitivity
+<a id=__codelineno-10-15 name=__codelineno-10-15 href=#__codelineno-10-15></a>        injection_events,
+<a id=__codelineno-10-16 name=__codelineno-10-16 href=#__codelineno-10-16></a>        reset_count,
+<a id=__codelineno-10-17 name=__codelineno-10-17 href=#__codelineno-10-17></a>        response_size_bytes,      // 0 at ingress
+<a id=__codelineno-10-18 name=__codelineno-10-18 href=#__codelineno-10-18></a>        workflow_id               // only when the caller declared one
+<a id=__codelineno-10-19 name=__codelineno-10-19 href=#__codelineno-10-19></a>      }
+<a id=__codelineno-10-20 name=__codelineno-10-20 href=#__codelineno-10-20></a>      An Allow that Cedar reaches with evaluation errors is denied, so a
+<a id=__codelineno-10-21 name=__codelineno-10-21 href=#__codelineno-10-21></a>      policy that reads a key outside this list, or workflow_id without
+<a id=__codelineno-10-22 name=__codelineno-10-22 href=#__codelineno-10-22></a>      `context has workflow_id`, denies the call.
 <a id=__codelineno-10-23 name=__codelineno-10-23 href=#__codelineno-10-23></a>
-<a id=__codelineno-10-24 name=__codelineno-10-24 href=#__codelineno-10-24></a>6.  Log audit entry:
-<a id=__codelineno-10-25 name=__codelineno-10-25 href=#__codelineno-10-25></a>      { decision, rule_matched, latency_us, call_id }
+<a id=__codelineno-10-24 name=__codelineno-10-24 href=#__codelineno-10-24></a>3.  Evaluate Cedar policies against:
+<a id=__codelineno-10-25 name=__codelineno-10-25 href=#__codelineno-10-25></a>      (principal, Action::"call_tool", resource) with context
 <a id=__codelineno-10-26 name=__codelineno-10-26 href=#__codelineno-10-26></a>
-<a id=__codelineno-10-27 name=__codelineno-10-27 href=#__codelineno-10-27></a>7.  If decision = permit and DLP passes:
-<a id=__codelineno-10-28 name=__codelineno-10-28 href=#__codelineno-10-28></a>        forward call to upstream server
+<a id=__codelineno-10-27 name=__codelineno-10-27 href=#__codelineno-10-27></a>4.  If decision = permit:
+<a id=__codelineno-10-28 name=__codelineno-10-28 href=#__codelineno-10-28></a>        proceed to egress DLP check (see egress policy documentation)
 <a id=__codelineno-10-29 name=__codelineno-10-29 href=#__codelineno-10-29></a>
-<a id=__codelineno-10-30 name=__codelineno-10-30 href=#__codelineno-10-30></a>8.  Receive response from upstream server
-<a id=__codelineno-10-31 name=__codelineno-10-31 href=#__codelineno-10-31></a>
-<a id=__codelineno-10-32 name=__codelineno-10-32 href=#__codelineno-10-32></a>9.  Run response inspection pipeline (see response-inspection.md)
-<a id=__codelineno-10-33 name=__codelineno-10-33 href=#__codelineno-10-33></a>      applies advice blocks (e.g., redact_fields)
-<a id=__codelineno-10-34 name=__codelineno-10-34 href=#__codelineno-10-34></a>
-<a id=__codelineno-10-35 name=__codelineno-10-35 href=#__codelineno-10-35></a>10. Log response audit entry
-<a id=__codelineno-10-36 name=__codelineno-10-36 href=#__codelineno-10-36></a>
-<a id=__codelineno-10-37 name=__codelineno-10-37 href=#__codelineno-10-37></a>11. Return (possibly redacted) response to agent
+<a id=__codelineno-10-30 name=__codelineno-10-30 href=#__codelineno-10-30></a>5.  If decision = deny:
+<a id=__codelineno-10-31 name=__codelineno-10-31 href=#__codelineno-10-31></a>        enforce per enforcement_mode (see Section 3)
+<a id=__codelineno-10-32 name=__codelineno-10-32 href=#__codelineno-10-32></a>
+<a id=__codelineno-10-33 name=__codelineno-10-33 href=#__codelineno-10-33></a>6.  Log audit entry:
+<a id=__codelineno-10-34 name=__codelineno-10-34 href=#__codelineno-10-34></a>      { decision, rule_matched, latency_us, call_id }
+<a id=__codelineno-10-35 name=__codelineno-10-35 href=#__codelineno-10-35></a>
+<a id=__codelineno-10-36 name=__codelineno-10-36 href=#__codelineno-10-36></a>7.  If decision = permit and DLP passes:
+<a id=__codelineno-10-37 name=__codelineno-10-37 href=#__codelineno-10-37></a>        forward call to upstream server
+<a id=__codelineno-10-38 name=__codelineno-10-38 href=#__codelineno-10-38></a>
+<a id=__codelineno-10-39 name=__codelineno-10-39 href=#__codelineno-10-39></a>8.  Receive response from upstream server
+<a id=__codelineno-10-40 name=__codelineno-10-40 href=#__codelineno-10-40></a>
+<a id=__codelineno-10-41 name=__codelineno-10-41 href=#__codelineno-10-41></a>9.  Run response inspection pipeline (see response-inspection.md)
+<a id=__codelineno-10-42 name=__codelineno-10-42 href=#__codelineno-10-42></a>      applies advice blocks (e.g., redact_fields)
+<a id=__codelineno-10-43 name=__codelineno-10-43 href=#__codelineno-10-43></a>
+<a id=__codelineno-10-44 name=__codelineno-10-44 href=#__codelineno-10-44></a>10. Log response audit entry
+<a id=__codelineno-10-45 name=__codelineno-10-45 href=#__codelineno-10-45></a>
+<a id=__codelineno-10-46 name=__codelineno-10-46 href=#__codelineno-10-46></a>11. Return (possibly redacted) response to agent
 </code></pre></div> <p>Latency budget: Cedar evaluation target is under 1 ms for bundles up to 500 policy rules. The runtime measures and logs <code>latency_us</code> for each evaluation to support SLA monitoring.</p> <hr> <p><a id=cmcp-policy-provenance></a></p> <h2 id=section-5-policy-provenance-closes-26>Section 5 : Policy Provenance (closes #26)<a class=headerlink href=#section-5-policy-provenance-closes-26 title="Permanent link">&para;</a></h2> <p>The <code>manifest.json</code> provenance metadata is included in the bundle hash measurement (see Section 1). This means:</p> <ul> <li><strong>Author identity</strong> (<code>author_identity</code>): tamper-evident. Changing the identity changes the bundle hash, producing a measurement mismatch that verifiers detect.</li> <li><strong>Authoring timestamp</strong> (<code>authored_at</code>): tamper-evident for the same reason.</li> <li><strong>Git commit</strong> (<code>commit_sha</code>): tamper-evident. Links the policy bundle to a specific point in version control history.</li> <li><strong>Approval signatures</strong> (<code>approval_chain</code>): tamper-evident. Each approval signature covers the bundle hash; removing or altering an approval changes the manifest, which changes the bundle hash.</li> </ul> <h3 id=verifier-workflow>Verifier Workflow<a class=headerlink href=#verifier-workflow title="Permanent link">&para;</a></h3> <p>A verifier checking a TRACE Claim can perform the following steps:</p> <ol> <li>Obtain the TRACE Claim and extract <code>policy_bundle.hash</code>.</li> <li>Compare <code>policy_bundle.hash</code> against the approved hash on record (e.g., from the organization's policy registry).</li> <li>Request the bundle tarball from the operator.</li> <li>Recompute the bundle hash locally using the algorithm in Section 1 and verify it matches <code>policy_bundle.hash</code>.</li> <li>Inspect <code>manifest.json</code> to confirm author, timestamp, commit SHA, and approval chain.</li> <li>Optionally verify each approval signature against the approver's known public key.</li> </ol> <p>If any step fails, the verifier rejects the TRACE Claim. This process requires no trust in the operator: the TEE measurement is the root of trust.</p> <hr> <p><a id=cmcp-workflow-scope></a></p> <h2 id=section-6-per-workflow-cedar-policy-scope-closes-41>Section 6 : Per-Workflow Cedar Policy Scope (closes #41)<a class=headerlink href=#section-6-per-workflow-cedar-policy-scope-closes-41 title="Permanent link">&para;</a></h2> <h3 id=workflow-identity>Workflow Identity<a class=headerlink href=#workflow-identity title="Permanent link">&para;</a></h3> <p>Workflow identity is established via session metadata. The agent includes a <code>workflow_id</code> in the session initiation request:</p> <ul> <li>HTTP transport: <code>X-MCP-Workflow-ID</code> header</li> <li>Session configuration: <code>workflow_id</code> field in the session init payload</li> </ul> <p>If <code>workflow_id</code> is absent, the runtime defaults to <code>workflow_id = "default"</code>. The default workflow policy should be restrictive (allowlist only widely-approved tools).</p> <h3 id=evaluation-order>Evaluation Order<a class=headerlink href=#evaluation-order title="Permanent link">&para;</a></h3> <p>A tool call must pass both checks:</p> <ol> <li><strong>Catalog-level</strong>: the tool is registered in the approved tool catalog.</li> <li><strong>Workflow-level</strong>: the tool is allowed for the current <code>workflow_id</code> per Cedar policy.</li> </ol> <p>Failing either check results in a deny decision.</p> <h3 id=workflow-entity-in-cedar-schema>Workflow Entity in Cedar Schema<a class=headerlink href=#workflow-entity-in-cedar-schema title="Permanent link">&para;</a></h3> <p>The per-workflow allowed-tools list can be modeled as an entity attribute in the Cedar schema:</p> <div class=highlight><pre><span></span><code><a id=__codelineno-11-1 name=__codelineno-11-1 href=#__codelineno-11-1></a>entity Workflow {
 <a id=__codelineno-11-2 name=__codelineno-11-2 href=#__codelineno-11-2></a>  allowed_tools: Set&lt;String&gt;,
 <a id=__codelineno-11-3 name=__codelineno-11-3 href=#__codelineno-11-3></a>  sensitivity_level: String

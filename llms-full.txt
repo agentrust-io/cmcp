@@ -1387,8 +1387,8 @@ forbid(
   resource
 )
 when {
-  context.session_sensitivity == "hipaa_phi" &&
-  resource.server_domain == "uncovered"
+  context.session_max_sensitivity == "hipaa_phi" &&
+  !context.baa_covered
 };
 ```
 
@@ -1456,16 +1456,25 @@ ______________________________________________________________________
 1.  Receive MCP tool call request
       inputs: tool_name, arguments, session_id, workflow_id (if present)
 
-2.  Build Cedar evaluation context:
+2.  Build Cedar evaluation context (the same keys at ingress and at egress):
       {
-        tool_name,
+        arguments,                // the call's arguments
         server_identity,
-        server_domain,
-        session_sensitivity,
-        workflow_id,
-        workflow_allowed_tools,
-        user_identity           // if available
+        compliance_domain,
+        baa_covered,
+        destination_class,
+        session_max_sensitivity,  // string label
+        attestation_platform,
+        egress,                   // false at ingress, true at egress
+        sensitivity_level,        // integer rank of session_max_sensitivity
+        injection_events,
+        reset_count,
+        response_size_bytes,      // 0 at ingress
+        workflow_id               // only when the caller declared one
       }
+      An Allow that Cedar reaches with evaluation errors is denied, so a
+      policy that reads a key outside this list, or workflow_id without
+      `context has workflow_id`, denies the call.
 
 3.  Evaluate Cedar policies against:
       (principal, Action::"call_tool", resource) with context
