@@ -210,6 +210,64 @@ def test_no_evidence_fails_closed() -> None:
     assert res.failure_reason == "no_raw_evidence"
 
 
+def test_azure_cvm_rejects_private_or_non_minimal_hcl_ak_and_short_quote_structs() -> None:
+    nonce = os.urandom(64)
+    envelope, measurement, ark_pem = _build_evidence(nonce)
+    env = json.loads(envelope)
+    rt = json.loads(base64.b64decode(env["runtime_data"]))
+
+    # 1. Private JWK member in HCLAkPub
+    rt_priv = json.loads(json.dumps(rt))
+    rt_priv["keys"][0]["d"] = "AQAB"
+    _, _, vcek_key = _synthetic_chain()
+    raw_rt_priv = json.dumps(rt_priv).encode()
+    snp_priv, meas_priv = _signed_snp(vcek_key, raw_rt_priv)
+    env_priv = dict(
+        env,
+        snp_report=base64.b64encode(snp_priv).decode(),
+        runtime_data=base64.b64encode(raw_rt_priv).decode(),
+    )
+    res_priv = verify_azure_cvm_measurement(
+        meas_priv, json.dumps(env_priv).encode(), nonce.hex(), ark_pem
+    )
+    assert res_priv.verified is False
+    assert res_priv.failure_reason == "ak_parse_error"
+
+    # 2. Leading 0x00 in Base64urlUInt exponent
+    rt_pad = json.loads(json.dumps(rt))
+    rt_pad["keys"][0]["e"] = (
+        base64.urlsafe_b64encode(b"\x00\x01\x00\x01").rstrip(b"=").decode("ascii")
+    )
+    raw_rt_pad = json.dumps(rt_pad).encode()
+    snp_pad, meas_pad = _signed_snp(vcek_key, raw_rt_pad)
+    env_pad = dict(
+        env,
+        snp_report=base64.b64encode(snp_pad).decode(),
+        runtime_data=base64.b64encode(raw_rt_pad).decode(),
+    )
+    res_pad = verify_azure_cvm_measurement(
+        meas_pad, json.dumps(env_pad).encode(), nonce.hex(), ark_pem
+    )
+    assert res_pad.verified is False
+    assert res_pad.failure_reason == "ak_parse_error"
+
+    # 3. Short quote_sig (< 6 bytes) fails closed without raising struct.error
+    env_short_sig = dict(env, quote_sig=base64.b64encode(b"\x00\x14").decode())
+    res_short = verify_azure_cvm_measurement(
+        measurement, json.dumps(env_short_sig).encode(), nonce.hex(), ark_pem
+    )
+    assert res_short.verified is False
+    assert res_short.failure_reason == "quote_signature_invalid"
+
+    # 4. Malformed report_data_hex fails closed as quote_nonce_mismatch
+    res_bad_nonce = verify_azure_cvm_measurement(
+        measurement, envelope, "not-valid-hex!", ark_pem
+    )
+    assert res_bad_nonce.verified is False
+    assert res_bad_nonce.failure_reason == "quote_nonce_mismatch"
+
+
+
 # ── Collector round-trip (tpm2 calls monkeypatched) ─────────────────────────────
 
 
