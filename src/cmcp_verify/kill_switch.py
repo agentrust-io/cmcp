@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,8 +39,16 @@ class KillSwitchRefusalResult:
     errors: list[str] = field(default_factory=list)
 
 
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 def _b64url_decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if not isinstance(value, str) or not _B64URL_RE.fullmatch(value) or len(value) % 4 == 1:
+        raise ValueError("invalid canonical base64url")
+    raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("non-canonical base64url encoding")
+    return raw
 
 
 def verify_kill_switch_refusal(
@@ -99,6 +108,11 @@ def verify_kill_switch_refusal(
     identity = gateway.get("agent_identity")
     if isinstance(identity, dict) and receipt.get("agent_id") != identity.get("agent_id"):
         errors.append("receipt names a different agent identity than the claim")
+
+    for req_field in ("agent_id", "session_id", "refused_at"):
+        val = receipt.get(req_field)
+        if not isinstance(val, str) or not val:
+            errors.append(f"receipt.{req_field} must be a non-empty string")
 
     return KillSwitchRefusalResult(
         valid=not errors,

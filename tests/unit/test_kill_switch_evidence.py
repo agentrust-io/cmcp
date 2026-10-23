@@ -192,3 +192,33 @@ def test_enabled_kill_switch_without_an_identity_refuses_to_start(tmp_path, monk
     with pytest.raises(SystemExit) as exc_info:
         run_startup(str(config_path))
     assert exc_info.value.code == 1
+
+
+def test_kill_switch_and_claim_verify_reject_non_canonical_b64url_and_private_jwk():
+    from cmcp_verify.kill_switch import _b64url_decode
+    from cmcp_verify.verify import _verify_key_binding, _verify_signature
+
+    # Non-canonical base64url with non-zero trailing padding bits
+    with pytest.raises(ValueError):
+        _b64url_decode("A" * 85 + "B")
+    with pytest.raises(ValueError):
+        _b64url_decode("A" * 42 + "B")
+
+    claim_with_priv = {
+        "trace": {
+            "cnf": {
+                "jwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": "A" * 43,
+                    "d": "A" * 43,
+                }
+            }
+        },
+        "signature": "A" * 86,
+    }
+    ok, err = _verify_signature(claim_with_priv)
+    assert ok is False and err is not None and "private" in err
+    kb_ok, kb_err = _verify_key_binding(claim_with_priv, is_sw_only=False)
+    assert kb_ok is False and kb_err is not None and "private" in kb_err
+
