@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -19,6 +20,8 @@ from cmcp_runtime.tee.tdreport import REPORT_DATA_SIZE, TDREPORT_SIZE
 from cmcp_runtime.tee.tdreport import TdReport as _TdReport
 
 _TDREPORT_MIN_SIZE = TDREPORT_SIZE
+_MEASUREMENT_RE = re.compile(r"^sha384:[0-9a-f]{96}$")
+_HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 
 # Intel DCAP QE identity endpoint (used to confirm DCAP service reachability)
 _DCAP_QE_IDENTITY_URL = (
@@ -71,15 +74,7 @@ def verify_tdx_measurement(
     result = TDXVerificationResult(verified=True)
 
     # Step 1: Format check
-    if not measurement.startswith("sha384:"):
-        result.verified = False
-        result.failure_reason = "invalid_measurement_format"
-        result.unverified_fields.extend(["dcap_quote_signature", "tcb_status"])
-        result.details["dcap_chain"] = "requires_intel_dcap_service"
-        return result
-
-    hex_part = measurement[len("sha384:"):]
-    if len(hex_part) != 96:
+    if not isinstance(measurement, str) or not _MEASUREMENT_RE.fullmatch(measurement):
         result.verified = False
         result.failure_reason = "invalid_measurement_format"
         result.unverified_fields.extend(["dcap_quote_signature", "tcb_status"])
@@ -125,6 +120,19 @@ def verify_tdx_measurement(
             # non-zero expectation silently failed and was silently ignored.
             if report_data_hex is not None:
                 extracted_rd = bytes(tdreport.report_mac.report_data)
+                if (
+                    not isinstance(report_data_hex, str)
+                    or not report_data_hex
+                    or len(report_data_hex) % 2 != 0
+                    or not _HEX_RE.fullmatch(report_data_hex)
+                ):
+                    result.verified = False
+                    result.failure_reason = "report_data_mismatch"
+                    result.details["report_data_actual"] = extracted_rd[:16].hex()
+                    result.unverified_fields.extend(
+                        ["dcap_quote_signature", "tcb_status"]
+                    )
+                    return result
                 expected_rd = bytes.fromhex(report_data_hex[:REPORT_DATA_SIZE * 2])
                 if len(expected_rd) < REPORT_DATA_SIZE:
                     # Zero-pad: the guest writes a short nonce into a 64-byte

@@ -217,3 +217,20 @@ def test_measurement_does_not_move_with_the_nonce(monkeypatch):
     window = slice(_OLD_MRTD_OFFSET, _OLD_MRTD_OFFSET + MRTD_SIZE)
     assert first_report[window] != second_report[window]
 
+
+def test_tdx_invalid_measurement_format_rejected_before_raw_evidence():
+    for bad_meas in (None, 123, "sha384:" + "Z" * 96, "sha384:" + "A" * 96, "sha384:abcd"):
+        res = verify_tdx_measurement(bad_meas, None)  # type: ignore[arg-type]
+        assert res.verified is False
+        assert res.failure_reason == "invalid_measurement_format"
+
+
+def test_tdx_malformed_report_data_hex_classified_as_report_data_mismatch(monkeypatch):
+    monkeypatch.setattr("cmcp_verify.tdx._check_dcap_reachable", lambda: False)
+    mrtd = _mrtd()
+    report = _make_tdreport(mrtd, bytes([0x11]) * REPORT_DATA_SIZE)
+    res = verify_tdx_measurement(_measurement_of(mrtd), report, report_data_hex="not-hex!")
+    assert res.verified is False
+    assert res.failure_reason == "report_data_mismatch"
+
+
