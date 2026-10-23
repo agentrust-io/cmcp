@@ -7,6 +7,7 @@ import binascii
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from collections.abc import Iterable
@@ -70,13 +71,34 @@ class PolicyBundle:
     signing_key_id: str | None = None
 
 
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        out[key] = value
+    return out
+
+
+def _no_nonfinite_constant(value: str) -> Any:
+    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
+
+
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
 def _b64url_decode(value: str) -> bytes:
+    if not isinstance(value, str) or not _B64URL_RE.fullmatch(value) or len(value) % 4 == 1:
+        raise ValueError("invalid canonical base64url")
     padding = 4 - (len(value) % 4)
-    return base64.urlsafe_b64decode(value + ("=" * padding if padding != 4 else ""))
+    raw = base64.urlsafe_b64decode(value + ("=" * padding if padding != 4 else ""))
+    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("non-canonical base64url encoding")
+    return raw
 
 
 def signing_pre_image(bundle_hash: str) -> bytes:
@@ -229,8 +251,12 @@ class PolicySigningKeys:
         if not path.is_file():
             return []
         try:
-            statements = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
+            statements = json.loads(
+                path.read_text(encoding="utf-8"),
+                object_pairs_hook=_no_duplicate_keys,
+                parse_constant=_no_nonfinite_constant,
+            )
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
             logger.warning("POLICY_KEY_REVOCATION_INVALID: cannot read %s: %s", path, exc)
             return []
         if not isinstance(statements, list):
@@ -260,15 +286,17 @@ def parse_bundle_version(version: str) -> tuple[int, ...]:
     orderable. A version that cannot be parsed is refused rather than treated as
     equal-or-newer, because "unparseable" must not be a way past the check.
     """
-    parts = version.split(".")
-    try:
-        return tuple(int(p) for p in parts)
-    except ValueError as exc:
+    if (
+        not isinstance(version, str)
+        or not version
+        or not all(p.isascii() and p.isdecimal() for p in version.split("."))
+    ):
         raise ConfigError(
             f"policy manifest version {version!r} is not a dotted sequence of integers; "
             "a runtime policy change is authorised by an increasing version, so the "
             "version must be orderable"
-        ) from exc
+        )
+    return tuple(int(p) for p in version.split("."))
 
 
 def verify_bundle_signature(
@@ -408,9 +436,15 @@ def load_policy_bundle(
     if not manifest_path.exists():
         raise ConfigError(f"Policy bundle missing manifest.json in {bundle_path}")
     try:
-        raw_manifest: dict[str, Any] = json.loads(manifest_path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
+        raw_manifest: dict[str, Any] = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_no_duplicate_keys,
+            parse_constant=_no_nonfinite_constant,
+        )
+    except (json.JSONDecodeError, ValueError, OSError) as exc:
         raise ConfigError(f"Cannot load manifest.json: {exc}") from exc
+    if not isinstance(raw_manifest, dict):
+        raise ConfigError("manifest.json must be a JSON object")
 
     required = {"version", "authored_at", "author_identity", "commit_sha"}
     missing = required - raw_manifest.keys()
