@@ -416,3 +416,31 @@ def test_ascii_only_bundles_keep_the_hash_they_already_had():
     )
 
     assert _bundle_hash(MANIFEST) == bundle_module._sha256_hex(legacy.encode())
+
+
+@pytest.mark.parametrize("bad_ver", ["", "1.-2.0", "1.+2.0", "1.2_0.0", " 1.0.0 ", "1.\u0662.0"])
+def test_parse_bundle_version_rejects_non_decimal_segments(bad_ver: str):
+    from cmcp_runtime.errors import ConfigError
+    from cmcp_runtime.policy.bundle import parse_bundle_version
+
+    with pytest.raises(ConfigError):
+        parse_bundle_version(bad_ver)
+
+
+def test_bundle_and_approval_reject_non_canonical_base64url_and_duplicate_keys(bundle_dir):
+    from cmcp_runtime.catalog.approval import CatalogApprovalError, _decode
+    from cmcp_runtime.errors import ConfigError
+    from cmcp_runtime.policy.bundle import _b64url_decode
+
+    # 64 zero bytes has canonical base64url 'A'*86; 'A'*85 + 'B' has non-zero unused low bits
+    with pytest.raises(ValueError):
+        _b64url_decode("A" * 85 + "B")
+    with pytest.raises(CatalogApprovalError):
+        _decode("A" * 85 + "B")
+
+    # Duplicate keys in manifest.json
+    raw = json.dumps(MANIFEST)
+    (bundle_dir / "manifest.json").write_text(raw[:-1] + ', "version": "9.9.9"}', encoding="utf-8")
+    with pytest.raises(ConfigError, match="duplicate JSON object key"):
+        load_policy_bundle(str(bundle_dir))
+

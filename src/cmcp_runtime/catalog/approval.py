@@ -111,12 +111,14 @@ def _b64(value: bytes) -> str:
 
 def _decode(value: str) -> bytes:
     """Decode a signature the schema has already constrained to unpadded base64url."""
+    if not isinstance(value, str) or len(value) % 4 == 1:
+        raise CatalogApprovalError("signature is not valid base64url")
     try:
         raw = base64.urlsafe_b64decode(value + "=" * ((4 - len(value) % 4) % 4))
     except (ValueError, TypeError) as exc:
         raise CatalogApprovalError("signature is not valid base64url") from exc
-    if len(raw) != 64:
-        raise CatalogApprovalError("signature must decode to 64 bytes")
+    if len(raw) != 64 or _b64(raw) != value:
+        raise CatalogApprovalError("signature must be canonical 64-byte base64url")
     return raw
 
 
