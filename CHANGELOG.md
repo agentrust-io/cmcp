@@ -78,6 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforce canonical unpadded base64url in `cmcp_runtime.agent_manifest._b64url_decode`
+  (rejecting `len % 4 == 1` and non-zero trailing bits), reject private JWK key
+  material in Agent Manifest trust anchors and catalog `publisher_jwk` entries,
+  reject duplicate JSON object keys across `mcp/server.py`, `catalog/loader.py`,
+  `agent_manifest.py`, and `inspection/pipeline.py`, and reject non-finite
+  floats and integers outside the RFC 8785 safe-integer range in `mcp/proxy.py`
+  (#798).
 - An Agent Manifest that lists its tools in `tool_manifest.tools` could never
   bind: cMCP handed the SDK its sealed catalog digest, and from agent-manifest
   0.13 the SDK compares `catalog_hash` with the Merkle root of that list. Such a

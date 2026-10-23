@@ -108,6 +108,15 @@ def _reject_nan_and_infinity(text: str) -> float:
     raise ValueError(f"non-standard JSON value not allowed: {text}")
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        obj[key] = value
+    return obj
+
+
 def _valid_rpc_id(value: Any) -> bool:
     # JSON-RPC 2.0 id must be a string, number, or null -- not a bool, even
     # though bool is an int subclass in Python.
@@ -553,7 +562,11 @@ class MCPServer:
                 )
             # #518: parse_constant intercepts NaN/Infinity/-Infinity before
             # json.loads would otherwise accept them silently.
-            msg = json.loads(body, parse_constant=_reject_nan_and_infinity)
+            msg = json.loads(
+                body,
+                parse_constant=_reject_nan_and_infinity,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             import hashlib
             payload_hash = f"sha256:{hashlib.sha256(body).hexdigest()}"
@@ -1209,8 +1222,12 @@ class MCPServer:
         """
         try:
             body = await request.body()
-            data = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = json.loads(
+                body,
+                parse_constant=_reject_nan_and_infinity,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             return JSONResponse(
                 {"error": "invalid JSON body", "error_code": "PARSE_ERROR"},
                 status_code=400,
@@ -1332,8 +1349,12 @@ class MCPServer:
                 status_code=409,
             )
         try:
-            data = json.loads(await request.body())
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = json.loads(
+                await request.body(),
+                parse_constant=_reject_nan_and_infinity,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             return JSONResponse(
                 {"error": "invalid JSON body", "error_code": "PARSE_ERROR"},
                 status_code=400,
@@ -1407,8 +1428,12 @@ class MCPServer:
                 {"error": "session management not configured"}, status_code=501
             )
         try:
-            data = json.loads(await request.body())
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = json.loads(
+                await request.body(),
+                parse_constant=_reject_nan_and_infinity,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             return JSONResponse(
                 {"error": "invalid JSON body", "error_code": "PARSE_ERROR"},
                 status_code=400,

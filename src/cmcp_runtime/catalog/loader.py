@@ -130,6 +130,24 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        obj[key] = value
+    return obj
+
+
+def _reject_nonfinite_json_constant(text: str) -> Any:
+    raise ValueError(f"non-standard JSON constant not allowed: {text}")
+
+
+_PRIVATE_JWK_MEMBERS: frozenset[str] = frozenset(
+    {"d", "p", "q", "dp", "dq", "qi", "oth", "k"}
+)
+
+
 def _compute_definition_hash(definition: dict[str, Any]) -> str:
     canonical = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return f"sha256:{_sha256_hex(canonical.encode())}"
@@ -204,8 +222,13 @@ def _load_entry_schema() -> dict[str, Any]:
             "refusing to load a catalog without structural validation"
         )
     try:
-        return dict(json.loads(CATALOG_ENTRY_SCHEMA_PATH.read_text()))
-    except (OSError, json.JSONDecodeError) as exc:
+        return dict(
+            json.loads(
+                CATALOG_ENTRY_SCHEMA_PATH.read_text(),
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise ConfigError(f"Cannot load catalog entry schema: {exc}") from exc
 
 
@@ -242,10 +265,14 @@ def load_catalog(
     """
     path = Path(catalog_path)
     try:
-        raw_list: list[dict[str, Any]] = json.loads(path.read_text())
+        raw_list: list[dict[str, Any]] = json.loads(
+            path.read_text(),
+            parse_constant=_reject_nonfinite_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
     except OSError as exc:
         raise ConfigError(f"Cannot read catalog file: {exc}") from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         raise ConfigError(f"Catalog JSON parse error: {exc}") from exc
 
     if not isinstance(raw_list, list):
@@ -314,6 +341,13 @@ def load_catalog(
             if raw_spawn
             else None
         )
+        publisher_jwk = (raw_server.get("provenance") or {}).get("publisher_jwk")
+        if isinstance(publisher_jwk, dict) and any(
+            k in publisher_jwk for k in _PRIVATE_JWK_MEMBERS
+        ):
+            raise ConfigError(
+                f"Catalog entry '{tool_name}': publisher_jwk must not contain private key material"
+            )
         server = ServerIdentity(
             display_name=raw_server["display_name"],
             # Empty rather than absent for a stdio server: it has no endpoint,
@@ -325,7 +359,7 @@ def load_catalog(
             rotation_mode=raw_server.get("rotation_mode", "key-pinned"),
             spawn=spawn,
             provenance_record_path=(raw_server.get("provenance") or {}).get("record_path"),
-            publisher_jwk=(raw_server.get("provenance") or {}).get("publisher_jwk"),
+            publisher_jwk=publisher_jwk,
         )
 
         raw_def = raw["approved_definition"]
