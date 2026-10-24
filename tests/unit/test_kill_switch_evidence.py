@@ -198,11 +198,13 @@ def test_kill_switch_and_claim_verify_reject_non_canonical_b64url_and_private_jw
     import base64
     import hashlib
     from datetime import UTC, datetime
+
     from cryptography.hazmat.primitives.serialization import (
         Encoding,
         NoEncryption,
         PrivateFormat,
     )
+
     from cmcp_runtime.audit.chain import AuditChain
     from cmcp_runtime.audit.keys import SigningKey
     from cmcp_runtime.audit.trace_claim import (
@@ -320,7 +322,20 @@ def test_kill_switch_and_claim_verify_reject_non_canonical_b64url_and_private_jw
 
     # Non-canonical key x alias fails verify_trace_claim and _verify_key_binding
     key_alias_claim = copy.deepcopy(claim)
-    key_alias_claim["trace"]["cnf"]["jwk"]["x"] = _flip_pad_bit(x_b64)
+    alias = _flip_pad_bit(x_b64)
+    assert base64.urlsafe_b64decode(alias + "=") == key.public_key_bytes
+    key_alias_claim["trace"]["cnf"]["jwk"]["x"] = alias
+    # Bind the altered textual JWK too, so a stale thumbprint cannot mask the guard.
+    alias_fp = hashlib.sha256(json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": alias},
+        separators=(",", ":"), sort_keys=True,
+    ).encode()).digest()
+    key_alias_claim["trace"]["runtime"]["nonce"] = base64.urlsafe_b64encode(
+        alias_fp + hashlib.sha256(bytes.fromhex(chain.chain_root)).digest()
+    ).rstrip(b"=").decode("ascii")
+    key_alias_claim["signature"] = base64.urlsafe_b64encode(
+        key.sign(_canonical_json(key_alias_claim))
+    ).rstrip(b"=").decode("ascii")
     key_res = verify_trace_claim(
         key_alias_claim, approved, trusted_public_key_hex=key.public_key_hex
     )
