@@ -291,13 +291,21 @@ def test_agent_identity_mismatch_fails():
     assert any("agent_id" in failure for failure in result.failures)
 
 
-def test_non_object_agent_identity_is_ignored():
+@pytest.mark.parametrize("identity", [None, {}, {"agent_id": 42}, {"agent_id": ""}, "not-an-object"])
+def test_malformed_present_agent_identity_fails(identity):
     fixture = copy.deepcopy(_fixture())
-    fixture["trace_claim"]["gateway"]["agent_identity"] = "not-an-object"
-
+    fixture["trace_claim"]["gateway"]["agent_identity"] = identity
     result = _verify_fixture(fixture)
+    assert not result.verified
+    assert any("agent_identity.agent_id" in failure for failure in result.failures)
 
+
+def test_absent_agent_identity_keeps_optional_binding():
+    fixture = copy.deepcopy(_fixture())
+    fixture["trace_claim"]["gateway"].pop("agent_identity", None)
+    result = _verify_fixture(fixture)
     assert result.verified, result.failures
+    assert "agent_id" not in result.verified_fields
 
 
 def test_ros2_must_be_object_when_present():

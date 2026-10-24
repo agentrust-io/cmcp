@@ -279,7 +279,10 @@ def verify_embodied_action_evidence(
                 verified_fields.append("tool_catalog_hash")
 
             agent_id = _claim_agent_id(claim_json)
-            if agent_id is not None:
+            gateway = claim_json.get("gateway")
+            if isinstance(gateway, dict) and "agent_identity" in gateway and not agent_id:
+                failures.append("claim_json.gateway.agent_identity.agent_id must be a non-empty string")
+            elif agent_id is not None:
                 if detached_payload.get("agent_id") != agent_id:
                     failures.append("agent_id does not match TRACE Claim agent identity")
                 else:
