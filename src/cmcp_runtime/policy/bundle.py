@@ -95,8 +95,13 @@ def _revocation_object_pairs(pairs: list[tuple[str, Any]]) -> Any:
     for key, value in pairs:
         if key in out or value is _INVALID_REVOCATION_JSON:
             return _INVALID_REVOCATION_JSON
-        if isinstance(value, list) and any(item is _INVALID_REVOCATION_JSON for item in value):
-            return _INVALID_REVOCATION_JSON
+        pending = [value]
+        while pending:
+            item = pending.pop()
+            if item is _INVALID_REVOCATION_JSON:
+                return _INVALID_REVOCATION_JSON
+            if isinstance(item, list):
+                pending.extend(item)
         out[key] = value
     return out
 

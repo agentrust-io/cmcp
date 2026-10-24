@@ -445,12 +445,15 @@ def test_bundle_and_approval_reject_non_canonical_base64url_and_duplicate_keys(b
         load_policy_bundle(str(bundle_dir))
 
 
+@pytest.mark.parametrize("extra", ('[[{"x":1,"x":2}]]', '[[NaN]]', '[[Infinity]]', '[[[[-Infinity]]]]'))
 def test_revocation_file_rejects_duplicate_key_statement_without_blocking_valid_revocation(
-    bundle_dir,
+    bundle_dir, extra,
 ):
     import base64
+
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     from cmcp_runtime.errors import PolicySigningKeyRevoked
     from cmcp_runtime.policy.bundle import (
         REVOCATION_FILE,
@@ -483,6 +486,21 @@ def test_revocation_file_rejects_duplicate_key_statement_without_blocking_valid_
     keys1 = PolicySigningKeys(cur_pub, suc_pub)
     assert keys1.apply_file(str(bundle_dir)) == []
     assert keys1.current == cur_pub
+
+    # Even ignored extension data must be strict JSON at every array depth.
+    nested = (
+        f'[{{"revoked_key_id":"{cur_id}","signature":"{valid_sig}",'
+        f'"extra":{extra}}}]'
+    )
+    (bundle_dir / REVOCATION_FILE).write_text(nested, encoding="utf-8")
+    nested_keys = PolicySigningKeys(cur_pub, suc_pub)
+    assert nested_keys.apply_file(str(bundle_dir)) == []
+    assert nested_keys.current == cur_pub
+    # An invalid statement must not suppress the later valid statement.
+    valid = json.dumps({"revoked_key_id": cur_id, "signature": valid_sig})
+    (bundle_dir / REVOCATION_FILE).write_text(nested[:-1] + ',' + valid + ']', encoding="utf-8")
+    assert nested_keys.apply_file(str(bundle_dir)) == [cur_id]
+    assert nested_keys.current == suc_pub
 
     # A malformed duplicate-key or NaN statement alongside a valid signed revocation
     # must NOT block the valid revocation from revoking cur_pub.
