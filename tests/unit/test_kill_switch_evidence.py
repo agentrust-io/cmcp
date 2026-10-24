@@ -195,30 +195,187 @@ def test_enabled_kill_switch_without_an_identity_refuses_to_start(tmp_path, monk
 
 
 def test_kill_switch_and_claim_verify_reject_non_canonical_b64url_and_private_jwk():
+    import base64
+    import hashlib
+    from datetime import UTC, datetime
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+    )
+    from cmcp_runtime.audit.chain import AuditChain
+    from cmcp_runtime.audit.keys import SigningKey
+    from cmcp_runtime.audit.trace_claim import (
+        AttestationReportInfo,
+        CallGraphSummary,
+        CallSummary,
+        PolicyBundleInfo,
+        ToolCatalogInfo,
+        _to_dict,
+        generate_trace_claim,
+    )
     from cmcp_verify.kill_switch import _b64url_decode
-    from cmcp_verify.verify import _verify_key_binding, _verify_signature
+    from cmcp_verify.verify import (
+        ApprovedHashes,
+        VerificationError,
+        VerificationStatus,
+        _canonical_json,
+        _verify_key_binding,
+        _verify_signature,
+        verify_trace_claim,
+    )
 
-    # Non-canonical base64url with non-zero trailing padding bits
     with pytest.raises(ValueError):
         _b64url_decode("A" * 85 + "B")
     with pytest.raises(ValueError):
         _b64url_decode("A" * 42 + "B")
 
-    claim_with_priv = {
-        "trace": {
-            "cnf": {
-                "jwk": {
-                    "kty": "OKP",
-                    "crv": "Ed25519",
-                    "x": "A" * 43,
-                    "d": "A" * 43,
-                }
-            }
-        },
-        "signature": "A" * 86,
+    key = SigningKey()
+    chain = AuditChain("ks-test-session")
+    x_b64 = base64.urlsafe_b64encode(key.public_key_bytes).rstrip(b"=").decode("ascii")
+    jwk_fp = hashlib.sha256(
+        json.dumps(
+            {"crv": "Ed25519", "kty": "OKP", "x": x_b64},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).digest()
+    report_data = (jwk_fp + hashlib.sha256(bytes.fromhex(chain.chain_root)).digest()).hex()
+
+    claim_obj = generate_trace_claim(
+        session_id="ks-test-session",
+        signing_key=key,
+        attestation_report=AttestationReportInfo(
+            provider="sev-snp",
+            measurement="ab" * 32,
+            report_data=report_data,
+            attestation_generated_at=datetime.now(tz=UTC).isoformat(),
+            attestation_validity_seconds=86400,
+        ),
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "a" * 64,
+            enforcement_mode="enforcing",
+            policy_version="1.0.0",
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "b" * 64),
+        call_summary=CallSummary(
+            tool_calls_total=0,
+            tool_calls_allowed=0,
+            tool_calls_denied=0,
+            tool_calls_faulted=0,
+            tools_invoked=[],
+            session_max_sensitivity="public",
+            call_graph_summary=CallGraphSummary(
+                compliance_domains_touched=[],
+                cross_boundary_events=[],
+            ),
+        ),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+        kill_switch_triggered=True,
+        do_sign=True,
+    )
+    claim = _to_dict(claim_obj)
+    approved = ApprovedHashes(
+        policy_bundle_hash="sha256:" + "a" * 64,
+        tool_catalog_hash="sha256:" + "b" * 64,
+    )
+
+    receipt = {
+        "type": REFUSAL_RECEIPT_TYPE,
+        "agent_id": _AGENT_ID,
+        "session_id": claim["gateway"]["session_id"],
+        "refused_at": datetime.now(tz=UTC).isoformat(),
+        "gateway_key": x_b64,
+        "claim_digest": "sha256:" + hashlib.sha256(_canonical_json(claim)).hexdigest(),
     }
-    ok, err = _verify_signature(claim_with_priv)
+    receipt["signature"] = (
+        base64.urlsafe_b64encode(key.sign(_canonical_json(receipt)))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+
+    # Intact signed control passes both public verifiers
+    control_res = verify_trace_claim(
+        claim, approved, trusted_public_key_hex=key.public_key_hex
+    )
+    assert "signature" in control_res.verified_fields
+    assert "public_key_binding" in control_res.verified_fields
+    assert verify_kill_switch_refusal(receipt, claim).valid is True
+
+    def _flip_pad_bit(b64_str: str) -> str:
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        idx = alphabet.index(b64_str[-1])
+        return b64_str[:-1] + alphabet[idx ^ 1]
+
+    # Non-canonical signature alias (same decoded bytes, non-zero pad bit) fails verify_trace_claim
+    sig_alias_claim = copy.deepcopy(claim)
+    sig_alias_claim["signature"] = _flip_pad_bit(claim["signature"])
+    sig_res = verify_trace_claim(
+        sig_alias_claim, approved, trusted_public_key_hex=key.public_key_hex
+    )
+    assert "signature" in sig_res.unverified_fields
+    assert sig_res.failure_reason == VerificationError.SIGNATURE_INVALID
+
+    # Non-canonical key x alias fails verify_trace_claim and _verify_key_binding
+    key_alias_claim = copy.deepcopy(claim)
+    key_alias_claim["trace"]["cnf"]["jwk"]["x"] = _flip_pad_bit(x_b64)
+    key_res = verify_trace_claim(
+        key_alias_claim, approved, trusted_public_key_hex=key.public_key_hex
+    )
+    assert "signature" in key_res.unverified_fields
+    assert _verify_key_binding(key_alias_claim, is_sw_only=False)[0] is False
+
+    # Freshly re-signed claim carrying private JWK member 'd' is rejected
+    priv_claim = copy.deepcopy(claim)
+    priv_raw = key._private.private_bytes(
+        Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+    )
+    priv_claim["trace"]["cnf"]["jwk"]["d"] = (
+        base64.urlsafe_b64encode(priv_raw).rstrip(b"=").decode("ascii")
+    )
+    priv_claim["signature"] = (
+        base64.urlsafe_b64encode(key.sign(_canonical_json(priv_claim)))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    priv_res = verify_trace_claim(
+        priv_claim, approved, trusted_public_key_hex=key.public_key_hex
+    )
+    assert priv_res.status != VerificationStatus.VERIFIED
+    assert "signature" not in priv_res.verified_fields
+    priv_receipt = copy.deepcopy(receipt)
+    priv_receipt["claim_digest"] = (
+        "sha256:" + hashlib.sha256(_canonical_json(priv_claim)).hexdigest()
+    )
+    priv_receipt["signature"] = (
+        base64.urlsafe_b64encode(key.sign(_canonical_json(priv_receipt)))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    priv_ks_res = verify_kill_switch_refusal(priv_receipt, priv_claim)
+    assert priv_ks_res.valid is False
+    assert any("private" in e for e in priv_ks_res.errors)
+    ok, err = _verify_signature(priv_claim)
     assert ok is False and err is not None and "private" in err
-    kb_ok, kb_err = _verify_key_binding(claim_with_priv, is_sw_only=False)
+    kb_ok, kb_err = _verify_key_binding(priv_claim, is_sw_only=False)
     assert kb_ok is False and kb_err is not None and "private" in kb_err
 
+    # Empty or non-string required receipt fields and non-canonical receipt signature fail
+    for field in ("agent_id", "session_id", "refused_at"):
+        for bad_val in ("", None, 123):
+            bad_receipt = copy.deepcopy(receipt)
+            bad_receipt[field] = bad_val
+            bad_receipt["signature"] = (
+                base64.urlsafe_b64encode(key.sign(_canonical_json(bad_receipt)))
+                .rstrip(b"=")
+                .decode("ascii")
+            )
+            res = verify_kill_switch_refusal(bad_receipt, claim)
+            assert res.valid is False
+            assert any(f"receipt.{field}" in e for e in res.errors)
+
+    alias_receipt = copy.deepcopy(receipt)
+    alias_receipt["signature"] = _flip_pad_bit(receipt["signature"])
+    assert verify_kill_switch_refusal(alias_receipt, claim).valid is False
