@@ -83,6 +83,28 @@ def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return out
 
 
+class _InvalidRevocationJson:
+    """Sentinel marking a revocation statement containing duplicate keys or non-finite values."""
+
+
+_INVALID_REVOCATION_JSON = _InvalidRevocationJson()
+
+
+def _revocation_object_pairs(pairs: list[tuple[str, Any]]) -> Any:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out or value is _INVALID_REVOCATION_JSON:
+            return _INVALID_REVOCATION_JSON
+        if isinstance(value, list) and any(item is _INVALID_REVOCATION_JSON for item in value):
+            return _INVALID_REVOCATION_JSON
+        out[key] = value
+    return out
+
+
+def _revocation_nonfinite_constant(_value: str) -> Any:
+    return _INVALID_REVOCATION_JSON
+
+
 def _no_nonfinite_constant(value: str) -> Any:
     raise ValueError(f"non-finite JSON constant is not allowed: {value}")
 
@@ -253,8 +275,8 @@ class PolicySigningKeys:
         try:
             statements = json.loads(
                 path.read_text(encoding="utf-8"),
-                object_pairs_hook=_no_duplicate_keys,
-                parse_constant=_no_nonfinite_constant,
+                object_pairs_hook=_revocation_object_pairs,
+                parse_constant=_revocation_nonfinite_constant,
             )
         except (json.JSONDecodeError, ValueError, OSError) as exc:
             logger.warning("POLICY_KEY_REVOCATION_INVALID: cannot read %s: %s", path, exc)
@@ -296,7 +318,14 @@ def parse_bundle_version(version: str) -> tuple[int, ...]:
             "a runtime policy change is authorised by an increasing version, so the "
             "version must be orderable"
         )
-    return tuple(int(p) for p in version.split("."))
+    try:
+        return tuple(int(p) for p in version.split("."))
+    except ValueError as exc:
+        raise ConfigError(
+            f"policy manifest version {version!r} is not a dotted sequence of integers; "
+            "a runtime policy change is authorised by an increasing version, so the "
+            "version must be orderable"
+        ) from exc
 
 
 def verify_bundle_signature(
