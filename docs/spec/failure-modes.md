@@ -281,3 +281,12 @@ For calls that are rejected or faulted (FM-3, FM-5), the TRACE Claim records the
   "signature_note": "TEE fault prevented signing. This claim is for audit record only and must not be treated as an attested proof."
 }
 ```
+
+## Measurement unavailable at startup
+
+`MEASUREMENT_UNAVAILABLE` means the gateway could not derive its measurement.
+Startup aborts; a caller should not treat this as a successfully measured gateway
+or as evidence that its TPM changed. Inspect the diagnostic detail for unreadable
+or unsupported measured inputs, restore the intended deployment inputs, then retry.
+Do not bypass measurement or rotate a signing key merely to suppress this error.
+This entry describes the existing runtime behavior; it adds no new recovery action.
