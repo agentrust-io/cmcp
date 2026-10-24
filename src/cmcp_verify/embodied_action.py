@@ -259,26 +259,31 @@ def verify_embodied_action_evidence(
             verified_fields.append("governance_decision")
 
     if claim_json is not None:
-        policy_hash = _claim_policy_hash(claim_json)
-        if policy_hash is not None:
-            if detached_payload.get("policy_bundle_hash") != policy_hash:
+        if not isinstance(claim_json, dict):
+            failures.append("claim_json must be a JSON object when supplied")
+        else:
+            policy_hash = _claim_policy_hash(claim_json)
+            if policy_hash is None:
+                failures.append("claim_json.trace.policy.bundle_hash must be a string")
+            elif detached_payload.get("policy_bundle_hash") != policy_hash:
                 failures.append("policy_bundle_hash does not match TRACE Claim policy hash")
             else:
                 verified_fields.append("policy_bundle_hash")
 
-        catalog_hash = _claim_catalog_hash(claim_json)
-        if catalog_hash is not None:
-            if detached_payload.get("tool_catalog_hash") != catalog_hash:
+            catalog_hash = _claim_catalog_hash(claim_json)
+            if catalog_hash is None:
+                failures.append("claim_json.gateway.catalog.hash must be a string")
+            elif detached_payload.get("tool_catalog_hash") != catalog_hash:
                 failures.append("tool_catalog_hash does not match TRACE Claim catalog hash")
             else:
                 verified_fields.append("tool_catalog_hash")
 
-        agent_id = _claim_agent_id(claim_json)
-        if agent_id is not None:
-            if detached_payload.get("agent_id") != agent_id:
-                failures.append("agent_id does not match TRACE Claim agent identity")
-            else:
-                verified_fields.append("agent_id")
+            agent_id = _claim_agent_id(claim_json)
+            if agent_id is not None:
+                if detached_payload.get("agent_id") != agent_id:
+                    failures.append("agent_id does not match TRACE Claim agent identity")
+                else:
+                    verified_fields.append("agent_id")
 
     ros2 = detached_payload.get("ros2")
     if ros2 is not None:

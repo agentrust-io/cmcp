@@ -450,14 +450,29 @@ def test_non_dict_audit_entry_or_payload_and_short_hash_rejected():
         assert not res2.verified
         assert res2.receipt_state == ReceiptState.INVALID
 
-    # Non-dict trace/gateway in claim_json is ignored without raising AttributeError
-    res3 = verify_embodied_action_evidence(
+    # Explicit None claim_json is the no-Claim mode and succeeds
+    res_no_claim = verify_embodied_action_evidence(
         fixture["audit_entry"],
         fixture["detached_payload"],
-        {"trace": None, "gateway": None},
+        None,
     )
-    assert res3.verified, res3.failures
-    assert "policy_bundle_hash" not in res3.verified_fields
+    assert res_no_claim.verified, res_no_claim.failures
+    assert "policy_bundle_hash" not in res_no_claim.verified_fields
+
+    # A supplied but malformed claim_json fails closed without raising AttributeError
+    for bad_claim in (
+        {"trace": None, "gateway": None},
+        {"trace": {"policy": None}, "gateway": {"catalog": None}},
+        {},
+        "not-a-dict",
+    ):
+        res3 = verify_embodied_action_evidence(
+            fixture["audit_entry"],
+            fixture["detached_payload"],
+            bad_claim,  # type: ignore[arg-type]
+        )
+        assert not res3.verified
+        assert res3.failures
 
     # Short sha256 digest (< 64 hex chars) is rejected by _HASH_RE
     bad_hash_entry = copy.deepcopy(fixture["audit_entry"])
@@ -465,7 +480,6 @@ def test_non_dict_audit_entry_or_payload_and_short_hash_rejected():
     res4 = verify_embodied_action_evidence(bad_hash_entry, fixture["detached_payload"])
     assert not res4.verified
     assert any("evidence_hash" in f for f in res4.failures)
-
 
 
 # -- canonical_json_bytes: RFC 8785/JCS compliance (agentrust-io/cmcp#588) ------

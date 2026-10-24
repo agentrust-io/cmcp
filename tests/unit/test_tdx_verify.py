@@ -232,5 +232,3 @@ def test_tdx_malformed_report_data_hex_classified_as_report_data_mismatch(monkey
     res = verify_tdx_measurement(_measurement_of(mrtd), report, report_data_hex="not-hex!")
     assert res.verified is False
     assert res.failure_reason == "report_data_mismatch"
-
-
