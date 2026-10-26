@@ -138,10 +138,32 @@ class _BoundProvider(SoftwareOnlyProvider):
         return report
 
 
-def _claim(*, provider: str, report_data: str):
-    """A signed TRACE claim whose report_data the caller controls."""
+def _claim(
+    *,
+    provider: str,
+    measurement_digest: bytes | None = None,
+    policy_hash: str = _POLICY_HASH,
+    nonce_key: SigningKey | None = None,
+):
+    """A signed TRACE claim binding ``measurement_digest`` under its own key.
+
+    The nonce is built here rather than by the caller so that report_data[:32] is
+    the thumbprint of the key that actually signs the claim. Building it outside
+    leaves the two halves committing different keys, and the measurement check
+    reads only the second half, so such a claim passes while quietly testing
+    nothing about the key binding.
+    """
     key = SigningKey()
     chain = AuditChain("policy-tee-conformance")
+    # nonce_key exists only so a case can commit a key other than the signer's and
+    # show the substitution is caught; leave it unset for an honest claim.
+    report_data = (
+        make_measurement_bound_nonce(
+            (nonce_key or key).public_key_bytes, measurement_digest
+        ).hex()
+        if measurement_digest is not None
+        else "00" * 32
+    )
     claim = generate_trace_claim(
         session_id="policy-tee-conformance",
         signing_key=key,
@@ -153,7 +175,7 @@ def _claim(*, provider: str, report_data: str):
             attestation_validity_seconds=86400,
         ),
         policy_bundle=PolicyBundleInfo(
-            hash=_POLICY_HASH, enforcement_mode="enforcing", policy_version="1.0.0"
+            hash=policy_hash, enforcement_mode="enforcing", policy_version="1.0.0"
         ),
         tool_catalog=ToolCatalogInfo(hash=_CATALOG_HASH),
         call_summary=CallSummary(
@@ -396,27 +418,38 @@ class TestPolicyTee004TamperDetection:
     """POLICY-TEE-004: a verifier that recomputes the digest rejects a report
     committing anything else, and fails closed on an unusable expected value."""
 
+    def test_the_first_half_still_binds_the_signing_key(self) -> None:
+        """The measurement sits in the second half, so a case asserting only on
+        measurement_binding passes even when the first half commits some other
+        key. Pinning both halves is what stops that going unnoticed.
+        """
+        digest = b"\xab" * 32
+        claim, _ = _claim(provider="sev-snp", measurement_digest=digest)
+        assert "public_key_binding" in verify_trace_claim(
+            claim, _APPROVED, expected_gateway_measurement=digest
+        ).verified_fields
+
+        substituted, _ = _claim(
+            provider="sev-snp", measurement_digest=digest, nonce_key=SigningKey()
+        )
+        result = verify_trace_claim(
+            substituted, _APPROVED, expected_gateway_measurement=digest
+        )
+
+        assert "public_key_binding" in result.unverified_fields
+        # The measurement half is untouched by the substitution, which is exactly
+        # why it cannot be the only thing a case asserts on.
+        assert "measurement_binding" in result.verified_fields
+
     def test_a_matching_measurement_verifies(self) -> None:
         digest = b"\xab" * 32
-        key = SigningKey()
-        claim, _ = _claim(
-            provider="sev-snp",
-            report_data=make_measurement_bound_nonce(
-                key.public_key_bytes, digest
-            ).hex(),
-        )
+        claim, _ = _claim(provider="sev-snp", measurement_digest=digest)
         result = verify_trace_claim(claim, _APPROVED, expected_gateway_measurement=digest)
 
         assert "measurement_binding" in result.verified_fields
 
     def test_a_substituted_measurement_is_rejected(self) -> None:
-        key = SigningKey()
-        claim, _ = _claim(
-            provider="sev-snp",
-            report_data=make_measurement_bound_nonce(
-                key.public_key_bytes, b"\xab" * 32
-            ).hex(),
-        )
+        claim, _ = _claim(provider="sev-snp", measurement_digest=b"\xab" * 32)
         result = verify_trace_claim(
             claim, _APPROVED, expected_gateway_measurement=b"\xee" * 32
         )
@@ -425,13 +458,7 @@ class TestPolicyTee004TamperDetection:
 
     def test_an_unusable_expected_digest_fails_closed(self) -> None:
         """Junk must not be read as 'skip the check'."""
-        key = SigningKey()
-        claim, _ = _claim(
-            provider="sev-snp",
-            report_data=make_measurement_bound_nonce(
-                key.public_key_bytes, b"\xab" * 32
-            ).hex(),
-        )
+        claim, _ = _claim(provider="sev-snp", measurement_digest=b"\xab" * 32)
         result = verify_trace_claim(
             claim, _APPROVED, expected_gateway_measurement="not-a-digest"
         )
@@ -441,13 +468,7 @@ class TestPolicyTee004TamperDetection:
     def test_the_check_is_opt_in_so_a_claim_cannot_vouch_for_itself(self) -> None:
         """Without an out-of-band expected digest no measurement verdict is given,
         because reading it from the claim would be circular."""
-        key = SigningKey()
-        claim, _ = _claim(
-            provider="sev-snp",
-            report_data=make_measurement_bound_nonce(
-                key.public_key_bytes, b"\xab" * 32
-            ).hex(),
-        )
+        claim, _ = _claim(provider="sev-snp", measurement_digest=b"\xab" * 32)
         result = verify_trace_claim(claim, _APPROVED)
 
         assert "measurement_binding" not in result.verified_fields
@@ -478,16 +499,6 @@ class TestPolicyTee005TwoConstructions:
         assert measured_after != measured_before
         assert canonical_after != canonical_before
 
-    def test_neither_is_asserted_to_equal_the_other(self, tmp_path, stub_code) -> None:
-        """Two separately-computed values over the same bytes. Equality is not the
-        property under test, and asserting it would undo #552's separation."""
-        path = _loadable_bundle(tmp_path / "b", "permit(principal, action, resource);")
-
-        measured = policy_digest(path)
-        canonical = load_policy_bundle(path).bundle_hash.removeprefix("sha256:")
-
-        assert measured != canonical
-
     def test_unchanged_policy_control_holds_both_still(self, tmp_path, stub_code) -> None:
         """The control: neither moves when the policy does not."""
         path = _loadable_bundle(tmp_path / "b", "permit(principal, action, resource);")
@@ -503,13 +514,7 @@ class TestPolicyTee005TwoConstructions:
 
         (root / "allow.cedar").write_text("forbid(principal, action, resource);")
 
-        key = SigningKey()
-        claim, _ = _claim(
-            provider="sev-snp",
-            report_data=make_measurement_bound_nonce(
-                key.public_key_bytes, before.digest
-            ).hex(),
-        )
+        claim, _ = _claim(provider="sev-snp", measurement_digest=before.digest)
         result = verify_trace_claim(
             claim, _APPROVED, expected_gateway_measurement=gateway_measurement(config).digest
         )
@@ -517,7 +522,12 @@ class TestPolicyTee005TwoConstructions:
         assert "measurement_binding" in result.unverified_fields
 
     def test_the_bundle_hash_check_rejects_its_own_mismatch(self, tmp_path, stub_code) -> None:
-        """And the canonical hash is checked against approved hashes, separately."""
+        """And the canonical hash is rejected by its own verifier, separately.
+
+        Comparing the two hashes here would only restate that the mutation moved
+        one of them. The point is that the check in front of it refuses, so this
+        goes through verify_trace_claim the way the measurement case does.
+        """
         root = tmp_path / "b"
         path = _loadable_bundle(root, "permit(principal, action, resource);")
         approved = ApprovedHashes(
@@ -526,6 +536,29 @@ class TestPolicyTee005TwoConstructions:
         )
 
         (root / "allow.cedar").write_text("forbid(principal, action, resource);")
-        mutated_hash = load_policy_bundle(path).bundle_hash
 
-        assert mutated_hash != approved.policy_bundle_hash
+        claim, _ = _claim(
+            provider="sev-snp",
+            measurement_digest=b"\xab" * 32,
+            policy_hash=load_policy_bundle(path).bundle_hash,
+        )
+        result = verify_trace_claim(claim, approved)
+
+        assert "policy_bundle.hash" in result.unverified_fields
+
+    def test_the_bundle_hash_check_passes_on_the_approved_bundle(
+        self, tmp_path, stub_code
+    ) -> None:
+        """The control for the case above, so the rejection is not vacuous."""
+        path = _loadable_bundle(tmp_path / "b", "permit(principal, action, resource);")
+        bundle_hash = load_policy_bundle(path).bundle_hash
+        approved = ApprovedHashes(
+            policy_bundle_hash=bundle_hash, tool_catalog_hash=_CATALOG_HASH
+        )
+
+        claim, _ = _claim(
+            provider="sev-snp", measurement_digest=b"\xab" * 32, policy_hash=bundle_hash
+        )
+        result = verify_trace_claim(claim, approved)
+
+        assert "policy_bundle.hash" not in result.unverified_fields
