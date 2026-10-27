@@ -17,7 +17,7 @@ def main():
     scope_file = root / "tools/lock-delta-scope.json"
     excluded = json.loads(scope_file.read_text()) if scope_file.exists() else {}
     changed = subprocess.check_output(
-        ["git", "diff", "--name-only", "-z", args.base, "HEAD", "--", "requirements"],
+        ["git", "diff", "--no-renames", "--name-only", "-z", args.base, "HEAD", "--", "requirements"],
         cwd=root,
     ).decode().split("\0")
     for relative in changed:
