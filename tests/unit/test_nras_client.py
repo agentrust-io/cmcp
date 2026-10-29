@@ -289,8 +289,85 @@ def test_try_appraise_returns_none_on_timeout(sw_report, monkeypatch):
     assert result is None
 
 
+@pytest.mark.parametrize(
+    ("api_key", "endpoint", "timeout"),
+    [
+        ("", NRAS_ENDPOINT, 10.0),
+        ("   ", NRAS_ENDPOINT, 10.0),
+        ("k", "http://nras.nvidia.com/v1", 10.0),
+        ("k", "ftp://nras.nvidia.com/v1", 10.0),
+        ("k", "https://", 10.0),
+        ("k", "https://:443/v1", 10.0),
+        ("k", NRAS_ENDPOINT, True),
+        ("k", NRAS_ENDPOINT, 0),
+        ("k", NRAS_ENDPOINT, float("nan")),
+    ],
+)
+def test_nras_client_init_validates_parameters(api_key, endpoint, timeout):
+    with pytest.raises(ValueError):
+        NRASClient(api_key=api_key, endpoint=endpoint, timeout=timeout)
+
+
+@pytest.mark.parametrize(
+    "bad_response_text",
+    [
+        "[1, 2]",
+        '{"status": "contraindicated", "status": "affirming"}',
+        '{"status": "affirming", "score": NaN}',
+        '{"status": []}',
+        '{"status": {}}',
+    ],
+)
+def test_nras_rejects_non_dict_duplicate_keys_and_nonfinite_json(sw_report, bad_response_text):
+    client = NRASClient(api_key="k", http_client=_mock_text_client(200, bad_response_text))
+    with pytest.raises(NRASError):
+        client.appraise(sw_report)
+
+
+@pytest.mark.parametrize("valid_report_data", ["a" * 64, "b" * 128])
+def test_nras_accepts_64_and_128_char_report_data(valid_report_data):
+    report = AttestationReport(
+        provider="software-only",
+        measurement="DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION",
+        report_data=valid_report_data,
+        raw_evidence=None,
+        attestation_generated_at=datetime.now(tz=UTC),
+        attestation_validity_seconds=86400,
+    )
+    client = NRASClient(api_key="k", http_client=_mock_client(200, _make_ear("affirming")))
+    assert client.appraise(report).status == "affirming"
+
+
+@pytest.mark.parametrize("bad_report_data", ["not-valid-hex", "aa", "a" * 62, "a" * 66])
+def test_try_appraise_handles_malformed_report_data_without_raising(bad_report_data, monkeypatch):
+    monkeypatch.setenv("CMCP_NRAS_API_KEY", "k")
+    bad_report = AttestationReport(
+        provider="software-only",
+        measurement="DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION",
+        report_data=bad_report_data,
+        raw_evidence=None,
+        attestation_generated_at=datetime.now(tz=UTC),
+        attestation_validity_seconds=86400,
+    )
+    assert try_appraise(bad_report) is None
+
+
+def test_try_appraise_handles_whitespace_api_key_and_unhashable_ear_status(sw_report, monkeypatch):
+    monkeypatch.setenv("CMCP_NRAS_API_KEY", "   ")
+    assert try_appraise(sw_report) is None
+
+    monkeypatch.setenv("CMCP_NRAS_API_KEY", "valid-key")
+    mock_instance = NRASClient(
+        api_key="valid-key",
+        http_client=_mock_text_client(200, '{"status": []}'),
+    )
+    with patch("cmcp_runtime.tee.nras.NRASClient", return_value=mock_instance):
+        assert try_appraise(sw_report) is None
+
+
 def test_try_appraise_logs_warning_when_no_key(sw_report, monkeypatch, caplog):
     import logging
+
     monkeypatch.delenv("CMCP_NRAS_API_KEY", raising=False)
     with caplog.at_level(logging.WARNING, logger="cmcp_runtime.tee.nras"):
         try_appraise(sw_report)
@@ -304,4 +381,5 @@ def test_try_appraise_logs_warning_when_no_key(sw_report, monkeypatch, caplog):
 
 def test_gateway_context_nras_appraisal_defaults_none():
     from cmcp_runtime.startup import RuntimeContext
+
     assert RuntimeContext.__dataclass_fields__["nras_appraisal"].default is None
