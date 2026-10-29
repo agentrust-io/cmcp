@@ -88,6 +88,7 @@ import csv
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
@@ -311,6 +312,16 @@ def policy_digest(policy_bundle_path: str) -> str:
     the attestation report is produced at step 2. This reads bytes off disk and
     needs nothing validated first.
     """
+    return policy_digest_of_files(read_policy_files(policy_bundle_path))
+
+
+def read_policy_files(policy_bundle_path: str) -> dict[str, bytes]:
+    """Every file in the policy bundle, by path relative to it, read once.
+
+    A caller that needs two things from the same bundle, such as the measurement and
+    the canonical hash, takes both from one read so a write in between cannot split
+    them.
+    """
     root = Path(policy_bundle_path)
     if not root.exists():
         raise MeasurementUnavailable(
@@ -324,17 +335,21 @@ def policy_digest(policy_bundle_path: str) -> str:
             "the policy bundle directory is empty, so policy cannot be measured",
             detail=f"path={policy_bundle_path}",
         )
+    return {
+        (p.relative_to(root).as_posix() if root.is_dir() else p.name): p.read_bytes()
+        for p in files
+    }
 
+
+def policy_digest_of_files(files: Mapping[str, bytes]) -> str:
+    """The policy component of the gateway measurement, from :func:`read_policy_files`."""
     parts = [
         json.dumps(
-            {
-                "path": p.relative_to(root).as_posix() if root.is_dir() else p.name,
-                "sha256": _sha256_hex(p.read_bytes()),
-            },
+            {"path": path, "sha256": _sha256_hex(content)},
             separators=(",", ":"),
             sort_keys=True,
         )
-        for p in files
+        for path, content in files.items()
     ]
     return _sha256_hex("\n".join(parts).encode())
 
@@ -362,7 +377,9 @@ def _config_payload(value: Any, *, _depth: int = 0) -> Any:
             for name in sorted(value.__dataclass_fields__)
             if name not in _CONFIG_SECRET_KEYS
         }
-    if isinstance(value, dict):
+    # Mapping, not dict: config freezes some mappings in a MappingProxyType, and
+    # falling through to str() below would measure its insertion order.
+    if isinstance(value, Mapping):
         return {
             str(k): _config_payload(v, _depth=_depth + 1)
             for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
@@ -378,11 +395,24 @@ def _config_payload(value: Any, *, _depth: int = 0) -> Any:
 
 def gateway_measurement(config: Any) -> GatewayMeasurement:
     """Compute the digest over installed code, the policy bundle, and the config."""
-    components = {
-        "code": code_digest(),
-        "policy": policy_digest(config.policy_bundle_path),
-        "config": config_digest(config),
-    }
+    return measurement_from_components(
+        {
+            "code": code_digest(),
+            "policy": policy_digest(config.policy_bundle_path),
+            "config": config_digest(config),
+        }
+    )
+
+
+def measurement_from_components(components: dict[str, str]) -> GatewayMeasurement:
+    """The gateway digest over already-computed code, policy and config digests.
+
+    Separate from :func:`gateway_measurement` so a running gateway can recompute the
+    digest after a policy reload from the code and config it measured at startup,
+    rather than from whatever is on disk now.
+    """
+    if set(components) != {"code", "policy", "config"}:
+        raise ValueError("a gateway measurement has exactly code, policy and config")
     canonical = json.dumps(components, separators=(",", ":"), sort_keys=True).encode()
     return GatewayMeasurement(
         digest=hashlib.sha256(_DIGEST_PREFIX + b"|" + canonical).digest(),

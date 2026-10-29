@@ -29,4 +29,13 @@ pip-audit>=2.6
 # Pinned rather than left to the runner's copy: dropping the old
 # "pip install --upgrade setuptools" prefix would otherwise freeze whatever
 # the image ships, and pip-audit rightly flags 79.0.1 for PYSEC-2026-3447.
-setuptools>=83.0.0
+# >=84.1.0: 84.0.0 is flagged by GHSA-xmj3-9gf7-h52w.
+setuptools>=84.1.0
+# Not a direct dependency: pulled in transitively by pip-audit -> cachecontrol
+# (filecache extra). Pinned here so the resolver can't settle on a vulnerable
+# version pip-audit itself would then flag.
+# >=4.2.1: 3.32.5 is flagged by CVE-2026-112940, CVE-2026-112913, CVE-2026-112907.
+filelock>=4.2.1
+# Not a direct dependency: pulled in transitively by pip-audit -> cachecontrol.
+# >=1.2.3: 1.2.2 is flagged by CVE-2026-114613.
+msgpack>=1.2.3

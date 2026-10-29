@@ -91,7 +91,10 @@ class CatalogException:
 @dataclass
 class ToolCatalog:
     entries: dict[str, CatalogEntry]  # tool_name -> entry
-    catalog_hash: str  # sha256:<hex> measured into the TEE report; never mutated
+    # sha256:<hex>, checked against the pinned hash and reported in every TRACE
+    # Claim. Not part of the gateway measurement, so no TEE report commits it.
+    # Never mutated.
+    catalog_hash: str
     exceptions: list[CatalogException] = field(default_factory=list)
 
     def lookup(self, tool_name: str) -> CatalogEntry | None:
