@@ -124,6 +124,18 @@ A policy signing key can be revoked on a running gateway only when `CMCP_POLICY_
 - **No fleet distribution.** Each gateway reads the statement from its own bundle directory. Nothing pushes it, and verifiers are not sent a revocation list; they see `gateway.policy_signing` in the claims the gateway signs.
 - **No expiry.** Keys are trusted until revoked.
 
+## Sealed signing key (TPM tier, opt-in)
+
+With `attestation.seal_signing_key`, the TRACE signing key survives restarts, sealed by the TPM to the gateway digest. It does not protect against:
+
+- **Owner authorization.** Anyone who can issue owner-authorized TPM commands can write an approved digest into the gate and unseal the key. On Azure, guest root can.
+- **A modified gateway that reports the approved digest.** The digest is computed by the gateway's own measurement code; a gateway that lies about it gets the key. The measurement extend index has the same limit.
+- **A crash between unseal and closing the gate.** For that moment the gate holds the approved digest, so another process with TPM access could unseal until the next start closes it.
+- **Boot state.** PCRs are not in the policy (deferred to P4), so the same digest unseals after a firmware or kernel change.
+- **Per-start uniqueness of the quote.** The TPM quote signs only the key thumbprint, `report_data[:32]`. With the key persistent, two starts quote over the same qualifying data; the random salt changes `report_data` but is not signed by the TPM.
+
+A verifier cannot tell from evidence that a key is sealed, so no claim field says so. One sealed gateway per TPM.
+
 ## What cMCP does not do
 
 - **cMCP is not a WAF.** It does not inspect HTTP traffic for SQL injection, XSS, or other web application attack patterns. It operates at the MCP tool call layer, not the HTTP layer.

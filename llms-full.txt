@@ -673,6 +673,12 @@ attestation:
   # AMD measurement register hex for SEV-SNP).
   # expected_measurement: "sha256:..."
 
+  # Optional, tpm provider only. Keep one TRACE signing key across restarts,
+  # sealed by the TPM to the gateway digest. Needs provider: tpm, and the
+  # tpm extra (pip install 'cmcp-runtime[tpm]'). See attestation.md 4.2.
+  # seal_signing_key: true
+  # sealed_key_dir: ./sealed-key
+
 agent_manifest:
   # Optional signed Agent Manifest binding (#302). When set, the runtime
   # verifies the manifest issuer signature, checks that the authenticated
@@ -724,13 +730,15 @@ policy_reload_interval_seconds: 0
 
 ### attestation
 
-| Field                  | Type    | Default       | Description                                                                                                                                                                                     |
-| ---------------------- | ------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider`             | string  | `auto`        | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `software-only`. `auto` detects in order: azure-cvm, then tpm, then sev-snp, then tdx. `software-only` requires `CMCP_DEV_MODE=1`. |
-| `enforcement_mode`     | string  | `enforcing`   | Policy enforcement mode. Valid values: `enforcing`, `advisory`, `silent`.                                                                                                                       |
-| `validity_seconds`     | integer | `86400`       | Attestation report validity period in seconds. Must be a positive integer. At expiry, behavior is controlled by `staleness_policy`.                                                             |
-| `staleness_policy`     | string  | `fail_closed` | Action when attestation validity expires. Valid values: `fail_closed` (terminate sessions), `warn_only` (allow sessions, mark claims as stale).                                                 |
-| `expected_measurement` | string  | none          | Optional. Expected TEE measurement value. If set, the runtime verifies the hardware measurement matches this string at startup and exits with a non-zero status if it does not.                 |
+| Field                  | Type    | Default       | Description                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------- | ------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | string  | `auto`        | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `software-only`. `auto` detects in order: azure-cvm, then tpm, then sev-snp, then tdx. `software-only` requires `CMCP_DEV_MODE=1`.                                                                                                                                                            |
+| `enforcement_mode`     | string  | `enforcing`   | Policy enforcement mode. Valid values: `enforcing`, `advisory`, `silent`.                                                                                                                                                                                                                                                                                  |
+| `validity_seconds`     | integer | `86400`       | Attestation report validity period in seconds. Must be a positive integer. At expiry, behavior is controlled by `staleness_policy`.                                                                                                                                                                                                                        |
+| `staleness_policy`     | string  | `fail_closed` | Action when attestation validity expires. Valid values: `fail_closed` (terminate sessions), `warn_only` (allow sessions, mark claims as stale).                                                                                                                                                                                                            |
+| `expected_measurement` | string  | none          | Optional. Expected TEE measurement value. If set, the runtime verifies the hardware measurement matches this string at startup and exits with a non-zero status if it does not.                                                                                                                                                                            |
+| `seal_signing_key`     | boolean | `false`       | Keep one TRACE signing key across restarts, sealed by the TPM to the gateway digest ([attestation.md 4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)). Requires `provider: tpm` named explicitly and the `tpm` extra. A start whose digest has no sealed key refuses with `SEALED_KEY_DIGEST_MISMATCH`; reseal first with `cmcp key reseal`. |
+| `sealed_key_dir`       | string  | `sealed-key`  | Directory for the sealed key store and its lock. Nothing in it is secret. Measured, like every other setting. A relative path is resolved against the gateway's working directory and the `cmcp key` commands resolve it against theirs, so use an absolute path.                                                                                          |
 
 ### agent_manifest
 
@@ -834,7 +842,7 @@ An optional `sink_policy` sets a hard upper limit on how sensitive the data sent
 - Configure `agent_manifest.path`, `agent_manifest.trust_anchor_path`, and `agent_manifest.authenticated_subject` for agents with signed manifests. The runtime will refuse to start if the signed manifest does not bind the authenticated agent subject to the loaded policy bundle and catalog hashes.
 - Set `attestation.expected_measurement` to the expected TEE measurement for your deployment. Without this, a different binary could be deployed and would still produce valid attestation reports.
 - Use a real TEE provider (`tpm`, `sev-snp`, or `tdx`), not `software-only`. Software-only mode has no hardware root of trust (nothing in the chip vouches for the software), and it leaves threat classes T1 through T4 in the [specification's threat model](https://cmcp.agentrust-io.com/SPEC/#formal-threat-classes) open.
-- Rotate the TEE signing key by performing a full enclave restart on a regular schedule. The signing key is hardware-sealed per enclave instance; rotation requires restart.
+- Rotate the TEE signing key on a regular schedule. By default every restart generates a new key, so a restart rotates it. With `attestation.seal_signing_key` the key survives restarts and upgrades, and only `cmcp key rotate` replaces it; tell relying parties that pin the old key.
 
 # Specification index
 
@@ -2444,6 +2452,8 @@ At enclave startup, before accepting any connections:
 
 The attestation report's `report_data` (nonce) is bound to this key, ensuring the hardware-attested report and the signing key are cryptographically linked (see Section 3.3).
 
+**Sealed key (TPM tier, opt-in).** With `attestation.seal_signing_key`, steps 1 and 3 run once, on the first start on a TPM. Later starts get the same key back from a seed the TPM unseals under the gateway digest (Section 4.2). The private key is still held only in process memory; what is on disk is a blob only that TPM can open.
+
 ### 2.2 Audit Entry Format
 
 Each MCP tool call interception produces one audit entry. The canonical format is:
@@ -2612,7 +2622,7 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || gateway_measurement.digest 
 
 **Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3 and collects its NV pair separately. The pair's pre-value may reflect an append-only history within one index incarnation, but a stateless verifier does not approve that history or rule out owner-authorized redefinition.
 
-**Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config.
+**Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config. A sealed, persistent key (Section 4.2) gives that difference up. On the TPM tier the salt still changes `report_data`, but the TPM quote signs only `report_data[:32]`, so the salt does not reach what the TPM signs; Section 4.2 states the limit.
 
 **Refreshed on every policy-bundle reload.** `report_data` holds one value and no history, so a report produced before a bundle reload still looks well-formed on its own, and nothing in it says whether it is current. The gateway re-attests on **every** reload, including a reload that finds the bundle unchanged: the same digest signed now and that digest signed an hour ago are different assertions, and only the latest report reaches a verifier. The hook is `PolicyEvaluator._maybe_reload` calling `refresh_measurement_binding`, fired whenever `PolicyStore.reload_if_stale` reports that the bundle was re-read.
 
@@ -2648,7 +2658,7 @@ ______________________________________________________________________
 
 ### 4.1 Phase 1: Ephemeral Keys
 
-In Phase 1, the runtime uses a single ephemeral Ed25519 keypair per enclave instance. Properties:
+The default on every provider. The runtime uses a single ephemeral Ed25519 keypair per enclave instance. Properties:
 
 - Generated at enclave startup (see Section 2.1).
 - Exists only in enclave memory. Never exported, never persisted.
@@ -2663,27 +2673,44 @@ Verification of historical TRACE Claims: a verifier holds a TRACE Claim containi
 
 Because the public key is embedded in the claim and attested by the hardware report, there is no need for a separate key transparency log in Phase 1.
 
-### 4.2 Phase 2: Persistent Keys (Future)
+### 4.2 Persistent Keys on the TPM Tier
 
-For use cases requiring long-lived keys (e.g., participation in a key transparency log, or runtime restarts without breaking verifier trust):
+Opt-in with `attestation.seal_signing_key`, on the `tpm` provider only, which has to be named explicitly. It keeps one key across restarts, so a relying party can pin it with `cmcp verify --trusted-key`. The implementation is `cmcp_runtime.tee.seal` (#462).
 
-- At first startup, generate an Ed25519 keypair and seal the private key to the TEE's measurement using the TEE's sealing API (TPM `TPM2_Create` with a parent key bound to PCRs; SEV-SNP sealing via a policy-bound key; TDX sealing via TD-bound key derivation).
-- The sealed key blob is stored on disk. On restart, the enclave unseals the key. Unsealing succeeds only if the enclave's current measurement matches the measurement policy used when sealing.
-- Rotation: updating the enclave's code or configuration changes its measurement. The old sealed key cannot be unsealed by the new measurement. The new enclave generates a fresh keypair and seals it to its own measurement. Old TRACE Claims remain verifiable via their embedded public key. New claims use the new key.
-- A key rotation event should be logged in the operator's change management system.
+**What the key is sealed under.** The Ed25519 seed is sealed with `TPM2_Create` under `TPM2_PolicyNV(gate == digest)`, where `digest` is the gateway measurement digest and the gate is an ordinary owner NV index (`0x01500433`, next to the measurement index). It is not sealed to the measurement index itself: that index is a `TPM_NT_EXTEND` chain that moves on every start, so a policy over it matches one start only. It is not sealed to PCRs either (see "Not covered" below).
+
+**One start.** The public key is read from the store first, since the attestation nonce and the certify pair around the measurement extend commit it. After the extend, the gateway writes the computed digest into the gate, unseals, and overwrites the gate with a sentinel. Between starts the gate holds the sentinel, so a process with TPM access has to write the gate itself, with owner authorization, to unseal.
+
+**State.** The store (`attestation.sealed_key_dir`) holds the public key and the blobs: the one for the current digest and the one before it. Nothing in it is secret. A lock file keeps a second process off the same store, and a second store on the same TPM cannot provision because the gate already exists, so there is one sealed gateway per TPM. The storage parent is recreated from a fixed template on each use and never made persistent, and the sessions that carry the seed are salted with it and encrypt that parameter.
+
+**Provisioning.** A key is minted only on a TPM with no gate and no store. Any other state is an unseal or a startup error with its own code: `SEALED_KEY_DIGEST_MISMATCH` (no blob for this digest, or the TPM refused with `TPM_RC_POLICY` or `TPM_RC_POLICY_FAIL`; any other TPM failure is `SEALED_KEY_UNAVAILABLE`), `SEALED_KEY_TPM_CHANGED` (the TPM answers `TPM_RC_HANDLE` for the gate index, or `TPM_RC_INTEGRITY` when loading the blob under its storage parent: another host, after `TPM2_Clear`, or an altered store; a TPM that fails any other way is `SEALED_KEY_UNAVAILABLE`), `SEALED_KEY_MISSING` (a gate with no store), `SEALED_KEY_PUBLIC_KEY_MISMATCH`, `SEALED_KEY_LOCKED` and `SEALED_KEY_UNAVAILABLE`. Nothing is minted to recover from them: minting on a mismatch would hand a changed gateway a working key, and sealing would enforce nothing.
+
+**When the digest changes.** The digest covers code, policy and configuration, so an upgrade, a policy reload and a policy signing key revocation all change it. The key stays the same through every one of them; only `cmcp key rotate` makes a new one.
+
+- Policy reload: after a verified reload the running gateway seals the key it holds to the new digest. It takes code and configuration from the startup measurement and recomputes only policy, from one read of the bundle that it seals only if its canonical hash is the bundle the reload accepted; a bundle changed after verification is not sealed to. A refused or failed reseal is logged; the gateway keeps serving, and the next start refuses until `cmcp key reseal` is run.
+- Upgrade: with the gateway stopped, `cmcp key reseal` seals the same key to the new build's digest, which `cmcp measure` prints. The previous blob is kept, so a rollback still starts.
+- Rotation: `cmcp key rotate` replaces the key on purpose and drops every blob, and it is the recovery for a lost store, and for a provisioning that stopped after defining the gate but before its first write, which it finishes only for that exact template. Relying parties pinning the old key must be told.
+
+This replaces the rule that stood here before: that an upgrade mints a fresh key sealed to the new measurement. Minting on a measurement change is the same as minting on a mismatch.
+
+**What it guarantees.** The blob is useless on any other TPM. A gateway whose measured inputs differ from the sealed digest, with its measurement code intact, does not get the key and does not start. The key survives restarts, so claims from a restart pass a pin to the first key and claims from a re-provisioned key fail it.
+
+**What it does not.** Anyone who can issue owner-authorized TPM commands can write an approved digest into the gate and unseal; on Azure, guest root can. A modified gateway that reports the approved digest gets the key. The extend index has the same limits. The key is sealed data, so a verifier cannot confirm from evidence that it is sealed, and no claim field says so. With the key persistent, two starts produce quotes over the same qualifying data: the provider passes `report_data[:32]`, the key thumbprint, to `TPM2_Quote`, and the random salt in `report_data[32:64]` changes `report_data` but not what the TPM signs. The `TPM2_NV_Certify` pair binds the full nonce but is not carried in ordinary TRACE claims. Binding the full nonce into the quote would change what producers and verifiers check, so it is a separate decision.
+
+**Not covered.** `TPM2_PolicyPCR` over boot state is deferred to P4 (`tpm-security-model.md`): with the TCG event log at 0 bytes on cloud vTPMs, PCR values after a firmware or kernel update cannot be predicted, so a PCR-bound key could not be resealed ahead of the reboot and every host update would be an outage. Also not covered: configurable owner authorization, `TPM2_PolicyAuthorize` tickets, a maximum key age, key transparency, and the other tiers.
 
 ### 4.3 Compromise Response
 
 If an enclave instance is suspected to be compromised:
 
-1. Shut down the enclave immediately. This destroys the in-memory private key (Phase 1) or leaves the sealed key on disk (Phase 2, sealed key should be deleted).
+1. Shut down the enclave immediately. This destroys the in-memory private key. A sealed key (Section 4.2) also survives on disk as a blob: run `cmcp key rotate` before restarting, which replaces the key and drops every blob of the old one.
 1. Invalidate all active sessions that were served by the compromised enclave.
 1. TRACE Claims issued by the compromised enclave (identifiable by their `tee_public_key`) should be flagged in the incident log. They cannot be cryptographically revoked (the signature remains valid), but their provenance is suspect.
 1. Verifiers should be notified of the compromised `tee_public_key` value so they can reject or quarantine claims bearing it.
-1. Start a new enclave instance. The new instance generates a fresh keypair with a new measurement.
+1. Start a new enclave instance. The new instance generates a fresh keypair, or with a sealed key unseals the one `cmcp key rotate` made.
 1. Conduct a post-incident review of all audit entries from the compromised enclave period using the signed bundle export mechanism (Section 2.4).
 
-There is no online revocation mechanism for Phase 1 keys. Revocation is handled out-of-band via incident notification to verifiers.
+There is no online revocation mechanism for either kind of key. Revocation is handled out-of-band via incident notification to verifiers.
 
 ______________________________________________________________________
 
@@ -2807,7 +2834,7 @@ The catalog does not support hot-reload in Phase 1. Updates require:
 1. Commit the updated catalog to version control. This creates an auditable record of who approved the change and when.
 1. Compute the new `catalog_hash` locally and record it in the commit message or PR description for pre-deployment verification.
 1. Deploy the new runtime configuration. This requires an enclave restart.
-1. On restart, the new enclave measures the new catalog hash. Subsequent TRACE Claims will contain the new `tool_catalog.hash`.
+1. On restart, the gateway loads the new catalog and checks it against the pinned `CMCP_CATALOG_HASH`. Subsequent TRACE Claims will contain the new `tool_catalog.hash`. The catalog is not part of the gateway measurement, which covers code, policy and configuration, so no hardware report or NV index commits it; a verifier checks it through `tool_catalog.hash` and its approved hashes.
 1. Verify: after startup, call `GET /v1/status` which returns the active `catalog_hash`. Confirm it matches the expected value from step 4.
 
 There is no partial catalog update. The entire catalog is replaced atomically at restart. This prevents a TOCTOU window between loading individual tool definitions.
@@ -3388,6 +3415,12 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 | `SESSION_SENSITIVITY_POLICY_DENY`  | 403           | INFO                              | Call denied due to session sensitivity state                                                                                                                                                                                                                                                            | [session-policy.md](https://cmcp.agentrust-io.com/spec/session-policy/index.md)                            |
 | `SESSION_RESET_REQUIRED`           | 428           | INFO                              | Agent attempted call that requires session reset first                                                                                                                                                                                                                                                  | [session-policy.md](https://cmcp.agentrust-io.com/spec/session-policy/index.md)                            |
 | `SESSION_STATE_STORE_UNAVAILABLE`  | startup       | FATAL                             | A configured `session_state_path` could not be opened, so the gateway would run without the cross-instance session-state persistence the operator configured                                                                                                                                            | [configuration.md](https://cmcp.agentrust-io.com/configuration/index.md)                                   |
+| `SEALED_KEY_DIGEST_MISMATCH`       | startup       | FATAL                             | `attestation.seal_signing_key` is on and no sealed key exists for this gateway digest, or the TPM refused to unseal under it. The code, policy or configuration changed without `cmcp key reseal`                                                                                                       | [attestation.md §4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)                             |
+| `SEALED_KEY_TPM_CHANGED`           | startup       | FATAL                             | The sealed key does not belong to this TPM: another host, the TPM was cleared, or the store was altered. A TPM that fails to answer is `SEALED_KEY_UNAVAILABLE` instead                                                                                                                                 | [attestation.md §4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)                             |
+| `SEALED_KEY_MISSING`               | startup       | FATAL                             | This TPM has a sealed-key gate but there is no sealed key store for it. Restore the store or run `cmcp key rotate`                                                                                                                                                                                      | [attestation.md §4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)                             |
+| `SEALED_KEY_PUBLIC_KEY_MISMATCH`   | startup       | FATAL                             | The stored public key does not match the secret the TPM unsealed                                                                                                                                                                                                                                        | [attestation.md §4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)                             |
+| `SEALED_KEY_LOCKED`                | startup       | FATAL                             | Another process holds the sealed key store                                                                                                                                                                                                                                                              | [attestation.md §4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)                             |
+| `SEALED_KEY_UNAVAILABLE`           | startup       | FATAL                             | The TPM, tpm2-pytss or the sealed key store could not be used, or the gateway could not be measured                                                                                                                                                                                                     | [attestation.md §4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)                             |
 | `TEE_FAULT`                        | 500           | ERROR                             | TEE process fault during call execution                                                                                                                                                                                                                                                                 | [failure-modes.md FM-3](https://cmcp.agentrust-io.com/spec/failure-modes/index.md)                         |
 | `ATTESTATION_STALE`                | 412           | WARN                              | Attestation report validity period has expired                                                                                                                                                                                                                                                          | [attestation.md §3](https://cmcp.agentrust-io.com/spec/attestation/index.md)                               |
 | `BREAK_GLASS_ACTIVE`               | 200           | WARN                              | Call allowed via catalog exception (break-glass procedure active)                                                                                                                                                                                                                                       | [tool-identity.md](https://cmcp.agentrust-io.com/spec/tool-identity/index.md)                              |
@@ -5183,8 +5216,34 @@ With both fixed, the following hold on hardware:
 
 One limit on this run: the VM drew the `Global Virtual TPM CA - 03` hierarchy, whose AK certificate has no AIA, so the chain is the leaf alone. The verification above was therefore anchored on the leaf itself, which exercises the verifier's plumbing but proves **no key provenance**. Chained verification against a vendor root still needs a host of the other hierarchy, or the root from #453.
 
+## Sealed signing key, contributor-owned AMD firmware TPM, 2026-10-17
+
+In short: on a real TPM, a gateway keeps one signing key across restarts, a changed gateway gets no key and does not start, and resealing, rollback and rotation work.
+
+A contributor's laptop, AMD firmware TPM, spec revision 1.59, firmware `0x60016.0x7`, dual-booted, so the TPM also holds another operating system's keys. Owner authorization is empty; lockout authorization is set by the other OS. This exercises #462 as merged here: cMCP's own `run_startup` with `attestation.seal_signing_key`, the reseal after a policy reload, and `cmcp key reseal` and `rotate`, not a prototype beside it.
+
+To leave the TPM as it was, every cMCP NV index was moved to an unused test handle (`0x01504365` for the gate, `0x01504366` for the measurement extend index), no `TPM2_Clear`, owner-authorization change or persistent handle was used, and the run refused to start unless both test handles were free. Every TPM context had to report manufacturer AMD; all 37 did. The installed code was editable, so the code digest was pinned; policy and configuration were measured for real.
+
+|                                                                                                       | Result                                               |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| First start provisions, two restarts unseal the same key, `report_data[:32]` is that key's thumbprint | pass. First start 2.21 s, restarts 2.53 s and 2.54 s |
+| The gate holds the sentinel between starts                                                            | pass                                                 |
+| A changed policy refuses to start with `SEALED_KEY_DIGEST_MISMATCH`, gate still closed                | pass                                                 |
+| A reseal after a policy reload keeps the key on the next start                                        | pass                                                 |
+| `cmcp key reseal` before an upgrade, then a rollback, keep the key                                    | pass                                                 |
+| A second gateway on the same store refuses with `SEALED_KEY_LOCKED`                                   | pass                                                 |
+| An unseal while the gate is closed is refused by the TPM                                              | pass                                                 |
+| `cmcp key rotate` replaces the key, and the next start unseals the new one                            | pass                                                 |
+
+Afterwards only the two test handles were undefined, and the NV index list, the persistent handles and the lockout counter (0) equalled both the snapshot taken at the start and an earlier record of the same TPM.
+
+A second run, after failures came to be classified by TPM return code, gave the same results and the same unchanged state. The closed-gate refusal came back from this TPM as `TPM_RC_POLICY` ("policy failure in math operation or an invalid authPolicy value"), which is what `SEALED_KEY_DIGEST_MISMATCH` now requires.
+
+Left out on purpose: an owner-password change and `TPM2_Clear`, which would alter or destroy the other operating system's keys, and a blob moved to another TPM. The swtpm tests in `tests/integration/test_sealed_signing_key_swtpm.py` cover all three, along with every scenario above. Not shown by this run: an Azure vTPM, the certify pair (this TPM provisions no platform attestation key, so the extend ran unsigned), and a discrete TPM. It is contributor-supplied evidence, not project-owned hardware.
+
 ## Not yet validated
 
+- **The sealed signing key on a cloud vTPM and with the certify pair**: the only hardware run is the contributor fTPM above, which has no platform attestation key.
 - **TPM certificate chain on every Azure host**: the AK signature is verified, and the sibling [ca2a](https://github.com/agentrust-io/ca2a) verifier has done so against real quotes. Chaining that key to a pinned root is **host-dependent**: see the fleet-variance correction above, where a host presenting the `Global Virtual TPM CA - 03` hierarchy with no AIA extension cannot produce a chain at all.
 - **The NV certify pair against a real vendor-rooted chain**: the 2026-08-01 run anchored on the leaf because that host presented the no-AIA hierarchy, so key provenance for the certifying key is still unproven on Azure (#453).
 - **NVIDIA GPU CC**: not implemented, planned for v0.2 via NRAS.
@@ -5317,6 +5376,18 @@ A policy signing key can be revoked on a running gateway only when `CMCP_POLICY_
 - **Revocation state is in memory.** A restart rebuilds it from `CMCP_POLICY_SIGNING_KEY`, `CMCP_POLICY_SUCCESSOR_SIGNING_KEY` and `signing-key-revocations.json`. If the statement file is removed and the old key is still configured, the restarted gateway trusts the old key again.
 - **No fleet distribution.** Each gateway reads the statement from its own bundle directory. Nothing pushes it, and verifiers are not sent a revocation list; they see `gateway.policy_signing` in the claims the gateway signs.
 - **No expiry.** Keys are trusted until revoked.
+
+## Sealed signing key (TPM tier, opt-in)
+
+With `attestation.seal_signing_key`, the TRACE signing key survives restarts, sealed by the TPM to the gateway digest. It does not protect against:
+
+- **Owner authorization.** Anyone who can issue owner-authorized TPM commands can write an approved digest into the gate and unseal the key. On Azure, guest root can.
+- **A modified gateway that reports the approved digest.** The digest is computed by the gateway's own measurement code; a gateway that lies about it gets the key. The measurement extend index has the same limit.
+- **A crash between unseal and closing the gate.** For that moment the gate holds the approved digest, so another process with TPM access could unseal until the next start closes it.
+- **Boot state.** PCRs are not in the policy (deferred to P4), so the same digest unseals after a firmware or kernel change.
+- **Per-start uniqueness of the quote.** The TPM quote signs only the key thumbprint, `report_data[:32]`. With the key persistent, two starts quote over the same qualifying data; the random salt changes `report_data` but is not signed by the TPM.
+
+A verifier cannot tell from evidence that a key is sealed, so no claim field says so. One sealed gateway per TPM.
 
 ## What cMCP does not do
 

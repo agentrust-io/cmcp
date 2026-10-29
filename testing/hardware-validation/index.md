@@ -198,8 +198,34 @@ With both fixed, the following hold on hardware:
 
 One limit on this run: the VM drew the `Global Virtual TPM CA - 03` hierarchy, whose AK certificate has no AIA, so the chain is the leaf alone. The verification above was therefore anchored on the leaf itself, which exercises the verifier's plumbing but proves **no key provenance**. Chained verification against a vendor root still needs a host of the other hierarchy, or the root from #453.
 
+## Sealed signing key, contributor-owned AMD firmware TPM, 2026-10-17
+
+In short: on a real TPM, a gateway keeps one signing key across restarts, a changed gateway gets no key and does not start, and resealing, rollback and rotation work.
+
+A contributor's laptop, AMD firmware TPM, spec revision 1.59, firmware `0x60016.0x7`, dual-booted, so the TPM also holds another operating system's keys. Owner authorization is empty; lockout authorization is set by the other OS. This exercises #462 as merged here: cMCP's own `run_startup` with `attestation.seal_signing_key`, the reseal after a policy reload, and `cmcp key reseal` and `rotate`, not a prototype beside it.
+
+To leave the TPM as it was, every cMCP NV index was moved to an unused test handle (`0x01504365` for the gate, `0x01504366` for the measurement extend index), no `TPM2_Clear`, owner-authorization change or persistent handle was used, and the run refused to start unless both test handles were free. Every TPM context had to report manufacturer AMD; all 37 did. The installed code was editable, so the code digest was pinned; policy and configuration were measured for real.
+
+|                                                                                                       | Result                                               |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| First start provisions, two restarts unseal the same key, `report_data[:32]` is that key's thumbprint | pass. First start 2.21 s, restarts 2.53 s and 2.54 s |
+| The gate holds the sentinel between starts                                                            | pass                                                 |
+| A changed policy refuses to start with `SEALED_KEY_DIGEST_MISMATCH`, gate still closed                | pass                                                 |
+| A reseal after a policy reload keeps the key on the next start                                        | pass                                                 |
+| `cmcp key reseal` before an upgrade, then a rollback, keep the key                                    | pass                                                 |
+| A second gateway on the same store refuses with `SEALED_KEY_LOCKED`                                   | pass                                                 |
+| An unseal while the gate is closed is refused by the TPM                                              | pass                                                 |
+| `cmcp key rotate` replaces the key, and the next start unseals the new one                            | pass                                                 |
+
+Afterwards only the two test handles were undefined, and the NV index list, the persistent handles and the lockout counter (0) equalled both the snapshot taken at the start and an earlier record of the same TPM.
+
+A second run, after failures came to be classified by TPM return code, gave the same results and the same unchanged state. The closed-gate refusal came back from this TPM as `TPM_RC_POLICY` ("policy failure in math operation or an invalid authPolicy value"), which is what `SEALED_KEY_DIGEST_MISMATCH` now requires.
+
+Left out on purpose: an owner-password change and `TPM2_Clear`, which would alter or destroy the other operating system's keys, and a blob moved to another TPM. The swtpm tests in `tests/integration/test_sealed_signing_key_swtpm.py` cover all three, along with every scenario above. Not shown by this run: an Azure vTPM, the certify pair (this TPM provisions no platform attestation key, so the extend ran unsigned), and a discrete TPM. It is contributor-supplied evidence, not project-owned hardware.
+
 ## Not yet validated
 
+- **The sealed signing key on a cloud vTPM and with the certify pair**: the only hardware run is the contributor fTPM above, which has no platform attestation key.
 - **TPM certificate chain on every Azure host**: the AK signature is verified, and the sibling [ca2a](https://github.com/agentrust-io/ca2a) verifier has done so against real quotes. Chaining that key to a pinned root is **host-dependent**: see the fleet-variance correction above, where a host presenting the `Global Virtual TPM CA - 03` hierarchy with no AIA extension cannot produce a chain at all.
 - **The NV certify pair against a real vendor-rooted chain**: the 2026-08-01 run anchored on the leaf because that host presented the no-AIA hierarchy, so key provenance for the certifying key is still unproven on Azure (#453).
 - **NVIDIA GPU CC**: not implemented, planned for v0.2 via NRAS.

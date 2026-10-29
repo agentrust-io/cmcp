@@ -36,6 +36,12 @@ attestation:
   # AMD measurement register hex for SEV-SNP).
   # expected_measurement: "sha256:..."
 
+  # Optional, tpm provider only. Keep one TRACE signing key across restarts,
+  # sealed by the TPM to the gateway digest. Needs provider: tpm, and the
+  # tpm extra (pip install 'cmcp-runtime[tpm]'). See attestation.md 4.2.
+  # seal_signing_key: true
+  # sealed_key_dir: ./sealed-key
+
 agent_manifest:
   # Optional signed Agent Manifest binding (#302). When set, the runtime
   # verifies the manifest issuer signature, checks that the authenticated
@@ -87,13 +93,15 @@ policy_reload_interval_seconds: 0
 
 ### attestation
 
-| Field                  | Type    | Default       | Description                                                                                                                                                                                     |
-| ---------------------- | ------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider`             | string  | `auto`        | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `software-only`. `auto` detects in order: azure-cvm, then tpm, then sev-snp, then tdx. `software-only` requires `CMCP_DEV_MODE=1`. |
-| `enforcement_mode`     | string  | `enforcing`   | Policy enforcement mode. Valid values: `enforcing`, `advisory`, `silent`.                                                                                                                       |
-| `validity_seconds`     | integer | `86400`       | Attestation report validity period in seconds. Must be a positive integer. At expiry, behavior is controlled by `staleness_policy`.                                                             |
-| `staleness_policy`     | string  | `fail_closed` | Action when attestation validity expires. Valid values: `fail_closed` (terminate sessions), `warn_only` (allow sessions, mark claims as stale).                                                 |
-| `expected_measurement` | string  | none          | Optional. Expected TEE measurement value. If set, the runtime verifies the hardware measurement matches this string at startup and exits with a non-zero status if it does not.                 |
+| Field                  | Type    | Default       | Description                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------- | ------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | string  | `auto`        | TEE provider. Valid values: `auto`, `tpm`, `sev-snp`, `tdx`, `software-only`. `auto` detects in order: azure-cvm, then tpm, then sev-snp, then tdx. `software-only` requires `CMCP_DEV_MODE=1`.                                                                                                                                                            |
+| `enforcement_mode`     | string  | `enforcing`   | Policy enforcement mode. Valid values: `enforcing`, `advisory`, `silent`.                                                                                                                                                                                                                                                                                  |
+| `validity_seconds`     | integer | `86400`       | Attestation report validity period in seconds. Must be a positive integer. At expiry, behavior is controlled by `staleness_policy`.                                                                                                                                                                                                                        |
+| `staleness_policy`     | string  | `fail_closed` | Action when attestation validity expires. Valid values: `fail_closed` (terminate sessions), `warn_only` (allow sessions, mark claims as stale).                                                                                                                                                                                                            |
+| `expected_measurement` | string  | none          | Optional. Expected TEE measurement value. If set, the runtime verifies the hardware measurement matches this string at startup and exits with a non-zero status if it does not.                                                                                                                                                                            |
+| `seal_signing_key`     | boolean | `false`       | Keep one TRACE signing key across restarts, sealed by the TPM to the gateway digest ([attestation.md 4.2](https://cmcp.agentrust-io.com/spec/attestation/index.md)). Requires `provider: tpm` named explicitly and the `tpm` extra. A start whose digest has no sealed key refuses with `SEALED_KEY_DIGEST_MISMATCH`; reseal first with `cmcp key reseal`. |
+| `sealed_key_dir`       | string  | `sealed-key`  | Directory for the sealed key store and its lock. Nothing in it is secret. Measured, like every other setting. A relative path is resolved against the gateway's working directory and the `cmcp key` commands resolve it against theirs, so use an absolute path.                                                                                          |
 
 ### agent_manifest
 
@@ -197,4 +205,4 @@ An optional `sink_policy` sets a hard upper limit on how sensitive the data sent
 - Configure `agent_manifest.path`, `agent_manifest.trust_anchor_path`, and `agent_manifest.authenticated_subject` for agents with signed manifests. The runtime will refuse to start if the signed manifest does not bind the authenticated agent subject to the loaded policy bundle and catalog hashes.
 - Set `attestation.expected_measurement` to the expected TEE measurement for your deployment. Without this, a different binary could be deployed and would still produce valid attestation reports.
 - Use a real TEE provider (`tpm`, `sev-snp`, or `tdx`), not `software-only`. Software-only mode has no hardware root of trust (nothing in the chip vouches for the software), and it leaves threat classes T1 through T4 in the [specification's threat model](https://cmcp.agentrust-io.com/SPEC/#formal-threat-classes) open.
-- Rotate the TEE signing key by performing a full enclave restart on a regular schedule. The signing key is hardware-sealed per enclave instance; rotation requires restart.
+- Rotate the TEE signing key on a regular schedule. By default every restart generates a new key, so a restart rotates it. With `attestation.seal_signing_key` the key survives restarts and upgrades, and only `cmcp key rotate` replaces it; tell relying parties that pin the old key.
