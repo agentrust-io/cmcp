@@ -15,8 +15,11 @@ Phase 2 / v0.2 -- target: Q3 2026 (Berlin demo).
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import math
 import os
+import urllib.parse
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -86,6 +89,18 @@ class NRASClient:
         timeout: float = _DEFAULT_TIMEOUT_SECONDS,
         http_client: httpx.Client | None = None,
     ) -> None:
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("api_key must be a non-empty string")
+        parsed = urllib.parse.urlsplit(endpoint) if isinstance(endpoint, str) else None
+        if parsed is None or parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("endpoint must be a valid HTTPS URL with a hostname")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be a positive finite number")
         self._api_key = api_key
         self._endpoint = endpoint
         self._timeout = timeout
@@ -103,7 +118,14 @@ class NRASClient:
             NRASAppraisalError: Any other 4xx response.
             NRASError:          Network / timeout errors or unexpected response.
         """
-        nonce_b64 = base64.b64encode(bytes.fromhex(report.report_data)).decode()
+        rd = getattr(report, "report_data", None)
+        if (
+            not isinstance(rd, str)
+            or len(rd) not in (64, 128)
+            or any(c not in "0123456789abcdefABCDEF" for c in rd)
+        ):
+            raise NRASError("report.report_data must be a 64- or 128-character hex string")
+        nonce_b64 = base64.b64encode(bytes.fromhex(rd)).decode()
 
         if report.raw_evidence is not None:
             evidence_b64 = base64.b64encode(report.raw_evidence).decode()
@@ -145,15 +167,36 @@ class NRASClient:
         if response.status_code >= 400:
             raise NRASAppraisalError(response.status_code, response.text)
 
+        def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            out: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in out:
+                    raise ValueError(f"duplicate JSON object key: {key!r}")
+                out[key] = value
+            return out
+
+        def _no_nonfinite(token: str) -> Any:
+            raise ValueError(f"non-finite JSON constant: {token}")
+
         try:
-            return response.json()
+            parsed = json.loads(
+                response.text,
+                object_pairs_hook=_no_duplicate_keys,
+                parse_constant=_no_nonfinite,
+            )
         except Exception as exc:
             raise NRASError(f"NRAS response is not valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise NRASError("NRAS response must be a JSON object")
+        return parsed
+
     @staticmethod
     def _parse_ear(ear: dict[str, Any]) -> AppraisalResult:
         """Validate and extract fields from a raw EAR JSON payload."""
+        if not isinstance(ear, dict):
+            raise NRASError("EAR payload must be a JSON object")
         status = ear.get("status", "")
-        if status not in _VALID_STATUSES:
+        if not isinstance(status, str) or status not in _VALID_STATUSES:
             raise NRASError(
                 f"NRAS returned unrecognised EAR status {status!r}. Expected one of {sorted(_VALID_STATUSES)}."
             )
@@ -192,7 +235,7 @@ def try_appraise(report: AttestationReport) -> AppraisalResult | None:
     Phase 2 / v0.2 -- implements issue #125.
     """
     api_key = os.environ.get(_ENV_API_KEY)
-    if not api_key:
+    if not api_key or not api_key.strip():
         logger.warning(
             "CMCP_NRAS_API_KEY is not set -- skipping NRAS post-attestation appraisal. "
             "The TRACE Trust Record appraisal field will be empty. "
@@ -200,8 +243,8 @@ def try_appraise(report: AttestationReport) -> AppraisalResult | None:
         )
         return None
 
-    client = NRASClient(api_key=api_key)
     try:
+        client = NRASClient(api_key=api_key)
         result = client.appraise(report)
         logger.info(
             "NRAS appraisal complete: status=%s verifier=%s",
@@ -211,11 +254,10 @@ def try_appraise(report: AttestationReport) -> AppraisalResult | None:
         return result
     except NRASAuthError:
         logger.warning(
-            "NRAS appraisal skipped: API key was rejected (HTTP 401). "
-            "Check CMCP_NRAS_API_KEY."
+            "NRAS appraisal skipped: API key was rejected (HTTP 401). Check CMCP_NRAS_API_KEY."
         )
     except NRASAppraisalError as exc:
         logger.warning("NRAS appraisal rejected evidence: %s", exc)
-    except NRASError as exc:
+    except (NRASError, ValueError) as exc:
         logger.warning("NRAS appraisal failed (network/timeout): %s", exc)
     return None
