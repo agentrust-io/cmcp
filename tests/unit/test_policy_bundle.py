@@ -416,3 +416,114 @@ def test_ascii_only_bundles_keep_the_hash_they_already_had():
     )
 
     assert _bundle_hash(MANIFEST) == bundle_module._sha256_hex(legacy.encode())
+
+
+@pytest.mark.parametrize("bad_ver", ["", "1.-2.0", "1.+2.0", "1.2_0.0", " 1.0.0 ", "1.\u0662.0"])
+def test_parse_bundle_version_rejects_non_decimal_segments(bad_ver: str):
+    from cmcp_runtime.errors import ConfigError
+    from cmcp_runtime.policy.bundle import parse_bundle_version
+
+    with pytest.raises(ConfigError):
+        parse_bundle_version(bad_ver)
+
+
+def test_bundle_and_approval_reject_non_canonical_base64url_and_duplicate_keys(bundle_dir):
+    from cmcp_runtime.catalog.approval import CatalogApprovalError, _decode
+    from cmcp_runtime.errors import ConfigError
+    from cmcp_runtime.policy.bundle import _b64url_decode
+
+    # 64 zero bytes has canonical base64url 'A'*86; 'A'*85 + 'B' has non-zero unused low bits
+    with pytest.raises(ValueError):
+        _b64url_decode("A" * 85 + "B")
+    with pytest.raises(CatalogApprovalError):
+        _decode("A" * 85 + "B")
+
+    # Duplicate keys in manifest.json
+    raw = json.dumps(MANIFEST)
+    (bundle_dir / "manifest.json").write_text(raw[:-1] + ', "version": "9.9.9"}', encoding="utf-8")
+    with pytest.raises(ConfigError, match="duplicate JSON object key"):
+        load_policy_bundle(str(bundle_dir))
+
+
+@pytest.mark.parametrize("extra", ('[[{"x":1,"x":2}]]', '[[NaN]]', '[[Infinity]]', '[[[[-Infinity]]]]'))
+def test_revocation_file_rejects_duplicate_key_statement_without_blocking_valid_revocation(
+    bundle_dir, extra,
+):
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from cmcp_runtime.errors import PolicySigningKeyRevoked
+    from cmcp_runtime.policy.bundle import (
+        REVOCATION_FILE,
+        PolicySigningKeys,
+        policy_key_id,
+        revocation_pre_image,
+    )
+
+    cur_priv = Ed25519PrivateKey.generate()
+    cur_pub = cur_priv.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    suc_priv = Ed25519PrivateKey.generate()
+    suc_pub = suc_priv.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    cur_id = policy_key_id(cur_pub)
+    valid_sig = (
+        base64.urlsafe_b64encode(suc_priv.sign(revocation_pre_image(cur_id)))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+
+    # First statement is a duplicate-key forgery targeting successor; fails closed
+    dup_only = (
+        f'[{{"revoked_key_id": "decoy", "revoked_key_id": "{cur_id}", '
+        f'"signature": "{valid_sig}"}}]'
+    )
+    (bundle_dir / REVOCATION_FILE).write_text(dup_only, encoding="utf-8")
+    keys1 = PolicySigningKeys(cur_pub, suc_pub)
+    assert keys1.apply_file(str(bundle_dir)) == []
+    assert keys1.current == cur_pub
+
+    # Even ignored extension data must be strict JSON at every array depth.
+    nested = (
+        f'[{{"revoked_key_id":"{cur_id}","signature":"{valid_sig}",'
+        f'"extra":{extra}}}]'
+    )
+    (bundle_dir / REVOCATION_FILE).write_text(nested, encoding="utf-8")
+    nested_keys = PolicySigningKeys(cur_pub, suc_pub)
+    assert nested_keys.apply_file(str(bundle_dir)) == []
+    assert nested_keys.current == cur_pub
+    # An invalid statement must not suppress the later valid statement.
+    valid = json.dumps({"revoked_key_id": cur_id, "signature": valid_sig})
+    (bundle_dir / REVOCATION_FILE).write_text(nested[:-1] + ',' + valid + ']', encoding="utf-8")
+    assert nested_keys.apply_file(str(bundle_dir)) == [cur_id]
+    assert nested_keys.current == suc_pub
+
+    # A malformed duplicate-key or NaN statement alongside a valid signed revocation
+    # must NOT block the valid revocation from revoking cur_pub.
+    mixed = (
+        f'[{{"revoked_key_id": "a", "revoked_key_id": "b", "signature": "{valid_sig}"}}, '
+        f'{{"bad": NaN}}, '
+        f'{{"revoked_key_id": "{cur_id}", "signature": "{valid_sig}"}}]'
+    )
+    (bundle_dir / REVOCATION_FILE).write_text(mixed, encoding="utf-8")
+    keys2 = PolicySigningKeys(cur_pub, suc_pub)
+    assert keys2.apply_file(str(bundle_dir)) == [cur_id]
+    assert keys2.current == suc_pub
+
+    # Now a bundle signed by the revoked cur_priv is refused as PolicySigningKeyRevoked
+    unsigned = load_policy_bundle(str(bundle_dir))
+    manifest = dict(MANIFEST)
+    manifest["signature"] = (
+        base64.urlsafe_b64encode(
+            cur_priv.sign(bundle_module.signing_pre_image(unsigned.bundle_hash))
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PolicySigningKeyRevoked):
+        load_policy_bundle(str(bundle_dir), None, keys2.current, keys2.revoked)
