@@ -791,3 +791,67 @@ async def test_concurrent_first_use_spawns_exactly_one_stdio_child(monkeypatch):
     assert len(spawned) == 1, f"expected exactly one spawn, got {len(spawned)}"
     assert server_a is server_b
     assert proxy._stdio_servers[_server_execution_key(entry)] is server_a
+
+
+# ── #798: numeric validation and duplicate JSON key rejection ─────────────────
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        2**53,
+        -(2**53),
+        {"nested": [2**53]},
+        {"nested": float("nan")},
+    ],
+)
+def test_cedar_safe_rejects_non_finite_floats_and_out_of_range_ints(bad_value):
+    from cmcp_runtime.mcp.proxy import _cedar_safe
+
+    with pytest.raises(ValueError):
+        _cedar_safe(bad_value)
+
+
+def test_cedar_safe_accepts_boundary_safe_integers():
+    from cmcp_runtime.mcp.proxy import _cedar_safe
+
+    assert _cedar_safe({"max": 2**53 - 1, "min": -(2**53 - 1)}) == {
+        "max": 9007199254740991,
+        "min": -9007199254740991,
+    }
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"x": float("nan")},
+        {"x": float("inf")},
+        {"x": 2**53},
+        {"x": -(2**53)},
+    ],
+)
+def test_trace_action_rejects_invalid_numbers(bad_args):
+    proxy, _, _ = _make_proxy()
+    with pytest.raises(ValueError):
+        proxy.trace_action("c1", "test.tool", bad_args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"x": float("nan")},
+        {"x": float("inf")},
+        {"x": 2**53},
+    ],
+)
+async def test_call_tool_rejects_invalid_numbers_before_upstream(bad_args):
+    proxy, _, chain = _make_proxy()
+    with pytest.raises(ValueError):
+        await proxy.call_tool("c1", "test.tool", bad_args)
+    fault_entries = [e for e in chain.entries if e.entry_type == "fault"]
+    assert len(fault_entries) == 1
+
