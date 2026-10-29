@@ -55,6 +55,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -277,15 +278,54 @@ def verify_gateway_measurement(
     verified.append("policy")
 
     # 1. Envelope.
+    def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in out:
+                raise ValueError(f"duplicate JSON key: {key!r}")
+            out[key] = value
+        return out
+
+    def _no_nonfinite(token: str) -> Any:
+        raise ValueError(f"non-finite JSON constant: {token}")
+
+    def _parse_float(token: str) -> float:
+        val = float(token)
+        if not math.isfinite(val):
+            raise ValueError(f"non-finite JSON number: {token}")
+        return val
+
+    def _decode_b64_str(value: Any) -> bytes:
+        if not isinstance(value, str) or not value:
+            raise TypeError("expected non-empty base64 string")
+        return base64.b64decode(value.encode("ascii"), validate=True)
+
     try:
-        payload = json.loads(envelope)
-        if int(payload.get("v", 0)) != ENVELOPE_VERSION:
-            return fail("unsupported_envelope_version", version=str(payload.get("v")))
-        pre_attest = base64.b64decode(payload["pre_attest"])
-        pre_sig = base64.b64decode(payload["pre_signature"])
-        post_attest = base64.b64decode(payload["post_attest"])
-        post_sig = base64.b64decode(payload["post_signature"])
-        claimed_digest = bytes.fromhex(payload["gateway_digest"])
+        if not isinstance(envelope, (bytes, bytearray, memoryview)):
+            raise TypeError("envelope must be bytes")
+        payload = json.loads(
+            bytes(envelope).decode("utf-8"),
+            object_pairs_hook=_no_duplicate_keys,
+            parse_constant=_no_nonfinite,
+            parse_float=_parse_float,
+        )
+        if not isinstance(payload, dict):
+            raise TypeError("envelope must be a JSON object")
+        version = payload.get("v")
+        if type(version) is not int or version != ENVELOPE_VERSION:
+            return fail("unsupported_envelope_version", version=str(version))
+        pre_attest = _decode_b64_str(payload["pre_attest"])
+        pre_sig = _decode_b64_str(payload["pre_signature"])
+        post_attest = _decode_b64_str(payload["post_attest"])
+        post_sig = _decode_b64_str(payload["post_signature"])
+        gw_hex = payload["gateway_digest"]
+        if (
+            not isinstance(gw_hex, str)
+            or len(gw_hex) != 64
+            or any(c not in "0123456789abcdef" for c in gw_hex)
+        ):
+            raise ValueError("gateway_digest must be 64 lowercase hex characters")
+        claimed_digest = bytes.fromhex(gw_hex)
     except Exception as exc:  # noqa: BLE001
         return fail("malformed_envelope", error=f"{type(exc).__name__}: {exc}")
     verified.append("envelope")

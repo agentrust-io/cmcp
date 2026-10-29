@@ -116,6 +116,10 @@ def measurement_nv_public_bytes(
     cMCP seeds a new extend index before its first certification, so every signed
     Name must include the TPM-managed ``TPMA_NV_WRITTEN`` state bit.
     """
+    if type(index) is not int:
+        raise TypeError("index must be an integer")
+    if not isinstance(written, bool):
+        raise TypeError("written must be a boolean")
     if not 0x01000000 <= index <= 0x01FFFFFF:
         raise ValueError(f"index is not a TPM NV handle: {index:#x}")
     attributes = MEASUREMENT_NV_WRITTEN_ATTRIBUTES if written else MEASUREMENT_NV_BASE_ATTRIBUTES
