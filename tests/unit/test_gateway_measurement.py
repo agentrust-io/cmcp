@@ -179,6 +179,28 @@ def test_config_digest_ignores_each_excluded_field_of_the_real_config(name: str)
     assert config_digest(Config(**{name: "b"})) == unset
 
 
+def test_sink_policy_is_measured_as_a_mapping_not_its_repr() -> None:
+    """Reordering tool entries in the YAML is not a configuration change.
+
+    SinkPolicy freezes its mapping in a MappingProxyType, which is not a dict, so it
+    used to be measured as its printed form in insertion order. With a sealed
+    signing key (#462) that made a reordered file refuse to start.
+    """
+    from cmcp_runtime.config import Config
+    from cmcp_runtime.sink_policy import SinkPolicy
+    from cmcp_runtime.tee.measurement import _config_payload
+
+    forward = Config(sink_policy=SinkPolicy({"a.tool": "public", "b.tool": "pii"}, "pii"))
+    reverse = Config(sink_policy=SinkPolicy({"b.tool": "pii", "a.tool": "public"}, "pii"))
+    assert _config_payload(forward)["sink_policy"]["tool_max_sensitivity"] == {
+        "a.tool": "public",
+        "b.tool": "pii",
+    }
+    assert config_digest(forward) == config_digest(reverse)
+    changed = Config(sink_policy=SinkPolicy({"a.tool": "pii", "b.tool": "pii"}, "pii"))
+    assert config_digest(changed) != config_digest(forward)
+
+
 # ── code digest ───────────────────────────────────────────────────────────────
 
 

@@ -14,16 +14,22 @@ from cryptography.hazmat.primitives.serialization import (
 
 class SigningKey:
     """
-    Ephemeral Ed25519 keypair generated at gateway startup.
+    Ed25519 keypair the gateway signs TRACE Claims with.
 
-    The private key is held only in memory and never written to disk or logged.
-    Every gateway restart produces a different keypair (conformance: ATTEST-004).
+    By default it is generated at startup, held only in memory and never written to
+    disk or logged, so every restart produces a different keypair (conformance:
+    ATTEST-004). With sealing on the TPM tier (#462) the same key comes back on
+    every start from a seed the TPM unseals, and ATTEST-004 does not apply.
     The public key is embedded in every TRACE Claim so verifiers can check
     signatures without trusting the operator.
     """
 
-    def __init__(self) -> None:
-        self._private: Ed25519PrivateKey = Ed25519PrivateKey.generate()
+    def __init__(self, seed: bytes | None = None) -> None:
+        self._private: Ed25519PrivateKey = (
+            Ed25519PrivateKey.generate()
+            if seed is None
+            else Ed25519PrivateKey.from_private_bytes(seed)
+        )
         self._public: Ed25519PublicKey = self._private.public_key()
         self._public_bytes: bytes = self._public.public_bytes(
             encoding=Encoding.Raw,
