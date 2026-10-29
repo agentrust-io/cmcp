@@ -2,6 +2,12 @@ This page lists what cMCP does not protect against, where its promises stop, and
 
 # Limitations
 
+## Delegated work at a kill-switch drain deadline
+
+A successful operator trip blocks new calls for the bound identity. The drain requests cancellation of outstanding gateway coroutines at its deadline; Python cannot forcibly stop a worker thread, and cancelling an HTTP awaiter does not roll back a request the remote service already received. A previously admitted effect can therefore complete after the trip response. Its outcome remains unknown unless separately observed. Do not infer "no effect" or automatically retry an operation from cancellation or a successful trip response.
+
+The paired software test in `tests/unit/test_worker_drain_outcome.py` observes completion before the trip and a deliberately released worker after the trip, while checking that later admission is blocked. It uses a marker file, not an external service or hardware boundary. Complete mediation at the effect's commit point requires a separately selected enforcement design (see #820 and #736).
+
 This document describes what cMCP does not prevent, where its guarantees end, and what operators and verifiers must address through separate controls.
 
 ## Upstream HTTP bounds
