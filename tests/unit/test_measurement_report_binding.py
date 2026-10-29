@@ -479,7 +479,7 @@ def test_startup_binds_the_measurement_into_the_nonce_on_sev_snp(
     assert measurement is not None
 
     nonce = _attestation_nonce(
-        jwk_thumbprint(_KEY), _SigningKey(), provider, measurement
+        jwk_thumbprint(_KEY), _KEY, provider, measurement
     )
     assert nonce == jwk_thumbprint(_KEY) + gateway_measurement(config).digest
 
@@ -497,8 +497,8 @@ def test_startup_keeps_the_random_salt_on_the_tpm_tier(
     assert measurement is not None  # still measured, just committed elsewhere
 
     fingerprint = jwk_thumbprint(_KEY)
-    first = _attestation_nonce(fingerprint, _SigningKey(), provider, measurement)
-    second = _attestation_nonce(fingerprint, _SigningKey(), provider, measurement)
+    first = _attestation_nonce(fingerprint, _KEY, provider, measurement)
+    second = _attestation_nonce(fingerprint, _KEY, provider, measurement)
 
     assert first[:32] == fingerprint
     assert first != second  # the salt is random per call
@@ -786,13 +786,22 @@ def test_a_provider_returning_a_non_report_does_not_displace_the_good_one(
 
 
 def test_extend_degrades_when_tpm2_pytss_is_absent(
-    tmp_path: Path, stub_code: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_code: None
 ) -> None:
-    """tpm2-pytss is not installed in CI, so this is the branch that actually runs.
+    """The branch CI runs, since CI installs no tpm2-pytss.
+
+    The library is hidden rather than assumed absent: with the ``tpm`` extra
+    installed, this test would otherwise open the default TCTI and extend the
+    measurement index on whatever TPM the machine has.
 
     Dev mode turns the missing library into a warning; production would abort, which
     test_an_unmeasurable_gateway_aborts_startup_on_sev_snp covers for the other tier.
     """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "tpm2_pytss", None)
+    monkeypatch.setitem(sys.modules, "tpm2_pytss.ESAPI", None)
+
     from cmcp_runtime.startup import _extend_measurement, _measure_gateway
 
     config = _Config(policy_bundle_path=_bundle(tmp_path, "permit(...);"), dev_mode=True)
