@@ -98,6 +98,13 @@ class AttestationConfig:
     staleness_policy: StalenessPolicy = StalenessPolicy.FAIL_CLOSED
     expected_measurement: str | None = None
     allow_unmeasured_spawn: bool = False
+    #: #462: keep one TRACE signing key across restarts, sealed by the TPM to the
+    #: gateway measurement. Off by default and TPM tier only; see
+    #: cmcp_runtime.tee.seal. With it on, ATTEST-004 (a new key per start) does
+    #: not apply.
+    seal_signing_key: bool = False
+    #: Where the sealed key store and its lock live. Nothing in it is secret.
+    sealed_key_dir: str = "sealed-key"
     required_provenance_kind: str | None = None
     """Minimum server-provenance assurance to route a call. ``None`` records the
     outcome without enforcing it, which is the only default that works in an
@@ -205,6 +212,8 @@ _KNOWN_ATTEST_KEYS = {
     "expected_measurement",
     "allow_unmeasured_spawn",
     "required_provenance_kind",
+    "seal_signing_key",
+    "sealed_key_dir",
 }
 _KNOWN_AGENT_MANIFEST_KEYS = {
     "path",
@@ -442,6 +451,19 @@ def load_config(path: str) -> Config:
     if not isinstance(allow_unmeasured_spawn, bool):
         raise ConfigError("attestation.allow_unmeasured_spawn must be a boolean")
 
+    seal_signing_key = attest_raw.get("seal_signing_key", False)
+    if not isinstance(seal_signing_key, bool):
+        raise ConfigError("attestation.seal_signing_key must be a boolean")
+    if seal_signing_key and provider is not TEEProvider.TPM:
+        raise ConfigError(
+            "attestation.seal_signing_key needs attestation.provider: tpm. Sealing is "
+            "TPM tier only, and auto-detection could select another tier."
+        )
+    sealed_key_dir = attest_raw.get("sealed_key_dir", "sealed-key")
+    if not isinstance(sealed_key_dir, str) or not sealed_key_dir.strip():
+        raise ConfigError("attestation.sealed_key_dir must be a non-empty string")
+    _check_no_traversal("attestation.sealed_key_dir", sealed_key_dir)
+
     required_provenance_kind = attest_raw.get("required_provenance_kind", None)
     _KINDS = ("publisher-asserted", "observer-attested", "tee-attested")
     if required_provenance_kind is not None and required_provenance_kind not in _KINDS:
@@ -569,6 +591,8 @@ def load_config(path: str) -> Config:
             staleness_policy=staleness_policy,
             expected_measurement=expected_measurement,
             allow_unmeasured_spawn=allow_unmeasured_spawn,
+            seal_signing_key=seal_signing_key,
+            sealed_key_dir=sealed_key_dir,
             required_provenance_kind=required_provenance_kind,
         ),
         agent_manifest=AgentManifestConfig(
