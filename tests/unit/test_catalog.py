@@ -337,3 +337,27 @@ def test_a_deployment_declared_compliance_domain_loads(catalog_file):
     )
 
     assert catalog.require("crm.query").compliance_domain == "clinical"
+
+
+def test_catalog_rejects_duplicate_json_keys(tmp_path: Path):
+    raw = json.dumps([ENTRY_1])
+    dup = raw.replace(
+        '"tool_name": "crm.query"',
+        '"tool_name": "safe.query", "tool_name": "crm.query"',
+    )
+    path = tmp_path / "dup-catalog.json"
+    path.write_text(dup, encoding="utf-8")
+    with pytest.raises(ConfigError, match="duplicate JSON object key"):
+        load_catalog(str(path))
+
+
+@pytest.mark.parametrize("private_field", ["d", "p", "q", "dp", "dq", "qi", "oth", "k"])
+def test_catalog_rejects_private_publisher_jwk_material(catalog_file, private_field: str):
+    entry = json.loads(json.dumps(ENTRY_1))
+    entry["server"]["provenance"] = {
+        "record_path": "provenance.json",
+        "publisher_jwk": {"kty": "OKP", "crv": "Ed25519", "x": "AAAA", private_field: "secret"},
+    }
+    with pytest.raises(ConfigError, match="private key material"):
+        load_catalog(catalog_file([entry]))
+
