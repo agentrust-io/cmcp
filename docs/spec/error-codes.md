@@ -8,6 +8,7 @@ This is the normative registry for all error codes used across the cMCP Runtime.
 
 | error_code | HTTP status | log level | description | spec reference |
 |---|---|---|---|---|
+| `MEASUREMENT_UNAVAILABLE` | 500 / startup | FATAL | The gateway code/configuration/policy inputs could not be measured; startup aborts rather than extending an unestablished identity. Inspect the reported measurement detail and restore readable, supported inputs before retrying; do not rotate a signing key as a generic remedy | [failure-modes.md](failure-modes.md) |
 | `ATTESTATION_REPORT_UNAVAILABLE` | 503 | FATAL | TEE provider did not return an attestation report within timeout | [failure-modes.md FM-1](failure-modes.md) |
 | `ATTESTATION_PROVIDER_UNSUPPORTED` | 500 | FATAL | No supported TEE provider detected and `CMCP_DEV_MODE` is not set | [attestation.md §1.1](attestation.md) |
 | `POLICY_HASH_MISMATCH` | 500 | FATAL | Measured policy bundle hash does not match deployment manifest | [failure-modes.md FM-4](failure-modes.md) |
