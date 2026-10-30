@@ -1,5 +1,21 @@
 # Limitations
 
+## Delegated work at a kill-switch drain deadline
+
+A successful operator trip blocks new calls for the bound identity. The drain
+requests cancellation of outstanding gateway coroutines at its deadline; Python
+cannot forcibly stop a worker thread, and cancelling an HTTP awaiter does not
+roll back a request the remote service already received. A previously admitted
+effect can therefore complete after the trip response. Its outcome remains
+unknown unless separately observed. Do not infer "no effect" or automatically
+retry an operation from cancellation or a successful trip response.
+
+The paired software test in `tests/unit/test_worker_drain_outcome.py` observes
+completion before the trip and a deliberately released worker after the trip,
+while checking that later admission is blocked. It uses a marker file, not an
+external service or hardware boundary. Complete mediation at the effect's commit
+point requires a separately selected enforcement design (see #820 and #736).
+
 This document describes what cMCP does not prevent, where its guarantees end, and what operators and verifiers must address through separate controls.
 
 ## Upstream HTTP bounds
@@ -228,6 +244,18 @@ refusal is deliberate, and it applies in advisory and silent modes too.
   directory. Nothing pushes it, and verifiers are not sent a revocation list; they
   see `gateway.policy_signing` in the claims the gateway signs.
 - **No expiry.** Keys are trusted until revoked.
+
+## Sealed signing key (TPM tier, opt-in)
+
+With `attestation.seal_signing_key`, the TRACE signing key survives restarts, sealed by the TPM to the gateway digest. It does not protect against:
+
+- **Owner authorization.** Anyone who can issue owner-authorized TPM commands can write an approved digest into the gate and unseal the key. On Azure, guest root can.
+- **A modified gateway that reports the approved digest.** The digest is computed by the gateway's own measurement code; a gateway that lies about it gets the key. The measurement extend index has the same limit.
+- **A crash between unseal and closing the gate.** For that moment the gate holds the approved digest, so another process with TPM access could unseal until the next start closes it.
+- **Boot state.** PCRs are not in the policy (deferred to P4), so the same digest unseals after a firmware or kernel change.
+- **Per-start uniqueness of the quote.** The TPM quote signs only the key thumbprint, `report_data[:32]`. With the key persistent, two starts quote over the same qualifying data; the random salt changes `report_data` but is not signed by the TPM.
+
+A verifier cannot tell from evidence that a key is sealed, so no claim field says so. One sealed gateway per TPM.
 
 ## What cMCP does not do
 
