@@ -32,6 +32,17 @@ jobs:
           python -m pip install --require-hashes -r requirements/dev.txt
           python -m pip install --no-deps -e .
 
+      - name: Install the TPM tier (Linux)
+        # #462: on Linux the sealed signing key runs against swtpm, so its tests and
+        # their coverage are in this job, and the suite runs with tpm2-pytss present,
+        # which is when tests/conftest.py has to keep it off any host TPM. The TPM
+        # tier is Linux-only, so the Windows legs skip those tests.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends swtpm libtss2-dev pkg-config
+          python -m pip install --require-hashes -r requirements/dev.txt -r requirements/tpm.txt
+
       - name: Security scan
         # --skip-editable: pip-audit resolves the editable install of this package
         # against PyPI and fails when the version is not published yet, so without

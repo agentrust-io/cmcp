@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A sealed TRACE signing key on the TPM tier (#462), off by default.** With
+  `attestation.seal_signing_key` and `provider: tpm`, the signing key survives
+  restarts, sealed under `TPM2_PolicyNV` over a gate NV index (`0x01500433`)
+  that holds the gateway digest, so a relying party can pin it with
+  `cmcp verify --trusted-key`. A gateway whose measured inputs differ from the
+  sealed digest does not get the key and does not start; each failure has its
+  own `SEALED_KEY_*` code, and nothing is minted to recover. A verified policy
+  reload reseals the key to the new digest. ATTEST-004 applies only with
+  sealing off. See `docs/spec/attestation.md` 4.2 for what it does and does not
+  guarantee.
+- `cmcp measure` prints the gateway digest and its components. `cmcp key public`,
+  `cmcp key reseal` and `cmcp key rotate` manage the sealed key.
+- A `tpm` extra for tpm2-pytss. On Linux, CI's test job installs it and runs the
+  TPM tier against swtpm.
+
+### Fixed
+
+- **The test suite could write to the developer's TPM.** With tpm2-pytss
+  installed, tests that expected the degraded path opened the default TCTI and
+  defined and extended the measurement index on the machine's real TPM. The
+  suite now refuses any ESAPI context that is not a simulator.
+- `sink_policy.tool_max_sensitivity` was measured as its printed form, in YAML
+  order, so reordering the tools changed the configuration digest. It is now
+  measured as a mapping; the digest changes once for deployments that set
+  `sink_policy`.
+
 ### Security
 
 - **The operator token was measured.** Only the bearer token was excluded from
@@ -102,6 +130,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ManifestCatalogOutOfProfile`, an outcome distinct from a failed join or a
   root mismatch; the gateway still does not bind. Reported by
   @asymx-mechanics (#719).
+
+## [0.7.1] - 2026-10-19
+
+### Security
+
+- **A Cedar Allow reached with evaluation errors was enforced as Allow**
+  (GHSA-frxc-7f57-6f4r). Cedar skips a policy whose condition errors, so a
+  `forbid` reading a context attribute the current phase does not carry could
+  not stop a matching `permit`. `CedarBackend` now denies any Allow that comes
+  with evaluation errors, and the error reaches the `tool_call` or
+  `egress_denied` audit row. So that a policy written for one phase does not
+  deny in the other, both phases now carry the same context keys: egress adds
+  `session_max_sensitivity` (the label string), `arguments`, `baa_covered`,
+  `compliance_domain`, `server_identity`, `destination_class` and
+  `attestation_platform`, and ingress adds `egress` (false),
+  `sensitivity_level`, `injection_events`, `reset_count` and
+  `response_size_bytes` (0). Without this the shipped BFSi demo denied every
+  response at egress. A policy that reads a key outside that set, or
+  `workflow_id` when the caller declared none, now denies.
+- **The TPM AIA certificate fetch was unbounded** (GHSA-mrcx-xvv4-m7f8). The
+  chain walk followed redirects to any address and read responses without a
+  limit. It now refuses destinations that do not resolve to global addresses,
+  checks every redirect the same way, follows at most three and ignores
+  responses over 64 KiB. Each hop's host is resolved once and the connection
+  goes to the checked address (the request still names the host, and HTTPS
+  still verifies the certificate against it), so a second DNS answer cannot
+  point the fetch somewhere else. The fetch no longer uses environment proxies.
+  An on-prem CA whose AIA host has a private address falls back to the
+  vendored bundle.
+- **Upstream drift was classified against the wrong catalog entry**
+  (GHSA-2p85-666x-xm7x). The scanner received the server of whichever entry was
+  last in the catalog. Detection and fail-closed denial were not affected; only
+  the classification written to the audit row was.
 
 ## [0.7.0] - 2026-09-30
 

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
+import ipaddress
 import logging
+import socket
+import ssl
 import subprocess  # nosec B404
 import sys
+import urllib.parse
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,6 +54,133 @@ _PLATFORM_AK_CERT_NV_INDEX = 0x01C101D0
 # Azure guarantee.
 _AIA_FETCH_TIMEOUT_SECONDS = 5
 _AIA_MAX_DEPTH = 6
+# The AIA URL comes from a certificate that is not trusted yet, so the fetch is
+# bounded: only publicly routable destinations, a few redirects that are checked
+# the same way, and a response size far above any real issuer certificate or
+# PKCS#7 bundle (Azure's are under 2 KiB).
+_AIA_MAX_RESPONSE_BYTES = 64 * 1024
+_AIA_MAX_REDIRECTS = 3
+
+
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+@dataclass(frozen=True)
+class _AiaTarget:
+    """One AIA hop, resolved once: connect to ``address``, speak to ``host``."""
+
+    scheme: str
+    host: str
+    port: int
+    address: str
+    path: str
+
+
+def _aia_address_allowed(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Only globally routable addresses: no loopback, private, link-local, metadata."""
+    return address.is_global
+
+
+def _resolve_aia_destination(url: str) -> _AiaTarget | None:
+    """Resolve ``url``'s host once and return the address to connect to.
+
+    None unless the scheme is http(s) and every address the host resolves to is
+    allowed. The caller connects to the returned address and never resolves the
+    name again, so a second lookup cannot answer differently (DNS rebinding).
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return None
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        infos = socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP)
+        addresses = [ipaddress.ip_address(str(info[4][0]).split("%")[0]) for info in infos]
+    except (OSError, ValueError, UnicodeError):
+        return None
+    if not addresses or not all(_aia_address_allowed(a) for a in addresses):
+        return None
+    path = parts.path or "/"
+    if parts.query:
+        path = f"{path}?{parts.query}"
+    return _AiaTarget(parts.scheme, parts.hostname, port, str(addresses[0]), path)
+
+
+def _aia_destination_allowed(url: str) -> bool:
+    """True when ``url`` is http(s) and every address its host resolves to is global."""
+    return _resolve_aia_destination(url) is not None
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP to a validated address; the Host header still names the URL's host."""
+
+    def __init__(self, target: _AiaTarget, timeout: float) -> None:
+        super().__init__(target.host, target.port, timeout=timeout)
+        self._address = target.address
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._address, self.port), self.timeout)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS to a validated address, with SNI and certificate checks on the host name."""
+
+    def __init__(
+        self, target: _AiaTarget, timeout: float, context: ssl.SSLContext | None = None
+    ) -> None:
+        if context is None:
+            context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+        self._tls = context
+        super().__init__(target.host, target.port, timeout=timeout, context=self._tls)
+        self._address = target.address
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._address, self.port), self.timeout)
+        self.sock = self._tls.wrap_socket(sock, server_hostname=self.host)
+
+
+def _fetch_aia(url: str) -> bytes | None:
+    """Fetch one AIA caIssuers URL, or return None when it is refused or too large.
+
+    Every hop, the first and each redirect, is resolved once, checked, and then
+    connected to by that checked address. At most three redirects are followed.
+    Environment proxies are not used: a proxy would resolve the name itself.
+    """
+    current = url
+    for _hop in range(_AIA_MAX_REDIRECTS + 1):
+        target = _resolve_aia_destination(current)
+        if target is None:
+            logger.warning(
+                "AIA fetch refused for %s: not a publicly routable destination", current
+            )
+            return None
+        conn: http.client.HTTPConnection = (
+            _PinnedHTTPSConnection(target, _AIA_FETCH_TIMEOUT_SECONDS)
+            if target.scheme == "https"
+            else _PinnedHTTPConnection(target, _AIA_FETCH_TIMEOUT_SECONDS)
+        )
+        try:
+            conn.request("GET", target.path)
+            response = conn.getresponse()
+            location = response.getheader("Location")
+            if response.status in _REDIRECT_STATUSES and location:
+                current = urllib.parse.urljoin(current, location)
+                continue
+            if response.status != 200:
+                logger.debug("AIA fetch from %s returned HTTP %d", current, response.status)
+                return None
+            data: bytes = response.read(_AIA_MAX_RESPONSE_BYTES + 1)
+        finally:
+            conn.close()
+        if len(data) > _AIA_MAX_RESPONSE_BYTES:
+            logger.warning(
+                "AIA response from %s exceeds %d bytes; ignored", current, _AIA_MAX_RESPONSE_BYTES
+            )
+            return None
+        return data
+    logger.warning("AIA fetch for %s exceeded %d redirects", url, _AIA_MAX_REDIRECTS)
+    return None
+
 
 # TPM2_NV_Read is bounded by TPM2_PT_NV_BUFFER_MAX; query it and cap by this.
 _NV_READ_CHUNK_BYTES = 512
@@ -308,8 +441,6 @@ class TPMProvider(TEEProvider):
         If neither produces an issuer the walk stops, and whatever was gathered is
         returned so a partial chain still travels rather than being discarded.
         """
-        import urllib.request
-
         from cryptography import x509
         from cryptography.hazmat.primitives.serialization import pkcs7
 
@@ -365,13 +496,9 @@ class TPMProvider(TEEProvider):
             )
             issuer = None
             for url in urls:
-                if not url.startswith(("http://", "https://")):
-                    continue
                 try:
-                    with urllib.request.urlopen(  # noqa: S310  # nosec B310 - http(s) only, checked above
-                        url, timeout=_AIA_FETCH_TIMEOUT_SECONDS
-                    ) as response:
-                        found = load_any(response.read())
+                    data = _fetch_aia(url)
+                    found = load_any(data) if data is not None else []
                     if found:
                         issuer = found[0]
                         break

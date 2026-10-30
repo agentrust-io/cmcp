@@ -1024,9 +1024,12 @@ class CMCPProxy:
         for tool_name, kind in drifted:
             classification = kind
             if self._catalog_scanner is not None and (offered := by_name.get(tool_name)):
+                # Classify against the drifted tool's own entry; the earlier
+                # loop variable is whichever catalog entry happened to be last.
+                drifted_entry = self._catalog.entries[tool_name]
                 result = self._catalog_scanner.check_drift(
                     tool_name=tool_name,
-                    server_name=catalog_entry.server.display_name or catalog_entry.server.url,
+                    server_name=drifted_entry.server.display_name or drifted_entry.server.url,
                     current_definition=offered,
                 )
                 if result.available and result.threats:
@@ -1261,6 +1264,15 @@ class CMCPProxy:
             # either the catalog floor or sensitivity accumulated earlier.
             "session_max_sensitivity": effective_sensitivity,
             "attestation_platform": self._attestation_platform,
+            # The egress keys, at their ingress values. Both phases carry the
+            # same keys (PolicyEvaluator.egress_context): CedarBackend denies
+            # an Allow reached with evaluation errors, so a key only one phase
+            # carried would turn the other phase into a deny.
+            "egress": False,
+            "sensitivity_level": self._session.sensitivity_order.get(effective_sensitivity, 0),
+            "injection_events": len(self._session.injection_events),
+            "reset_count": self._session.reset_count,
+            "response_size_bytes": 0,
         }
         if workflow_id is not None:
             ctx["workflow_id"] = workflow_id
@@ -2264,8 +2276,13 @@ class CMCPProxy:
                                                        else (declared_data_class,))),
                     order=self._sink_order,
                 )
+            # Rebuilt now so session_max_sensitivity covers this response
+            # and anything a concurrent call added while it was in flight.
             egress_decision = self._policy.authorize_egress(
-                tool_name, response_bytes, self._session, workflow_id=workflow_id
+                tool_name, response_bytes, self._session, workflow_id=workflow_id,
+                call_context=self._build_cedar_context(
+                    tool_name, arguments, workflow_id, effective_data_class
+                ),
             )
             egress_would_deny = egress_decision.would_have_denied
             egress_advice = egress_decision.advice

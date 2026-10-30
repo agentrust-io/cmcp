@@ -36,7 +36,8 @@ class CedarBackend:
 
     The class name intentionally remains ``CedarBackend`` so existing test and
     extension seams do not change.  There is no mock or permissive fallback: an
-    invalid policy, malformed request, or unavailable engine produces a deny.
+    invalid policy, malformed request, unavailable engine, or an Allow that
+    Cedar reached while reporting evaluation errors produces a deny.
     """
 
     def __init__(self, *, policy_content: str) -> None:
@@ -75,9 +76,21 @@ class CedarBackend:
                 policies=self._policy_content,
                 entities=[],
             )
-            allowed = response.decision == cedarpy.Decision.Allow
             reasons = tuple(str(reason) for reason in response.diagnostics.reasons)
             errors = tuple(str(error) for error in response.diagnostics.errors)
+            # Cedar skips a policy whose condition errors and decides on the
+            # rest, so a forbid that errors (for example on a context attribute
+            # this phase does not carry) cannot stop a matching permit. An
+            # Allow reached with errors is therefore not the decision the
+            # policy author wrote: deny it. The matched ids are dropped because
+            # they name the permits, and their annotations are not deny advice.
+            allowed = response.decision == cedarpy.Decision.Allow and not errors
+            if errors and response.decision == cedarpy.Decision.Allow:
+                logger.warning(
+                    "Cedar returned Allow with evaluation errors; denying: %s",
+                    "; ".join(errors),
+                )
+                reasons = ()
             return CedarDecision(
                 allowed=allowed,
                 reason=(
