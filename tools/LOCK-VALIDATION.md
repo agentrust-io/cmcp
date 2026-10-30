@@ -12,3 +12,8 @@ Source: https://github.com/agentrust-io/weight-custody-manifest/pull/249 .
 
 
 Explicitly excluded non-lock files: {"requirements/confinement.txt": "composed requirements with an include, outside the exact-pin lock subset"}. These remain under their existing compiler/composed-environment checks. The guard does not claim to validate them.
+
+Hash options must follow the marker (when present); every trailing token must be
+a complete lowercase SHA-256 hash option. Quoted marker literals are retained.
+Marker text is compared as an identity, not evaluated or fully validated as
+PEP 508 syntax; supported-platform resolution is a separate check.

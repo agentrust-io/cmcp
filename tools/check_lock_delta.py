@@ -15,6 +15,7 @@ import venv
 from pathlib import Path
 
 PIN = re.compile(r"^([A-Za-z0-9_.-]+)(\[[^]]+\])?==([^\s;]+)(.*)$")
+TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|[^\s'\"]+")
 HASH = re.compile(r"--hash=sha256:[0-9a-f]{64}(?=\s|$)")
 
 
@@ -39,11 +40,26 @@ def parse_lock(text):
         name, extras, version, tail = match.groups()
         name = re.sub(r"[-_.]+", "-", name).lower()
         extras = tuple(sorted((extras or "").strip("[]").lower().split(",")))
-        hashes = HASH.findall(tail)
-        if not hashes:
+        # Keep quoted marker literals intact, then require every trailing
+        # option to be a complete hash token. Removing valid hashes first can
+        # hide a malformed second hash (or another option) inside the marker.
+        tokens = list(TOKEN.finditer(tail))
+        end = 0
+        option = None
+        for token in tokens:
+            if tail[end:token.start()].strip():
+                raise ValueError(f"{name}: unsupported lock option or malformed hash")
+            if option is None and token.group().startswith("--"):
+                option = token
+            end = token.end()
+        if tail[end:].strip():
+            raise ValueError(f"{name}: unsupported lock option or malformed hash")
+        if option is None:
             raise ValueError(f"{name}: missing SHA-256 hash")
-        marker = HASH.sub("", tail).strip()
-        if marker and not marker.startswith(";"):
+        marker = tail[:option.start()].strip()
+        if ((marker and not marker.startswith(";"))
+                or not all(HASH.fullmatch(value)
+                           for value in tail[option.start():].split())):
             raise ValueError(f"{name}: unsupported lock option or malformed hash")
         marker = " ".join(marker.split())
         key = (name, extras, marker)
