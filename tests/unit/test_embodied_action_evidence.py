@@ -291,13 +291,21 @@ def test_agent_identity_mismatch_fails():
     assert any("agent_id" in failure for failure in result.failures)
 
 
-def test_non_object_agent_identity_is_ignored():
+@pytest.mark.parametrize("identity", [None, {}, {"agent_id": 42}, {"agent_id": ""}, "not-an-object"])
+def test_malformed_present_agent_identity_fails(identity):
     fixture = copy.deepcopy(_fixture())
-    fixture["trace_claim"]["gateway"]["agent_identity"] = "not-an-object"
-
+    fixture["trace_claim"]["gateway"]["agent_identity"] = identity
     result = _verify_fixture(fixture)
+    assert not result.verified
+    assert any("agent_identity.agent_id" in failure for failure in result.failures)
 
+
+def test_absent_agent_identity_keeps_optional_binding():
+    fixture = copy.deepcopy(_fixture())
+    fixture["trace_claim"]["gateway"].pop("agent_identity", None)
+    result = _verify_fixture(fixture)
     assert result.verified, result.failures
+    assert "agent_id" not in result.verified_fields
 
 
 def test_ros2_must_be_object_when_present():
@@ -438,6 +446,48 @@ def test_physical_completion_claim_fails_closed():
 
     assert not result.verified
     assert any("physical completion" in failure for failure in result.failures)
+
+
+def test_non_dict_audit_entry_or_payload_and_short_hash_rejected():
+    fixture = copy.deepcopy(_fixture())
+    for bad in [None, 123, "str", []]:
+        res1 = verify_embodied_action_evidence(bad, fixture["detached_payload"])  # type: ignore[arg-type]
+        assert not res1.verified
+        assert res1.receipt_state == ReceiptState.INVALID
+        res2 = verify_embodied_action_evidence(fixture["audit_entry"], bad)  # type: ignore[arg-type]
+        assert not res2.verified
+        assert res2.receipt_state == ReceiptState.INVALID
+
+    # Explicit None claim_json is the no-Claim mode and succeeds
+    res_no_claim = verify_embodied_action_evidence(
+        fixture["audit_entry"],
+        fixture["detached_payload"],
+        None,
+    )
+    assert res_no_claim.verified, res_no_claim.failures
+    assert "policy_bundle_hash" not in res_no_claim.verified_fields
+
+    # A supplied but malformed claim_json fails closed without raising AttributeError
+    for bad_claim in (
+        {"trace": None, "gateway": None},
+        {"trace": {"policy": None}, "gateway": {"catalog": None}},
+        {},
+        "not-a-dict",
+    ):
+        res3 = verify_embodied_action_evidence(
+            fixture["audit_entry"],
+            fixture["detached_payload"],
+            bad_claim,  # type: ignore[arg-type]
+        )
+        assert not res3.verified
+        assert res3.failures
+
+    # Short sha256 digest (< 64 hex chars) is rejected by _HASH_RE
+    bad_hash_entry = copy.deepcopy(fixture["audit_entry"])
+    bad_hash_entry["external_execution_evidence"]["evidence_hash"] = "sha256:abcd"
+    res4 = verify_embodied_action_evidence(bad_hash_entry, fixture["detached_payload"])
+    assert not res4.verified
+    assert any("evidence_hash" in f for f in res4.failures)
 
 
 # -- canonical_json_bytes: RFC 8785/JCS compliance (agentrust-io/cmcp#588) ------
