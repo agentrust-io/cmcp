@@ -158,3 +158,38 @@ def test_audit_detail_is_bounded(signed_record) -> None:
     path, _ = signed_record
     block = check_server_provenance(path, None, TOOLS).to_audit()
     assert len(block.get("provenance_detail", "")) <= 512
+
+
+@pytest.mark.parametrize(
+    "raw_json",
+    [
+        "[1, 2]",
+        '"just-a-string"',
+        '{"kind": "publisher-asserted", "kind": "tee-attested"}',
+        '{"kind": "publisher-asserted", "x": NaN}',
+        '{"kind": 123, "publisher": 456}',
+    ],
+)
+def test_check_server_provenance_rejects_non_dict_duplicate_keys_and_non_str_fields(
+    tmp_path, signed_record, raw_json: str
+) -> None:
+    _, jwk = signed_record
+    p = tmp_path / "bad_prov.json"
+    p.write_text(raw_json, encoding="utf-8")
+    res = check_server_provenance(str(p), jwk, TOOLS)
+    assert res.outcome is ProvenanceOutcome.INVALID
+    assert res.to_audit()["provenance"] == "invalid"
+
+
+def test_check_server_provenance_rejects_private_jwk_and_meets_validates_required_kind(
+    signed_record,
+) -> None:
+    path, jwk = signed_record
+    for param in ("d", "k"):
+        res = check_server_provenance(path, {**jwk, param: "secret"}, TOOLS)
+        assert res.outcome is ProvenanceOutcome.INVALID
+    with pytest.raises(ValueError, match="unknown provenance required_kind"):
+        ProvenanceResult(ProvenanceOutcome.ABSENT).meets("unknown-kind")
+    assert ProvenanceResult(ProvenanceOutcome.VERIFIED, kind="unknown-kind").meets(
+        "publisher-asserted"
+    ) is False
