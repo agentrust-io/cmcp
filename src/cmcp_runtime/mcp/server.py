@@ -1312,7 +1312,10 @@ class MCPServer:
         durable store, records the trip in the live session's audit chain, then
         closes that session and returns its signed claim. From the moment the
         trip starts no new call is admitted; calls already running finish or
-        are cancelled at the close drain deadline. The block lasts until
+        have cancellation requested at the close drain deadline. Cancellation
+        of an awaiter does not terminate a delegated worker thread or roll back
+        a remote effect. A successful trip establishes blocked admission, not
+        that every previously admitted effect was prevented. The block lasts until
         POST /kill-switch/unblock.
         """
         if (
