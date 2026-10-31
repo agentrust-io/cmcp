@@ -153,6 +153,17 @@ def test_report_data_mismatch_fails() -> None:
     assert r.failure_reason == "report_data_mismatch"
 
 
+def test_oversized_report_data_hex_fails_in_quote_verify() -> None:
+    quote, root = _build_quote()
+    valid_hex = _RD.hex()
+    assert len(valid_hex) == 128
+    r = verify_tdx_quote(quote, root, valid_hex + "aa")
+    assert r.verified is False
+    assert r.failure_reason == "report_data_mismatch"
+    assert "report_data" not in r.verified_fields
+
+
+
 def test_parse_rejects_flat_signature_layout() -> None:
     """A quote without the type-6 QE wrapper must be rejected, not misread.
 
