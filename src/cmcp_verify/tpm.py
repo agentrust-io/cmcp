@@ -156,16 +156,10 @@ def verify_tpm_measurement(
 
 def _valid_measurement(measurement: str) -> bool:
     """Return True if measurement is "sha256:" followed by exactly 64 hex characters."""
-    if not measurement.startswith("sha256:"):
+    if not isinstance(measurement, str) or not measurement.startswith("sha256:"):
         return False
     hex_part = measurement[len("sha256:"):]
-    if len(hex_part) != 64:
-        return False
-    try:
-        bytes.fromhex(hex_part)
-    except ValueError:
-        return False
-    return True
+    return len(hex_part) == 64 and all(c in "0123456789abcdef" for c in hex_part)
 
 
 def _parse_tpm2b_attest(
