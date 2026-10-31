@@ -28,7 +28,7 @@ def sw_report() -> AttestationReport:
     return AttestationReport(
         provider="software-only",
         measurement="DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION",
-        report_data="aa" * 32,
+        report_data="aa" * 64,
         raw_evidence=None,
         attestation_generated_at=datetime.now(tz=UTC),
         attestation_validity_seconds=86400,
@@ -40,7 +40,7 @@ def hw_report() -> AttestationReport:
     return AttestationReport(
         provider="software-only",
         measurement="sha256:" + "ab" * 32,
-        report_data="cd" * 32,
+        report_data="cd" * 64,
         raw_evidence=bytes.fromhex("deadbeef") * 64,
         attestation_generated_at=datetime.now(tz=UTC),
         attestation_validity_seconds=86400,
@@ -289,8 +289,182 @@ def test_try_appraise_returns_none_on_timeout(sw_report, monkeypatch):
     assert result is None
 
 
+@pytest.mark.parametrize(
+    ("api_key", "endpoint", "timeout"),
+    [
+        ("", NRAS_ENDPOINT, 10.0),
+        ("   ", NRAS_ENDPOINT, 10.0),
+        ("k", "http://nras.nvidia.com/v1", 10.0),
+        ("k", "ftp://nras.nvidia.com/v1", 10.0),
+        ("k", "https://", 10.0),
+        ("k", "https://:443/v1", 10.0),
+        ("k", None, 10.0),
+        ("k", "https://example.com:not-a-port/v1", 10.0),
+        ("k", "https://example.com:99999/v1", 10.0),
+        ("k", "https://example.com:65536/v1", 10.0),
+        ("k", "https://example.com:0/v1", 10.0),
+        ("k", "https://example.com:-1/v1", 10.0),
+        ("k", "https://exa\nmple.com/v1", 10.0),
+        ("k", NRAS_ENDPOINT, True),
+        ("k", NRAS_ENDPOINT, "10"),
+        ("k", NRAS_ENDPOINT, 0),
+        ("k", NRAS_ENDPOINT, -1.0),
+        ("k", NRAS_ENDPOINT, float("nan")),
+        ("k", NRAS_ENDPOINT, float("inf")),
+        ("k", NRAS_ENDPOINT, 1e308),
+        ("k", NRAS_ENDPOINT, 3600.5),
+        ("k", NRAS_ENDPOINT, 10**1000),
+        ("k", NRAS_ENDPOINT, -(10**1000)),
+    ],
+)
+def test_nras_client_init_validates_parameters(api_key, endpoint, timeout):
+    with pytest.raises(ValueError):
+        NRASClient(api_key=api_key, endpoint=endpoint, timeout=timeout)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "timeout"),
+    [
+        (NRAS_ENDPOINT, 10),
+        ("https://example.com:443/v1", 0.5),
+        ("https://example.com:8443/v1", 3600),
+        ("https://example.com:1/v1", 10.0),
+        ("https://example.com:65535/v1", 10.0),
+        ("https://[::1]:8443/v1", 10.0),
+    ],
+)
+def test_nras_client_init_accepts_valid_endpoint_and_timeout(endpoint, timeout):
+    assert NRASClient(api_key="k", endpoint=endpoint, timeout=timeout)._timeout == timeout
+
+
+def test_appraise_without_injected_client_applies_configured_timeout(sw_report):
+    real_client = httpx.Client
+    seen: dict[str, float] = {}
+
+    def factory(*, timeout: float) -> httpx.Client:
+        seen["timeout"] = timeout
+        return real_client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, content=json.dumps(_make_ear()).encode())
+            )
+        )
+
+    client = NRASClient(api_key="k", timeout=3600)
+    with patch("cmcp_runtime.tee.nras.httpx.Client", side_effect=factory):
+        assert client.appraise(sw_report).status == "affirming"
+    assert seen["timeout"] == 3600
+
+
+def test_appraise_converts_invalid_url_from_transport_to_nras_error(sw_report):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.InvalidURL("Invalid port: 'not-a-port'")
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    client = NRASClient(api_key="k", http_client=http)
+    with pytest.raises(NRASError, match="transport error"):
+        client.appraise(sw_report)
+
+
+@pytest.mark.parametrize(
+    "bad_response_text",
+    [
+        "[1, 2]",
+        '{"status": "contraindicated", "status": "affirming"}',
+        '{"status": "affirming", "score": NaN}',
+        '{"status": []}',
+        '{"status": {}}',
+    ],
+)
+def test_nras_rejects_non_dict_duplicate_keys_and_nonfinite_json(sw_report, bad_response_text):
+    client = NRASClient(api_key="k", http_client=_mock_text_client(200, bad_response_text))
+    with pytest.raises(NRASError):
+        client.appraise(sw_report)
+
+
+def _report_with(report_data: object) -> AttestationReport:
+    return AttestationReport(
+        provider="software-only",
+        measurement="DEVELOPMENT_ONLY_NOT_FOR_PRODUCTION",
+        report_data=report_data,  # type: ignore[arg-type]
+        raw_evidence=None,
+        attestation_generated_at=datetime.now(tz=UTC),
+        attestation_validity_seconds=86400,
+    )
+
+
+def test_nras_accepts_64_byte_nonce_as_128_char_lowercase_hex():
+    import base64
+
+    nonce = bytes(range(64))
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, content=json.dumps(_make_ear("affirming")).encode())
+
+    client = NRASClient(
+        api_key="k", http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert client.appraise(_report_with(nonce.hex())).status == "affirming"
+    assert json.loads(captured[0].content)["nonce"] == base64.b64encode(nonce).decode()
+
+
+BAD_REPORT_DATA = [
+    "not-valid-hex",
+    "",
+    "aa",
+    "a" * 62,
+    "a" * 64,
+    "a" * 66,
+    "a" * 126,
+    "a" * 130,
+    "A" * 128,
+    "g" * 128,
+    "a" * 127 + "\n",
+    None,
+    b"a" * 128,
+]
+
+
+@pytest.mark.parametrize("bad_report_data", BAD_REPORT_DATA)
+def test_appraise_rejects_report_data_that_is_not_a_128_char_lowercase_nonce(bad_report_data):
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, content=json.dumps(_make_ear()).encode())
+
+    client = NRASClient(
+        api_key="k", http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    with pytest.raises(NRASError, match="report_data"):
+        client.appraise(_report_with(bad_report_data))
+    assert not called
+
+
+@pytest.mark.parametrize("bad_report_data", BAD_REPORT_DATA)
+def test_try_appraise_handles_malformed_report_data_without_raising(bad_report_data, monkeypatch):
+    monkeypatch.setenv("CMCP_NRAS_API_KEY", "k")
+    assert try_appraise(_report_with(bad_report_data)) is None
+
+
+def test_try_appraise_handles_whitespace_api_key_and_unhashable_ear_status(sw_report, monkeypatch):
+    monkeypatch.setenv("CMCP_NRAS_API_KEY", "   ")
+    assert try_appraise(sw_report) is None
+
+    monkeypatch.setenv("CMCP_NRAS_API_KEY", "valid-key")
+    mock_instance = NRASClient(
+        api_key="valid-key",
+        http_client=_mock_text_client(200, '{"status": []}'),
+    )
+    with patch("cmcp_runtime.tee.nras.NRASClient", return_value=mock_instance):
+        assert try_appraise(sw_report) is None
+
+
 def test_try_appraise_logs_warning_when_no_key(sw_report, monkeypatch, caplog):
     import logging
+
     monkeypatch.delenv("CMCP_NRAS_API_KEY", raising=False)
     with caplog.at_level(logging.WARNING, logger="cmcp_runtime.tee.nras"):
         try_appraise(sw_report)
@@ -304,4 +478,58 @@ def test_try_appraise_logs_warning_when_no_key(sw_report, monkeypatch, caplog):
 
 def test_gateway_context_nras_appraisal_defaults_none():
     from cmcp_runtime.startup import RuntimeContext
+
     assert RuntimeContext.__dataclass_fields__["nras_appraisal"].default is None
+
+
+@pytest.mark.parametrize(
+    "raw_json",
+    [
+        '{"status":"affirming","score":1e1000}',
+        '{"status":"affirming","score":-1e1000}',
+        '{"status":"affirming","submods":{"gpu":{"score":-1e1000}}}',
+        '{"status":"affirming","score":{"nested":[1e1000]}}',
+        '{"status":"affirming","score":{"nested":[-1e1000]}}',
+    ],
+)
+def test_appraise_rejects_exponent_overflow(sw_report, raw_json):
+    client = NRASClient(
+        api_key="synthetic-key",
+        http_client=_mock_text_client(200, raw_json),
+    )
+    with pytest.raises(NRASError, match="non-finite JSON number"):
+        client.appraise(sw_report)
+
+
+@pytest.mark.parametrize(
+    "raw_json",
+    [
+        '{"status":"affirming","score":1e1000}',
+        '{"status":"affirming","score":-1e1000}',
+        '{"status":"affirming","submods":{"gpu":{"score":-1e1000}}}',
+        '{"status":"affirming","score":{"nested":[1e1000]}}',
+        '{"status":"affirming","score":{"nested":[-1e1000]}}',
+    ],
+)
+def test_try_appraise_controls_exponent_overflow(sw_report, monkeypatch, raw_json):
+    monkeypatch.setenv("CMCP_NRAS_API_KEY", "synthetic-key")
+    client = NRASClient(
+        api_key="synthetic-key",
+        http_client=_mock_text_client(200, raw_json),
+    )
+    with patch("cmcp_runtime.tee.nras.NRASClient", return_value=client):
+        assert try_appraise(sw_report) is None
+
+
+@pytest.mark.parametrize("score", ["1e308", "-1e308", '{"nested":[1e308,-1e308,0.0]}'])
+def test_appraise_preserves_finite_exponents(sw_report, score):
+    text = '{"status":"affirming","score":' + score + "}"
+    client = NRASClient(api_key="synthetic-key", http_client=_mock_text_client(200, text))
+    result = client.appraise(sw_report)
+    assert result.status == "affirming"
+    assert result.ear_raw == json.loads(text)
+
+
+def test_parse_ear_rejects_non_dict_payload():
+    with pytest.raises(NRASError, match="EAR payload must be a JSON object"):
+        NRASClient._parse_ear(["not", "a", "dict"])  # type: ignore[arg-type]
