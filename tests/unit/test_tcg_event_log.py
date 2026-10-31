@@ -146,3 +146,67 @@ def test_undeclared_algorithm_is_rejected() -> None:
 def test_missing_header_is_rejected() -> None:
     with pytest.raises(EventLogError):
         parse_event_log(b"\x00" * 64)
+
+
+@pytest.mark.parametrize(
+    "bad_log",
+    [
+        # Duplicate algorithm in Spec ID header
+        (
+            lambda: (
+                lambda spec: struct.pack("<II20sI", 0, EV_NO_ACTION, b"\x00" * 20, len(spec))
+                + spec
+            )(
+                b"Spec ID Event03\x00"
+                + struct.pack("<I", 0)
+                + bytes([0, 2, 0, 8])
+                + struct.pack("<I", 2)
+                + struct.pack("<HH", ALG_SHA256, 32)
+                + struct.pack("<HH", ALG_SHA256, 32)
+                + bytes([0])
+            )
+        )(),
+        # Wrong digest size for known algorithm ALG_SHA256 (declared 4 instead of 32)
+        (
+            lambda: (
+                lambda spec: struct.pack("<II20sI", 0, EV_NO_ACTION, b"\x00" * 20, len(spec))
+                + spec
+            )(
+                b"Spec ID Event03\x00"
+                + struct.pack("<I", 0)
+                + bytes([0, 2, 0, 8])
+                + struct.pack("<I", 1)
+                + struct.pack("<HH", ALG_SHA256, 4)
+                + bytes([0])
+            )
+        )(),
+        # Trailing bytes after vendorInfo in Spec ID header
+        (
+            lambda: (
+                lambda spec: struct.pack("<II20sI", 0, EV_NO_ACTION, b"\x00" * 20, len(spec))
+                + spec
+            )(
+                b"Spec ID Event03\x00"
+                + struct.pack("<I", 0)
+                + bytes([0, 2, 0, 8])
+                + struct.pack("<I", 1)
+                + struct.pack("<HH", ALG_SHA256, 32)
+                + bytes([0, 0xFF])
+            )
+        )(),
+        # Duplicate algorithm in TCG_PCR_EVENT2 entry
+        _header_event()
+        + struct.pack("<III", 0, EV_SEPARATOR, 2)
+        + struct.pack("<H", ALG_SHA256)
+        + b"\x11" * 32
+        + struct.pack("<H", ALG_SHA256)
+        + b"\x22" * 32
+        + struct.pack("<I", 0),
+        "not-bytes",  # type: ignore[list-item]
+    ],
+)
+def test_event_log_rejects_duplicate_algs_wrong_digest_sizes_and_trailing_header(
+    bad_log: bytes,
+) -> None:
+    with pytest.raises(EventLogError):
+        parse_event_log(bad_log)
