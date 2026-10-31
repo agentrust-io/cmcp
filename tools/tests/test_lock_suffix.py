@@ -22,7 +22,9 @@ class TestHashSuffix(unittest.TestCase):
                        ' ; os_name == "value --hash=sha256:BAD"'):
             with self.subTest(marker=marker):
                 text = "demo==1" + marker + SUFFIX_HASH + SUFFIX_HASH.replace("a" * 64, "b" * 64)
-                self.assertEqual(guard.parse_lock(text), {("demo", ("",), marker.strip()): "1"})
+                self.assertEqual(guard.parse_lock(text), {
+                    ("demo", ("",), marker.strip()): (
+                        "1", frozenset([SUFFIX_HASH.strip(), SUFFIX_HASH.replace("a" * 64, "b" * 64).strip()]))})
 
     def test_entire_hash_suffix_is_validated(self):
         for marker in ('', ' ; python_version >= "3.11"'):

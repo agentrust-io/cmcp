@@ -65,7 +65,7 @@ def parse_lock(text):
         key = (name, extras, marker)
         if key in result:
             raise ValueError(f"duplicate pin: {name} {marker}")
-        result[key] = version
+        result[key] = (version, frozenset(tail[option.start():].split()))
     if not result:
         raise ValueError("empty lock")
     return result
@@ -86,20 +86,46 @@ def main(argv=None):
     parser.add_argument("--allow-removed", action="append", default=[])
     parser.add_argument("--resolve", action="store_true", help="requires uv and package network access")
     parser.add_argument("--python-version", default="3.11")
-    parser.add_argument("locks", nargs="+", type=Path)
+    parser.add_argument("--all-locks", action="store_true",
+                        help="check current and base requirements/*.txt inventory")
+    parser.add_argument("locks", nargs="*", type=Path)
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
-    for path in args.locks:
+    if args.all_locks and args.locks:
+        parser.error("--all-locks cannot be combined with explicit paths")
+    if not args.all_locks and not args.locks:
+        parser.error("provide lock paths or --all-locks")
+    base_paths = set()
+    paths = args.locks
+    if args.all_locks:
+        paths = {path.relative_to(root) for path in (root / "requirements").glob("*.txt")}
+        if args.base:
+            listing = subprocess.run(["git", "ls-tree", "-r", "--name-only", "-z",
+                                      args.base, "--", "requirements/"], cwd=root,
+                                     capture_output=True, text=True, check=True)
+            base_paths = {Path(name) for name in listing.stdout.split("\0")
+                          if Path(name).parent == Path("requirements") and name.endswith(".txt")}
+            paths |= base_paths
+        if not paths:
+            raise ValueError("no requirements locks found")
+        paths = sorted(paths)
+    for path in paths:
         absolute = (root / path).resolve()
         relative = absolute.relative_to(root).as_posix()
         after = absolute.read_text(encoding="utf-8")
         parse_lock(after)
         if args.base:
-            previous = subprocess.run(["git", "show", f"{args.base}:{relative}"], cwd=root,
-                                      capture_output=True, text=True, check=False)
-            if previous.returncode:
-                raise ValueError(f"cannot read base lock {relative}; review new locks separately")
-            changed = check_delta(previous.stdout, after, args.allow_removed)
+            if args.all_locks and path not in base_paths:
+                # Only a successful base inventory can establish a new path.
+                # New locks still receive structural and requested resolver checks.
+                changed = sorted({key[0] for key in parse_lock(after)})
+                print(f"{relative}: new lock; requires dependency review")
+            else:
+                previous = subprocess.run(["git", "show", f"{args.base}:{relative}"], cwd=root,
+                                          capture_output=True, text=True, check=False)
+                if previous.returncode:
+                    raise ValueError(f"cannot read base lock {relative}; review new locks separately")
+                changed = check_delta(previous.stdout, after, args.allow_removed)
             print(f"{relative}: changed packages {changed}")
         if args.resolve:
             # Each resolution uses an isolated interpreter context and ignores
