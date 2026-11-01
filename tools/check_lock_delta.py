@@ -61,7 +61,10 @@ def parse_lock(text):
                 or not all(HASH.fullmatch(value)
                            for value in tail[option.start():].split())):
             raise ValueError(f"{name}: unsupported lock option or malformed hash")
-        marker = " ".join(marker.split())
+        # Collapse only unquoted whitespace: spaces inside a literal are part
+        # of marker identity, even when the resulting marker is never active.
+        marker = re.sub(r'''"[^"]*"|'[^']*'|\s+''',
+                        lambda part: " " if part.group().isspace() else part.group(), marker)
         key = (name, extras, marker)
         if key in result:
             raise ValueError(f"duplicate pin: {name} {marker}")
@@ -110,8 +113,20 @@ def main(argv=None):
             raise ValueError("no requirements locks found")
         paths = sorted(paths)
     for path in paths:
-        absolute = (root / path).resolve()
-        relative = absolute.relative_to(root).as_posix()
+        # Preserve the inventory's lexical name for the Git baseline. Resolving
+        # a symlink first can silently compare server.txt against dev.txt.
+        absolute = root / path
+        lexical = absolute.relative_to(root)
+        if ".." in lexical.parts:
+            raise ValueError(f"lock path must stay inside repository: {path}")
+        component = root
+        for part in lexical.parts:
+            component /= part
+            if component.is_symlink():
+                raise ValueError(f"lock path must not contain symlinks: {path}")
+        if not absolute.is_file():
+            raise ValueError(f"lock must be a regular file: {path}")
+        relative = lexical.as_posix()
         after = absolute.read_text(encoding="utf-8")
         parse_lock(after)
         if args.base:

@@ -16,6 +16,17 @@ H2 = " --hash=sha256:" + "b" * 64
 
 
 class TestHashDelta(unittest.TestCase):
+    def test_quoted_whitespace_is_preserved(self):
+        for quote in ('"', "'"):
+            before = f'demo==1 ; os_name == {quote}foo  bar{quote}' + H1
+            after = before.replace('foo  bar', 'foo bar')
+            with self.subTest(quote=quote):
+                with self.assertRaisesRegex(ValueError, 'changed platform markers'):
+                    guard.check_delta(before, after)
+                self.assertEqual(guard.check_delta(before, after, ['demo']), ['demo'])
+                self.assertEqual(guard.check_delta(before, before.replace(
+                    '; os_name ==', ';  os_name\t ==')), [])
+
     def test_same_version_hash_changes_are_reported(self):
         for marker in ('', ' ; sys_platform == "win32"'):
             before = 'demo==1' + marker + H1
@@ -115,6 +126,28 @@ class TestLockInventoryCLI(unittest.TestCase):
                 result = self.run_cli('check_lock_delta.py', '--base', base, '--all-locks')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('requirements/runtime.txt', result.stderr)
+
+    def test_symlink_refused_by_inventory_explicit_and_changed_driver(self):
+        server = self.root / 'requirements/server.txt'
+        server.write_text('demo==1' + H1 + '\nserver-only==1' + H1)
+        (self.root / 'requirements/dev.txt').write_text('demo==1' + H1)
+        self.commit()
+        base = self.git('rev-parse', 'HEAD')
+        server.unlink()
+        try:
+            server.symlink_to('dev.txt')
+        except OSError as exc:
+            self.skipTest(f'symlink creation unavailable: {exc}')
+        self.commit()
+        commands = [('check_lock_delta.py', '--base', base, '--all-locks'),
+                    ('check_lock_delta.py', '--base', base, 'requirements/server.txt'),
+                    ('check_changed_locks.py', '--base', base)]
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.run_cli(*command)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('symlink', result.stderr)
+                self.assertIn('requirements/server.txt', result.stderr)
 
     def test_bad_base_cannot_be_mistaken_for_new_inventory(self):
         (self.root / 'requirements/runtime.txt').write_text('demo==1' + H1)
