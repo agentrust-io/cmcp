@@ -1,12 +1,12 @@
 ﻿---
-description: "Exact cMCP runtime behavior for each failure: attestation at startup and mid-session, TEE faults, policy hash mismatch, and MCP parse errors."
+description: "cMCP failure behavior and recovery: gateway measurement and TPM/NV operations, production/dev startup, attestation, TEE faults, policy mismatch, and MCP parse errors."
 ---
 
 # Failure Mode Specification
 
 ---
 Status: Draft v0.1
-Last updated: 2026-06-04
+Last updated: 2026-11-01
 Stability: Unstable , expect breaking changes before v1.0
 ---
 
@@ -26,6 +26,7 @@ Closes #22.
 | Attestation staleness mid-session | Fail-closed. Active sessions terminated. | Yes (see FM-2) | `attestation_stale: true` on claims produced at or after deadline | `WARN attestation_stale` + session_id + expiry_utc |
 | TEE fault mid-invocation | Fail-closed on in-flight call. Structured error returned to agent. Session continues if TEE recovers. | No | `status: fault` | `ERROR tee_fault` + call_id + timestamp |
 | Policy bundle hash mismatch at startup | Fail-closed. Runtime does not start. | No | Not produced | `FATAL policy_hash_mismatch` + expected_hash + actual_hash |
+| Gateway measurement or TPM/NV operation unavailable at startup | Production: fail-closed; runtime does not start. `CMCP_DEV_MODE`: warn and continue without established gateway measurement. | Dev mode only (see Measurement unavailable at startup) | No claim in production; dev continuation is not evidence of a successfully measured gateway | Production: `FATAL MEASUREMENT_UNAVAILABLE` + detail; dev mode: `WARN` measurement unavailable |
 | Sealed signing key unavailable at startup | Fail-closed. Runtime does not start. Nothing is minted to recover. | No | Not produced | `FATAL SEALED_KEY_*` + detail (see FM-1b) |
 | MCP protocol parse failure | Fail-closed on the specific call. Structured error returned. Session continues. | No | `status: parse_error` | `WARN parse_failure` + call_id + payload_hash |
 
@@ -301,9 +302,25 @@ For calls that are rejected or faulted (FM-3, FM-5), the TRACE Claim records the
 
 ## Measurement unavailable at startup
 
-`MEASUREMENT_UNAVAILABLE` means the gateway could not derive its measurement.
-Startup aborts; a caller should not treat this as a successfully measured gateway
-or as evidence that its TPM changed. Inspect the diagnostic detail for unreadable
-or unsupported measured inputs, restore the intended deployment inputs, then retry.
-Do not bypass measurement or rotate a signing key merely to suppress this error.
-This entry describes the existing runtime behavior; it adds no new recovery action.
+`MEASUREMENT_UNAVAILABLE` covers failures deriving code/configuration/policy
+measurements and failures completing the TPM-backed measurement path.
+
+**Triggers**: unreadable or unsupported measured inputs, TPM open errors, NV index
+define/read/validation errors, `TPM2_NV_Extend` failure, chain-value mismatch,
+truncated NV values, and certify failures. Inspect the reported diagnostic detail
+rather than assuming an input-file problem.
+
+**Production**: startup aborts with `FATAL MEASUREMENT_UNAVAILABLE`; no traffic is
+processed from this failed startup.
+
+**Development**: with `CMCP_DEV_MODE`, the runtime logs a warning and continues.
+This continuation is not evidence of a successfully measured gateway.
+
+**Recovery**: restore readable, supported measurement inputs when they are the
+reported cause. For a TPM/NV failure, investigate device access, library support,
+NV index configuration and the reported chain or certify operation against the
+intended deployment state before restarting. This code alone is not evidence
+that the TPM changed. Do not bypass measurement or rotate a signing key merely
+to suppress this error. Sealed-key recovery remains a separate decision (FM-1b).
+
+This entry describes existing runtime behavior; it adds no new recovery action.
