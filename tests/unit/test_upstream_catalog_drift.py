@@ -1023,3 +1023,34 @@ async def test_o3_append_failure_matches_catalog_drift(tmp_path, monkeypatch, fa
         assert chain.verify_chain() is True
     finally:
         store.close()
+
+
+# --- scanner attribution (classification must follow the drifted tool) ----
+
+
+def _catalog_with_trailing_entry(*, drifted_first: bool) -> ToolCatalog:
+    """lookup_customer on crm plus invoice on billing, in either insertion order."""
+    crm = _catalog().entries["lookup_customer"]
+    billing = replace(
+        crm,
+        tool_name="invoice",
+        server=replace(crm.server, display_name="billing", url="https://billing.example/mcp"),
+    )
+    pairs = [("lookup_customer", crm), ("invoice", billing)]
+    if not drifted_first:
+        pairs.reverse()
+    return ToolCatalog(entries=dict(pairs), catalog_hash="sha256:" + "c" * 64)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drifted_first", [True, False])
+async def test_scanner_classifies_drift_under_the_drifted_tools_own_server(drifted_first):
+    catalog = _catalog_with_trailing_entry(drifted_first=drifted_first)
+    scanner = MagicMock(spec=CatalogScanner)
+    scanner.check_drift.return_value = MagicMock(available=True, threats=[])
+    proxy, _, _ = _proxy(catalog, drift_policy=DriftPolicy.FAIL_CLOSED, scanner=scanner)
+    proxy._advertised_tools = AsyncMock(return_value=_advertise("changed"))
+
+    assert await proxy._check_upstream_drift(catalog.entries["lookup_customer"]) is True
+    scanner.check_drift.assert_called_once()
+    assert scanner.check_drift.call_args.kwargs["server_name"] == "crm"

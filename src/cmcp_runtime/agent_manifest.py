@@ -17,7 +17,7 @@ from cryptography.exceptions import InvalidSignature
 
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
-from cmcp_runtime.manifest_catalog import manifest_catalog_binding
+from cmcp_runtime.manifest_catalog import project_listed_tools
 
 if TYPE_CHECKING:
     from cmcp_runtime.catalog.loader import ToolCatalog
@@ -435,21 +435,19 @@ def _verify_with_sdk(
         require_runtime_artifacts and manifest.get("profile") == EVIDENCE_REQUIREMENTS_PROFILE
     )
     projection = None
-    if require_runtime_artifacts and (experimental or _lists_tools(manifest)):
-        # A manifest that lists its tools declares a Merkle root over them
-        # (spec 3.2.3), not cMCP's sealed digest, so the two are never compared.
-        # The root is recomputed from the catalog this runtime serves, which
-        # must be the catalog behind the sealed digest the caller supplied. The
-        # experimental profile always binds this way and also signs the sealed
-        # digest, checked below.
-        if runtime_catalog is None or runtime_catalog.catalog_hash != sealed_catalog_hash:
-            if experimental:
-                raise ConfigError("Experimental requirements need the actual runtime catalog")
-            raise ConfigError(
-                "Agent Manifest lists its tools; binding it needs the runtime catalog"
-            )
-        projection = manifest_catalog_binding(runtime_catalog)
-        tool_catalog_hash = projection["catalog_hash"]
+    binds_listed_tools = require_runtime_artifacts and (experimental or _lists_tools(manifest))
+    # A manifest that lists its tools declares a Merkle root over them
+    # (spec 3.2.3), not cMCP's sealed digest, so the two are never compared.
+    # The root is recomputed from the catalog this runtime serves, which must
+    # be the catalog behind the sealed digest the caller supplied. The
+    # experimental profile always binds this way and also signs the sealed
+    # digest, checked below.
+    if binds_listed_tools and (
+        runtime_catalog is None or runtime_catalog.catalog_hash != sealed_catalog_hash
+    ):
+        if experimental:
+            raise ConfigError("Experimental requirements need the actual runtime catalog")
+        raise ConfigError("Agent Manifest lists its tools; binding it needs the runtime catalog")
     if envelope is not None:
         # Before appraisal, so a substituted document is reported as that
         # rather than as whatever the SDK finds first. Decoding here does not
@@ -460,6 +458,17 @@ def _verify_with_sdk(
             decoded = None  # malformed; the SDK appraisal below refuses it
         if decoded is not None:
             _require_same_payload(decoded.manifest, manifest)
+    if binds_listed_tools and runtime_catalog is not None:
+        # Joined on tool_name plus endpoint_id against the manifest's own list
+        # (agentrust-io/agent-manifest#340). Out of profile and a failed join
+        # stop here; only a joined projection reaches the root comparison.
+        artifacts = manifest.get("artifacts")
+        tool_manifest = artifacts.get("tool_manifest") if isinstance(artifacts, dict) else None
+        projection = project_listed_tools(
+            runtime_catalog,
+            tool_manifest.get("tools") if isinstance(tool_manifest, dict) else None,
+        )
+        tool_catalog_hash = projection["catalog_hash"]
     # The envelope is handed to the verifier when there is one, because for a
     # v0.2 manifest the envelope is the signature. Passing the decoded payload
     # instead would ask the SDK to appraise a document with nothing to appraise.
@@ -580,8 +589,9 @@ def _require_sealed_catalog_requirement(
     """The experimental profile must also sign cMCP's sealed catalog digest.
 
     Read only after signature and schema verification. The Merkle root covers
-    tool IDs, schemas and descriptions; the sealed digest adds server identity
-    and output schemas, so both constructions are required to be signed.
+    tool IDs, input and output schemas and descriptions; the sealed digest adds
+    server identity and TLS pins, so both constructions are required to be
+    signed.
     """
     requirements = manifest.get("evidence_requirements")
     components = requirements.get("components") if isinstance(requirements, dict) else None
@@ -682,9 +692,11 @@ def verify_agent_manifest_binding(
     *tool_catalog_hash* is cMCP's sealed catalog digest. A manifest that omits
     ``tool_manifest.tools`` must declare exactly that digest. A manifest that
     lists its tools declares their Merkle root instead, and binds only when the
-    list and root equal the projection of *runtime_catalog*, the catalog being
-    served (cmcp_runtime.manifest_catalog). Without *runtime_catalog* such a
-    manifest does not bind.
+    list joins *runtime_catalog*, the catalog being served, on ``tool_name``
+    plus SPIFFE ``endpoint_id`` and the list and root equal its projection
+    (cmcp_runtime.manifest_catalog). A served catalog without a SPIFFE basis is
+    out of profile (ManifestCatalogOutOfProfile) and does not bind either.
+    Without *runtime_catalog* such a manifest does not bind.
     The experimental evidence-requirements profile always binds this way and
     must also sign the sealed digest.
 

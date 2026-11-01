@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A sealed TRACE signing key on the TPM tier (#462), off by default.** With
+  `attestation.seal_signing_key` and `provider: tpm`, the signing key survives
+  restarts, sealed under `TPM2_PolicyNV` over a gate NV index (`0x01500433`)
+  that holds the gateway digest, so a relying party can pin it with
+  `cmcp verify --trusted-key`. A gateway whose measured inputs differ from the
+  sealed digest does not get the key and does not start; each failure has its
+  own `SEALED_KEY_*` code, and nothing is minted to recover. A verified policy
+  reload reseals the key to the new digest. ATTEST-004 applies only with
+  sealing off. See `docs/spec/attestation.md` 4.2 for what it does and does not
+  guarantee.
+- `cmcp measure` prints the gateway digest and its components. `cmcp key public`,
+  `cmcp key reseal` and `cmcp key rotate` manage the sealed key.
+- A `tpm` extra for tpm2-pytss. On Linux, CI's test job installs it and runs the
+  TPM tier against swtpm.
+
 ### Fixed
 
 - Gateway audit records now distinguish responses inspected successfully (`pass`)
@@ -19,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names, vocabulary, historical entries and session-start `n/a` remain unchanged
   (#764).
 
+- **The test suite could write to the developer's TPM.** With tpm2-pytss
+  installed, tests that expected the degraded path opened the default TCTI and
+  defined and extended the measurement index on the machine's real TPM. The
+  suite now refuses any ESAPI context that is not a simulator.
+- `sink_policy.tool_max_sensitivity` was measured as its printed form, in YAML
+  order, so reordering the tools changed the configuration digest. It is now
+  measured as a mapping; the digest changes once for deployments that set
+  `sink_policy`.
+
 ### Security
 
 - **The operator token was measured.** Only the bearer token was excluded from
@@ -29,6 +55,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token. The configuration digest changes once for every deployment, since the
   field leaves the measured payload. A deployment that used a low-entropy
   operator token should rotate it after upgrading.
+- Agent Manifest v0.2: the SDK appraised the COSE envelope, but the binding
+  fields were read from the decoded dict the caller passed, and nothing checked
+  that the two were the same document. A valid envelope paired with a dict
+  carrying another policy or catalog hash bound. The dict must now equal the
+  signed payload, and `issuer_key_id` is the key that verified the envelope
+  instead of an empty string.
+
+### Added
+
+- `build_server(ctx, trace_gate=...)`: an optional pre-transport hook for
+  verifier-issued TRACE tokens (`cmcp_runtime.trace_gate.TraceGate`). With a
+  gate, `POST /trace/challenge` and `POST /trace/admit` are registered behind
+  bearer auth, every `tools/call` needs a holder proof bound to its exact action,
+  and the gate is rechecked and a receipt committed before any byte goes
+  upstream. A gate requires enforcing mode. With no gate, the routes do not
+  exist and the call path is unchanged.
+- `cmcp_runtime.manifest_catalog.manifest_catalog_binding`: the Agent Manifest
+  tool Merkle root (spec 3.2.3) computed from the catalog being served, kept
+  separate from cMCP's sealed catalog digest.
+- Experimental `evidence-requirements-experimental-v1` manifest profile: the
+  tool binding is checked against that Merkle projection, and the signed
+  evidence requirements must also name the sealed catalog digest.
 
 ### Removed
 
@@ -66,46 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the "cMCP" and "cMCP-compatible" marks are held by the founding maintainer
   until a host organization accepts the project.
 
-## [0.7.0] - 2026-09-30
-
-### Security
-
-- TPM 2.0: `verify_tpm_measurement` listed a `qualifying_data` mismatch as
-  unverified but still returned `verified`, so a genuine quote could be attached
-  to a claim signed by any key. It also never compared the quote's `pcrDigest`
-  with the claim's `measurement`, though `docs/spec/tpm-security-model.md` said it
-  did. Both now fail the check.
-- Agent Manifest v0.2: the SDK appraised the COSE envelope, but the binding
-  fields were read from the decoded dict the caller passed, and nothing checked
-  that the two were the same document. A valid envelope paired with a dict
-  carrying another policy or catalog hash bound. The dict must now equal the
-  signed payload, and `issuer_key_id` is the key that verified the envelope
-  instead of an empty string.
-
-### Added
-
-- `build_server(ctx, trace_gate=...)`: an optional pre-transport hook for
-  verifier-issued TRACE tokens (`cmcp_runtime.trace_gate.TraceGate`). With a
-  gate, `POST /trace/challenge` and `POST /trace/admit` are registered behind
-  bearer auth, every `tools/call` needs a holder proof bound to its exact action,
-  and the gate is rechecked and a receipt committed before any byte goes
-  upstream. A gate requires enforcing mode. With no gate, the routes do not
-  exist and the call path is unchanged.
-- `cmcp_runtime.manifest_catalog.manifest_catalog_binding`: the Agent Manifest
-  tool Merkle root (spec 3.2.3) computed from the catalog being served, kept
-  separate from cMCP's sealed catalog digest.
-- Experimental `evidence-requirements-experimental-v1` manifest profile: the
-  tool binding is checked against that Merkle projection, and the signed
-  evidence requirements must also name the sealed catalog digest.
-
-### Changed
-
-- `verify_trace_claim` takes `expected_launch_measurements`, and `cmcp verify`
-  takes a repeatable `--launch-measurement`. A hardware claim whose measurement is
-  outside the set fails. With no set, a hardware claim is `partially_verified`
-  with `launch_measurement` unverified: genuine hardware says what ran, not that
-  it was approved, and a report from any guest image used to come out `verified`.
-
 ### Fixed
 
 - An Agent Manifest that lists its tools in `tool_manifest.tools` could never
@@ -116,6 +124,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is still compared with the sealed digest. `verify_agent_manifest_binding`
   takes `runtime_catalog` for this; without it a manifest with `tools` does not
   bind, which includes `cmcp verify`, since it has no catalog to project.
+- The Agent Manifest tool projection (`cmcp_runtime.manifest_catalog`, added
+  in #713 after the v0.7.0 tag) now follows the restricted profile ruled on
+  agentrust-io/agent-manifest#340. `schema_hash` is SHA-256 over the JCS form
+  of `{"input_schema", "output_schema"}` instead of the input schema alone,
+  `description_hash` is over the description as a JCS string instead of its
+  raw UTF-8, and `endpoint_id` is the server's SPIFFE ID with no fallback to
+  its URL. **This changes every `schema_hash`, `description_hash` and
+  `catalog_hash` the projection produces**, so a manifest built from main
+  before this fix must be reissued. No release carries the old values.
+  Binding now joins the manifest's tools to the served catalog on exact
+  `tool_name` plus `endpoint_id`, one to one, rebuilds the root from the
+  manifest's `tool_id` and the served component hashes, and compares only that
+  root. A non-empty served catalog with any server lacking a `spiffe_id` raises
+  `ManifestCatalogOutOfProfile`, an outcome distinct from a failed join or a
+  root mismatch; the gateway still does not bind. Reported by
+  @asymx-mechanics (#719).
+
+## [0.7.1] - 2026-10-19
+
+### Security
+
+- **A Cedar Allow reached with evaluation errors was enforced as Allow**
+  (GHSA-frxc-7f57-6f4r). Cedar skips a policy whose condition errors, so a
+  `forbid` reading a context attribute the current phase does not carry could
+  not stop a matching `permit`. `CedarBackend` now denies any Allow that comes
+  with evaluation errors, and the error reaches the `tool_call` or
+  `egress_denied` audit row. So that a policy written for one phase does not
+  deny in the other, both phases now carry the same context keys: egress adds
+  `session_max_sensitivity` (the label string), `arguments`, `baa_covered`,
+  `compliance_domain`, `server_identity`, `destination_class` and
+  `attestation_platform`, and ingress adds `egress` (false),
+  `sensitivity_level`, `injection_events`, `reset_count` and
+  `response_size_bytes` (0). Without this the shipped BFSi demo denied every
+  response at egress. A policy that reads a key outside that set, or
+  `workflow_id` when the caller declared none, now denies.
+- **The TPM AIA certificate fetch was unbounded** (GHSA-mrcx-xvv4-m7f8). The
+  chain walk followed redirects to any address and read responses without a
+  limit. It now refuses destinations that do not resolve to global addresses,
+  checks every redirect the same way, follows at most three and ignores
+  responses over 64 KiB. Each hop's host is resolved once and the connection
+  goes to the checked address (the request still names the host, and HTTPS
+  still verifies the certificate against it), so a second DNS answer cannot
+  point the fetch somewhere else. The fetch no longer uses environment proxies.
+  An on-prem CA whose AIA host has a private address falls back to the
+  vendored bundle.
+- **Upstream drift was classified against the wrong catalog entry**
+  (GHSA-2p85-666x-xm7x). The scanner received the server of whichever entry was
+  last in the catalog. Detection and fail-closed denial were not affected; only
+  the classification written to the audit row was.
+
+## [0.7.0] - 2026-09-30
+
+### Security
+
+- TPM 2.0: `verify_tpm_measurement` listed a `qualifying_data` mismatch as
+  unverified but still returned `verified`, so a genuine quote could be attached
+  to a claim signed by any key. It also never compared the quote's `pcrDigest`
+  with the claim's `measurement`, though `docs/spec/tpm-security-model.md` said it
+  did. Both now fail the check.
+
+### Changed
+
+- `verify_trace_claim` takes `expected_launch_measurements`, and `cmcp verify`
+  takes a repeatable `--launch-measurement`. A hardware claim whose measurement is
+  outside the set fails. With no set, a hardware claim is `partially_verified`
+  with `launch_measurement` unverified: genuine hardware says what ran, not that
+  it was approved, and a report from any guest image used to come out `verified`.
 
 ## [0.6.0] - 2026-09-25
 

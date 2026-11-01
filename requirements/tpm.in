@@ -1,0 +1,10 @@
+# tpm2-pytss for the TPM tier, installed on top of the dev lock by the CI job
+# that runs the sealed signing key against swtpm (#462). The test job installs
+# no TPM library, so without this nothing in CI imports the real TPM path.
+# Only tpm2-pytss is locked here: its dependencies (cffi, cryptography,
+# packaging) are already pinned in dev.txt, and --require-hashes fails if a
+# release adds one that is not. It ships an sdist only and builds against the
+# TSS headers (libtss2-dev). Compile with:
+#   uv pip compile requirements/tpm.in --generate-hashes --universal \
+#     --python-version 3.11 --no-deps -o requirements/tpm.txt
+tpm2-pytss>=3.0

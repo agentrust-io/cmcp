@@ -7,6 +7,8 @@ on:
       - 'mkdocs.yml'
       - 'hooks/**'
       - 'requirements-docs.txt'
+      - 'requirements/docs.txt'
+      - 'requirements/runtime.txt'
       - 'scripts/check_docs_quickstart.py'
       - '.github/workflows/docs-check.yml'
 permissions:
@@ -25,8 +27,9 @@ jobs:
       # The runtime dependencies too: this job imports the package, and the
       # docs lock alone does not carry httpx and friends.
       - run: python -m pip install --require-hashes -r requirements/docs.txt
-      - run: python -m pip install --require-hashes -r requirements/dev.txt
+      - run: python -m pip install --require-hashes -r requirements/runtime.txt
       - run: python -m pip install --no-deps -e .
+      - run: python -m pip check
       - run: python -m mkdocs build --strict
       - run: python scripts/check_docs_quickstart.py
 

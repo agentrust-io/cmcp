@@ -9,6 +9,9 @@ on:
       - "mkdocs.yml"
       - "hooks/**"
       - "requirements-docs.txt"
+      - "requirements/docs.txt"
+      - "requirements/runtime.txt"
+      - ".github/workflows/docs.yml"
       - "README.md"
       - "CHANGELOG.md"
       - "CONTRIBUTING.md"
@@ -44,8 +47,9 @@ jobs:
       - name: Install docs dependencies
         run: |
           pip install --require-hashes -r requirements/docs.txt
-          pip install --require-hashes -r requirements/dev.txt
+          pip install --require-hashes -r requirements/runtime.txt
           pip install --no-deps -e .
+          python -m pip check
 
       - name: Configure git for gh-deploy
         run: |

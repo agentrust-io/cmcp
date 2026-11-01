@@ -11,7 +11,7 @@ import os
 import secrets
 import sys
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from cmcp_runtime.agent_manifest import (
     AgentManifestBinding,
@@ -51,6 +51,17 @@ from cmcp_runtime.tee.nras import AppraisalResult, try_appraise
 from cmcp_runtime.tee.report_binding import (
     binds_measurement_into_report_data,
     measurement_bound_nonce_for,
+)
+from cmcp_runtime.tee.seal import (
+    HeldSealedKey,
+    SealedKeyError,
+    SealedKeyPublicKeyMismatch,
+    SealedKeyStore,
+    SealedKeyUnavailable,
+    StoreLock,
+    ed25519_public_key,
+    open_sealed_key,
+    stored_public_key,
 )
 from cmcp_runtime.tee.spiffe import SpiffeClientResult, fetch_svid
 
@@ -100,6 +111,9 @@ class RuntimeContext:
     # The signed TPM2_NV_Certify pair proving the measurement. None when the platform
     # provisions no certified attestation key to sign with; see cmcp_verify.nv_certify.
     measurement_evidence: bytes | None = None
+    #: #462: the sealed signing key and its store lock, held for the life of the
+    #: process. None unless attestation.seal_signing_key is on.
+    sealed_key: HeldSealedKey | None = None
 
 
 def _jwk_thumbprint_sha256(x_b64url: str) -> bytes:
@@ -232,7 +246,7 @@ def _measure_gateway(
 
 def _attestation_nonce(
     key_fingerprint: bytes,
-    signing_key: SigningKey,
+    public_key_bytes: bytes,
     tee_provider: TEEProvider,
     measurement: GatewayMeasurement | None,
 ) -> bytes:
@@ -255,7 +269,7 @@ def _attestation_nonce(
     if measurement is not None and binds_measurement_into_report_data(
         tee_provider.provider_name()
     ):
-        return measurement_bound_nonce_for(signing_key.public_key_bytes, measurement)
+        return measurement_bound_nonce_for(public_key_bytes, measurement)
     return key_fingerprint + secrets.token_bytes(32)
 
 
@@ -362,6 +376,85 @@ def _extend_and_certify(
     return certified.extend, envelope
 
 
+@dataclass
+class _SealedStart:
+    """What a sealed start knows before it is measured: the store and the public key."""
+
+    store: SealedKeyStore
+    lock: StoreLock
+    public_key: bytes
+    seed_if_new: bytes | None  # set when this start will provision
+
+
+def _fatal_sealed(exc: SealedKeyError) -> NoReturn:
+    _fatal(exc.code, str(exc), detail=exc.detail or "", action="startup_aborted")
+    sys.exit(1)
+
+
+def _begin_sealed_start(config: Config) -> _SealedStart:
+    """Lock the store and learn the public key, before anything is unsealed (#462).
+
+    The certify pair around the measurement extend commits the attestation nonce,
+    and the nonce commits the public key, so the key has to be known first. It is:
+    the store records it, and on the first start on a TPM the seed is generated
+    here and handed to provisioning.
+    """
+    store = SealedKeyStore(config.attestation.sealed_key_dir)
+    try:
+        lock = store.acquire()
+        public_key = stored_public_key(store)
+    except SealedKeyError as exc:
+        _fatal_sealed(exc)
+    seed_if_new = None
+    if public_key is None:
+        seed_if_new = secrets.token_bytes(32)
+        public_key = ed25519_public_key(seed_if_new)
+    return _SealedStart(store, lock, public_key, seed_if_new)
+
+
+def _finish_sealed_start(
+    start: _SealedStart, measurement: GatewayMeasurement | None
+) -> HeldSealedKey:
+    """Unseal the signing key under the measured digest, right after the extend."""
+    if measurement is None:
+        _fatal_sealed(
+            SealedKeyUnavailable(
+                "the gateway could not be measured, so there is no digest to unseal "
+                "the signing key under"
+            )
+        )
+    try:
+        from tpm2_pytss.ESAPI import ESAPI
+    except ImportError as exc:
+        _fatal_sealed(SealedKeyUnavailable("tpm2-pytss is required to unseal", detail=str(exc)))
+    try:
+        with ESAPI() as ectx:
+            opened = open_sealed_key(
+                ectx, start.store, measurement.digest, seed_if_new=start.seed_if_new
+            )
+    except SealedKeyError as exc:
+        _fatal_sealed(exc)
+    except Exception as exc:  # noqa: BLE001 - any TPM fault means no key
+        _fatal_sealed(
+            SealedKeyUnavailable(
+                "the TPM could not be opened to unseal the signing key",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        )
+    if opened.public_key != start.public_key:
+        _fatal_sealed(
+            SealedKeyPublicKeyMismatch(
+                "the key the attestation nonce commits is not the key the TPM unsealed"
+            )
+        )
+    logger.info(
+        "Signing key %s: %s...",
+        "provisioned and sealed" if opened.provisioned else "unsealed",
+        opened.public_key.hex()[:16],
+    )
+    return HeldSealedKey(start.store, start.lock, opened, measurement.digest)
+
+
 def run_startup(config_path: str) -> RuntimeContext:
     """
     Execute the ordered startup sequence. Any failure before step 6 (network bind)
@@ -400,8 +493,24 @@ def run_startup(config_path: str) -> RuntimeContext:
     # measurement's TPM2_NV_Certify calls commit the attestation nonce, which is
     # derived from this key. The key has no dependencies of its own, so producing it
     # earlier is ordering only, not a behaviour change.
-    signing_key = SigningKey()
-    logger.info("Signing key generated: %s...", signing_key.public_key_hex[:16])
+    # With sealing (#462) only the public key is known here; the private key is
+    # unsealed after the extend, under the digest the extend committed.
+    sealed_start: _SealedStart | None = None
+    signing_key: SigningKey | None = None
+    if config.attestation.seal_signing_key:
+        if tee_provider.provider_name() != "tpm":
+            _fatal_sealed(
+                SealedKeyUnavailable(
+                    "attestation.seal_signing_key needs the tpm provider",
+                    detail=f"provider={tee_provider.provider_name()}",
+                )
+            )
+        sealed_start = _begin_sealed_start(config)
+        public_key_bytes = sealed_start.public_key
+    else:
+        signing_key = SigningKey()
+        public_key_bytes = signing_key.public_key_bytes
+        logger.info("Signing key generated: %s...", signing_key.public_key_hex[:16])
 
     # CRYPTO-001 + CRYPTO-002: the first 32 bytes of the nonce are the RFC 7638 JWK Thumbprint
     # (SHA-256 of the sorted JSON OKP key members) so verifiers can re-derive the fingerprint
@@ -410,14 +519,14 @@ def run_startup(config_path: str) -> RuntimeContext:
     # What fills the remaining 32 bytes depends on the platform: a random salt, or the
     # gateway measurement on the providers that have no NV index to hold it (#552).
     # See _attestation_nonce.
-    _x_b64 = base64.urlsafe_b64encode(signing_key.public_key_bytes).rstrip(b"=").decode()
+    _x_b64 = base64.urlsafe_b64encode(public_key_bytes).rstrip(b"=").decode()
     key_fingerprint = _jwk_thumbprint_sha256(_x_b64)
 
     # Step 3b (#432, #552): measure the gateway BEFORE it serves traffic. The
     # measurement is computed first because on SEV-SNP, TDX and Azure CVM it goes
     # into the nonce itself, so it has to exist before the nonce does.
     measurement = _measure_gateway(config, tee_provider)
-    nonce = _attestation_nonce(key_fingerprint, signing_key, tee_provider, measurement)
+    nonce = _attestation_nonce(key_fingerprint, public_key_bytes, tee_provider, measurement)
 
     # On the TPM tier the measurement is committed by an NV extend index instead,
     # certified either side of the extend so it is signed evidence rather than a
@@ -427,6 +536,12 @@ def run_startup(config_path: str) -> RuntimeContext:
     extend_result, measurement_evidence = _extend_measurement(
         config, tee_provider, measurement, nonce
     )
+
+    sealed_key: HeldSealedKey | None = None
+    if sealed_start is not None:
+        sealed_key = _finish_sealed_start(sealed_start, measurement)
+        signing_key = SigningKey(sealed_key.seed)
+    assert signing_key is not None
 
     try:
         attestation_report = tee_provider.get_attestation_report(nonce)
@@ -842,5 +957,6 @@ def run_startup(config_path: str) -> RuntimeContext:
         gateway_measurement=measurement,
         measurement_extend=extend_result,
         measurement_evidence=measurement_evidence,
+        sealed_key=sealed_key,
         session_state_store=session_state_store,
     )

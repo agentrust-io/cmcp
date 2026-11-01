@@ -26,6 +26,7 @@ Closes #22.
 | Attestation staleness mid-session | Fail-closed. Active sessions terminated. | Yes (see FM-2) | `attestation_stale: true` on claims produced at or after deadline | `WARN attestation_stale` + session_id + expiry_utc |
 | TEE fault mid-invocation | Fail-closed on in-flight call. Structured error returned to agent. Session continues if TEE recovers. | No | `status: fault` | `ERROR tee_fault` + call_id + timestamp |
 | Policy bundle hash mismatch at startup | Fail-closed. Runtime does not start. | No | Not produced | `FATAL policy_hash_mismatch` + expected_hash + actual_hash |
+| Sealed signing key unavailable at startup | Fail-closed. Runtime does not start. Nothing is minted to recover. | No | Not produced | `FATAL SEALED_KEY_*` + detail (see FM-1b) |
 | MCP protocol parse failure | Fail-closed on the specific call. Structured error returned. Session continues. | No | `status: parse_error` | `WARN parse_failure` + call_id + payload_hash |
 
 ---
@@ -56,6 +57,22 @@ Closes #22.
 ```
 
 **Operator notification**: The orchestration platform health check fails (no process listening on the health port). Alerting on pod restart loops or task failure is the operator responsibility. The runtime does not attempt to send an outbound notification from a failed-attestation state, as there is no attested channel to send it on.
+
+---
+
+## FM-1b: Sealed Signing Key Unavailable at Startup
+
+**Trigger**: `attestation.seal_signing_key` is on and the gateway cannot unseal its signing key ([attestation.md §4.2](attestation.md)).
+
+**Decision**: Fail-closed, after the measurement extend and before the attestation report. A new key is never minted to recover: that would hand a changed gateway a working key.
+
+**Codes and the usual fix**:
+- `SEALED_KEY_DIGEST_MISMATCH`: code, policy or configuration changed. Stop, run `cmcp key reseal` (it seals the same key to this installation's digest), start again. If the change was not intended, that is what this refusal is for.
+- `SEALED_KEY_TPM_CHANGED`: the sealed-key gate is absent, or the stored blob failed its integrity check under this TPM's storage parent. The store may belong to another host, the TPM may have been cleared, or the store may have been altered. Investigate the original host and store backups before explicitly rotating; `cmcp key rotate` makes a new key. A transient or unknown load failure is `SEALED_KEY_UNAVAILABLE`, not evidence that the key is gone.
+- `SEALED_KEY_MISSING`: the store was lost. Restore it, or `cmcp key rotate`.
+- `SEALED_KEY_PUBLIC_KEY_MISMATCH`: the store was altered. Investigate before rotating.
+- `SEALED_KEY_LOCKED`: another gateway or `cmcp key` command holds the store.
+- `SEALED_KEY_UNAVAILABLE`: tpm2-pytss, the TPM or the store could not be used, or the gateway could not be measured.
 
 ---
 

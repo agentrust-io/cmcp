@@ -11,13 +11,22 @@ def _reload_config_with_env(monkeypatch, value: str | None) -> object:
     Reload cmcp_runtime.config with CMCP_DEV_MODE set to *value* (or absent if None),
     and return the fresh module so we can inspect its DEV_MODE constant.
     """
+    # The module to put back afterwards, imported before the environment changes.
+    import cmcp_runtime
+    import cmcp_runtime.config
+
     if value is None:
         monkeypatch.delenv("CMCP_DEV_MODE", raising=False)
     else:
         monkeypatch.setenv("CMCP_DEV_MODE", value)
 
-    # Force a clean reimport so the module-level constant is re-evaluated.
-    sys.modules.pop("cmcp_runtime.config", None)
+    # Force a clean reimport so the module-level constant is re-evaluated, and put
+    # the original module back afterwards, both in sys.modules and as the package
+    # attribute the import also rebinds. Modules imported earlier keep references
+    # into the original, so leaving the copy in place made later tests patch a
+    # module that startup no longer reads.
+    monkeypatch.setattr(cmcp_runtime, "config", cmcp_runtime.config)
+    monkeypatch.delitem(sys.modules, "cmcp_runtime.config", raising=False)
     return importlib.import_module("cmcp_runtime.config")
 
 

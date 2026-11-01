@@ -60,9 +60,9 @@ What the appraisal does not give you: it proves the gateway extended a specific 
 
 No TCG event log is collected or replayed. A verifier can tell that state differs from a known-good value but not what changed, cannot express policy over individual boot components, and cannot debug a mismatch. Any allowlist of golden measurements becomes unmaintainable, since every firmware update invalidates it with no explanation.
 
-### 4.5 Sealing is documented but not implemented
+### 4.5 Sealing is opt-in, and not bound to boot state
 
-[attestation.md](attestation.md) section 4.2 describes sealing the signing key with `TPM2_Create` under a PCR-bound parent. That is correctly scoped as Phase 2, but a reader may assume it exists. It does not.
+The signing key can be sealed (#462, [attestation.md](attestation.md) section 4.2), but only with `attestation.seal_signing_key`, and under `TPM2_PolicyNV` over a gate index holding the gateway digest rather than a PCR-bound parent. Boot state is not in the policy until P4. By default the key is still ephemeral.
 
 ### 4.6 The measurement itself was wrong (#434, fixed in #437)
 
@@ -111,7 +111,7 @@ quote-specific and is not used to appraise an NV certification.
 
 **What P2 still does not give you.** `verified=True` requires a complete relying-party policy, including an expected digest; collector-claimed metadata cannot substitute for one. The result does not prove that the measured inputs are safe, that the pre-value has an approved history, that the index was never redefined, or that the evidence is current beyond its binding to the caller-supplied transcript nonce. Deciding the approved digest for a release is a release-engineering question, not a TPM one. Transporting the startup pair in a signed claim, binding it to a relying-party protocol, and defining policy-reload behavior remain separate integration work.
 
-**P3. Seal the TRACE signing key (attestation.md 4.2).** Implement the documented Phase 2 design over the P2 policy, so a modified gateway cannot unseal the key that signs claims. This is what converts measurement into enforcement.
+**P3. Seal the TRACE signing key (attestation.md 4.2).** Landed as opt-in (#462). The key is sealed under `TPM2_PolicyNV` over a gate NV index that holds the gateway digest, not over the measurement index, which accumulates and so matches one start only, and not over PCRs, which wait for P4. A gateway whose measured inputs differ from the sealed digest, with its measurement code intact, does not get the key and does not start. Anyone with owner authorization can still write an approved digest into the gate and unseal, and a modified gateway that reports the approved digest gets the key; those are the same limits as the extend index.
 
 **P4. Ship the TCG event log (#433).** Collect and replay it so evidence is interpretable and policy can name specific components.
 

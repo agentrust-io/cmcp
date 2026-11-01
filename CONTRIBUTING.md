@@ -48,7 +48,7 @@ pip install -e ".[dev]"
 
 ```bash
 ruff check src/ tests/        # lint
-mypy src/cmcp_gateway/        # type check
+mypy src/cmcp_runtime/        # type check
 bandit -r src/ -c pyproject.toml  # security scan
 pytest tests/unit/ -v          # unit tests
 ```
@@ -99,9 +99,9 @@ Keep commits small and focused. One logical change per commit. Do not bundle unr
 
 Changes to these paths require two maintainer approvals and a comment explaining the security impact:
 
-- `src/cmcp_gateway/audit/`: signing, audit chain, TRACE Claim generation
-- `src/cmcp_gateway/tee/`: TEE provider integration
-- `src/cmcp_gateway/policy/`: Cedar policy evaluation
+- `src/cmcp_runtime/audit/`: signing, audit chain, TRACE Claim generation
+- `src/cmcp_runtime/tee/`: TEE provider integration
+- `src/cmcp_runtime/policy/`: Cedar policy evaluation
 
 ## Reporting security vulnerabilities
 
@@ -111,7 +111,7 @@ Do **not** open a public issue. Use [GitHub Security Advisories](https://github.
 
 - Python 3.11+ syntax throughout (`X | Y`, `match`, etc.)
 - `ruff` enforces style; do not add `# noqa` without a comment explaining why
-- `mypy --strict` on `src/cmcp_gateway/`; new public functions need type annotations
+- `mypy --strict` on `src/cmcp_runtime/`; new public functions need type annotations
 - No comments that describe *what* the code does: only *why* when non-obvious
 - Tests live in `tests/unit/` and follow the existing `test_<module>.py` naming
 

@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import base64
 import binascii
+import fnmatch
 import hashlib
+import io
 import json
 import logging
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import rfc8785
@@ -364,6 +366,36 @@ def _canonical_bundle_hash(
         }
     )
     return _sha256_hex(canonical)
+
+
+def bundle_hash_of_files(files: Mapping[str, bytes]) -> str | None:
+    """The canonical bundle hash of a bundle already read into memory, or None.
+
+    ``files`` maps each file's path, relative to the bundle, to its bytes, as
+    :func:`cmcp_runtime.tee.measurement.read_policy_files` returns them. The files
+    chosen and the decoding are the ones :func:`load_policy_bundle` applies on disk,
+    so a read of the bundle the store accepted hashes to that bundle's
+    ``bundle_hash``. None when the files are not a loadable bundle. Nothing is
+    verified here: a caller compares the result with a hash that was.
+    """
+    try:
+        raw_manifest = json.loads(_read_text(files["manifest.json"]))
+        schema_content = _read_text(files["schema.cedarschema"])
+        policy_files = {
+            path: _read_text(content)
+            for path, content in files.items()
+            if fnmatch.fnmatchcase(PurePosixPath(path).name, "*.cedar")
+        }
+    except (KeyError, ValueError):  # ValueError covers JSON and decoding errors
+        return None
+    if not policy_files or not isinstance(raw_manifest, dict):
+        return None
+    return f"sha256:{_canonical_bundle_hash(raw_manifest, policy_files, schema_content)}"
+
+
+def _read_text(content: bytes) -> str:
+    """Decode as ``Path.read_text()`` does: the locale encoding, universal newlines."""
+    return io.TextIOWrapper(io.BytesIO(content)).read()
 
 
 def load_policy_bundle(
