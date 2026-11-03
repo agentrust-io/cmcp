@@ -9,6 +9,8 @@ import hashlib
 import io
 import json
 import logging
+import math
+import re
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -72,13 +74,75 @@ class PolicyBundle:
     signing_key_id: str | None = None
 
 
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        out[key] = value
+    return out
+
+
+class _InvalidRevocationJson:
+    """Sentinel marking a revocation statement containing duplicate keys or non-finite values."""
+
+
+_INVALID_REVOCATION_JSON = _InvalidRevocationJson()
+
+
+def _revocation_object_pairs(pairs: list[tuple[str, Any]]) -> Any:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out or value is _INVALID_REVOCATION_JSON:
+            return _INVALID_REVOCATION_JSON
+        pending = [value]
+        while pending:
+            item = pending.pop()
+            if item is _INVALID_REVOCATION_JSON:
+                return _INVALID_REVOCATION_JSON
+            if isinstance(item, list):
+                pending.extend(item)
+        out[key] = value
+    return out
+
+
+def _revocation_nonfinite_constant(_value: str) -> Any:
+    return _INVALID_REVOCATION_JSON
+
+
+def _revocation_parse_float(token: str) -> Any:
+    val = float(token)
+    if not math.isfinite(val):
+        return _INVALID_REVOCATION_JSON
+    return val
+
+
+def _no_nonfinite_constant(value: str) -> Any:
+    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
+
+
+def _finite_float(token: str) -> float:
+    val = float(token)
+    if not math.isfinite(val):
+        raise ValueError(f"non-finite JSON number is not allowed: {token}")
+    return val
+
+
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
 def _b64url_decode(value: str) -> bytes:
+    if not isinstance(value, str) or not _B64URL_RE.fullmatch(value) or len(value) % 4 == 1:
+        raise ValueError("invalid canonical base64url")
     padding = 4 - (len(value) % 4)
-    return base64.urlsafe_b64decode(value + ("=" * padding if padding != 4 else ""))
+    raw = base64.urlsafe_b64decode(value + ("=" * padding if padding != 4 else ""))
+    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("non-canonical base64url encoding")
+    return raw
 
 
 def signing_pre_image(bundle_hash: str) -> bytes:
@@ -142,9 +206,7 @@ class PolicySigningKeys:
 
     def __init__(self, current: bytes, successor: bytes | None = None) -> None:
         if successor is not None and successor == current:
-            raise ConfigError(
-                "the successor policy signing key must differ from the current one"
-            )
+            raise ConfigError("the successor policy signing key must differ from the current one")
         self._current: bytes | None = current
         self._successor = successor
         self._revoked: list[bytes] = []
@@ -231,8 +293,13 @@ class PolicySigningKeys:
         if not path.is_file():
             return []
         try:
-            statements = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
+            statements = json.loads(
+                path.read_text(encoding="utf-8"),
+                object_pairs_hook=_revocation_object_pairs,
+                parse_constant=_revocation_nonfinite_constant,
+                parse_float=_revocation_parse_float,
+            )
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
             logger.warning("POLICY_KEY_REVOCATION_INVALID: cannot read %s: %s", path, exc)
             return []
         if not isinstance(statements, list):
@@ -246,9 +313,7 @@ class PolicySigningKeys:
             try:
                 revoked = self.apply(statement)
             except PolicyKeyRevocationInvalid as exc:
-                logger.warning(
-                    "POLICY_KEY_REVOCATION_INVALID: %s (%s)", exc, exc.detail or ""
-                )
+                logger.warning("POLICY_KEY_REVOCATION_INVALID: %s (%s)", exc, exc.detail or "")
                 continue
             if revoked is not None:
                 applied.append(revoked)
@@ -262,9 +327,18 @@ def parse_bundle_version(version: str) -> tuple[int, ...]:
     orderable. A version that cannot be parsed is refused rather than treated as
     equal-or-newer, because "unparseable" must not be a way past the check.
     """
-    parts = version.split(".")
+    if (
+        not isinstance(version, str)
+        or not version
+        or not all(p.isascii() and p.isdecimal() for p in version.split("."))
+    ):
+        raise ConfigError(
+            f"policy manifest version {version!r} is not a dotted sequence of integers; "
+            "a runtime policy change is authorised by an increasing version, so the "
+            "version must be orderable"
+        )
     try:
-        return tuple(int(p) for p in parts)
+        return tuple(int(p) for p in version.split("."))
     except ValueError as exc:
         raise ConfigError(
             f"policy manifest version {version!r} is not a dotted sequence of integers; "
@@ -339,8 +413,7 @@ def _canonical_bundle_hash(
     })
     """
     policy_hashes = {
-        name: _sha256_hex(content.encode())
-        for name, content in sorted(policy_files.items())
+        name: _sha256_hex(content.encode()) for name, content in sorted(policy_files.items())
     }
     hashed_manifest = {k: v for k, v in manifest.items() if k not in _UNHASHED_MANIFEST_KEYS}
     # docs/spec/cedar-policy.md section 1 defines canonical_json as RFC 8785
@@ -440,9 +513,16 @@ def load_policy_bundle(
     if not manifest_path.exists():
         raise ConfigError(f"Policy bundle missing manifest.json in {bundle_path}")
     try:
-        raw_manifest: dict[str, Any] = json.loads(manifest_path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
+        raw_manifest: dict[str, Any] = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_no_duplicate_keys,
+            parse_constant=_no_nonfinite_constant,
+            parse_float=_finite_float,
+        )
+    except (json.JSONDecodeError, ValueError, OSError) as exc:
         raise ConfigError(f"Cannot load manifest.json: {exc}") from exc
+    if not isinstance(raw_manifest, dict):
+        raise ConfigError("manifest.json must be a JSON object")
 
     required = {"version", "authored_at", "author_identity", "commit_sha"}
     missing = required - raw_manifest.keys()
@@ -503,9 +583,7 @@ def load_policy_bundle(
     if signing_key is not None:
         # POLICY-004. After the hash, because the signature is over the hash: a
         # signature can only mean anything once we know what was hashed.
-        verify_bundle_signature(
-            raw_manifest, f"sha256:{computed}", signing_key, revoked_keys
-        )
+        verify_bundle_signature(raw_manifest, f"sha256:{computed}", signing_key, revoked_keys)
         # Refuse a version we cannot order, even on first load. Discovering at the
         # first reload that the running bundle's version was never comparable is
         # worse than refusing to start with it.
@@ -614,8 +692,7 @@ class PolicyStore:
             raise PolicySignatureInvalid(
                 "policy bundle version did not increase; refusing a possible downgrade",
                 detail=(
-                    f"running={self._bundle.manifest.version} "
-                    f"offered={new_bundle.manifest.version}"
+                    f"running={self._bundle.manifest.version} offered={new_bundle.manifest.version}"
                 ),
             )
 
