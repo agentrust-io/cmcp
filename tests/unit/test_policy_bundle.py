@@ -416,3 +416,30 @@ def test_ascii_only_bundles_keep_the_hash_they_already_had():
     )
 
     assert _bundle_hash(MANIFEST) == bundle_module._sha256_hex(legacy.encode())
+
+
+# #462: the reseal after a reload hashes one in-memory read of the bundle and compares
+# it with the hash of the bundle the store accepted, so the two must agree.
+
+
+def test_a_read_of_the_bundle_hashes_to_what_the_loader_computes(bundle_dir):
+    from cmcp_runtime.tee.measurement import read_policy_files
+
+    (bundle_dir / "sub").mkdir()
+    (bundle_dir / "sub" / "more.cedar").write_bytes(
+        b"forbid(principal, action, resource)\r\nwhen { false };\r\n"
+    )
+    (bundle_dir / "README.md").write_text("measured, but not part of the bundle hash")
+    files = read_policy_files(str(bundle_dir))
+    assert bundle_module.bundle_hash_of_files(files) == load_policy_bundle(str(bundle_dir)).bundle_hash
+
+
+def test_files_that_are_not_a_loadable_bundle_have_no_hash(bundle_dir):
+    from cmcp_runtime.tee.measurement import read_policy_files
+
+    files = read_policy_files(str(bundle_dir))
+    without = {k: v for k, v in files.items() if k != "manifest.json"}
+    assert bundle_module.bundle_hash_of_files(without) is None
+    assert bundle_module.bundle_hash_of_files({**files, "manifest.json": b"{not json"}) is None
+    no_policy = {k: v for k, v in files.items() if not k.endswith(".cedar")}
+    assert bundle_module.bundle_hash_of_files(no_policy) is None

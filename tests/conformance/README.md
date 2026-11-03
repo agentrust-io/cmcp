@@ -21,7 +21,7 @@ Spec reference: [attestation.md](../../docs/spec/attestation.md)
 | ATTEST-001 | MUST | Gateway refuses to start when no TEE provider is detected and `CMCP_DEV_MODE` is not set. | Exit code 1; log contains `ATTESTATION_PROVIDER_UNSUPPORTED`. |
 | ATTEST-002 | MUST | Gateway starts with software-only provider when `CMCP_DEV_MODE=1`. | TRACE Claims have `attestation_report.provider = "software-only"`. |
 | ATTEST-003 | MUST | TRACE Claim `tee_public_key` is consistent across all claims in a single session. | All claims in the session carry the same `tee_public_key` value. |
-| ATTEST-004 | MUST | New enclave startup produces a different `tee_public_key` than the previous startup. | Key is ephemeral: two independent startups never share a `tee_public_key`. |
+| ATTEST-004 | MUST | New enclave startup produces a different `tee_public_key` than the previous startup, unless `attestation.seal_signing_key` is on (TPM tier, [attestation.md §4.2](../../docs/spec/attestation.md)). | With sealing off, the key is ephemeral: two independent startups never share a `tee_public_key`. With it on, the same key is unsealed on every start. |
 | ATTEST-005 | MUST | Policy bundle hash mismatch at startup causes failure. | `POLICY_HASH_MISMATCH` error emitted; exit code 1. |
 | ATTEST-006 | SHOULD | Attestation refresh produces a TRACE Claim with updated `attestation_generated_at` without dropping active sessions. | Refreshed claim has a later `attestation_generated_at`; in-flight sessions are not interrupted. |
 
