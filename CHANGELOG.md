@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gateway audit records now distinguish responses inspected successfully (`pass`)
+  from calls with no response inspection (`null`). The gateway runs the existing
+  catalog schema stage after scanning: schema refusal records `schema_violation`,
+  actual surplus removal in redact mode records `surplus_stripped`, and log-only
+  surplus and scanner sanitization record `pass`. Egress refusals and later faults
+  retain the completed inspection result. The existing schema-stage behavior
+  is reused without changing its validation rules. Audit field
+  names, vocabulary, historical entries and session-start `n/a` remain unchanged
+  (#764).
+
 - **The test suite could write to the developer's TPM.** With tpm2-pytss
   installed, tests that expected the degraded path opened the default TCTI and
   defined and extended the measurement index on the machine's real TPM. The
