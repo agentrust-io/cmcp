@@ -25,7 +25,12 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.x509.oid import NameOID
 
-from cmcp_verify.azure_cvm import verify_azure_cvm_measurement
+from cmcp_verify.azure_cvm import (
+    _ak_from_runtime_data,
+    _extract_extra_data,
+    _verify_quote_signature,
+    verify_azure_cvm_measurement,
+)
 from cmcp_verify.sev_snp import _SNP_SIG_OFFSET
 
 _MEAS_OFFSET = SNP_OFFSETS["measurement"]
@@ -208,6 +213,191 @@ def test_no_evidence_fails_closed() -> None:
     res = verify_azure_cvm_measurement("sha384:" + "0" * 96, None, "00" * 64, b"")
     assert res.verified is False
     assert res.failure_reason == "no_raw_evidence"
+
+
+def test_azure_cvm_rejects_private_or_non_minimal_hcl_ak_and_short_quote_structs() -> None:
+    nonce = os.urandom(64)
+    envelope, measurement, ark_pem = _build_evidence(nonce)
+    env = json.loads(envelope)
+    rt = json.loads(base64.b64decode(env["runtime_data"]))
+
+    # 1. Private JWK member in HCLAkPub
+    rt_priv = json.loads(json.dumps(rt))
+    rt_priv["keys"][0]["d"] = "AQAB"
+    _, _, vcek_key = _synthetic_chain()
+    raw_rt_priv = json.dumps(rt_priv).encode()
+    snp_priv, meas_priv = _signed_snp(vcek_key, raw_rt_priv)
+    env_priv = dict(
+        env,
+        snp_report=base64.b64encode(snp_priv).decode(),
+        runtime_data=base64.b64encode(raw_rt_priv).decode(),
+    )
+    res_priv = verify_azure_cvm_measurement(
+        meas_priv, json.dumps(env_priv).encode(), nonce.hex(), ark_pem
+    )
+    assert res_priv.verified is False
+    assert res_priv.failure_reason == "ak_parse_error"
+
+    # 2. Leading 0x00 in Base64urlUInt exponent
+    rt_pad = json.loads(json.dumps(rt))
+    rt_pad["keys"][0]["e"] = (
+        base64.urlsafe_b64encode(b"\x00\x01\x00\x01").rstrip(b"=").decode("ascii")
+    )
+    raw_rt_pad = json.dumps(rt_pad).encode()
+    snp_pad, meas_pad = _signed_snp(vcek_key, raw_rt_pad)
+    env_pad = dict(
+        env,
+        snp_report=base64.b64encode(snp_pad).decode(),
+        runtime_data=base64.b64encode(raw_rt_pad).decode(),
+    )
+    res_pad = verify_azure_cvm_measurement(
+        meas_pad, json.dumps(env_pad).encode(), nonce.hex(), ark_pem
+    )
+    assert res_pad.verified is False
+    assert res_pad.failure_reason == "ak_parse_error"
+
+    # 3. Short quote_sig (< 6 bytes) fails closed without raising struct.error
+    env_short_sig = dict(env, quote_sig=base64.b64encode(b"\x00\x14").decode())
+    res_short = verify_azure_cvm_measurement(
+        measurement, json.dumps(env_short_sig).encode(), nonce.hex(), ark_pem
+    )
+    assert res_short.verified is False
+    assert res_short.failure_reason == "quote_signature_invalid"
+
+    # 4. Malformed report_data_hex fails closed as quote_nonce_mismatch
+    res_bad_nonce = verify_azure_cvm_measurement(
+        measurement, envelope, "not-valid-hex!", ark_pem
+    )
+    assert res_bad_nonce.verified is False
+    assert res_bad_nonce.failure_reason == "quote_nonce_mismatch"
+
+    # 5. Missing kty on HCLAkPub is rejected
+    rt_no_kty = json.loads(json.dumps(rt))
+    del rt_no_kty["keys"][0]["kty"]
+    raw_rt_no_kty = json.dumps(rt_no_kty).encode()
+    snp_no_kty, meas_no_kty = _signed_snp(vcek_key, raw_rt_no_kty)
+    env_no_kty = dict(
+        env,
+        snp_report=base64.b64encode(snp_no_kty).decode(),
+        runtime_data=base64.b64encode(raw_rt_no_kty).decode(),
+    )
+    res_no_kty = verify_azure_cvm_measurement(
+        meas_no_kty, json.dumps(env_no_kty).encode(), nonce.hex(), ark_pem
+    )
+    assert res_no_kty.verified is False
+    assert res_no_kty.failure_reason == "ak_parse_error"
+
+
+def test_azure_cvm_rejects_certify_attest_and_accepts_quote() -> None:
+    nonce = os.urandom(64)
+    extra = hashlib.sha256(nonce).digest()
+    chain_pem, ark_pem, vcek_key = _synthetic_chain()
+    ak_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    runtime = _runtime_data(ak_key.public_key())
+    snp, measurement = _signed_snp(vcek_key, runtime)
+
+    def _raw_tpms_attest(attest_type: int) -> bytes:
+        return (
+            struct.pack(">I", 0xFF544347)
+            + struct.pack(">H", attest_type)
+            + struct.pack(">H", 0)
+            + struct.pack(">H", len(extra))
+            + extra
+            + b"\x00" * 40
+        )
+
+    def _wrap_envelope(quote_msg: bytes) -> bytes:
+        quote_sig = _tpmt_signature(ak_key, quote_msg)
+        return json.dumps(
+            {
+                "v": 1,
+                "snp_report": base64.b64encode(snp).decode(),
+                "runtime_data": base64.b64encode(runtime).decode(),
+                "quote_msg": base64.b64encode(quote_msg).decode(),
+                "quote_sig": base64.b64encode(quote_sig).decode(),
+                "ak_pub_pem": ak_key.public_key()
+                .public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+                .decode(),
+                "vcek_chain_pem": base64.b64encode(chain_pem).decode(),
+            }
+        ).encode()
+
+    # (a) Bare TPMS_ATTEST with TPM_ST_ATTEST_CERTIFY (0x8017) must be rejected
+    bare_certify = _raw_tpms_attest(0x8017)
+    res_bare_certify = verify_azure_cvm_measurement(
+        measurement, _wrap_envelope(bare_certify), nonce.hex(), ark_pem
+    )
+    assert res_bare_certify.verified is False
+    assert res_bare_certify.failure_reason == "quote_parse_error"
+
+    # (b) TPM2B_ATTEST-wrapped TPM_ST_ATTEST_CERTIFY (0x8017) must be rejected
+    wrapped_certify = struct.pack(">H", len(bare_certify)) + bare_certify
+    res_wrapped_certify = verify_azure_cvm_measurement(
+        measurement, _wrap_envelope(wrapped_certify), nonce.hex(), ark_pem
+    )
+    assert res_wrapped_certify.verified is False
+    assert res_wrapped_certify.failure_reason == "quote_parse_error"
+
+    # (c) Bare and TPM2B_ATTEST-wrapped TPM_ST_ATTEST_QUOTE (0x8018) must be accepted
+    bare_quote = _raw_tpms_attest(0x8018)
+    res_bare_quote = verify_azure_cvm_measurement(
+        measurement, _wrap_envelope(bare_quote), nonce.hex(), ark_pem
+    )
+    assert res_bare_quote.verified is True, res_bare_quote.failure_reason
+
+    wrapped_quote = struct.pack(">H", len(bare_quote)) + bare_quote
+    res_wrapped_quote = verify_azure_cvm_measurement(
+        measurement, _wrap_envelope(wrapped_quote), nonce.hex(), ark_pem
+    )
+    assert res_wrapped_quote.verified is True, res_wrapped_quote.failure_reason
+
+
+def test_azure_cvm_parser_bounds_and_jwk_validation() -> None:
+    ak_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ak_pub = ak_key.public_key()
+    pn = ak_pub.public_numbers()
+    e_b64 = _b64u_int(pn.e)
+    n_b64 = _b64u_int(pn.n)
+
+    # _extract_extra_data bounds
+    with pytest.raises(ValueError, match="TPMS_ATTEST truncated"):
+        _extract_extra_data(b"\xffTCG")
+    with pytest.raises(ValueError, match="TPM2B_ATTEST size exceeds buffer"):
+        _extract_extra_data(struct.pack(">HI", 20, 0xFF544347))
+    with pytest.raises(ValueError, match="TPMS_ATTEST magic not found"):
+        _extract_extra_data(b"\x00" * 10)
+    with pytest.raises(ValueError, match="TPMS_ATTEST is not a TPM_ST_ATTEST_QUOTE"):
+        _extract_extra_data(struct.pack(">HI", 4, 0xFF544347))
+    with pytest.raises(ValueError, match="TPMS_ATTEST qualifiedSigner truncated"):
+        _extract_extra_data(struct.pack(">IH", 0xFF544347, 0x8018))
+    with pytest.raises(ValueError, match="TPMS_ATTEST extraData header truncated"):
+        _extract_extra_data(struct.pack(">IHH", 0xFF544347, 0x8018, 2) + b"\xaa")
+    with pytest.raises(ValueError, match="TPMS_ATTEST extraData truncated"):
+        _extract_extra_data(struct.pack(">IHHH", 0xFF544347, 0x8018, 0, 8) + b"\xbb\xcc")
+
+    # _verify_quote_signature length mismatch
+    assert _verify_quote_signature(b"msg", struct.pack(">HHH", 0x0014, 0x000B, 10) + b"x", ak_pub) is False
+
+    # _ak_from_runtime_data edge cases
+    with pytest.raises(ValueError, match="duplicate JSON object key"):
+        _ak_from_runtime_data(b'{"keys": [], "keys": []}')
+    with pytest.raises(ValueError, match="non-finite JSON constant"):
+        _ak_from_runtime_data(b'{"keys": [NaN]}')
+    with pytest.raises(ValueError, match="runtime data must be a JSON object"):
+        _ak_from_runtime_data(b"[]")
+    with pytest.raises(ValueError, match="runtime data keys must be a list"):
+        _ak_from_runtime_data(b'{"keys": {}}')
+    with pytest.raises(ValueError, match="runtime data must carry exactly one HCLAkPub key"):
+        _ak_from_runtime_data(b'{"keys": []}')
+    with pytest.raises(ValueError, match="HCLAkPub kty must be RSA"):
+        _ak_from_runtime_data(json.dumps({"keys": [{"kid": "HCLAkPub", "kty": "EC", "e": e_b64, "n": n_b64}]}).encode())
+    with pytest.raises(ValueError, match="canonical unpadded base64url"):
+        _ak_from_runtime_data(json.dumps({"keys": [{"kid": "HCLAkPub", "kty": "RSA", "e": "A", "n": n_b64}]}).encode())
+    with pytest.raises(ValueError, match="canonical unpadded base64url"):
+        _ak_from_runtime_data(json.dumps({"keys": [{"kid": "HCLAkPub", "kty": "RSA", "e": "QR", "n": n_b64}]}).encode())
+    with pytest.raises(ValueError, match="odd integers >= 3"):
+        _ak_from_runtime_data(json.dumps({"keys": [{"kid": "HCLAkPub", "kty": "RSA", "e": "Ag", "n": n_b64}]}).encode())
+
 
 
 # ── Collector round-trip (tpm2 calls monkeypatched) ─────────────────────────────
