@@ -105,7 +105,22 @@ def _parse_spec_id(event_data: bytes) -> dict[int, int]:
             raise EventLogError("Spec ID event truncated inside the algorithm list")
         alg_id, digest_size = struct.unpack_from("<HH", event_data, offset)
         offset += 4
+        if alg_id in sizes:
+            raise EventLogError(f"Spec ID event declares duplicate algorithm 0x{alg_id:04x}")
+        if digest_size == 0:
+            raise EventLogError(f"Spec ID event declares zero digest size for 0x{alg_id:04x}")
+        if alg_id in _HASHES and digest_size != _HASHES[alg_id]().digest_size:
+            raise EventLogError(
+                f"Spec ID event declares digest size {digest_size} for algorithm 0x{alg_id:04x}, "
+                f"expected {_HASHES[alg_id]().digest_size}"
+            )
         sizes[alg_id] = digest_size
+    if len(event_data) < offset + 1:
+        raise EventLogError("Spec ID event truncated before vendorInfoSize")
+    vendor_info_size = event_data[offset]
+    offset += 1
+    if offset + vendor_info_size != len(event_data):
+        raise EventLogError("Spec ID event length does not match vendorInfoSize")
     return sizes
 
 
@@ -117,6 +132,9 @@ def parse_event_log(data: bytes) -> tuple[list[EventLogEntry], dict[int, int]]:
     Raises EventLogError on any truncation rather than returning a partial log: a
     silently truncated log replays to the wrong PCR values.
     """
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise EventLogError("event log must be bytes")
+    data = bytes(data)
     if len(data) < 32:
         raise EventLogError("event log too short to contain a header event")
 
@@ -151,6 +169,10 @@ def parse_event_log(data: bytes) -> tuple[list[EventLogEntry], dict[int, int]]:
             if size is None:
                 raise EventLogError(
                     f"event uses algorithm 0x{alg_id:04x}, which the header did not declare"
+                )
+            if alg_id in digests:
+                raise EventLogError(
+                    f"event declares duplicate digest for algorithm 0x{alg_id:04x}"
                 )
             if len(data) < offset + size:
                 raise EventLogError("event truncated inside a digest")
