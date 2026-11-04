@@ -102,6 +102,17 @@ _LIVE_AUTHENTICATED_SUBJECT_SOURCES = frozenset({"svid"})
 _EXTERNAL_EVIDENCE_ERROR = "EXTERNAL_EVIDENCE_VERIFICATION_FAILED"
 _EXTERNAL_EVIDENCE_HASH_RE = re.compile(r"^sha(256|384):[0-9a-f]+$")
 _ISSUER_KEY_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_PRIVATE_JWK_PARAMS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
+
+
+def _canonical_b64url_decode(value: Any) -> bytes:
+    if not isinstance(value, str) or not _B64URL_RE.fullmatch(value) or len(value) % 4 == 1:
+        raise ValueError("must be canonical unpadded base64url")
+    raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("non-canonical base64url encoding")
+    return raw
 _EXTERNAL_EVIDENCE_TYPES = frozenset({
     "controller-execution-receipt/v1",
     "tee-signed-receipt",
@@ -187,9 +198,10 @@ def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
 def _jwk_x_to_hex(x_b64: str) -> str | None:
     """Decode trace.cnf.jwk.x (base64url, no padding) to hex. Returns None on error."""
     try:
-        padding = 4 - (len(x_b64) % 4)
-        padded = x_b64 + ("=" * padding if padding != 4 else "")
-        return base64.urlsafe_b64decode(padded).hex()
+        raw = _canonical_b64url_decode(x_b64)
+        if len(raw) != 32:
+            return None
+        return raw.hex()
     except Exception:
         return None
 
@@ -211,24 +223,23 @@ def _platform_report_data(nonce: Any) -> str | None:
 def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
     """Verify the Ed25519 signature using the JWK public key in trace.cnf.jwk.x."""
     try:
-        x_b64: str = claim["trace"]["cnf"]["jwk"]["x"]
-        padding = 4 - (len(x_b64) % 4)
-        if padding != 4:
-            x_b64 += "=" * padding
-        pub_bytes = base64.urlsafe_b64decode(x_b64)
+        jwk = claim["trace"]["cnf"]["jwk"]
+        if not isinstance(jwk, dict):
+            return False, "trace.cnf.jwk must be a JSON object"
+        if _PRIVATE_JWK_PARAMS.intersection(jwk):
+            return False, "trace.cnf.jwk must not contain private or symmetric JWK parameters"
+        x_b64: str = jwk["x"]
+        pub_bytes = _canonical_b64url_decode(x_b64)
         pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
-    except (KeyError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         return False, f"cannot parse trace.cnf.jwk.x: {exc}"
 
-    sig_b64: str = claim.get("signature", "")
-    if not sig_b64:
+    sig_b64 = claim.get("signature", "")
+    if not isinstance(sig_b64, str) or not sig_b64:
         return False, "signature field is empty"
 
     try:
-        padding = 4 - (len(sig_b64) % 4)
-        if padding != 4:
-            sig_b64 += "=" * padding
-        sig_bytes = base64.urlsafe_b64decode(sig_b64)
+        sig_bytes = _canonical_b64url_decode(sig_b64)
     except Exception as exc:
         return False, f"cannot decode signature: {exc}"
 
@@ -271,14 +282,17 @@ def _verify_key_binding(
         return None, "software-only mode -- TEE key binding not applicable"
 
     # Extract the public key bytes from cnf.jwk.x
-    x_b64 = claim.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
+    jwk = claim.get("trace", {}).get("cnf", {}).get("jwk", {})
+    if not isinstance(jwk, dict) or _PRIVATE_JWK_PARAMS.intersection(jwk):
+        return False, "trace.cnf.jwk is malformed or contains private key parameters"
+    x_b64 = jwk.get("x", "")
     if not x_b64:
         return False, "trace.cnf.jwk.x is missing -- cannot verify key binding"
 
     try:
-        padding = 4 - (len(x_b64) % 4)
-        padded = x_b64 + ("=" * padding if padding != 4 else "")
-        base64.urlsafe_b64decode(padded)  # validate encoding; bytes not needed
+        raw_x = _canonical_b64url_decode(x_b64)
+        if len(raw_x) != 32:
+            return False, "trace.cnf.jwk.x must decode to 32 bytes"
     except Exception as exc:
         return False, f"cannot decode trace.cnf.jwk.x: {exc}"
 
