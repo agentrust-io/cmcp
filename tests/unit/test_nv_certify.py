@@ -392,7 +392,8 @@ def test_non_sha256_length_claimed_gateway_digest_is_rejected() -> None:
     short_digest = bytes(31)
     result = verify(fx, make_envelope(fx, gateway_digest=short_digest))
     assert not result.verified
-    assert result.failure_reason == "gateway_digest_mismatch"
+    assert result.failure_reason == "malformed_envelope"
+    assert "envelope" not in result.verified_fields
 
 
 def test_replayed_pair_from_another_session_is_rejected() -> None:
@@ -607,3 +608,52 @@ def test_accumulated_index_still_verifies() -> None:
         accumulated = hashlib.sha256(accumulated + bytes([i]) * 32).digest()
     result = verify(fx, make_envelope(fx, pre_contents=accumulated))
     assert result.verified, result.failure_reason
+
+
+@pytest.mark.parametrize("bad_v", [True, False, 1.9, "1", None])
+def test_non_int_envelope_version_is_rejected(bad_v: object) -> None:
+    fx = Fixture()
+    env = json.loads(make_envelope(fx))
+    env["v"] = bad_v
+    result = verify(fx, json.dumps(env).encode())
+    assert not result.verified
+    assert result.failure_reason == "unsupported_envelope_version"
+
+
+@pytest.mark.parametrize(
+    "mutated_raw",
+    [
+        lambda raw: raw[:-1] + b',"v":1}',
+        lambda _raw: b'{"v":1,"x":NaN}',
+        lambda raw: raw[:-1] + b',"extra":1e1000}',
+        lambda raw: raw[:-1] + b',"extra":{"nested":[-1e1000]}}',
+        lambda _raw: b"[1, 2]",
+        lambda raw: json.dumps({**json.loads(raw), "pre_attest": "!!!not-base64!!!"}).encode(),
+        lambda raw: json.dumps(
+            {**json.loads(raw), "gateway_digest": GATEWAY_DIGEST.hex().upper()}
+        ).encode(),
+        lambda raw: json.dumps({**json.loads(raw), "gateway_digest": "a" * 62}).encode(),
+        lambda raw: json.dumps({**json.loads(raw), "gateway_digest": "a" * 66}).encode(),
+    ],
+)
+def test_envelope_rejects_duplicate_keys_nonfinite_non_base64_and_uppercase_hex(
+    mutated_raw,
+) -> None:
+    fx = Fixture()
+    raw = make_envelope(fx)
+    assert verify(fx, raw).verified
+    result = verify(fx, mutated_raw(raw))
+    assert not result.verified
+    assert result.failure_reason == "malformed_envelope"
+    assert "envelope" not in result.verified_fields
+
+
+@pytest.mark.parametrize(
+    ("bad_index", "bad_written"),
+    [(True, True), ("0x01500432", True), (0x01500432, "yes")],
+)
+def test_measurement_nv_public_bytes_validates_types(bad_index, bad_written) -> None:
+    from cmcp_verify.nv_policy import measurement_nv_public_bytes
+
+    with pytest.raises(TypeError):
+        measurement_nv_public_bytes(bad_index, written=bad_written)
