@@ -27,8 +27,11 @@ def main():
             print(f"OUT OF SCOPE {relative}: {excluded[relative]}")
             continue
         path = root / relative
-        if path.is_symlink() or (root / "requirements").is_symlink():
-            raise ValueError(f"lock path must not contain symlinks: {relative}")
+        component = root
+        for part in Path(relative).parts:
+            component = component / part
+            if component.is_symlink():
+                raise ValueError(f"lock path must not contain symlinks: {relative}")
         if not path.is_file():
             raise ValueError(f"deleted lock requires explicit maintainer review: {relative}")
         after = path.read_text(encoding="utf-8")
