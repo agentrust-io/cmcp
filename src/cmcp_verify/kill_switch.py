@@ -76,7 +76,7 @@ def verify_kill_switch_refusal(
         try:
             public_key = Ed25519PublicKey.from_public_bytes(_b64url_decode(receipt_key))
             public_key.verify(_b64url_decode(signature), _canonical_json(receipt))
-        except (ValueError, binascii.Error):
+        except (TypeError, ValueError, binascii.Error):
             errors.append("receipt key or signature cannot be decoded")
         except InvalidSignature:
             errors.append("receipt signature verification failed")
@@ -93,8 +93,14 @@ def verify_kill_switch_refusal(
         errors.append(
             "receipt is not bound to a signed claim (issued before the session's claim existed)"
         )
-    elif digest != "sha256:" + hashlib.sha256(_canonical_json(claim)).hexdigest():
-        errors.append("receipt claim_digest does not match the claim")
+    else:
+        try:
+            claim_digest = "sha256:" + hashlib.sha256(_canonical_json(claim)).hexdigest()
+        except (TypeError, ValueError):
+            errors.append("claim cannot be canonicalized")
+        else:
+            if digest != claim_digest:
+                errors.append("receipt claim_digest does not match the claim")
 
     identity = gateway.get("agent_identity")
     if isinstance(identity, dict) and receipt.get("agent_id") != identity.get("agent_id"):

@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+import rfc8785
+
 from cmcp_runtime.agent_manifest import AgentManifestBinding
 from cmcp_runtime.audit.chain import AuditChain, AuditEntry
 from cmcp_runtime.audit.trace_claim import (
@@ -504,12 +506,7 @@ class SessionManager:
 
         claim_dict = claim.model_dump(exclude_none=True)
         # Record canonical hash of this claim for the next claim's prev_claim_hash link.
-        self._last_claim_hash = (
-            "sha256:"
-            + hashlib.sha256(
-                json.dumps(claim_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-            ).hexdigest()
-        )
+        self._last_claim_hash = "sha256:" + hashlib.sha256(rfc8785.dumps(claim_dict)).hexdigest()
         self._closed_claims[session_id] = claim_dict
         logger.info("Session closed: session_id=%s sequence_number=%d", session_id, _CLAIM_SEQUENCE)
         return claim_dict

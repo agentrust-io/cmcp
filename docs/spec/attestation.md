@@ -443,6 +443,11 @@ definition_hash = lowercase_hex(SHA-256(canonical_json(approved_definition)))
 ```
 
 `canonical_json` uses RFC 8785 (sorted keys, no insignificant whitespace).
+Older cMCP versions used Python's ASCII-escaped JSON serialization for these
+hashes and TRACE claim signatures. Existing claims or pinned catalog and
+definition hashes containing non-ASCII text, certain numbers, or keys ordered
+differently by JCS may therefore need to be reissued or repinned after upgrade.
+Stored audit-chain entry hashes are unchanged by this transition.
 
 ### 5.2 Catalog Hash Computation
 
