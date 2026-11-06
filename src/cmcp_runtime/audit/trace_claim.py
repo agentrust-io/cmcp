@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
+import rfc8785
 from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -346,12 +347,12 @@ REFUSAL_RECEIPT_TYPE = "cmcp.kill-switch.refusal/v1"
 
 
 def canonical_json(claim_dict: dict[str, Any]) -> bytes:
-    """Canonical serialization for signing: sorted keys, no whitespace, UTF-8.
+    """RFC 8785 serialization for signing.
 
     The 'signature' field is excluded from the body being signed.
     """
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
-    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return rfc8785.dumps(body)
 
 
 def sign_trace_claim(claim: RuntimeClaim, signing_key: Any) -> str:
