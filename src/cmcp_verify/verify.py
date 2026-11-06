@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
-from cmcp_runtime.audit.trace_claim import RuntimeClaim
+from cmcp_runtime.audit.trace_claim import RuntimeClaim, canonical_json
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
 from cmcp_verify.platform_policy import SnpPlatformPolicy
@@ -180,8 +180,7 @@ class VerificationResult:
 
 def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
     """Reproduce the gateway's canonical serialization for signature verification."""
-    body = {k: v for k, v in claim_dict.items() if k != "signature"}
-    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return canonical_json(claim_dict)
 
 
 def _jwk_x_to_hex(x_b64: str) -> str | None:
@@ -232,7 +231,10 @@ def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
     except Exception as exc:
         return False, f"cannot decode signature: {exc}"
 
-    body = _canonical_json(claim)
+    try:
+        body = _canonical_json(claim)
+    except (TypeError, ValueError) as exc:
+        return False, f"claim cannot be canonicalized: {exc}"
     try:
         pub_key.verify(sig_bytes, body)
         return True, None
