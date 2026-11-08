@@ -706,3 +706,120 @@ def test_startup_fails_closed_on_unreadable_revocation_list(complete_setup):
     with pytest.raises(SystemExit) as exc_info:
         run_startup(str(config_path))
     assert exc_info.value.code == 1
+
+
+@pytest.mark.parametrize("policy_failure", ["hash", "manifest", "signing_key", None])
+def test_sealing_waits_for_policy_acceptance(complete_setup, monkeypatch, caplog, policy_failure):
+    """Exercise the real policy loader; TPM seams only are synthetic (#782)."""
+    from types import SimpleNamespace
+
+    import cmcp_runtime.startup as startup
+    from cmcp_runtime.audit.keys import SigningKey
+    from cmcp_runtime.tee.base import SoftwareOnlyProvider
+    from cmcp_runtime.tee.measurement import GatewayMeasurement
+
+    config_path = Path(complete_setup)
+    config_path.write_text(config_path.read_text() + "attestation:\n  provider: tpm\n  seal_signing_key: true\n")
+    key = SigningKey(b"s" * 32)
+    provider = SoftwareOnlyProvider()
+    monkeypatch.setattr(provider, "provider_name", lambda: "tpm")
+    monkeypatch.setattr(startup, "detect_provider", lambda config: provider)
+    start = SimpleNamespace(public_key=key.public_key_bytes)
+    monkeypatch.setattr(startup, "_begin_sealed_start", lambda config: start)
+    measurement = GatewayMeasurement("a" * 64, {})
+    monkeypatch.setattr(startup, "_measure_gateway", lambda *args: measurement)
+    monkeypatch.setattr(startup, "_extend_measurement", lambda *args: (None, None))
+    events = []
+    real_load = startup.load_policy_bundle
+
+    def load(*args, **kwargs):
+        result = real_load(*args, **kwargs)
+        events.append("policy accepted")
+        return result
+
+    held = SimpleNamespace(seed=b"s" * 32)
+
+    def finish(actual_start, actual_measurement):
+        assert actual_start is start and actual_measurement is measurement
+        events.append("seal")
+        return held
+
+    monkeypatch.setattr(startup, "load_policy_bundle", load)
+    monkeypatch.setattr(startup, "_finish_sealed_start", finish)
+    monkeypatch.delenv("CMCP_POLICY_HASH", raising=False)
+    monkeypatch.delenv("CMCP_POLICY_SIGNING_KEY", raising=False)
+    if policy_failure == "hash":
+        monkeypatch.setenv("CMCP_POLICY_HASH", "sha256:" + "0" * 64)
+    elif policy_failure == "manifest":
+        (config_path.parent / "policy" / "manifest.json").write_text("not json")
+    elif policy_failure == "signing_key":
+        monkeypatch.setenv("CMCP_POLICY_SIGNING_KEY", "invalid")
+
+    if policy_failure is not None:
+        with pytest.raises(SystemExit) as exc:
+            run_startup(complete_setup)
+        assert exc.value.code == 1
+        assert events == []
+        expected = {"hash": "POLICY_HASH_MISMATCH", "manifest": "Policy bundle invalid",
+                    "signing_key": "POLICY_SIGNING_KEY_INVALID"}
+        assert expected[policy_failure] in caplog.text
+    else:
+        ctx = run_startup(complete_setup)
+        assert events == ["policy accepted", "seal"]
+        assert ctx.sealed_key is held
+        if ctx.audit_store is not None:
+            ctx.audit_store.close()
+
+
+@pytest.mark.parametrize(
+    ("failure_config", "expected"),
+    [
+        ("kill_switch:\n  enabled: true\n", "KILL_SWITCH_REQUIRES_IDENTITY"),
+        ("audit_db_path: {directory}\n", "AUDIT_STORE_UNAVAILABLE"),
+        ("session_state_path: {directory}\n", "SESSION_STATE_STORE_UNAVAILABLE"),
+        ("conformance_profile: aarm\n", "CONFORMANCE_PROFILE_UNSATISFIED"),
+    ],
+)
+def test_sealing_waits_for_late_validation_and_allows_corrected_start(
+    complete_setup, monkeypatch, caplog, failure_config, expected
+):
+    """Late refusals must not provision; correcting the config can then start."""
+    from types import SimpleNamespace
+
+    import cmcp_runtime.startup as startup
+    from cmcp_runtime.audit.keys import SigningKey
+    from cmcp_runtime.tee.base import SoftwareOnlyProvider
+    from cmcp_runtime.tee.measurement import GatewayMeasurement
+
+    config_path = Path(complete_setup)
+    valid = config_path.read_text() + (
+        "attestation:\n  provider: tpm\n  seal_signing_key: true\n"
+    )
+    config_path.write_text(valid + failure_config.format(directory=config_path.parent))
+    key = SigningKey(b"s" * 32)
+    provider = SoftwareOnlyProvider()
+    monkeypatch.setattr(provider, "provider_name", lambda: "tpm")
+    monkeypatch.setattr(startup, "detect_provider", lambda config: provider)
+    monkeypatch.setattr(startup, "_begin_sealed_start", lambda config: SimpleNamespace(
+        public_key=key.public_key_bytes
+    ))
+    monkeypatch.setattr(startup, "_measure_gateway", lambda *args: GatewayMeasurement("a" * 64, {}))
+    monkeypatch.setattr(startup, "_extend_measurement", lambda *args: (None, None))
+    finish = MagicMock(return_value=SimpleNamespace(seed=b"s" * 32))
+    monkeypatch.setattr(startup, "_finish_sealed_start", finish)
+
+    with pytest.raises(SystemExit) as exc:
+        run_startup(complete_setup)
+    assert exc.value.code == 1
+    assert expected in caplog.text
+    finish.assert_not_called()
+
+    config_path.write_text(valid)
+    ctx = run_startup(complete_setup)
+    try:
+        finish.assert_called_once()
+        assert ctx.signing_key.public_key_bytes == key.public_key_bytes
+        assert ctx.sealed_key is finish.return_value
+    finally:
+        if ctx.audit_store is not None:
+            ctx.audit_store.close()

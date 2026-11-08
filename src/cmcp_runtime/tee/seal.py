@@ -6,11 +6,15 @@ to the measurement index itself: that index is a ``TPM_NT_EXTEND`` chain that mo
 on every start, and ``PolicyNV`` compares one exact value, so a key sealed to it
 would match a single position in the chain and be lost on the next restart.
 
-One start is: extend and certify the measurement as before, write the computed
-digest into the gate, unseal, then overwrite the gate with a sentinel. Between
+One start is: extend and certify the measurement as before, complete startup
+validation, write the computed digest into the gate, unseal, then overwrite the gate
+with a sentinel. Between
 starts the gate holds the sentinel, so another process with TPM access cannot
 unseal passively; it has to write the gate itself, which needs owner
-authorization. The gate is per TPM, so there is one sealed gateway per TPM.
+authorization. This implementation requires an empty owner password: a process
+that can access the TPM device and read ``sealed_key_dir`` can write the gate
+and unseal. The sentinel is not an authorization boundary against that process.
+The gate is per TPM, so there is one sealed gateway per TPM.
 
 What this guarantees: the blob is useless on any other TPM; a gateway whose
 measured inputs differ from the sealed digest, with its measurement code intact,
