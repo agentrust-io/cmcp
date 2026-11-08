@@ -100,14 +100,17 @@ What the tool is allowed to do. This is the part that is fingerprinted into `def
 
 ### `definition_hash`
 
-SHA-256 of the canonical JSON of `approved_definition`, prefixed with `sha256:`:
+SHA-256 of the RFC 8785 (JCS) bytes of `approved_definition`, prefixed with
+`sha256:`. Use `rfc8785`, which is installed with cMCP; Python JSON formatting can
+produce different bytes for non-ASCII text or numbers:
 
 ```python
-import hashlib, json
+import hashlib
+import rfc8785
 
 def compute_definition_hash(approved_definition: dict) -> str:
-    canonical = json.dumps(approved_definition, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    canonical = rfc8785.dumps(approved_definition)
+    digest = hashlib.sha256(canonical).hexdigest()
     return f"sha256:{digest}"
 ```
 
@@ -158,29 +161,32 @@ Use `"strict"` for tools that handle sensitive data, where an unexpected field c
 The `catalog_hash` in the TRACE claim is one fingerprint over the whole catalog, not one per entry:
 
 ```python
-import hashlib, json
+import hashlib
+import rfc8785
 
 def compute_catalog_hash(entries: list[dict]) -> str:
     sorted_entries = sorted(entries, key=lambda e: e["tool_name"])
-    canonical = json.dumps(sorted_entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    canonical = rfc8785.dumps(sorted_entries)
+    digest = hashlib.sha256(canonical).hexdigest()
     return f"sha256:{digest}"
 ```
 
 Steps:
 1. Sort entries by `tool_name` (ascending and case-sensitive, though tool names are always lowercase)
-2. Canonical JSON: `sort_keys=True`, no spaces (`separators=(",", ":")`)
+2. Serialize with RFC 8785 (JCS), including its Unicode key ordering and number formatting
 3. SHA-256 of the UTF-8 bytes
 
 Compute the hash before deploying with a short Python script:
 
 ```python
-import hashlib, json
+import hashlib
+import json
+import rfc8785
 
 def catalog_hash(entries: list[dict]) -> str:
     sorted_entries = sorted(entries, key=lambda e: e["tool_name"])
-    canonical = json.dumps(sorted_entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+    canonical = rfc8785.dumps(sorted_entries)
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 with open("catalog.json") as f:
     entries = json.load(f)
@@ -270,11 +276,13 @@ Compute and pin the catalog hash before starting the gateway:
 ```bash
 # Pin the catalog hash (required in production: see CMCP_CATALOG_HASH)
 export CMCP_CATALOG_HASH="$(python -c "
-import hashlib, json
+import hashlib
+import json
+import rfc8785
 entries = json.load(open('catalog.json'))
 s = sorted(entries, key=lambda e: e['tool_name'])
-c = json.dumps(s, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
-print('sha256:' + hashlib.sha256(c.encode()).hexdigest())
+c = rfc8785.dumps(s)
+print('sha256:' + hashlib.sha256(c).hexdigest())
 ")"
 
 # Validate the Cedar policy bundle hash separately
