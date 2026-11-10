@@ -454,11 +454,25 @@ Stored audit-chain entry hashes are unchanged by this transition.
 The catalog hash that goes into `tool_catalog.hash` in the TRACE Claim:
 
 ```
-sorted_entries = sort(entries, key=tool_name, order=lexicographic_ascending)
+sorted_entries = sort(entries, key=tool_name, order=unicode_code_point_ascending)
 catalog_hash = lowercase_hex(SHA-256(canonical_json(sorted_entries)))
 ```
 
 Only the `entries` array (sorted) is hashed, not the `catalog_version` or `updated_at` fields. This ensures the catalog hash is stable across metadata-only updates.
+
+Compare `tool_name` as a sequence of Unicode code points, without locale
+collation, case folding, or normalization. At the first differing code point,
+the smaller numeric value sorts first; a proper prefix sorts before the longer
+name. This entry-array order preserves the Python runtime's existing behavior.
+It is separate from RFC 8785's UTF-16 ordering of object member names: JCS does
+not reorder array elements. Implementations using UTF-16 strings must compare
+decoded code points rather than relying on their default string comparator.
+For example, `tool_\uff5a` sorts before `tool_\U00010000` under this rule;
+UTF-16 code-unit ordering would reverse them and change the catalog hash.
+The two-entry interoperability control is in
+`tests/unit/test_catalog_jcs_hashes.py`. This clarification does not authorize
+changing existing catalog pins or bypassing the canonical-byte transition
+requirements described above.
 
 At enclave startup, the runtime:
 1. Loads the catalog document from the configured path.
