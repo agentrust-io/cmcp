@@ -64,7 +64,7 @@ Closes #22.
 
 **Trigger**: `attestation.seal_signing_key` is on and the gateway cannot unseal its signing key ([attestation.md §4.2](attestation.md)).
 
-**Decision**: Fail-closed, after the measurement extend and before the attestation report. A new key is never minted to recover: that would hand a changed gateway a working key.
+**Decision**: Fail-closed. Store locking and public-key discovery can fail before measurement. Final provisioning or unseal occurs after attestation and the policy, catalog, identity and store checks, before network bind. A failed startup releases the sealed-key store lock. A new key is never minted to recover: that would hand a changed gateway a working key.
 
 **Codes and the usual fix**:
 - `SEALED_KEY_DIGEST_MISMATCH`: code, policy or configuration changed. Stop, run `cmcp key reseal` (it seals the same key to this installation's digest), start again. If the change was not intended, that is what this refusal is for.

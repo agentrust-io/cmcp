@@ -271,7 +271,7 @@ def test_the_commands_refuse_while_a_gateway_holds_the_key(tpm: Swtpm, tmp_path:
     _stop(running)
 
 
-# Startup's own refusals. Each is fatal, with the sealed-key code, before any traffic.
+# Startup refusals are fatal before the gateway serves traffic.
 
 
 def _refused(caplog: pytest.LogCaptureFixture, config_path: Path) -> str:
@@ -398,11 +398,9 @@ def test_the_quote_signs_the_key_thumbprint_and_not_the_salt(tpm: Swtpm) -> None
     ],
 )
 def test_refused_first_start_does_not_seal_and_corrected_start_provisions(
-    tpm: Swtpm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tpm: Swtpm, tmp_path: Path,
     caplog: pytest.LogCaptureFixture, failure: str, code: str,
 ) -> None:
-    import cmcp_runtime.startup as startup
-
     config_path = _gateway(tmp_path)
     valid_config = config_path.read_text()
     manifest = tmp_path / "policy" / "manifest.json"
@@ -415,23 +413,8 @@ def test_refused_first_start_does_not_seal_and_corrected_start_provisions(
         field = "audit_db_path" if failure == "audit" else "session_state_path"
         config_path.write_text(valid_config + f"{field}: {tmp_path}\n")
 
-    # SystemExit is caught by pytest, so release the process-lifetime lock as an
-    # actual process exit would. Provisioning, storage and TPM operations are real.
-    starts = []
-    begin = startup._begin_sealed_start
-
-    def remember(config):
-        start = begin(config)
-        starts.append(start)
-        return start
-
-    monkeypatch.setattr(startup, "_begin_sealed_start", remember)
-    try:
-        assert code in _refused(caplog, config_path)
-        assert not SealedKeyStore(tmp_path / "sealed").path.exists()
-    finally:
-        for start in starts:
-            start.lock.release()
+    assert code in _refused(caplog, config_path)
+    assert not SealedKeyStore(tmp_path / "sealed").path.exists()
 
     config_path.write_text(valid_config)
     manifest.write_text(valid_manifest)

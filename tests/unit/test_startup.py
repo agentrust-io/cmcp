@@ -724,7 +724,7 @@ def test_sealing_waits_for_policy_acceptance(complete_setup, monkeypatch, caplog
     provider = SoftwareOnlyProvider()
     monkeypatch.setattr(provider, "provider_name", lambda: "tpm")
     monkeypatch.setattr(startup, "detect_provider", lambda config: provider)
-    start = SimpleNamespace(public_key=key.public_key_bytes)
+    start = SimpleNamespace(public_key=key.public_key_bytes, lock=MagicMock())
     monkeypatch.setattr(startup, "_begin_sealed_start", lambda config: start)
     measurement = GatewayMeasurement("a" * 64, {})
     monkeypatch.setattr(startup, "_measure_gateway", lambda *args: measurement)
@@ -748,6 +748,7 @@ def test_sealing_waits_for_policy_acceptance(complete_setup, monkeypatch, caplog
     monkeypatch.setattr(startup, "_finish_sealed_start", finish)
     monkeypatch.delenv("CMCP_POLICY_HASH", raising=False)
     monkeypatch.delenv("CMCP_POLICY_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("CMCP_POLICY_SUCCESSOR_SIGNING_KEY", raising=False)
     if policy_failure == "hash":
         monkeypatch.setenv("CMCP_POLICY_HASH", "sha256:" + "0" * 64)
     elif policy_failure == "manifest":
@@ -775,6 +776,7 @@ def test_sealing_waits_for_policy_acceptance(complete_setup, monkeypatch, caplog
     ("failure_config", "expected"),
     [
         ("kill_switch:\n  enabled: true\n", "KILL_SWITCH_REQUIRES_IDENTITY"),
+        ("kill_switch:\n  enabled: true\n", "KILL_SWITCH_STORE_UNAVAILABLE"),
         ("audit_db_path: {directory}\n", "AUDIT_STORE_UNAVAILABLE"),
         ("session_state_path: {directory}\n", "SESSION_STATE_STORE_UNAVAILABLE"),
         ("conformance_profile: aarm\n", "CONFORMANCE_PROFILE_UNSATISFIED"),
@@ -792,6 +794,8 @@ def test_sealing_waits_for_late_validation_and_allows_corrected_start(
     from cmcp_runtime.tee.measurement import GatewayMeasurement
 
     config_path = Path(complete_setup)
+    if expected == "KILL_SWITCH_STORE_UNAVAILABLE":
+        _agent_manifest_config(complete_setup)
     valid = config_path.read_text() + (
         "attestation:\n  provider: tpm\n  seal_signing_key: true\n"
     )
@@ -800,26 +804,41 @@ def test_sealing_waits_for_late_validation_and_allows_corrected_start(
     provider = SoftwareOnlyProvider()
     monkeypatch.setattr(provider, "provider_name", lambda: "tpm")
     monkeypatch.setattr(startup, "detect_provider", lambda config: provider)
-    monkeypatch.setattr(startup, "_begin_sealed_start", lambda config: SimpleNamespace(
-        public_key=key.public_key_bytes
-    ))
+    def begin(config):
+        store = startup.SealedKeyStore(config_path.parent / "sealed")
+        return SimpleNamespace(public_key=key.public_key_bytes, lock=store.acquire())
+
+    monkeypatch.setattr(startup, "_begin_sealed_start", begin)
+    monkeypatch.delenv("CMCP_POLICY_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("CMCP_POLICY_SUCCESSOR_SIGNING_KEY", raising=False)
     monkeypatch.setattr(startup, "_measure_gateway", lambda *args: GatewayMeasurement("a" * 64, {}))
     monkeypatch.setattr(startup, "_extend_measurement", lambda *args: (None, None))
-    finish = MagicMock(return_value=SimpleNamespace(seed=b"s" * 32))
+    finish = MagicMock(side_effect=lambda start, _: SimpleNamespace(
+        seed=b"s" * 32, release=start.lock.release
+    ))
     monkeypatch.setattr(startup, "_finish_sealed_start", finish)
 
-    with pytest.raises(SystemExit) as exc:
-        run_startup(complete_setup)
+    with monkeypatch.context() as failure:
+        if expected == "KILL_SWITCH_STORE_UNAVAILABLE":
+            failure.setattr(startup, "KillSwitchBlockStore", MagicMock(side_effect=OSError))
+        with pytest.raises(SystemExit) as exc:
+            run_startup(complete_setup)
     assert exc.value.code == 1
     assert expected in caplog.text
     finish.assert_not_called()
 
+    if expected == "KILL_SWITCH_STORE_UNAVAILABLE":
+        valid += failure_config
     config_path.write_text(valid)
     ctx = run_startup(complete_setup)
     try:
         finish.assert_called_once()
         assert ctx.signing_key.public_key_bytes == key.public_key_bytes
-        assert ctx.sealed_key is finish.return_value
+        assert ctx.sealed_key is not None
+        if expected == "KILL_SWITCH_STORE_UNAVAILABLE":
+            assert ctx.kill_switch_store is not None
     finally:
+        if ctx.sealed_key is not None:
+            ctx.sealed_key.release()
         if ctx.audit_store is not None:
             ctx.audit_store.close()

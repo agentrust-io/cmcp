@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   succeed (#782). A rejected policy, identity or store configuration no longer
   leaves a newly sealed key bound to rejected inputs. Port binding happens later
   and is outside this boundary. Earlier validation errors now take precedence
-  over sealing errors. Clarify the empty-owner-password access boundary.
+  over final provisioning and unseal errors. Failed startup releases the sealed-key
+  store lock. Clarify the empty-owner-password access boundary.
 
 - **The test suite could write to the developer's TPM.** With tpm2-pytss
   installed, tests that expected the degraded path opened the default TCTI and

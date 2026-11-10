@@ -10,6 +10,7 @@ import logging
 import os
 import secrets
 import sys
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
@@ -400,16 +401,20 @@ def _begin_sealed_start(config: Config) -> _SealedStart:
     here and handed to provisioning.
     """
     store = SealedKeyStore(config.attestation.sealed_key_dir)
-    try:
-        lock = store.acquire()
-        public_key = stored_public_key(store)
-    except SealedKeyError as exc:
-        _fatal_sealed(exc)
-    seed_if_new = None
-    if public_key is None:
-        seed_if_new = secrets.token_bytes(32)
-        public_key = ed25519_public_key(seed_if_new)
-    return _SealedStart(store, lock, public_key, seed_if_new)
+    with ExitStack() as cleanup:
+        try:
+            lock = store.acquire()
+            cleanup.callback(lock.release)
+            public_key = stored_public_key(store)
+        except SealedKeyError as exc:
+            _fatal_sealed(exc)
+        seed_if_new = None
+        if public_key is None:
+            seed_if_new = secrets.token_bytes(32)
+            public_key = ed25519_public_key(seed_if_new)
+        start = _SealedStart(store, lock, public_key, seed_if_new)
+        cleanup.pop_all()
+        return start
 
 
 def _finish_sealed_start(
@@ -470,6 +475,14 @@ def run_startup(config_path: str) -> RuntimeContext:
     5. Load and verify catalog hash
     (Step 6: bind network port - done by the caller after this returns)
     """
+    with ExitStack() as cleanup:
+        context = _run_startup(config_path, cleanup)
+        # The returned HeldSealedKey now owns the store lock.
+        cleanup.pop_all()
+        return context
+
+
+def _run_startup(config_path: str, cleanup: ExitStack) -> RuntimeContext:
     # Step 1: config
     try:
         config = load_config(config_path)
@@ -506,6 +519,7 @@ def run_startup(config_path: str) -> RuntimeContext:
                 )
             )
         sealed_start = _begin_sealed_start(config)
+        cleanup.callback(sealed_start.lock.release)
         public_key_bytes = sealed_start.public_key
     else:
         signing_key = SigningKey()
