@@ -267,11 +267,11 @@ def load_catalog(
     path = Path(catalog_path)
     try:
         raw_list: list[dict[str, Any]] = json.loads(
-            path.read_text(),
+            path.read_text(encoding="utf-8"),
             parse_constant=_reject_nonfinite_json_constant,
             object_pairs_hook=_reject_duplicate_keys,
         )
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"Cannot read catalog file: {exc}") from exc
     except (json.JSONDecodeError, ValueError) as exc:
         raise ConfigError(f"Catalog JSON parse error: {exc}") from exc
