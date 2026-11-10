@@ -786,6 +786,7 @@ def test_sealing_waits_for_late_validation_and_allows_corrected_start(
     complete_setup, monkeypatch, caplog, failure_config, expected
 ):
     """Late refusals must not provision; correcting the config can then start."""
+    from threading import Lock
     from types import SimpleNamespace
 
     import cmcp_runtime.startup as startup
@@ -804,9 +805,15 @@ def test_sealing_waits_for_late_validation_and_allows_corrected_start(
     provider = SoftwareOnlyProvider()
     monkeypatch.setattr(provider, "provider_name", lambda: "tpm")
     monkeypatch.setattr(startup, "detect_provider", lambda config: provider)
-    def begin(config):
-        store = startup.SealedKeyStore(config_path.parent / "sealed")
-        return SimpleNamespace(public_key=key.public_key_bytes, lock=store.acquire())
+
+    # Model exclusive ownership on every CI platform. The swtpm integration
+    # tests exercise the real Linux file lock.
+    lock = Lock()
+
+    def begin(_config):
+        assert lock.acquire(blocking=False), "startup left the store lock held"
+        store_lock = startup.StoreLock(SimpleNamespace(close=lock.release))
+        return SimpleNamespace(public_key=key.public_key_bytes, lock=store_lock)
 
     monkeypatch.setattr(startup, "_begin_sealed_start", begin)
     monkeypatch.delenv("CMCP_POLICY_SIGNING_KEY", raising=False)
@@ -835,6 +842,7 @@ def test_sealing_waits_for_late_validation_and_allows_corrected_start(
         finish.assert_called_once()
         assert ctx.signing_key.public_key_bytes == key.public_key_bytes
         assert ctx.sealed_key is not None
+        assert lock.locked()
         if expected == "KILL_SWITCH_STORE_UNAVAILABLE":
             assert ctx.kill_switch_store is not None
     finally:
