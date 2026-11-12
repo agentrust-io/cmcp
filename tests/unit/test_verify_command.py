@@ -78,6 +78,30 @@ def claim_and_bundle(tmp_path):
     return claim_file, bundle_file, claim, bundle, signing_key
 
 
+def test_verify_reports_malformed_claim_json(tmp_path):
+    claim_file = tmp_path / "bad-claim.json"
+    claim_file.write_text("{\n  invalid\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["verify", str(claim_file)])
+
+    assert result.exit_code == 1
+    assert f"Invalid JSON in {str(claim_file)!r} at line 2, column 3" in result.stderr
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_verify_reports_malformed_audit_bundle_json(claim_and_bundle):
+    claim_file, bundle_file, _, _, _ = claim_and_bundle
+    bundle_file.write_text("{\n  invalid\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main, [
+        "verify", str(claim_file), "--audit-bundle", str(bundle_file),
+    ])
+
+    assert result.exit_code == 1
+    assert f"Invalid JSON in {str(bundle_file)!r} at line 2, column 3" in result.stderr
+    assert isinstance(result.exception, SystemExit)
+
+
 def test_verify_software_only_is_partially_verified(claim_and_bundle):
     # The fixture is a software-only (dev mode) claim: every cryptographic check
     # passes, but with no hardware-backed attestation the verifier fails closed
