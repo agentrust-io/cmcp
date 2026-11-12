@@ -122,6 +122,92 @@ def test_tutorial_hash_snippets_match_loader(tmp_path, monkeypatch, capsys):
     assert load_catalog(str(path), expected_hash=expected_hash).catalog_hash == expected_hash
 
 
+def _copyable_hash_scripts(markdown: str) -> list[str]:
+    scripts = []
+    for block in re.findall(r"```(?:python|bash)\n(.*?)\n```", markdown, flags=re.DOTALL):
+        if "rfc8785" not in block:
+            continue
+        match = re.search(r'python3? -c "\n(.*)\n"', block, flags=re.DOTALL)
+        scripts.append(match.group(1) if match else block)
+    return scripts
+
+
+def test_remaining_docs_hash_recipes_match_loader(tmp_path, monkeypatch, capsys):
+    root = Path(__file__).resolve().parents[2] / "docs"
+    docs = {
+        "quickstart": root / "quickstart.md",
+        "tls-pinning": root / "tutorials" / "tls-pinning.md",
+        "tool-catalog-authoring": root / "tutorials" / "tool-catalog-authoring.md",
+    }
+    texts = {name: path.read_text(encoding="utf-8") for name, path in docs.items()}
+    legacy = re.compile(r"json\.dumps\([^)\n]*sort_keys\s*=\s*True")
+    for name, text in texts.items():
+        assert legacy.search(text) is None, name
+        assert "ensure_ascii=True" not in text, name
+
+    definition = {
+        "description": "Résumé records",
+        "input_schema": {
+            "type": "object",
+            "properties": {"limit": {"type": "number", "minimum": 1e-7}},
+        },
+    }
+    definition_hash = _compute_definition_hash(definition)
+    entries = [
+        {
+            "tool_name": "records.query",
+            "server": {
+                "display_name": "Test server",
+                "url": "https://example.com/mcp",
+                "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "transport": "http-sse",
+            },
+            "approved_definition": definition,
+            "definition_hash": definition_hash,
+            "compliance_domain": "internal",
+            "requires_baa": False,
+            "sensitivity_level": "public",
+            "added_at": "2026-06-01T00:00:00Z",
+            "approved_by": "security@example.com",
+        }
+    ]
+    expected_hash = _catalog_hash(entries)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    quickstart_scripts = _copyable_hash_scripts(texts["quickstart"])
+    tls_scripts = _copyable_hash_scripts(texts["tls-pinning"])
+    authoring_scripts = _copyable_hash_scripts(texts["tool-catalog-authoring"])
+    assert len(quickstart_scripts) == 1
+    assert len(tls_scripts) == 1
+    assert len(authoring_scripts) == 4
+    for script in (*quickstart_scripts, *tls_scripts, *authoring_scripts):
+        assert "rfc8785.dumps" in script
+        if "catalog.json" in script:
+            assert "Path(" in script
+            assert "encoding=" in script and "utf-8" in script
+
+    exec(quickstart_scripts[0], {})
+    assert capsys.readouterr().out.strip() == f"records.query {definition_hash}"
+    exec(tls_scripts[0], {})
+    assert capsys.readouterr().out.strip() == expected_hash
+
+    namespace = {}
+    exec(authoring_scripts[0], namespace)
+    assert namespace["compute_definition_hash"](definition) == definition_hash
+    exec(authoring_scripts[1], namespace)
+    assert namespace["compute_catalog_hash"](entries) == expected_hash
+    exec(authoring_scripts[2], namespace)
+    assert capsys.readouterr().out.strip() == expected_hash
+    exec(authoring_scripts[3], {})
+    assert capsys.readouterr().out.strip() == expected_hash
+
+    loaded = load_catalog(str(catalog), expected_hash=expected_hash)
+    assert loaded.catalog_hash == expected_hash
+    assert loaded.entries["records.query"].definition_hash == definition_hash
+
+
 def test_loader_rejects_non_utf8_catalog(tmp_path):
     path = tmp_path / "catalog.json"
     path.write_bytes(b'["\xff"]')
