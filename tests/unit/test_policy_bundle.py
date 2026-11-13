@@ -345,10 +345,9 @@ def test_load_bundle_warns_that_agent_os_version_is_legacy(bundle_dir, caplog):
 # spec computed different hashes for the same bundle.
 # ---------------------------------------------------------------------------
 
+
 def _bundle_hash(manifest):
-    return bundle_module._canonical_bundle_hash(
-        manifest, {"policy.cedar": CEDAR_POLICY}, SCHEMA
-    )
+    return bundle_module._canonical_bundle_hash(manifest, {"policy.cedar": CEDAR_POLICY}, SCHEMA)
 
 
 def test_bundle_hash_matches_rfc8785_for_non_ascii_author_identity():
@@ -366,9 +365,7 @@ def test_bundle_hash_matches_rfc8785_for_non_ascii_author_identity():
                     for k, v in manifest.items()
                     if k not in bundle_module._UNHASHED_MANIFEST_KEYS
                 },
-                "policy_files": {
-                    "policy.cedar": hashlib.sha256(CEDAR_POLICY.encode()).hexdigest()
-                },
+                "policy_files": {"policy.cedar": hashlib.sha256(CEDAR_POLICY.encode()).hexdigest()},
                 "schema_hash": hashlib.sha256(SCHEMA.encode()).hexdigest(),
             }
         )
@@ -383,9 +380,7 @@ def test_bundle_hash_diverges_from_the_ascii_escaping_form():
     legacy = json.dumps(
         {
             "manifest": {
-                k: v
-                for k, v in manifest.items()
-                if k not in bundle_module._UNHASHED_MANIFEST_KEYS
+                k: v for k, v in manifest.items() if k not in bundle_module._UNHASHED_MANIFEST_KEYS
             },
             "policy_files": {"policy.cedar": bundle_module._sha256_hex(CEDAR_POLICY.encode())},
             "schema_hash": bundle_module._sha256_hex(SCHEMA.encode()),
@@ -403,9 +398,7 @@ def test_ascii_only_bundles_keep_the_hash_they_already_had():
     legacy = json.dumps(
         {
             "manifest": {
-                k: v
-                for k, v in MANIFEST.items()
-                if k not in bundle_module._UNHASHED_MANIFEST_KEYS
+                k: v for k, v in MANIFEST.items() if k not in bundle_module._UNHASHED_MANIFEST_KEYS
             },
             "policy_files": {"policy.cedar": bundle_module._sha256_hex(CEDAR_POLICY.encode())},
             "schema_hash": bundle_module._sha256_hex(SCHEMA.encode()),
@@ -431,7 +424,9 @@ def test_a_read_of_the_bundle_hashes_to_what_the_loader_computes(bundle_dir):
     )
     (bundle_dir / "README.md").write_text("measured, but not part of the bundle hash")
     files = read_policy_files(str(bundle_dir))
-    assert bundle_module.bundle_hash_of_files(files) == load_policy_bundle(str(bundle_dir)).bundle_hash
+    assert (
+        bundle_module.bundle_hash_of_files(files) == load_policy_bundle(str(bundle_dir)).bundle_hash
+    )
 
 
 def test_files_that_are_not_a_loadable_bundle_have_no_hash(bundle_dir):
@@ -443,3 +438,153 @@ def test_files_that_are_not_a_loadable_bundle_have_no_hash(bundle_dir):
     assert bundle_module.bundle_hash_of_files({**files, "manifest.json": b"{not json"}) is None
     no_policy = {k: v for k, v in files.items() if not k.endswith(".cedar")}
     assert bundle_module.bundle_hash_of_files(no_policy) is None
+
+
+@pytest.mark.parametrize("bad_ver", ["", "1.-2.0", "1.+2.0", "1.2_0.0", " 1.0.0 ", "1.\u0662.0"])
+def test_parse_bundle_version_rejects_non_decimal_segments(bad_ver: str):
+    from cmcp_runtime.errors import ConfigError
+    from cmcp_runtime.policy.bundle import parse_bundle_version
+
+    with pytest.raises(ConfigError):
+        parse_bundle_version(bad_ver)
+
+
+def test_bundle_and_approval_reject_non_canonical_base64url_and_duplicate_keys(bundle_dir):
+    from cmcp_runtime.catalog.approval import CatalogApprovalError, _decode
+    from cmcp_runtime.errors import ConfigError
+    from cmcp_runtime.policy.bundle import _b64url_decode
+
+    # 64 zero bytes has canonical base64url 'A'*86; 'A'*85 + 'B' has non-zero unused low bits
+    with pytest.raises(ValueError):
+        _b64url_decode("A" * 85 + "B")
+    with pytest.raises(CatalogApprovalError):
+        _decode("A" * 85 + "B")
+
+    # Duplicate keys or overflow floats in manifest.json
+    raw = json.dumps(MANIFEST)
+    (bundle_dir / "manifest.json").write_text(raw[:-1] + ', "version": "9.9.9"}', encoding="utf-8")
+    with pytest.raises(ConfigError, match="duplicate JSON object key"):
+        load_policy_bundle(str(bundle_dir))
+    (bundle_dir / "manifest.json").write_text(raw[:-1] + ', "extra": 1e999}', encoding="utf-8")
+    with pytest.raises(ConfigError, match="non-finite JSON number"):
+        load_policy_bundle(str(bundle_dir))
+
+
+def test_approval_schema_rejects_exponent_overflow_and_accepts_finite_float(tmp_path, monkeypatch):
+    import cmcp_runtime.catalog.approval as approval_mod
+    from cmcp_runtime.catalog.approval import CatalogApprovalError, _approval_schema
+
+    orig_schema_text = approval_mod.CATALOG_APPROVAL_SCHEMA_PATH.read_text(encoding="utf-8")
+    for bad_num in ("1e999", "-1e999", '{"nested": 1e999}'):
+        bad_path = tmp_path / "bad_schema.json"
+        bad_path.write_text(
+            orig_schema_text.rstrip()[:-1] + f', "x_ignored": {bad_num}}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(approval_mod, "CATALOG_APPROVAL_SCHEMA_PATH", bad_path)
+        monkeypatch.setattr(approval_mod, "_schema_cache", None)
+        with pytest.raises(CatalogApprovalError, match="non-finite JSON number"):
+            _approval_schema()
+
+    finite_path = tmp_path / "finite_schema.json"
+    finite_path.write_text(
+        orig_schema_text.rstrip()[:-1] + ', "x_ignored": 1.5}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(approval_mod, "CATALOG_APPROVAL_SCHEMA_PATH", finite_path)
+    monkeypatch.setattr(approval_mod, "_schema_cache", None)
+    assert _approval_schema()["x_ignored"] == 1.5
+    monkeypatch.setattr(approval_mod, "_schema_cache", None)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    (
+        '[[{"x":1,"x":2}]]',
+        "[[NaN]]",
+        "[[Infinity]]",
+        "[[[[-Infinity]]]]",
+        "1e999",
+        "-1e999",
+        "[[1e999]]",
+        '{"nested": -1e999}',
+    ),
+)
+def test_revocation_file_rejects_duplicate_key_statement_without_blocking_valid_revocation(
+    bundle_dir,
+    extra,
+):
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from cmcp_runtime.errors import PolicySigningKeyRevoked
+    from cmcp_runtime.policy.bundle import (
+        REVOCATION_FILE,
+        PolicySigningKeys,
+        policy_key_id,
+        revocation_pre_image,
+    )
+
+    cur_priv = Ed25519PrivateKey.generate()
+    cur_pub = cur_priv.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    suc_priv = Ed25519PrivateKey.generate()
+    suc_pub = suc_priv.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    cur_id = policy_key_id(cur_pub)
+    valid_sig = (
+        base64.urlsafe_b64encode(suc_priv.sign(revocation_pre_image(cur_id)))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+
+    # First statement is a duplicate-key forgery targeting successor; fails closed
+    dup_only = (
+        f'[{{"revoked_key_id": "decoy", "revoked_key_id": "{cur_id}", "signature": "{valid_sig}"}}]'
+    )
+    (bundle_dir / REVOCATION_FILE).write_text(dup_only, encoding="utf-8")
+    keys1 = PolicySigningKeys(cur_pub, suc_pub)
+    assert keys1.apply_file(str(bundle_dir)) == []
+    assert keys1.current == cur_pub
+
+    # Even ignored extension data must be strict JSON at every array depth.
+    nested = f'[{{"revoked_key_id":"{cur_id}","signature":"{valid_sig}","extra":{extra}}}]'
+    (bundle_dir / REVOCATION_FILE).write_text(nested, encoding="utf-8")
+    nested_keys = PolicySigningKeys(cur_pub, suc_pub)
+    assert nested_keys.apply_file(str(bundle_dir)) == []
+    assert nested_keys.current == cur_pub
+    # An invalid statement must not suppress the later valid statement (including one with a finite float extension).
+    valid = json.dumps({"revoked_key_id": cur_id, "signature": valid_sig, "extra": 1.5})
+    (bundle_dir / REVOCATION_FILE).write_text(nested[:-1] + "," + valid + "]", encoding="utf-8")
+    assert nested_keys.apply_file(str(bundle_dir)) == [cur_id]
+    assert nested_keys.current == suc_pub
+
+    # A malformed duplicate-key or NaN statement alongside a valid signed revocation
+    # must NOT block the valid revocation from revoking cur_pub.
+    mixed = (
+        f'[{{"revoked_key_id": "a", "revoked_key_id": "b", "signature": "{valid_sig}"}}, '
+        f'{{"bad": NaN}}, '
+        f'{{"revoked_key_id": "{cur_id}", "signature": "{valid_sig}"}}]'
+    )
+    (bundle_dir / REVOCATION_FILE).write_text(mixed, encoding="utf-8")
+    keys2 = PolicySigningKeys(cur_pub, suc_pub)
+    assert keys2.apply_file(str(bundle_dir)) == [cur_id]
+    assert keys2.current == suc_pub
+
+    # Now a bundle signed by the revoked cur_priv is refused as PolicySigningKeyRevoked
+    unsigned = load_policy_bundle(str(bundle_dir))
+    manifest = dict(MANIFEST)
+    manifest["signature"] = (
+        base64.urlsafe_b64encode(
+            cur_priv.sign(bundle_module.signing_pre_image(unsigned.bundle_hash))
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PolicySigningKeyRevoked):
+        load_policy_bundle(str(bundle_dir), None, keys2.current, keys2.revoked)
