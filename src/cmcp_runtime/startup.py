@@ -10,6 +10,7 @@ import logging
 import os
 import secrets
 import sys
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
@@ -400,22 +401,26 @@ def _begin_sealed_start(config: Config) -> _SealedStart:
     here and handed to provisioning.
     """
     store = SealedKeyStore(config.attestation.sealed_key_dir)
-    try:
-        lock = store.acquire()
-        public_key = stored_public_key(store)
-    except SealedKeyError as exc:
-        _fatal_sealed(exc)
-    seed_if_new = None
-    if public_key is None:
-        seed_if_new = secrets.token_bytes(32)
-        public_key = ed25519_public_key(seed_if_new)
-    return _SealedStart(store, lock, public_key, seed_if_new)
+    with ExitStack() as cleanup:
+        try:
+            lock = store.acquire()
+            cleanup.callback(lock.release)
+            public_key = stored_public_key(store)
+        except SealedKeyError as exc:
+            _fatal_sealed(exc)
+        seed_if_new = None
+        if public_key is None:
+            seed_if_new = secrets.token_bytes(32)
+            public_key = ed25519_public_key(seed_if_new)
+        start = _SealedStart(store, lock, public_key, seed_if_new)
+        cleanup.pop_all()
+        return start
 
 
 def _finish_sealed_start(
     start: _SealedStart, measurement: GatewayMeasurement | None
 ) -> HeldSealedKey:
-    """Unseal the signing key under the measured digest, right after the extend."""
+    """Unseal the signing key under the measured digest after startup validation."""
     if measurement is None:
         _fatal_sealed(
             SealedKeyUnavailable(
@@ -470,6 +475,14 @@ def run_startup(config_path: str) -> RuntimeContext:
     5. Load and verify catalog hash
     (Step 6: bind network port - done by the caller after this returns)
     """
+    with ExitStack() as cleanup:
+        context = _run_startup(config_path, cleanup)
+        # The returned HeldSealedKey now owns the store lock.
+        cleanup.pop_all()
+        return context
+
+
+def _run_startup(config_path: str, cleanup: ExitStack) -> RuntimeContext:
     # Step 1: config
     try:
         config = load_config(config_path)
@@ -494,7 +507,7 @@ def run_startup(config_path: str) -> RuntimeContext:
     # derived from this key. The key has no dependencies of its own, so producing it
     # earlier is ordering only, not a behaviour change.
     # With sealing (#462) only the public key is known here; the private key is
-    # unsealed after the extend, under the digest the extend committed.
+    # unsealed after startup validation, under the digest the extend committed.
     sealed_start: _SealedStart | None = None
     signing_key: SigningKey | None = None
     if config.attestation.seal_signing_key:
@@ -506,6 +519,7 @@ def run_startup(config_path: str) -> RuntimeContext:
                 )
             )
         sealed_start = _begin_sealed_start(config)
+        cleanup.callback(sealed_start.lock.release)
         public_key_bytes = sealed_start.public_key
     else:
         signing_key = SigningKey()
@@ -536,12 +550,6 @@ def run_startup(config_path: str) -> RuntimeContext:
     extend_result, measurement_evidence = _extend_measurement(
         config, tee_provider, measurement, nonce
     )
-
-    sealed_key: HeldSealedKey | None = None
-    if sealed_start is not None:
-        sealed_key = _finish_sealed_start(sealed_start, measurement)
-        signing_key = SigningKey(sealed_key.seed)
-    assert signing_key is not None
 
     try:
         attestation_report = tee_provider.get_attestation_report(nonce)
@@ -940,6 +948,14 @@ def run_startup(config_path: str) -> RuntimeContext:
 
     # Step 5g: open the shared, persistent session-state store if configured.
     session_state_store = _open_session_state_store(config)
+
+    # A refused first start must not persist a key bound to rejected inputs.
+    # Port binding remains the caller's responsibility after this returns.
+    sealed_key: HeldSealedKey | None = None
+    if sealed_start is not None:
+        sealed_key = _finish_sealed_start(sealed_start, measurement)
+        signing_key = SigningKey(sealed_key.seed)
+    assert signing_key is not None
 
     return RuntimeContext(
         config=config,
