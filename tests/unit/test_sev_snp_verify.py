@@ -213,3 +213,33 @@ def test_vcek_cert_chain_unverified_on_format_failure():
     bad = "sha256:" + "z" * 64
     result = verify_sev_snp_measurement(bad, raw_evidence=None)
     assert "vcek_cert_chain" in result.unverified_fields
+
+
+def test_sev_snp_and_tpm_reject_non_hex_uppercase_and_oversized_report_data():
+    import pytest
+
+    from cmcp_verify.tpm import verify_tpm_measurement
+
+    for bad_m in ("sha384:" + "z" * 96, "sha384:" + "A" * 96, "sha384: " + "a" * 94 + " ", None):
+        res = verify_sev_snp_measurement(bad_m, raw_evidence=None)  # type: ignore[arg-type]
+        assert res.verified is False
+        assert res.failure_reason == "invalid_measurement_format"
+
+    raw_m = b"\x77" * 48
+    nonce = b"\x44" * 64
+    report = make_snp_report(version=2, measurement_bytes=raw_m, report_data=nonce)
+    measurement = "sha384:" + hashlib.sha384(raw_m).hexdigest()
+    for bad_rd in (nonce.hex() + "aa", "zz" * 32, "", 123):
+        res = verify_sev_snp_measurement(
+            measurement,
+            raw_evidence=report,
+            report_data_hex=bad_rd,  # type: ignore[arg-type]
+        )
+        assert res.verified is False
+        assert res.failure_reason == "report_data_mismatch"
+
+    for bad_tpm in ("sha256:" + "A" * 64, "sha256: " + "a" * 62 + " ", None):
+        tpm_res = verify_tpm_measurement(bad_tpm, raw_evidence=None)  # type: ignore[arg-type]
+        assert tpm_res.verified is False
+        assert tpm_res.failure_reason == "invalid_measurement_format"
+    _ = pytest
