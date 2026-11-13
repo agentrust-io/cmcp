@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
+import rfc8785
 
 from cmcp_runtime.agent_manifest import AgentManifestBinding
 from cmcp_runtime.audit.chain import AuditChain
@@ -158,6 +159,22 @@ def test_close_session_claim_session_id_matches() -> None:
     state, chain = mgr.create_session()
     claim = mgr.close_session(state.session_id, state, chain)
     assert claim["gateway"]["session_id"] == state.session_id
+
+
+def test_claim_links_and_refusal_digest_use_jcs() -> None:
+    mgr = SessionManager(_make_ctx())
+    state, chain = mgr.create_session()
+    claim = mgr.close_session(state.session_id, state, chain)
+    assert mgr._last_claim_hash == "sha256:" + hashlib.sha256(rfc8785.dumps(claim)).hexdigest()
+    state2, chain2 = mgr.create_session()
+    successor = mgr.close_session(state2.session_id, state2, chain2)
+    assert successor["gateway"]["prev_claim_hash"] == (
+        "sha256:" + hashlib.sha256(rfc8785.dumps(claim)).hexdigest()
+    )
+    claim["gateway"]["session_id"] = "café"
+    receipt = mgr.refusal_receipt("café", state.session_id)
+    body = {k: v for k, v in claim.items() if k != "signature"}
+    assert receipt["claim_digest"] == "sha256:" + hashlib.sha256(rfc8785.dumps(body)).hexdigest()
 
 
 def test_close_session_claim_includes_agent_identity_binding() -> None:

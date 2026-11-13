@@ -23,7 +23,7 @@ pip install cmcp-runtime
 
 ## The catalog format
 
-`catalog.json` is a JSON array of catalog entries:
+`catalog.json` is a UTF-8 encoded JSON array of catalog entries:
 
 ```json
 [
@@ -100,14 +100,17 @@ What the tool is allowed to do. This is the part that is fingerprinted into `def
 
 ### `definition_hash`
 
-SHA-256 of the canonical JSON of `approved_definition`, prefixed with `sha256:`:
+SHA-256 of the RFC 8785 (JCS) bytes of `approved_definition`, prefixed with
+`sha256:`. Use `rfc8785`, which is installed with cMCP; Python JSON formatting can
+produce different bytes for non-ASCII text or numbers:
 
 ```python
-import hashlib, json
+import hashlib
+import rfc8785
 
 def compute_definition_hash(approved_definition: dict) -> str:
-    canonical = json.dumps(approved_definition, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    canonical = rfc8785.dumps(approved_definition)
+    digest = hashlib.sha256(canonical).hexdigest()
     return f"sha256:{digest}"
 ```
 
@@ -158,32 +161,35 @@ Use `"strict"` for tools that handle sensitive data, where an unexpected field c
 The `catalog_hash` in the TRACE claim is one fingerprint over the whole catalog, not one per entry:
 
 ```python
-import hashlib, json
+import hashlib
+import rfc8785
 
 def compute_catalog_hash(entries: list[dict]) -> str:
     sorted_entries = sorted(entries, key=lambda e: e["tool_name"])
-    canonical = json.dumps(sorted_entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    canonical = rfc8785.dumps(sorted_entries)
+    digest = hashlib.sha256(canonical).hexdigest()
     return f"sha256:{digest}"
 ```
 
 Steps:
-1. Sort entries by `tool_name` (ascending and case-sensitive, though tool names are always lowercase)
-2. Canonical JSON: `sort_keys=True`, no spaces (`separators=(",", ":")`)
+1. Sort entries by `tool_name` in ascending Unicode code-point order, without locale collation, case folding, or normalization. Python's string ordering implements this; UTF-16-based implementations need an explicit code-point comparator.
+2. Serialize with RFC 8785 (JCS), including its UTF-16 object-member ordering and number formatting. JCS preserves the entry-array order from step 1.
 3. SHA-256 of the UTF-8 bytes
 
 Compute the hash before deploying with a short Python script:
 
 ```python
-import hashlib, json
+import hashlib
+import json
+import rfc8785
+from pathlib import Path
 
 def catalog_hash(entries: list[dict]) -> str:
     sorted_entries = sorted(entries, key=lambda e: e["tool_name"])
-    canonical = json.dumps(sorted_entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+    canonical = rfc8785.dumps(sorted_entries)
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
-with open("catalog.json") as f:
-    entries = json.load(f)
+entries = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
 
 print(catalog_hash(entries))
 ```
@@ -270,11 +276,14 @@ Compute and pin the catalog hash before starting the gateway:
 ```bash
 # Pin the catalog hash (required in production: see CMCP_CATALOG_HASH)
 export CMCP_CATALOG_HASH="$(python -c "
-import hashlib, json
-entries = json.load(open('catalog.json'))
+import hashlib
+import json
+import rfc8785
+from pathlib import Path
+entries = json.loads(Path('catalog.json').read_text(encoding='utf-8'))
 s = sorted(entries, key=lambda e: e['tool_name'])
-c = json.dumps(s, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
-print('sha256:' + hashlib.sha256(c.encode()).hexdigest())
+c = rfc8785.dumps(s)
+print('sha256:' + hashlib.sha256(c).hexdigest())
 ")"
 
 # Validate the Cedar policy bundle hash separately
@@ -291,8 +300,8 @@ If anything is wrong, both commands exit with an error and the gateway is not st
 ## Summary
 
 1. All `tool_name` values must be lowercase
-2. `definition_hash` = SHA-256 of canonical JSON of `approved_definition` (sort_keys, no spaces)
-3. `catalog_hash` = SHA-256 of canonical JSON of all entries sorted by `tool_name`
+2. `definition_hash` = SHA-256 of the RFC 8785 (JCS) bytes of `approved_definition`
+3. `catalog_hash` = SHA-256 of the RFC 8785 (JCS) bytes of all entries sorted by `tool_name` in Unicode code-point order
 4. Use `"strict"` schema validation for high-sensitivity tools; `"redact"` is the safe default for others
 5. `sensitivity_level` feeds session tracking; `compliance_domain` feeds Cedar policy context
 

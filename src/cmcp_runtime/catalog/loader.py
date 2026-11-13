@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import jsonschema
+import rfc8785
 
 from cmcp_runtime.errors import (
     CatalogHashMismatch,
@@ -134,8 +135,7 @@ def _sha256_hex(data: bytes) -> str:
 
 
 def _compute_definition_hash(definition: dict[str, Any]) -> str:
-    canonical = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return f"sha256:{_sha256_hex(canonical.encode())}"
+    return f"sha256:{_sha256_hex(rfc8785.dumps(definition))}"
 
 
 def definition_digest(
@@ -152,8 +152,7 @@ def definition_digest(
     on our side would read as drift on theirs. This digest covers only what both
     sides can be expected to agree on.
 
-    Uses the same canonical JSON form as :func:`_compute_definition_hash`, so the
-    two can never disagree about how a value is serialised.
+    This local comparison digest is distinct from the RFC 8785 catalog hash.
     """
     canonical = json.dumps(
         {
@@ -196,8 +195,7 @@ def advertised_definition_digest(tool: dict[str, Any]) -> str:
 def _catalog_hash(raw_entries: list[dict[str, Any]]) -> str:
     """SHA-256 of canonical JSON of entries sorted by tool_name."""
     sorted_entries = sorted(raw_entries, key=lambda e: e["tool_name"])
-    canonical = json.dumps(sorted_entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return f"sha256:{_sha256_hex(canonical.encode())}"
+    return f"sha256:{_sha256_hex(rfc8785.dumps(sorted_entries))}"
 
 
 def _load_entry_schema() -> dict[str, Any]:
@@ -245,8 +243,8 @@ def load_catalog(
     """
     path = Path(catalog_path)
     try:
-        raw_list: list[dict[str, Any]] = json.loads(path.read_text())
-    except OSError as exc:
+        raw_list: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"Cannot read catalog file: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ConfigError(f"Catalog JSON parse error: {exc}") from exc
