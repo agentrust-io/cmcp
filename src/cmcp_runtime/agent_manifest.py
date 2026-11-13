@@ -32,6 +32,22 @@ EVIDENCE_REQUIREMENTS_PROFILE = "evidence-requirements-experimental-v1"
 _B64URL_RE = re.compile(r"^[A-Za-z0-9\-_]*$")
 _HASH_RE = re.compile(r"^(sha256:[0-9a-f]{64}|sha384:[0-9a-f]{96})$")
 _SUBJECT_SOURCES: frozenset[str] = frozenset({"config", "svid", "manifest-dev"})
+_PRIVATE_KEY_MEMBERS: frozenset[str] = frozenset(
+    {"d", "p", "q", "dp", "dq", "qi", "oth", "k", "private_key", "private_key_base64url"}
+)
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        obj[key] = value
+    return obj
+
+
+def _reject_nonfinite_json_constant(text: str) -> Any:
+    raise ValueError(f"non-standard JSON constant not allowed: {text}")
 
 SubjectSource = Literal["config", "svid", "manifest-dev"]
 
@@ -83,10 +99,13 @@ class AgentManifestBinding:
 
 
 def _b64url_decode(value: str) -> bytes:
-    if not _B64URL_RE.match(value):
+    if len(value) % 4 == 1 or not _B64URL_RE.match(value):
         raise ConfigError("Agent Manifest signature/key must use base64url encoding")
     padding = 4 - (len(value) % 4)
-    return base64.urlsafe_b64decode(value + ("=" * padding if padding != 4 else ""))
+    raw = base64.urlsafe_b64decode(value + ("=" * padding if padding != 4 else ""))
+    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
+        raise ConfigError("Agent Manifest signature/key must use base64url encoding")
+    return raw
 
 
 def _b64url_encode(value: bytes) -> str:
@@ -133,9 +152,15 @@ def load_agent_manifest_document(path: str) -> LoadedAgentManifest:
         raise ConfigError(f"Cannot read Agent Manifest: {exc}") from exc
 
     try:
-        manifest = json.loads(raw)
+        manifest = json.loads(
+            raw,
+            parse_constant=_reject_nonfinite_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
     except (json.JSONDecodeError, UnicodeDecodeError):
         return LoadedAgentManifest(manifest=_decode_cose_envelope(raw), envelope=raw)
+    except ValueError as exc:
+        raise ConfigError(f"Cannot read Agent Manifest: {exc}") from exc
 
     if not isinstance(manifest, dict):
         raise ConfigError("Agent Manifest must be a JSON object")
@@ -226,9 +251,13 @@ def load_agent_manifest_trust_policy(
     a malformed issuer is a ConfigError, so neither can enter the policy.
     """
     try:
-        with Path(path).open() as f:
-            raw = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
+        with Path(path).open(encoding="utf-8") as f:
+            raw = json.load(
+                f,
+                parse_constant=_reject_nonfinite_json_constant,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise ConfigError(f"Cannot read Agent Manifest trust anchor: {exc}") from exc
 
     if isinstance(raw, dict) and "public_key_base64url" in raw:
@@ -246,6 +275,10 @@ def load_agent_manifest_trust_policy(
     for item in entries:
         if not isinstance(item, dict):
             raise ConfigError("Agent Manifest trust anchor keys must be objects")
+        if any(k in item for k in _PRIVATE_KEY_MEMBERS):
+            raise ConfigError(
+                "Agent Manifest trust anchor keys must not contain private key material"
+            )
         public_key = _b64url_decode(str(item.get("public_key_base64url", "")))
         key_id = str(item.get("key_id") or _key_id(public_key))
         if key_id in anchors:
@@ -310,8 +343,12 @@ def load_agent_manifest_revocations(path: str) -> Any:
         if not line.strip():
             continue
         try:
-            item = json.loads(line)
-        except json.JSONDecodeError as exc:
+            item = json.loads(
+                line,
+                parse_constant=_reject_nonfinite_json_constant,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ConfigError(
                 f"Agent Manifest revocation list line {line_no} is not JSON: {exc}"
             ) from exc
@@ -458,6 +495,10 @@ def _verify_with_sdk(
             decoded = None  # malformed; the SDK appraisal below refuses it
         if decoded is not None:
             _require_same_payload(decoded.manifest, manifest)
+    else:
+        signature = manifest.get("signature")
+        if isinstance(signature, dict) and isinstance(signature.get("signature_value"), str):
+            _b64url_decode(signature["signature_value"])
     if binds_listed_tools and runtime_catalog is not None:
         # Joined on tool_name plus endpoint_id against the manifest's own list
         # (agentrust-io/agent-manifest#340). Out of profile and a failed join
