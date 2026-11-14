@@ -79,3 +79,25 @@ Spec references: [SPEC.md §5](../../SPEC.md), [schemas/trace-claim.schema.json]
 | TRACE-001 | MUST | Every TRACE Claim validates against the JSON Schema. | No validation errors against `schemas/trace-claim.schema.json`. |
 | TRACE-002 | MUST | `signature` field verifies against `tee_public_key` over canonical JSON of the claim. | Signature verification succeeds with `signature` field excluded from the signed payload. |
 | TRACE-003 | MUST | `policy_bundle.hash` matches the SHA-256 of the canonical policy bundle. | Hash matches as defined in [cedar-policy.md §1](../../docs/spec/cedar-policy.md). |
+
+### Group 7: Delegated Identity and Runtime Attestation (draft, issue #568)
+
+Spec status: draft conformance vectors for review; these cases do not define
+TRACE Claim fields or a token-exchange wire format. See
+[`fixtures/identity-attestation/`](fixtures/identity-attestation/) and
+[`test_identity_attestation_conformance.py`](test_identity_attestation_conformance.py).
+
+Keep workload identity, represented user, token audience, proof-of-possession
+binding, delegation reference, and runtime attestation as six independent
+dimensions. Authentication standing is independent of runtime attestation.
+Missing or unverifiable attestation is `not_established`, with its cause
+preserved; it must not be upgraded to a positive claim or collapsed into a
+verified contradiction. Optional policy continues to normal policy evaluation;
+required policy refuses before upstream invocation. Refusal cases assert zero
+upstream calls and include a control that fails if the required boundary is
+bypassed.
+
+| ID | Level | Description | Expected outcome |
+|---|---|---|---|
+| IA-003 | MUST | Authentication succeeds while runtime-attestation evidence is absent, under both optional and required attestation policies. | Authentication stands; optional policy continues without an attestation claim; required policy refuses before upstream invocation and preserves the not-established reason. |
+| IA-004 | MUST | Runtime-attestation evidence is present but cannot be verified, under both optional and required attestation policies. | Authentication stands independently; evidence remains not established with its cause preserved; required policy refuses before upstream invocation. A verified binding contradiction remains a distinct refusal outcome. |
