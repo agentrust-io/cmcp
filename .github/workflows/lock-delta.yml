@@ -1,0 +1,31 @@
+name: Generated lock delta
+on:
+  pull_request:
+    paths:
+      - 'requirements/**'
+      - 'tools/check_lock_delta.py'
+      - 'tools/check_changed_locks.py'
+      - 'tools/lock-delta-scope.json'
+      - 'tools/tests/test_lock_*.py'
+      - '.github/workflows/lock-delta.yml'
+permissions:
+  contents: read
+jobs:
+  lock-delta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - name: Guard regression controls
+        run: |
+          python -m unittest discover -s tools/tests -p 'test_lock_*.py'
+          python -O -m unittest discover -s tools/tests -p 'test_lock_*.py'
+      - name: Compare changed lock structure
+        env:
+          LOCK_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python tools/check_changed_locks.py --base "$LOCK_BASE_SHA"
