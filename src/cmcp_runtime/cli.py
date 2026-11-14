@@ -221,12 +221,16 @@ def client_bridge(gateway_url: str, token_env: str) -> None:
 
 def _load_verify_json(path: str) -> Any:
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError as exc:
         raise click.ClickException(
             f"Invalid JSON in {path!r} at line {exc.lineno}, column {exc.colno}: {exc.msg}"
         ) from exc
+    except UnicodeDecodeError as exc:
+        raise click.ClickException(f"Cannot decode {path!r} as UTF-8: {exc}") from exc
+    except OSError as exc:
+        raise click.ClickException(f"Cannot read {path!r}: {exc}") from exc
 
 
 @main.command()

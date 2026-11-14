@@ -102,6 +102,40 @@ def test_verify_reports_malformed_audit_bundle_json(claim_and_bundle):
     assert isinstance(result.exception, SystemExit)
 
 
+@pytest.mark.parametrize("target", ["claim", "bundle"])
+def test_verify_reports_invalid_utf8(claim_and_bundle, target):
+    claim_file, bundle_file, _, _, _ = claim_and_bundle
+    path = claim_file if target == "claim" else bundle_file
+    path.write_bytes(b'{"x":"\xff"}')
+    result = CliRunner().invoke(main, [
+        "verify", str(claim_file), "--audit-bundle", str(bundle_file),
+    ])
+    assert result.exit_code == 1
+    assert f"Cannot decode {str(path)!r} as UTF-8" in result.stderr
+    assert isinstance(result.exception, SystemExit)
+
+
+@pytest.mark.parametrize("target", ["claim", "bundle"])
+@pytest.mark.parametrize("error", [PermissionError, FileNotFoundError])
+def test_verify_reports_file_read_errors(claim_and_bundle, monkeypatch, target, error):
+    claim_file, bundle_file, _, _, _ = claim_and_bundle
+    path = claim_file if target == "claim" else bundle_file
+    original_open = open
+
+    def failing_open(file, *args, **kwargs):
+        if file == str(path):
+            raise error("simulated read failure")
+        return original_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    result = CliRunner().invoke(main, [
+        "verify", str(claim_file), "--audit-bundle", str(bundle_file),
+    ])
+    assert result.exit_code == 1
+    assert f"Cannot read {str(path)!r}: simulated read failure" in result.stderr
+    assert isinstance(result.exception, SystemExit)
+
+
 def test_verify_software_only_is_partially_verified(claim_and_bundle):
     # The fixture is a software-only (dev mode) claim: every cryptographic check
     # passes, but with no hardware-backed attestation the verifier fails closed
