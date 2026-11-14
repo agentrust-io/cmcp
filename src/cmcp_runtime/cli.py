@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -218,6 +219,20 @@ def client_bridge(gateway_url: str, token_env: str) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
+def _load_verify_json(path: str) -> Any:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(
+            f"Invalid JSON in {path!r} at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise click.ClickException(f"Cannot decode {path!r} as UTF-8: {exc}") from exc
+    except OSError as exc:
+        raise click.ClickException(f"Cannot read {path!r}: {exc}") from exc
+
+
 @main.command()
 @click.argument("claim_file", type=click.Path(exists=True))
 @click.option("--policy-hash", default=None,
@@ -266,16 +281,13 @@ def verify(
     consistency, and (when pinned) the policy and catalog hashes.
     Exits 0 when verified, 1 otherwise.
     """
-    import json as _json
-
     from cmcp_runtime.agent_manifest import (
         load_agent_manifest,
         load_agent_manifest_trust_policy,
     )
     from cmcp_verify import ApprovedHashes, verify_audit_bundle, verify_trace_claim
 
-    with open(claim_file) as f:
-        claim = _json.load(f)
+    claim = _load_verify_json(claim_file)
 
     pinned_policy = policy_hash is not None
     pinned_catalog = catalog_hash is not None
@@ -330,8 +342,7 @@ def verify(
 
     bundle_ok = True
     if audit_bundle is not None:
-        with open(audit_bundle) as f:
-            bundle = _json.load(f)
+        bundle = _load_verify_json(audit_bundle)
         bundle_result = verify_audit_bundle(bundle, claim)
         bundle_ok = bundle_result.verified
         _line(
