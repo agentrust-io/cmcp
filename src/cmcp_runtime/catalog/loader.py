@@ -371,7 +371,13 @@ def load_catalog(
         )
 
         # Verify definition_hash if present in the entry
-        computed_def_hash = _compute_definition_hash(raw_def)
+        try:
+            computed_def_hash = _compute_definition_hash(raw_def)
+        except rfc8785.CanonicalizationError as exc:
+            raise ConfigError(
+                f"Catalog entry '{tool_name}': approved_definition cannot be canonicalized "
+                f"under RFC 8785: {exc}"
+            ) from exc
         if "definition_hash" in raw and raw["definition_hash"] != computed_def_hash:
             raise ConfigError(
                 f"Catalog entry '{tool_name}': definition_hash mismatch. "
@@ -400,7 +406,10 @@ def load_catalog(
             schema_validation_mode=schema_validation_mode,
         )
 
-    computed_hash = _catalog_hash(raw_list)
+    try:
+        computed_hash = _catalog_hash(raw_list)
+    except rfc8785.CanonicalizationError as exc:
+        raise ConfigError(f"Catalog cannot be canonicalized under RFC 8785: {exc}") from exc
     if expected_hash is not None:
         expected_hex = expected_hash.removeprefix("sha256:")
         actual_hex = computed_hash.removeprefix("sha256:")

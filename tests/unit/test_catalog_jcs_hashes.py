@@ -213,3 +213,73 @@ def test_loader_rejects_non_utf8_catalog(tmp_path):
     path.write_bytes(b'["\xff"]')
     with pytest.raises(ConfigError, match="Cannot read catalog file"):
         load_catalog(str(path))
+
+
+def test_loader_rejects_integer_outside_rfc8785_safe_range(tmp_path):
+    definition = {
+        "description": "64-bit bound",
+        "input_schema": {
+            "type": "object",
+            "properties": {"count": {"type": "integer", "maximum": 9223372036854775807}},
+        },
+    }
+    entries = [
+        {
+            "tool_name": "records.query",
+            "server": {
+                "display_name": "Test server",
+                "url": "https://example.com/mcp",
+                "tls_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "transport": "http-sse",
+            },
+            "approved_definition": definition,
+            "definition_hash": "sha256:" + "0" * 64,
+            "compliance_domain": "internal",
+            "requires_baa": False,
+            "sensitivity_level": "public",
+            "added_at": "2026-06-01T00:00:00Z",
+            "approved_by": "security@example.com",
+        }
+    ]
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    with pytest.raises(
+        ConfigError,
+        match=r"Catalog entry 'records\.query': approved_definition cannot be canonicalized under RFC 8785",
+    ):
+        load_catalog(str(path))
+
+    valid_def = {"description": "valid def", "input_schema": {"type": "object"}}
+    valid_def_hash = _compute_definition_hash(valid_def)
+    entries[0]["approved_definition"] = valid_def
+    entries[0]["definition_hash"] = valid_def_hash
+    entries[0]["server"]["provenance"] = {
+        "record_path": "prov.json",
+        "publisher_jwk": {"kty": "OKP", "crv": "Ed25519", "x": "AAAA", "x_overflow": 9223372036854775807},
+    }
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    with pytest.raises(
+        ConfigError,
+        match=r"Catalog cannot be canonicalized under RFC 8785",
+    ):
+        load_catalog(str(path))
+
+
+
+def test_kill_switch_refusal_reports_uncanonicalizable_claim():
+    from cmcp_verify.kill_switch import verify_kill_switch_refusal
+
+    receipt = {
+        "type": "cmcp.kill_switch.refusal.v1",
+        "session_id": "sess-001",
+        "claim_digest": "sha256:" + "0" * 64,
+    }
+    claim = {
+        "gateway": {"session_id": "sess-001", "kill_switch_triggered": True},
+        "overflow_int": 9223372036854775807,
+        "signature": "AAAA",
+    }
+    res = verify_kill_switch_refusal(receipt, claim)
+    assert not res.valid
+    assert "claim cannot be canonicalized" in res.errors
+

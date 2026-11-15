@@ -447,7 +447,13 @@ Older cMCP versions used Python's ASCII-escaped JSON serialization for these
 hashes and TRACE claim signatures. Existing claims or pinned catalog and
 definition hashes containing non-ASCII text, certain numbers, or keys ordered
 differently by JCS may therefore need to be reissued or repinned after upgrade.
-Stored audit-chain entry hashes are unchanged by this transition.
+Stored audit-chain entry hashes are unchanged by this transition. Although RFC
+8785 Appendix B Note 1 permits integers outside the IEEE 754 safe-integer range
+when implementations agree, the runtime's `rfc8785` library enforces the I-JSON
+safe-integer range (`-(2^53 - 1)` through `2^53 - 1`); a catalog whose
+`approved_definition` or entry fields contain an integer of `2^53` or more (for
+example `"maximum": 9223372036854775807`) is refused at load time with
+`ConfigError`.
 
 ### 5.2 Catalog Hash Computation
 
