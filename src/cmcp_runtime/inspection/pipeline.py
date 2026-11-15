@@ -31,6 +31,19 @@ _INJECTION_THRESHOLDS: dict[str, float] = {"strict": 0.3, "balanced": 0.5, "perm
 _PATTERNS_FILE = pathlib.Path(__file__).parent / "patterns_v1.json"
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        obj[key] = value
+    return obj
+
+
+def _reject_nonfinite_json_constant(text: str) -> Any:
+    raise ValueError(f"non-standard JSON constant not allowed: {text}")
+
+
 def _load_patterns() -> tuple[list[tuple[str, str]], str]:
     """Load injection patterns from the versioned config file.
 
@@ -38,7 +51,11 @@ def _load_patterns() -> tuple[list[tuple[str, str]], str]:
     tuples ready for compilation, and version is the semantic version string from
     the config (e.g. "1.0.0").
     """
-    data = json.loads(_PATTERNS_FILE.read_text(encoding="utf-8"))
+    data = json.loads(
+        _PATTERNS_FILE.read_text(encoding="utf-8"),
+        parse_constant=_reject_nonfinite_json_constant,
+        object_pairs_hook=_reject_duplicate_keys,
+    )
     version: str = data["version"]
     pairs: list[tuple[str, str]] = [
         (entry["regex"], entry["name"]) for entry in data["patterns"]
@@ -109,14 +126,38 @@ def _stage2_schema_validation(
     modified (surplus fields stripped) in redact mode.
     """
     output_schema = catalog_entry.approved_definition.output_schema
+
+    # Validate JSON structure and reject duplicate object keys even when
+    # output_schema is None; non-JSON plain text passes through.
+    try:
+        payload: Any = json.loads(
+            response_bytes,
+            parse_constant=_reject_nonfinite_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        if output_schema is None:
+            return StageResult(stage="schema", decision="skip"), response_bytes
+        return (
+            StageResult(
+                stage="schema",
+                decision="allow",
+                reason="non-JSON response; schema check skipped",
+            ),
+            response_bytes,
+        )
+    except ValueError as exc:
+        return (
+            StageResult(
+                stage="schema",
+                decision="deny",
+                reason=f"RESPONSE_SCHEMA_VIOLATION: {exc}",
+            ),
+            response_bytes,
+        )
+
     if output_schema is None:
         return StageResult(stage="schema", decision="skip"), response_bytes
-
-    # Only validate JSON responses; non-JSON passes through
-    try:
-        payload: Any = json.loads(response_bytes)
-    except (json.JSONDecodeError, ValueError):
-        return StageResult(stage="schema", decision="allow", reason="non-JSON response; schema check skipped"), response_bytes
 
     # Identify surplus fields at the top level only
     surplus: list[str] = []
@@ -262,7 +303,11 @@ def _classify_sensitivity(
     # Source 2: field-level tags from output_schema
     if response_text:
         try:
-            response_json = json.loads(response_text)
+            response_json = json.loads(
+                response_text,
+                parse_constant=_reject_nonfinite_json_constant,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
             if isinstance(response_json, dict):
                 schema_tags = _extract_schema_sensitivity_tags(
                     response_json,
@@ -271,7 +316,7 @@ def _classify_sensitivity(
                 for t in schema_tags:
                     if t not in tags:
                         tags.append(t)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError:
             pass
 
     # Source 3: content pattern matching.
@@ -386,10 +431,25 @@ class InspectionPipeline:
             response_text_for_s3 = response_bytes.decode("utf-8", errors="replace")
         except Exception:
             response_text_for_s3 = ""
-        s3_tags = _classify_sensitivity(
-            catalog_entry,
-            response_text=response_text_for_s3,
-        )
+        try:
+            s3_tags = _classify_sensitivity(
+                catalog_entry,
+                response_text=response_text_for_s3,
+            )
+        except ValueError as exc:
+            s3_tags = (
+                [catalog_entry.sensitivity_level]
+                if catalog_entry.sensitivity_level and catalog_entry.sensitivity_level != "public"
+                else []
+            )
+            for pattern, tag in _PII_PATTERNS:
+                if len(s3_tags) >= 4:
+                    break
+                if pattern.search(response_text_for_s3) and tag not in s3_tags:
+                    s3_tags.append(tag)
+            if s2.decision != "deny":
+                stage_results["schema"] = "deny"
+                deny_reasons.append(f"RESPONSE_SCHEMA_VIOLATION: {exc}")
         sensitivity_tags.extend(s3_tags)
         stage_results["classification"] = "allow"
 

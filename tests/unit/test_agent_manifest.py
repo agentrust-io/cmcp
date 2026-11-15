@@ -582,3 +582,120 @@ def test_malformed_revocation_line_fails_closed(tmp_path: Path, line: str) -> No
     crl.write_text(_revocation_line("ok-entry") + "\n" + line + "\n")
     with pytest.raises(ConfigError, match="line 2"):
         load_agent_manifest_revocations(str(crl))
+
+
+# ── #798: canonical base64url, private JWK rejection, and duplicate JSON keys ─
+
+
+def _flip_trailing_bit(b64url_str: str) -> str:
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    last_idx = alphabet.index(b64url_str[-1])
+    return b64url_str[:-1] + alphabet[last_idx ^ 1]
+
+
+@pytest.mark.parametrize(
+    "invalid_b64url",
+    [
+        "A",
+        "AAAAA",
+        "AB",  # non-zero trailing 4 bits for 1-byte decode (canonical is "AA")
+        "AAB",  # non-zero trailing 2 bits for 2-byte decode (canonical is "AAA")
+    ],
+)
+def test_b64url_decode_rejects_non_canonical_encoding(invalid_b64url: str) -> None:
+    from cmcp_runtime.agent_manifest import _b64url_decode
+
+    with pytest.raises(ConfigError, match="base64url"):
+        _b64url_decode(invalid_b64url)
+
+
+def test_trust_anchor_rejects_non_canonical_public_key_trailing_bits(tmp_path: Path) -> None:
+    _, pub, key_id = _keypair()
+    canonical_pub = _b64url(pub)
+    non_canonical_pub = _flip_trailing_bit(canonical_pub)
+    assert base64.urlsafe_b64decode(non_canonical_pub + "=") == pub
+
+    path = _write_anchor(
+        tmp_path,
+        [{"key_id": key_id, "public_key_base64url": non_canonical_pub, "issuers": [ISSUER]}],
+    )
+    with pytest.raises(ConfigError, match="base64url"):
+        load_agent_manifest_trust_policy(path)
+
+
+def test_manifest_binding_rejects_non_canonical_signature_trailing_bits() -> None:
+    priv, pub, key_id = _keypair()
+    manifest = _signed_manifest(priv, key_id)
+    sig_val = manifest["signature"]["signature_value"]
+    non_canonical_sig = _flip_trailing_bit(sig_val)
+    assert base64.urlsafe_b64decode(non_canonical_sig + "==") == base64.urlsafe_b64decode(
+        sig_val + "=="
+    )
+    manifest["signature"]["signature_value"] = non_canonical_sig
+
+    with pytest.raises(ConfigError, match="base64url"):
+        verify_agent_manifest_binding(
+            manifest,
+            {key_id: pub},
+            trusted_key_issuers={key_id: [ISSUER]},
+            authenticated_subject=AGENT_ID,
+            policy_bundle_hash=POLICY_HASH,
+            tool_catalog_hash=CATALOG_HASH,
+            enforcement_mode=EnforcementMode.ENFORCING,
+        )
+
+
+@pytest.mark.parametrize("private_field", ["d", "p", "q", "dp", "dq", "qi", "oth", "k"])
+def test_trust_anchor_rejects_private_jwk_material(tmp_path: Path, private_field: str) -> None:
+    _, pub, key_id = _keypair()
+    path = _write_anchor(
+        tmp_path,
+        [
+            {
+                "key_id": key_id,
+                "public_key_base64url": _b64url(pub),
+                "issuers": [ISSUER],
+                private_field: "secret",
+            }
+        ],
+    )
+    with pytest.raises(ConfigError, match="private key material"):
+        load_agent_manifest_trust_policy(path)
+
+
+def test_load_agent_manifest_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    from cmcp_runtime.agent_manifest import load_agent_manifest_document
+
+    path = tmp_path / "dup-manifest.json"
+    path.write_text(
+        '{"agent_id": "spiffe://a/b", "agent_id": "spiffe://c/d", "version": "0.1"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate JSON object key"):
+        load_agent_manifest_document(str(path))
+
+
+def test_trust_anchor_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    _, pub, key_id = _keypair()
+    path = tmp_path / "dup-anchor.json"
+    path.write_text(
+        f'{{"key_id": "{key_id}", "public_key_base64url": "{_b64url(pub)}", '
+        f'"public_key_base64url": "{_b64url(pub)}"}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate JSON object key"):
+        load_agent_manifest_trust_policy(str(path))
+
+
+def test_revocations_reject_duplicate_json_keys(tmp_path: Path) -> None:
+    from cmcp_runtime.agent_manifest import load_agent_manifest_revocations
+
+    crl = tmp_path / "revocations.jsonl"
+    crl.write_text(
+        '{"manifest_id": "m1", "manifest_id": "m2", "revoked_at": "2026-09-20T00:00:00Z", '
+        '"reason": "key_compromise", "revoked_by": "spiffe://factory.example/ca"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate JSON object key"):
+        load_agent_manifest_revocations(str(crl))
+

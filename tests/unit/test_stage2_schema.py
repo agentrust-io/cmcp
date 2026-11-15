@@ -193,3 +193,34 @@ def test_pipeline_log_mode_passes_through_unmodified():
     assert ir.modified_response is None
     assert ir.stripped_fields is not None
     assert set(ir.stripped_fields) == {"internal_id", "debug"}
+
+
+# ── #798: duplicate JSON object keys in upstream responses ───────────────────
+
+
+def test_stage2_denies_duplicate_json_keys_with_schema():
+    entry = _make_entry(output_schema=_SCHEMA_WITH_PROPERTIES, schema_validation_mode="redact")
+    dup_bytes = b'{"result": "ok", "result": "shadowed", "count": 3}'
+    result, _ = _stage2_schema_validation(dup_bytes, entry)
+    assert result.decision == "deny"
+    assert "duplicate JSON object key" in (result.reason or "")
+
+
+def test_stage2_denies_duplicate_json_keys_even_without_output_schema():
+    entry = _make_entry(output_schema=None)
+    dup_bytes = b'{"result": "ok", "result": "shadowed"}'
+    result, _ = _stage2_schema_validation(dup_bytes, entry)
+    assert result.decision == "deny"
+    assert "duplicate JSON object key" in (result.reason or "")
+
+
+def test_pipeline_denies_duplicate_json_keys_and_still_records_pii():
+    pipeline = InspectionPipeline()
+    entry = _make_entry(output_schema=_SCHEMA_WITH_PROPERTIES, schema_validation_mode="redact")
+    dup_bytes = b'{"result": "123-45-6789", "result": "ok", "count": 1}'
+    ir = pipeline.run("c1", entry, dup_bytes)
+    assert ir.final_decision == "deny"
+    assert ir.stage_results["schema"] == "deny"
+    assert "duplicate JSON object key" in (ir.deny_reason or "")
+    assert "pii" in ir.sensitivity_tags
+

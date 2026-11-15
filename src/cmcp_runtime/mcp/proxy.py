@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -184,18 +185,61 @@ def _server_provenance_key(entry: CatalogEntry) -> tuple[str, ...]:
     )
 
 
+# RFC 8785 numbers are IEEE 754 doubles, so integers stay exact only to 2**53 - 1.
+_MAX_SAFE_INT = 2**53 - 1
+
+
+def _validate_json_numbers(value: Any) -> None:
+    """Reject non-finite floats and integers outside the RFC 8785 safe-integer range."""
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return
+    if isinstance(value, int):
+        if abs(value) > _MAX_SAFE_INT:
+            raise ValueError(
+                f"integer {value} is outside the RFC 8785 safe-integer range "
+                f"[-{_MAX_SAFE_INT}, {_MAX_SAFE_INT}]"
+            )
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"non-finite floating point number not allowed: {value}")
+        return
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _validate_json_numbers(k)
+            _validate_json_numbers(v)
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            _validate_json_numbers(item)
+        return
+
+
 def _cedar_safe(value: Any) -> Any:
     """
     Coerce a JSON value into types Cedar can ingest.
 
     Cedar has no float or null type: a single float anywhere in the request
     context makes cedarpy reject the whole request, which fails closed and
-    denies the call. Floats are preserved as strings; None values are dropped
-    (policies use `has` checks, so absence is the correct representation).
+    denies the call. Finite floats are preserved as strings; non-finite floats
+    and integers outside the RFC 8785 safe-integer range are rejected with
+    ValueError; None values are dropped (policies use `has` checks, so absence
+    is the correct representation).
     """
-    if isinstance(value, bool | int | str):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if abs(value) > _MAX_SAFE_INT:
+            raise ValueError(
+                f"integer {value} is outside the RFC 8785 safe-integer range "
+                f"[-{_MAX_SAFE_INT}, {_MAX_SAFE_INT}]"
+            )
+        return value
+    if isinstance(value, str):
         return value
     if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"non-finite floating point number not allowed: {value}")
         return str(value)
     if isinstance(value, dict):
         return {k: _cedar_safe(v) for k, v in value.items() if v is not None}
@@ -1571,13 +1615,22 @@ class CMCPProxy:
         """Consume the call's holder proof, or record the refusal and return it."""
         gate = self._trace_gate
         assert gate is not None
-        # Canonicalize before the first await in the call pipeline: the proof
-        # binds these bytes, and the proxy forwards exactly these arguments.
-        frozen = json.loads(rfc8785.dumps(arguments))
-        action = self.trace_action(call_id, tool_name, frozen, workflow_id, declared_data_class)
-        finalization.trace_action = action
         session_id = self._session.session_id
+        action: dict[str, Any] = {
+            "domain": "cmcp:protected-action:experimental-v1",
+            "session_id": session_id,
+            "call_id": call_id,
+            "protocol": "mcp",
+            "operation": "tools/call",
+            "tool_name": tool_name,
+        }
         try:
+            _validate_json_numbers(arguments)
+            # Canonicalize before the first await in the call pipeline: the proof
+            # binds these bytes, and the proxy forwards exactly these arguments.
+            frozen = json.loads(rfc8785.dumps(arguments))
+            action = self.trace_action(call_id, tool_name, frozen, workflow_id, declared_data_class)
+            finalization.trace_action = action
             handle, _claims = gate.begin(
                 trace_credentials,
                 action=action,
@@ -1621,6 +1674,7 @@ class CMCPProxy:
         Server identity and definition hash come from the approved catalog, never
         from the caller, so a proof for one upstream cannot be spent on another.
         """
+        _validate_json_numbers(arguments)
         entry = self._catalog.lookup(tool_name)
         return {
             "domain": "cmcp:protected-action:experimental-v1",
@@ -1719,7 +1773,10 @@ class CMCPProxy:
         # direct callers still get the normal fault-finalization path if this
         # serialization fails.
         _finalization.failure_stage = "request_serialization"
-        _payload_bytes = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+        _validate_json_numbers(arguments)
+        _payload_bytes = json.dumps(
+            arguments, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
         request_payload_hash = f"sha256:{hashlib.sha256(_payload_bytes).hexdigest()}"
         _finalization.request_payload_hash = request_payload_hash
 

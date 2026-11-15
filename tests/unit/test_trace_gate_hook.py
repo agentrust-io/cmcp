@@ -339,3 +339,52 @@ def test_decode_trace_token_accepts_only_canonical_base64url(value):
 
 def test_decode_trace_token_round_trips():
     assert decode_trace_token(_token()) == b"token-bytes"
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_rejects_duplicate_json_keys():
+    proxy, _, sent = _proxy()
+    server = MCPServer(proxy, bearer_token=BEARER)
+    raw_body = (
+        b'{"jsonrpc":"2.0","id":1,"method":"tools/call",'
+        b'"params":{"name":"read","name":"other","arguments":{}}}'
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=server.app),
+        base_url="https://gateway.test",
+        headers={"Authorization": f"Bearer {BEARER}", "Content-Type": "application/json"},
+    ) as client:
+        resp = await client.post("/mcp", content=raw_body)
+    assert resp.status_code == 400
+    assert resp.json()["error"]["data"]["error_code"] == "MCP_PARSE_FAILURE"
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_catalog_exception_rejects_duplicate_json_keys():
+    proxy, _, _ = _proxy()
+    server = MCPServer(proxy, bearer_token=BEARER)
+    raw_body = b'{"reason":"r1","reason":"r2","authorized_by":"op","tool_names":["t"]}'
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=server.app),
+        base_url="https://gateway.test",
+        headers={"Authorization": f"Bearer {BEARER}", "Content-Type": "application/json"},
+    ) as client:
+        resp = await client.post("/catalog/exception", content=raw_body)
+    assert resp.status_code == 400
+    assert resp.json()["error_code"] == "PARSE_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_gated_call_refuses_out_of_range_integer_cleanly():
+    gate = FakeGate()
+    proxy, chain, sent = _proxy(gate=gate)
+    result = await proxy.call_tool(
+        "call-1", "read", {"x": 2**53}, trace_credentials={"nonce": "n"}
+    )
+    assert not result.allowed
+    assert sent == []
+    assert "refusal" in gate.names()
+    entry = [e for e in chain.entries if e.entry_type == "tool_call"][-1]
+    assert entry.policy_rule_matched == "trace:refused"
+
