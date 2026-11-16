@@ -850,3 +850,21 @@ def test_sealing_waits_for_late_validation_and_allows_corrected_start(
             ctx.sealed_key.release()
         if ctx.audit_store is not None:
             ctx.audit_store.close()
+
+
+def test_a_tpm_that_fails_after_detection_fails_startup_closed(complete_setup, caplog):
+    """Detection reads the PCRs once; the report opens a fresh session. A TPM that
+    stops answering in between is a refused start, never a degraded one."""
+    from cmcp_runtime.tee.tpm import TPMProvider
+
+    provider = TPMProvider()
+    provider.get_attestation_report = MagicMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("TPM device found but could not read PCRs: tcti:IO failure")
+    )
+    with patch("cmcp_runtime.startup.detect_provider", return_value=provider), \
+         patch("cmcp_runtime.startup._measure_gateway", return_value=None), \
+         patch("cmcp_runtime.startup._extend_measurement", return_value=(None, None)), \
+         caplog.at_level("CRITICAL"), pytest.raises(SystemExit) as exc_info:
+        run_startup(complete_setup)
+    assert exc_info.value.code == 1
+    assert "ATTESTATION_REPORT_UNAVAILABLE" in caplog.text

@@ -46,15 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dev mode crashed on machines with a TPM it could not use.** `provider: auto`
   picked the TPM whenever `/dev/tpm0` or `/dev/tpmrm0` existed, even when the
   user could not open it or no TPM tooling was installed, and startup aborted with
-  `ATTESTATION_REPORT_UNAVAILABLE`. Detection now asks the TPM: it opens the
-  backend the report uses (ESAPI on the default TCTI, or `tpm2_pcrread`) and
-  needs one read-only answer, so the TSS picks the device as it will later and
-  a configured TCTI is honoured. A TPM that does not answer is skipped. Dev mode
-  falls back to software-only and logs why, auto-detection moves on to the next
-  provider, and production and an explicit `provider: tpm` still refuse to
-  start, now naming the reason. An answer does not promise that a later quote,
-  key or NV operation succeeds; those still fail closed. A dead TPM is now
-  reported as `ATTESTATION_PROVIDER_UNSUPPORTED` at detection.
+  `ATTESTATION_REPORT_UNAVAILABLE`. Detection now does the read every report
+  starts with, through the same function and backend (ESAPI on the default
+  TCTI, or `tpm2_pcrread`): PCRs 0-7 from SHA-256, else SHA-1, eight digests.
+  The TSS picks the device as it will later, and a configured TCTI is honoured.
+  A TPM that cannot give that read is skipped. Dev mode falls back to
+  software-only and logs why, auto-detection moves on to the next provider, and
+  production and an explicit `provider: tpm` still refuse to start, now naming
+  the reason. Usable does not promise a hardware-attested report: without a
+  quote and attestation key the report is downgraded to software-only and says
+  so, and a TPM that fails between detection and the report still fails
+  startup closed. A dead TPM is now reported as
+  `ATTESTATION_PROVIDER_UNSUPPORTED` at detection.
 
 ### Security
 
