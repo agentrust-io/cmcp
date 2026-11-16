@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import pathlib
 from typing import Any
@@ -287,6 +288,7 @@ def test_safe_integers_are_accepted(place: str, safe: int):
         ("cross_boundary", MAX_SAFE + 1),
         ("cross_boundary", -MAX_SAFE - 1),
         ("cross_boundary", float("inf")),
+        ("cross_boundary", 1e20),  # rfc8785 serializes it; the schema refuses it
         ("cross_boundary", "\ud800"),
     ],
 )
@@ -298,12 +300,14 @@ def test_a_claim_with_no_canonical_form_is_malformed_not_raised(place: str, unsa
         claim["gateway"]["call_summary"]["call_graph_summary"]["cross_boundary_events"] = [
             {"n": unsafe}
         ]
-    with pytest.raises(ValidationError, match="canonical form"):
+    with pytest.raises(ValidationError, match="canonical form|safe range"):
         RuntimeClaim.model_validate(claim)
     result = _full(claim)
     assert result.failure_reason.value == "CLAIM_MALFORMED"
     ok, err = _verify_signature(claim)  # a direct caller gets a result too
-    assert ok is False and "canonical form" in (err or "")
+    assert ok is False
+    if unsafe != 1e20:  # 1e20 has an RFC 8785 form; only the integer range refuses it
+        assert "canonical form" in (err or "")
 
 
 def test_schema_bounds_integers_to_the_jcs_range():
@@ -436,3 +440,195 @@ def test_prev_claim_hash_is_the_jcs_hash_of_the_previous_signed_claim():
     second = manager.close_session(second_state.session_id, second_state, second_chain)
     expected = "sha256:" + hashlib.sha256(rfc8785.dumps(first)).hexdigest()
     assert second["gateway"]["prev_claim_hash"] == expected
+
+
+# ── Review round 2: one contract for the model, the schema and the verifier ──
+
+
+_VALUES = [None, True, False, "1", 1, 1.0, 1.5, 0, -1, MAX_SAFE + 1, -MAX_SAFE - 1, 1e20, [], {}]
+
+
+def _bases() -> dict[str, dict[str, Any]]:
+    key = SigningKey()
+    return {
+        "1.1-measured": _to_dict(_claim(key, CODE)),
+        "1.1-unmeasured": _to_dict(_claim(key)),
+        "1.1-model-observed": _with_model(_to_dict(_claim(key, CODE))),
+        "1.0": _as_1_0(_to_dict(_claim(key)), key),
+    }
+
+
+def _members(node: Any, prefix: tuple = ()):
+    items = (
+        node.items()
+        if isinstance(node, dict)
+        else enumerate(node)
+        if isinstance(node, list)
+        else ()
+    )
+    for key, child in items:
+        yield prefix + (key,), child
+        yield from _members(child, prefix + (key,))
+
+
+def _mutations(base: dict[str, Any]):
+    yield ("root", "extra"), {**copy.deepcopy(base), "zz_unknown": 1}
+    for path, value in list(_members(base)):
+        edits = [("delete", ...)] if not isinstance(path[-1], int) else []
+        edits += [("set", v) for v in _VALUES]
+        if isinstance(value, dict):
+            edits.append(("extra", ...))
+        for kind, new in edits:
+            claim = copy.deepcopy(base)
+            node = claim
+            for key in path[:-1]:
+                node = node[key]
+            if kind == "delete":
+                del node[path[-1]]
+            elif kind == "extra":
+                node[path[-1]]["zz_unknown"] = 1
+            else:
+                node[path[-1]] = new
+            yield (path, kind if kind != "set" else repr(new)), claim
+
+
+def _model_accepts(claim: dict[str, Any]) -> bool:
+    try:
+        RuntimeClaim.model_validate(claim)
+    except (ValidationError, ValueError):
+        return False
+    return True
+
+
+@pytest.mark.parametrize("name", ["1.1-measured", "1.1-unmeasured", "1.1-model-observed", "1.0"])
+def test_model_and_json_schema_agree_on_every_mutation(name: str):
+    """Every member deleted, nulled, retyped, pushed out of range or given an
+    unknown sibling: the model and the published schema give the same answer."""
+    validator = jsonschema.Draft202012Validator(SCHEMA)
+    base = _bases()[name]
+    assert _model_accepts(base) and validator.is_valid(base)
+    disagreements = [
+        mutation
+        for mutation, claim in _mutations(base)
+        if _model_accepts(claim) != validator.is_valid(claim)
+    ]
+    assert disagreements == []
+
+
+INTEGER_FIELDS = [
+    ("gateway", "sequence_number"),
+    ("gateway", "attestation_validity_seconds"),
+    ("gateway", "audit_chain", "length"),
+    ("gateway", "call_summary", "tool_calls_total"),
+    ("gateway", "call_summary", "tool_calls_allowed"),
+    ("gateway", "call_summary", "tool_calls_denied"),
+    ("gateway", "call_summary", "tool_calls_faulted"),
+    ("gateway", "kill_switch", "window_seconds"),
+    ("gateway", "kill_switch", "min_calls"),
+    ("trace", "tool_transcript", "call_count"),
+    ("trace", "iat"),
+]
+
+
+@pytest.mark.parametrize("path", INTEGER_FIELDS, ids=[".".join(p) for p in INTEGER_FIELDS])
+@pytest.mark.parametrize("value", [True, False])
+def test_a_bool_is_never_an_integer(path: tuple, value: bool):
+    claim = _to_dict(_claim(SigningKey()))
+    node = claim
+    for key in path[:-1]:
+        node = node[key]
+    node[path[-1]] = value
+    assert not _model_accepts(claim)
+    assert not jsonschema.Draft202012Validator(SCHEMA).is_valid(claim)
+
+
+@pytest.mark.parametrize("name", ["1.1-measured", "1.0"])
+def test_the_public_verifier_never_raises_on_a_malformed_claim(name: str):
+    """Every mutation above, through verify_trace_claim: a result, never an exception."""
+    from cmcp_verify import ApprovedHashes, VerificationResult, verify_trace_claim
+
+    base = _bases()[name]
+    approved = ApprovedHashes(
+        policy_bundle_hash=base["trace"]["policy"]["bundle_hash"],
+        tool_catalog_hash=base["gateway"]["catalog"]["hash"],
+    )
+    for mutation, claim in _mutations(base):
+        result = verify_trace_claim(claim, approved)
+        assert isinstance(result, VerificationResult), mutation
+        assert result.failure_reason is not None or claim == base, mutation
+
+
+@pytest.mark.parametrize(
+    "value", [object(), b"bytes", float("nan"), float("inf"), {1, 2}, (1, 2), "\ud800"]
+)
+def test_python_only_values_get_a_structured_failure(value: Any):
+    """Values JSON cannot carry: a result, never an exception. A tuple is the one
+    with an exact JSON meaning (an array), so only the signature fails."""
+    claim = _to_dict(_claim(SigningKey()))
+    claim["gateway"]["call_summary"]["call_graph_summary"]["cross_boundary_events"] = [{"v": value}]
+    result = _full(claim)
+    expected = "SIGNATURE_INVALID" if isinstance(value, tuple) else "CLAIM_MALFORMED"
+    assert result.failure_reason is not None and result.failure_reason.value == expected
+
+
+@pytest.mark.parametrize("version", ["9.9", "", 1.1, 2])
+def test_the_canonicalizers_refuse_an_unsupported_version(version: Any):
+    from cmcp_verify.verify import _canonical_json as verifier_form
+
+    claim = _to_dict(_claim(SigningKey()))
+    claim["cmcp_version"] = version
+    with pytest.raises(ValueError, match="unsupported cmcp_version"):
+        canonical_json(claim)
+    with pytest.raises(ValueError, match="unsupported cmcp_version"):
+        verifier_form(claim)
+    assert _verify_signature(claim)[0] is False
+    assert _full(claim).failure_reason.value == "CLAIM_MALFORMED"
+
+
+def test_a_document_without_a_version_keeps_the_1_0_form():
+    """Refusal receipts carry no cmcp_version and are signed in the 1.0 form."""
+    receipt = {"type": "x", "n": 1.0, "s": "é"}
+    assert (
+        canonical_json(receipt)
+        == json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    )
+
+
+@pytest.mark.parametrize("code", ["AB" * 32, "ab" * 31, "zz" * 32, 7, None])
+def test_a_malformed_code_digest_is_left_out_not_fatal(code: Any):
+    from cmcp_runtime.tee.measurement import GatewayMeasurement
+    from tests.unit.test_session_manager import _make_ctx
+
+    ctx = _make_ctx()
+    ctx.gateway_measurement = GatewayMeasurement(
+        digest=b"\x00" * 32, components={"code": code, "policy": "cd" * 32, "config": "ef" * 32}
+    )
+    manager = SessionManager(ctx)
+    state, chain = manager.create_session()
+    claim = manager.close_session(state.session_id, state, chain)
+    assert "build_provenance" not in claim["trace"]
+    assert claim["gateway"]["trace_omitted"] == ["model", "build_provenance"]
+
+
+def test_the_stored_claim_is_the_signed_claim():
+    from tests.unit.test_session_manager import _make_ctx
+
+    manager = SessionManager(_make_ctx())
+    state, chain = manager.create_session()
+    closed = manager.close_session(state.session_id, state, chain)
+    stored = manager.get_trace_claim(state.session_id)
+    assert stored == closed
+    assert stored["cmcp_version"] == "1.1"
+    assert _verify_signature(stored) == (True, None)
+
+
+def test_each_manager_starts_its_own_claim_chain():
+    """prev_claim_hash links the claims one SessionManager signs; a new manager
+    (a new gateway process) starts a new chain."""
+    from tests.unit.test_session_manager import _make_ctx
+
+    for _ in range(2):
+        manager = SessionManager(_make_ctx())
+        state, chain = manager.create_session()
+        first = manager.close_session(state.session_id, state, chain)
+        assert "prev_claim_hash" not in first["gateway"]

@@ -39,7 +39,7 @@ The `schemas/` folder holds machine-readable descriptions of each data format, s
 
 | File | What it validates | Use with |
 |------|------------------|---------|
-| schemas/trace-claim.schema.json | TRACE Claim JSON (draft-07) | jsonschema, ajv, any JSON Schema validator |
+| schemas/trace-claim.schema.json | TRACE Claim JSON (2020-12) | jsonschema, ajv, any JSON Schema validator |
 | schemas/audit-entry.schema.json | Single audit chain entry | jsonschema, ajv |
 | schemas/catalog-entry.schema.json | Tool catalog entry | jsonschema, ajv |
 | schemas/cedar-schema.cedarschema | Cedar entity types and context attributes | cedar-policy CLI: `cedar validate` |

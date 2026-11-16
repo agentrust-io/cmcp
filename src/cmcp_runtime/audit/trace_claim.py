@@ -20,7 +20,14 @@ from agentrust_trace.models import (
     PolicyInfo,
     RuntimeInfo,
 )
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 AgentSubjectSource = Literal["config", "svid", "manifest-dev"]
 
@@ -130,8 +137,77 @@ class AgentIdentityInfo:
 # ── Pydantic output models ─────────────────────────────────────────────────────
 
 
+
+#: The largest integer RFC 8785 (I-JSON) serializes exactly.
+MAX_SAFE_INTEGER = 2**53 - 1
+
+
+def _json_integer(value: Any) -> Any:
+    # JSON Schema's integer is any number with no fractional part, so 1.0 counts;
+    # a bool or a string never does (strict mode refuses those).
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _safe_integer(value: int) -> int:
+    if not -MAX_SAFE_INTEGER <= value <= MAX_SAFE_INTEGER:
+        raise ValueError("integer outside the RFC 8785 safe range")
+    return value
+
+
+class NullMemberError(ValueError):
+    """A claim member that is null; ``path`` names it for diagnostics."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(f"null at {path}: leave the member out instead")
+        self.path = path
+
+
+#: Free-form evidence the JSON Schema leaves open, nulls included.
+_FREE_FORM = ("gateway", "call_summary", "call_graph_summary", "cross_boundary_events")
+
+
+def _null_path(value: Any, path: tuple[str, ...] = ()) -> str | None:
+    """The first member that is null, outside the free-form evidence, or None."""
+    if path == _FREE_FORM:
+        return None
+    if isinstance(value, dict):
+        items: Any = value.items()
+    elif isinstance(value, list):
+        items = enumerate(value)
+    else:
+        return None
+    for key, child in items:
+        here = (*path, str(key))
+        if child is None:
+            return ".".join(here)
+        found = _null_path(child, here)
+        if found:
+            return found
+    return None
+
+
+def _has_unsafe_integer(value: Any) -> bool:
+    """Any number with no fractional part beyond the safe range, at any depth."""
+    if isinstance(value, dict):
+        return any(_has_unsafe_integer(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_unsafe_integer(v) for v in value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if isinstance(value, float) and not value.is_integer():
+        return False
+    return abs(value) > MAX_SAFE_INTEGER
+
+
+#: An integer as the JSON Schema reads it, within the safe range for every version.
+JsonInt = Annotated[int, BeforeValidator(_json_integer), AfterValidator(_safe_integer)]
+Count = Annotated[JsonInt, Field(ge=0)]
+
+
 class CallGraphOut(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     compliance_domains_touched: list[str]
     cross_boundary_events: list[dict[str, Any]]
@@ -140,30 +216,30 @@ class CallGraphOut(BaseModel):
 
 
 class CallSummaryOut(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    tool_calls_total: int
-    tool_calls_allowed: int
-    tool_calls_denied: int
-    tool_calls_faulted: int
+    tool_calls_total: Count
+    tool_calls_allowed: Count
+    tool_calls_denied: Count
+    tool_calls_faulted: Count
     tools_invoked: list[str]
     session_max_sensitivity: str
     call_graph_summary: CallGraphOut
 
 
 class AuditChainSummary(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     root: str
     tip: str
-    length: int
+    length: Count
 
 
 class CatalogSummary(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    hash: str
-    drift_detected: bool = False
+    hash: Annotated[str, Field(pattern=r"^sha(256|384):[0-9a-f]+")]
+    drift_detected: bool
 
 
 class AgentIdentityOut(BaseModel):
@@ -179,7 +255,7 @@ class AgentIdentityOut(BaseModel):
     on any claim that violates this.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     manifest_id: str
     agent_id: Annotated[str, Field(pattern=r"^spiffe://")]
@@ -206,7 +282,7 @@ class PolicySigningOut(BaseModel):
     because the policy in force had lost its signer.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     key_id: _KEY_ID | None = None
     revoked_key_ids: list[_KEY_ID] = Field(default_factory=list)
@@ -220,7 +296,7 @@ class ToolTranscriptEntry(BaseModel):
     policy decision. No request/response payloads, so the transcript leaks no PII.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     tool_name: str
     data_class: str
@@ -235,10 +311,10 @@ class ToolTranscriptOut(BaseModel):
     (issue #126) lives in ``gateway.transcript_entries``, outside the TRACE block.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     hash: Annotated[str, Field(pattern=r"^sha(256:[0-9a-f]{64}|384:[0-9a-f]{96})$")]
-    call_count: Annotated[int, Field(ge=0)] | None = None
+    call_count: Count | None = None
     transcript_uri: str | None = None
     entries: list[ToolTranscriptEntry] | None = None
 
@@ -246,10 +322,10 @@ class ToolTranscriptOut(BaseModel):
 class GatewayTrace(BaseModel):
     """Phase 1 TRACE fields applicable to the cmcp runtime context."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     eat_profile: Literal["tag:agentrust-io.com,2026:trace-v0.2"]
-    iat: Annotated[int, Field(ge=1700000000)]
+    iat: Annotated[JsonInt, Field(ge=1700000000)]
     subject: Annotated[str, Field(pattern=r"^spiffe://")]
     runtime: RuntimeInfo
     policy: PolicyInfo
@@ -262,24 +338,15 @@ class GatewayTrace(BaseModel):
     build_provenance: BuildProvenance | None = None
     appraisal: Appraisal | None = None
 
-    @field_validator("model", "build_provenance", "appraisal", mode="before")
-    @classmethod
-    def _absent_not_null(cls, value: Any) -> Any:
-        # Left out means absent, as the JSON Schema says; an explicit null is
-        # neither a value nor an omission.
-        if value is None:
-            raise ValueError("leave the member out instead of sending null")
-        return value
-
 
 class CallLogSummary(BaseModel):
     """Per-session call log summary included in the gateway addenda."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    total_calls: int
+    total_calls: Count
     tools_called: list[str]
-    suspicious_sequences_detected: int
+    suspicious_sequences_detected: Count
 
 
 class AttestationEvidence(BaseModel):
@@ -297,7 +364,7 @@ class AttestationEvidence(BaseModel):
     than erroring.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     raw_evidence: str | None = None  # the exact bytes the platform signed
     quote_signature: str | None = None  # marshalled TPMT_SIGNATURE (TPM)
@@ -313,12 +380,12 @@ class KillSwitchState(BaseModel):
     A verifier that requires an armed kill switch checks for its presence.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     enabled: bool
-    window_seconds: int
-    deny_rate_threshold: float
-    min_calls: int
+    window_seconds: Annotated[JsonInt, Field(ge=1)]
+    deny_rate_threshold: Annotated[float, Field(gt=0, le=1)]
+    min_calls: Annotated[JsonInt, Field(ge=1)]
     #: What stopped the session: "deny_rate" when the threshold was crossed,
     #: "operator" when an operator tripped it. None when it did not trip.
     trigger: Literal["deny_rate", "operator"] | None = None
@@ -332,19 +399,19 @@ _OMITTABLE: tuple[TraceOmitted, ...] = ("model", "build_provenance")
 class GatewayAddenda(BaseModel):
     """cmcp-specific fields outside the canonical TRACE spec."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     session_id: str
     gateway_version: str
-    sequence_number: int  # AUDIT-005: monotonically increasing across all claims from this instance
+    sequence_number: Annotated[JsonInt, Field(ge=1)]  # AUDIT-005: monotonically increasing across all claims from this instance
     prev_claim_hash: str | None = None  # AUDIT-005: sha256 of previous claim's canonical JSON
     audit_chain: AuditChainSummary
     call_summary: CallSummaryOut
     catalog: CatalogSummary
     attestation_generated_at: str
-    attestation_validity_seconds: int
+    attestation_validity_seconds: Count
     attestation_stale: bool
-    catalog_exceptions: list[dict[str, str]] = Field(default_factory=list)
+    catalog_exceptions: list[dict[str, str]]
     call_log_summary: CallLogSummary | None = None
     agent_identity: AgentIdentityOut | None = None
     kill_switch_triggered: bool = False
@@ -356,13 +423,6 @@ class GatewayAddenda(BaseModel):
     transcript_entries: list[ToolTranscriptEntry] | None = None
     trace_omitted: list[TraceOmitted] | None = None
 
-    @field_validator("transcript_entries", "trace_omitted", mode="before")
-    @classmethod
-    def _absent_not_null(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError("leave the member out instead of sending null")
-        return value
-
 
 ClaimVersion = Literal["1.0", "1.1"]
 #: Claim format the gateway emits. 1.1 signs over RFC 8785 (JCS) and signs only
@@ -373,13 +433,24 @@ CLAIM_VERSION: ClaimVersion = "1.1"
 class RuntimeClaim(BaseModel):
     """cmcp TRACE profile - canonical trust fields nested inside a gateway envelope."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     # Required, never defaulted: it selects the bytes the signature covers.
     cmcp_version: ClaimVersion
     trace: GatewayTrace
     gateway: GatewayAddenda
-    signature: str = ""
+    signature: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_null(cls, data: Any) -> Any:
+        # JSON Schema allows null nowhere in a claim but inside free-form events,
+        # and the producer leaves absent members out, so null is never a value.
+        if isinstance(data, dict):
+            where = _null_path(data)
+            if where:
+                raise NullMemberError(where)
+        return data
 
     @model_validator(mode="after")
     def _shape_matches_version(self) -> RuntimeClaim:
@@ -415,6 +486,10 @@ class RuntimeClaim(BaseModel):
             rfc8785.dumps(body)
         except rfc8785.CanonicalizationError as exc:
             raise ValueError(f"1.1 claims need an RFC 8785 canonical form: {exc}") from exc
+        if _has_unsafe_integer(body):
+            # rfc8785 serializes a float such as 1e20, but the JSON Schema reads any
+            # number with no fraction as an integer and bounds it, so refuse it too.
+            raise ValueError("1.1 claims need integers within the RFC 8785 safe range")
         return self
 
 
@@ -432,13 +507,17 @@ REFUSAL_RECEIPT_TYPE = "cmcp.kill-switch.refusal/v1"
 def canonical_json(claim_dict: dict[str, Any]) -> bytes:
     """Canonical serialization for signing, without the 'signature' field.
 
-    A 1.1 claim uses RFC 8785 (JCS), as TRACE verifiers do. Anything else keeps
-    the 1.0 form (sorted keys, ASCII escapes), so older claims and receipts
-    still verify.
+    A 1.1 claim uses RFC 8785 (JCS), as TRACE verifiers do. A 1.0 claim, and a
+    document with no ``cmcp_version`` such as a refusal receipt, keep the 1.0
+    form (sorted keys, ASCII escapes), so they still verify. Any other version
+    is refused rather than given bytes it was never signed over.
     """
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
-    if claim_dict.get("cmcp_version") == "1.1":
+    version = claim_dict.get("cmcp_version")
+    if version == "1.1":
         return rfc8785.dumps(body)
+    if version not in (None, "1.0"):
+        raise ValueError(f"unsupported cmcp_version {version!r}")
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
@@ -696,7 +775,7 @@ def generate_trace_claim(
         ),
     )
 
-    claim = RuntimeClaim(cmcp_version=CLAIM_VERSION, trace=trace, gateway=gateway)
+    claim = RuntimeClaim(cmcp_version=CLAIM_VERSION, trace=trace, gateway=gateway, signature="")
 
     if do_sign:
         claim.signature = sign_trace_claim(claim, signing_key)

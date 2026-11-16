@@ -401,6 +401,7 @@ CRYPTO-001: software-only (dev) mode -- TEE key binding cannot be verified; this
 [cmcp verify] audit_chain              PASS
 [cmcp verify] hardware_attestation     FAIL  software-only mode - not hardware-backed
 [cmcp verify] note: software-only mode - not hardware-backed
+[cmcp verify] note: not a complete TRACE record; the gateway did not observe model, build_provenance
 [cmcp verify] RESULT: FAIL (partially_verified)
 ```
 

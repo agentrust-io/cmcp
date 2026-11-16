@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
-from cmcp_runtime.audit.trace_claim import RuntimeClaim
+from cmcp_runtime.audit.trace_claim import NullMemberError, RuntimeClaim
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
 from cmcp_verify.platform_policy import SnpPlatformPolicy
@@ -201,8 +201,11 @@ def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
     (sorted keys, ASCII escapes) otherwise.
     """
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
-    if claim_dict.get("cmcp_version") == "1.1":
+    version = claim_dict.get("cmcp_version")
+    if version == "1.1":
         return rfc8785.dumps(body)
+    if version not in (None, "1.0"):
+        raise ValueError(f"unsupported cmcp_version {version!r}")
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
@@ -256,8 +259,8 @@ def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
 
     try:
         body = _canonical_json(claim)
-    except rfc8785.CanonicalizationError as exc:
-        return False, f"claim has no RFC 8785 canonical form: {exc}"
+    except ValueError as exc:  # rfc8785.CanonicalizationError is a ValueError
+        return False, f"claim has no canonical form to verify: {exc}"
     try:
         pub_key.verify(sig_bytes, body)
         return True, None
@@ -564,6 +567,10 @@ def _coerce_measurement_digest(value: str | bytes) -> bytes | None:
 def _validation_error_path(exc: ValidationError) -> str:
     """Return the most specific non-missing schema location for diagnostics."""
     errors = exc.errors()
+    for error in errors:
+        null = error.get("ctx", {}).get("error")
+        if isinstance(null, NullMemberError):  # raised for the whole claim, names its member
+            return null.path
     for error in errors:
         if error["type"] == "missing":
             continue

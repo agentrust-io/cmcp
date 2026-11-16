@@ -248,11 +248,12 @@ class TestSessionManagerKillSwitch:
 
     def test_create_session_anonymous_never_blocked(self) -> None:
         ctx = _make_ctx(
-            ks_config=_ks_config(threshold=0.0, min_calls=1),
+            ks_config=_ks_config(threshold=1e-9, min_calls=1),
             agent_manifest=None,
         )
         mgr = SessionManager(ctx)
-        # Even with 0.0 threshold, anonymous sessions are never blocked
+        # Even with the lowest threshold the config allows ((0, 1]), anonymous
+        # sessions are never blocked
         state, chain = mgr.create_session()
         chain.append("tool_call", call_id="d0", tool_name="t", policy_decision="deny")
         mgr.close_session(state.session_id, state, chain)

@@ -341,14 +341,9 @@ def test_verify_rejects_call_summary_mismatch(
     else:
         claim["gateway"][section][field_name] = tampered_value
 
-    body = {k: v for k, v in claim.items() if k != "signature"}
-    body_bytes = json.dumps(
-        body,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode()
-    raw_sig = signing_key.sign(body_bytes)
+    from cmcp_runtime.audit.trace_claim import canonical_json
+
+    raw_sig = signing_key.sign(canonical_json(claim))  # the claim's own version picks the form
     claim["signature"] = base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
 
     tampered_claim = tmp_path / f"{field_name}-mismatch.json"
@@ -359,7 +354,11 @@ def test_verify_rejects_call_summary_mismatch(
     ])
 
     assert result.exit_code == 1, result.output
-    assert "signature                PASS" in result.output
+    if isinstance(tampered_value, bool):
+        # A bool is not a count: the claim is malformed before its signature is read.
+        assert "schema                   FAIL" in result.output
+    else:
+        assert "signature                PASS" in result.output
     assert "audit_bundle             FAIL" in result.output
     assert expected_error in result.output
 

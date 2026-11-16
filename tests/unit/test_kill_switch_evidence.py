@@ -424,3 +424,59 @@ def test_kill_switch_and_claim_verify_reject_non_canonical_b64url_and_private_jw
         "trace.cnf.jwk must be a JSON object",
     )
 
+
+# ── Receipts across claim versions ──────────────────────────────────────────
+
+
+def _receipt_pair(version: str) -> tuple[dict, dict]:
+    """A tripped session's claim in *version*, and a refusal receipt bound to it."""
+    import base64
+    import hashlib
+
+    from cmcp_runtime.audit.keys import SigningKey
+    from cmcp_runtime.audit.trace_claim import _to_dict, canonical_json
+    from tests.unit.test_claim_v1_1 import _as_1_0, _claim, _sign
+
+    key = SigningKey()
+    claim = _to_dict(_claim(key))
+    claim["gateway"]["kill_switch_triggered"] = True
+    claim = _sign(claim, key, canonical_json(claim))
+    if version == "1.0":
+        claim = _as_1_0(claim, key)
+    receipt = {
+        "type": REFUSAL_RECEIPT_TYPE,
+        "agent_id": _AGENT_ID,
+        "session_id": claim["gateway"]["session_id"],
+        "refused_at": "2026-06-04T00:00:00+00:00",
+        "gateway_key": claim["trace"]["cnf"]["jwk"]["x"],
+        "claim_digest": "sha256:" + hashlib.sha256(canonical_json(claim)).hexdigest(),
+    }
+    receipt["signature"] = (
+        base64.urlsafe_b64encode(key.sign(canonical_json(receipt))).rstrip(b"=").decode()
+    )
+    return claim, receipt
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.1"])
+def test_a_receipt_verifies_against_a_claim_of_either_version(version):
+    claim, receipt = _receipt_pair(version)
+    result = verify_kill_switch_refusal(receipt, claim)
+    assert result.valid, result.errors
+
+
+@pytest.mark.parametrize("version, swapped", [("1.0", "1.1"), ("1.1", "1.0")])
+def test_switching_the_claim_version_breaks_the_claim_and_its_binding(version, swapped):
+    claim, receipt = _receipt_pair(version)
+    claim["cmcp_version"] = swapped
+    result = verify_kill_switch_refusal(receipt, claim)
+    assert not result.valid
+    assert any("claim signature" in e for e in result.errors)
+    assert "receipt claim_digest does not match the claim" in result.errors
+
+
+def test_an_unsupported_claim_version_is_an_error_not_an_exception():
+    claim, receipt = _receipt_pair("1.1")
+    claim["cmcp_version"] = "9.9"
+    result = verify_kill_switch_refusal(receipt, claim)
+    assert not result.valid
+    assert any("unsupported cmcp_version" in e for e in result.errors)

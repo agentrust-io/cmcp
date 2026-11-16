@@ -202,8 +202,16 @@ sorted-key JSON with ASCII escapes. `cmcp_verify` picks the form from the signed
 assumed, since it selects the bytes the signature covers. A 1.1 claim must have
 an RFC 8785 form (integers within ±(2^53 − 1), finite numbers, valid Unicode);
 one without is malformed. `trace_omitted` is a set: order carries no meaning and
-a repeat is refused, and the 1.1 members are left out rather than sent as
-`null`. `cmcp_verify` returns the list as `trace_omitted` and `cmcp verify`
+a repeat is refused.
+
+`RuntimeClaim` and `schemas/trace-claim.schema.json` accept the same claims, a
+contract `tests/unit/test_claim_v1_1.py` holds by mutating every member of real
+1.0 and 1.1 claims through both. For either version: types are strict (a bool
+is never a count, `"1"` never a number), every integer lies within
+±(2^53 − 1), and `null` is never a value outside the free-form
+`cross_boundary_events`, so an absent member is left out. The one gap JSON
+Schema cannot express is a string holding a lone surrogate, which has no RFC 8785
+form; the model refuses it. `cmcp_verify` returns the list as `trace_omitted` and `cmcp verify`
 prints it: a verified claim is authentic for what the gateway signed, not a
 complete TRACE record.
 
