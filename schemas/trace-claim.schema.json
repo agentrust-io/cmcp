@@ -113,7 +113,7 @@
           "properties": {
             "jwk": {
               "type": "object",
-              "required": ["kty"],
+              "required": ["kty", "crv", "x"],
               "properties": {
                 "kty": { "type": "string" },
                 "crv": { "type": "string" },
@@ -447,7 +447,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "session_id", "audit_chain", "call_summary", "catalog",
+        "session_id", "gateway_version", "sequence_number", "audit_chain", "call_summary", "catalog",
         "attestation_generated_at", "attestation_validity_seconds",
         "attestation_stale", "catalog_exceptions"
       ],
@@ -687,6 +687,18 @@
       "description": "Base64url-encoded Ed25519 signature over the canonical JSON body (all fields except this one): RFC 8785 for 1.1, sorted-key ASCII JSON for 1.0."
     }
   },
+  "$defs": {
+    "jcsValue": {
+      "description": "A JSON value RFC 8785 serializes exactly: any number with no fractional part lies within +-(2^53 - 1). A string with a lone surrogate has no RFC 8785 form either; JSON Schema cannot express that, and cMCP refuses it.",
+      "anyOf": [
+        { "type": ["string", "boolean", "null"] },
+        { "type": "number", "not": { "type": "integer" } },
+        { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        { "type": "array", "items": { "$ref": "#/$defs/jcsValue" } },
+        { "type": "object", "additionalProperties": { "$ref": "#/$defs/jcsValue" } }
+      ]
+    }
+  },
   "allOf": [
     {
       "if": { "properties": { "cmcp_version": { "const": "1.1" } } },
@@ -696,7 +708,14 @@
             "required": ["appraisal"],
             "properties": { "tool_transcript": { "not": { "required": ["entries"] } } }
           },
-          "gateway": { "required": ["trace_omitted"] }
+          "gateway": {
+            "required": ["trace_omitted"],
+            "properties": {
+              "call_summary": { "properties": { "call_graph_summary": { "properties": {
+                "cross_boundary_events": { "items": { "$ref": "#/$defs/jcsValue" } }
+              } } } }
+            }
+          }
         }
       },
       "else": {

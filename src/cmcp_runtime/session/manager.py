@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -518,7 +519,13 @@ class SessionManager:
         measurement = getattr(self._ctx, "gateway_measurement", None)
         if not isinstance(measurement, GatewayMeasurement):
             return None
-        return measurement.components["code"]
+        code = measurement.components.get("code")
+        if not isinstance(code, str) or not re.fullmatch(r"[0-9a-f]{64}", code):
+            # Not a SHA-256 hex digest: leave build_provenance out (the claim says
+            # so in trace_omitted) rather than fail the session close.
+            logger.warning("Gateway code digest is not a SHA-256 hex digest; omitting it")
+            return None
+        return code
 
     def _kill_switch_state(self, state: SessionState) -> KillSwitchState | None:
         ks_cfg = getattr(self._ctx.config, "kill_switch", None)

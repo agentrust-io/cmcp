@@ -54,6 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both, the exact omitted fields, and the JCS integer range. The schema also
   gains the `azure-cvm-sev-snp` platform the runtime already emits.
 
+  The model and the schema now accept the same claims, for 1.0 as for 1.1: the
+  claim models validate strictly (before, `true` passed as a count and `"1"` as
+  a number), integers stay within ±(2^53 - 1), `null` is refused outside
+  `cross_boundary_events`, `signature`, `catalog_exceptions` and
+  `catalog.drift_detected` are required, and the schema requires
+  `gateway_version`, `sequence_number` and `cnf.jwk.crv`/`x`, which the model
+  always did. cMCP never emitted a claim these refuse. Both canonical forms
+  refuse a `cmcp_version` other than 1.0 or 1.1 (a receipt, which has none,
+  keeps the 1.0 form), and `verify_kill_switch_refusal` reports such a claim
+  instead of raising.
+
 ### Fixed
 
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks

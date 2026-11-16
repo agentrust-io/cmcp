@@ -41,8 +41,9 @@ def _verify_sig(claim_dict: dict, pub_hex: str) -> bool:
     # urlsafe_b64decode requires padding; add "==" which is idempotent if already padded
     sig = base64.urlsafe_b64decode(sig_b64 + "==")
     pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
-    body = {k: v for k, v in claim_dict.items() if k != "signature"}
-    body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    from cmcp_runtime.audit.trace_claim import canonical_json
+
+    body_bytes = canonical_json(claim_dict)  # the claim's own version picks the form
     try:
         pub.verify(sig, body_bytes)
         return True

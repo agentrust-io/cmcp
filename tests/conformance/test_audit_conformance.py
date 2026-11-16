@@ -310,9 +310,9 @@ class TestAudit005ClaimSequence:
         chain = AuditChain("sess-a005-d")
         key = SigningKey()
         c1 = _claim_dict(chain, key, seq=1)
-        c1_hash = _sha256t(
-            json.dumps(c1, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-        )
+        import rfc8785  # the manager links claims by the JCS hash of the signed claim
+
+        c1_hash = _sha256t(rfc8785.dumps(c1))
         c2 = _claim_dict(chain, key, seq=2, prev=c1_hash)
         assert c2["gateway"]["prev_claim_hash"] == c1_hash
 
