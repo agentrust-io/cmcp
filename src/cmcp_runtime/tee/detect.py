@@ -122,6 +122,10 @@ def detect_provider(config: Config) -> TEEProvider:
 
 
 def _reason(impl: TEEProvider) -> str | None:
-    """A provider's reason that hardware it found cannot be used, if it gives one."""
-    reason = getattr(impl, "unusable_reason", None)
-    return reason() if callable(reason) else None
+    """Why hardware the provider found cannot be used. A failure here never
+    stops detection: the reason only explains a result already decided."""
+    try:
+        return impl.unusable_reason()
+    except Exception:  # noqa: BLE001
+        logger.debug("%s gave no reason", type(impl).__name__, exc_info=True)
+        return None

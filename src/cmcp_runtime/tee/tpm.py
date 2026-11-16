@@ -190,44 +190,103 @@ _TPM2_CAP_TPM_PROPERTIES = 0x00000006
 _TPM2_PT_NV_BUFFER_MAX = 0x0000012B
 
 
+@dataclass(frozen=True)
+class TpmProbe:
+    """One look at the TPM. ``reason`` is set when one is present but unusable."""
+
+    usable: bool
+    reason: str | None = None
+
+
+def probe_tpm() -> TpmProbe:
+    """Check that a TPM answers through the backend attestation reports use.
+
+    That backend is ESAPI on the default TCTI when tpm2-pytss is installed, and
+    ``tpm2_pcrread`` otherwise. Each picks its device itself, so the probe asks
+    it rather than guessing from file permissions. A usable TPM answered one
+    read-only command; a later quote, key or NV operation can still fail, and
+    startup then fails closed. No device node means no TPM, which is not a fault.
+    """
+    try:
+        if sys.platform != "linux":
+            return TpmProbe(usable=False)
+        present = [dev for dev in _TPM_DEVICES if dev.exists()]
+        if not present:
+            return TpmProbe(usable=False)
+        names = ", ".join(str(dev) for dev in present)
+        if not _TSS2_AVAILABLE and shutil.which("tpm2_pcrread") is None:
+            return TpmProbe(
+                usable=False,
+                reason=(
+                    f"found {names} but neither tpm2-pytss nor tpm2-tools is installed; "
+                    "install cmcp-runtime[tpm] or tpm2-tools"
+                ),
+            )
+        error = _tss2_error() if _TSS2_AVAILABLE else _tools_error()
+        if error is None:
+            return TpmProbe(usable=True)
+        if not any(os.access(dev, os.R_OK | os.W_OK) for dev in present):
+            error += (
+                f"; this user cannot read and write {names}, "
+                "so add it to the device's group (often 'tss')"
+            )
+        return TpmProbe(usable=False, reason=f"found {names} but it did not answer: {error}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("TPM probe failed", exc_info=True)
+        return TpmProbe(usable=False, reason=f"the TPM check itself failed: {exc!r}")
+
+
+def _tss2_error() -> str | None:
+    """None if ESAPI on the default TCTI answers a read-only capability query."""
+    from tpm2_pytss.ESAPI import ESAPI
+
+    try:
+        with ESAPI() as ectx:
+            ectx.get_capability(_TPM2_CAP_TPM_PROPERTIES, _TPM2_PT_NV_BUFFER_MAX, 1)
+    except Exception as exc:  # noqa: BLE001
+        return str(exc) or type(exc).__name__
+    return None
+
+
+def _tools_error() -> str | None:
+    """None if tpm2_pcrread reads one PCR, from the bank the report reads first."""
+    detail = ""
+    for bank in ("sha256:0", "sha1:0"):
+        try:
+            result = subprocess.run(  # noqa: S603  # nosec B603, B607
+                ["tpm2_pcrread", bank],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return str(exc)
+        if result.returncode == 0:
+            return None
+        detail = f"tpm2_pcrread exited {result.returncode}: {result.stderr.strip()[:200]}"
+    return detail
+
+
 class TPMProvider(TEEProvider):
     """TPM 2.0 attestation provider using tpm2-pytss or subprocess fallback."""
 
     def provider_name(self) -> str:
         return "tpm"
 
+    def __init__(self) -> None:
+        self._probe: TpmProbe | None = None
+
     def detect(self) -> bool:
-        """Return True if a TPM device on Linux can be used: this user can read and
-        write it, and tpm2-pytss or tpm2-tools is installed to talk to it."""
-        try:
-            if sys.platform != "linux":
-                return False
-            return self.unusable_reason() is None and any(
-                dev.exists() for dev in _TPM_DEVICES
-            )
-        except Exception:  # noqa: BLE001
-            return False
+        """Return True if a TPM answered through the backend reports will use."""
+        self._probe = probe_tpm()
+        return self._probe.usable
 
     def unusable_reason(self) -> str | None:
-        """Why a TPM that is present cannot be used, or None.
-
-        None also when there is no TPM at all: absence is not a fault.
-        """
-        present = [dev for dev in _TPM_DEVICES if dev.exists()]
-        if not present:
-            return None
-        if not any(os.access(dev, os.R_OK | os.W_OK) for dev in present):
-            names = ", ".join(str(dev) for dev in present)
-            return (
-                f"found {names} but this user cannot read and write it; "
-                "add the user to the device's group (often 'tss')"
-            )
-        if not _TSS2_AVAILABLE and shutil.which("tpm2_pcrread") is None:
-            return (
-                "found a TPM but neither tpm2-pytss nor tpm2-tools is installed; "
-                "install cmcp-runtime[tpm] or tpm2-tools"
-            )
-        return None
+        """Why the TPM found by the last detect() cannot be used, or None."""
+        if self._probe is None:
+            self._probe = probe_tpm()
+        return self._probe.reason
 
     def get_attestation_report(self, nonce: bytes) -> AttestationReport:
         """

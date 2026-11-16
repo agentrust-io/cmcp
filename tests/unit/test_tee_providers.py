@@ -6,6 +6,7 @@ import ctypes
 import struct
 import subprocess
 import sys
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -270,50 +271,186 @@ def test_downgrade_note_preserves_the_sha1_fallback_note() -> None:
     assert TPMProvider._downgrade_note("sha1-bank-fallback", None) == "sha1-bank-fallback"
 
 
-# ── TPMProvider: a TPM that is present but cannot be used ─────────────────────
+# ── TPMProvider: one probe through the backend reports use ──────────────────
+
+
+class _FakeEsapi:
+    """Stands in for tpm2_pytss.ESAPI.ESAPI; records the query or raises."""
+
+    error: Exception | None = None
+    calls: list[tuple[int, int, int]] = []
+
+    def __enter__(self) -> _FakeEsapi:
+        if _FakeEsapi.error is not None:
+            raise _FakeEsapi.error
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def get_capability(self, cap: int, prop: int, count: int) -> None:
+        _FakeEsapi.calls.append((cap, prop, count))
+
 
 @pytest.fixture
-def fake_tpm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    device = tmp_path / "tpmrm0"
-    device.touch()
-    monkeypatch.setattr("cmcp_runtime.tee.tpm._TPM_DEVICES", [device])
+def devices(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Two device nodes, both present, with tpm2-pytss faked and nothing else."""
+    found = [tmp_path / "tpm0", tmp_path / "tpmrm0"]
+    for dev in found:
+        dev.touch()
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TPM_DEVICES", found)
     monkeypatch.setattr(sys, "platform", "linux")
-    return device
-
-
-def test_tpm_detect_true_when_usable(fake_tpm: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: True)
     monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", True)
-    assert TPMProvider().unusable_reason() is None
-    assert TPMProvider().detect() is True
+    module = types.ModuleType("tpm2_pytss.ESAPI")
+    module.ESAPI = _FakeEsapi  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "tpm2_pytss.ESAPI", module)
+    monkeypatch.setattr(_FakeEsapi, "error", None)
+    monkeypatch.setattr(_FakeEsapi, "calls", [])
+    return found
 
 
-def test_tpm_detect_false_when_device_not_accessible(
-    fake_tpm: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: False)
-    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", True)
-    assert TPMProvider().detect() is False
-    reason = TPMProvider().unusable_reason()
-    assert reason is not None and "cannot read and write" in reason and "tss" in reason
+def _access(allowed: set[Path]):
+    return lambda path, _mode: Path(path) in allowed
 
 
-def test_tpm_detect_false_when_no_tooling(fake_tpm: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: True)
-    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
-    monkeypatch.setattr("cmcp_runtime.tee.tpm.shutil.which", lambda _: None)
-    assert TPMProvider().detect() is False
-    reason = TPMProvider().unusable_reason()
-    assert reason is not None and "tpm2-tools" in reason
+def _tools_only(monkeypatch: pytest.MonkeyPatch, run) -> list[list[str]]:
+    seen: list[list[str]] = []
 
+    def fake_run(argv: list[str], **_: object):
+        seen.append(argv)
+        return run(argv)
 
-def test_tpm_tools_alone_are_enough(fake_tpm: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: True)
     monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
     monkeypatch.setattr("cmcp_runtime.tee.tpm.shutil.which", lambda _: "/usr/bin/tpm2_pcrread")
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.subprocess.run", fake_run)
+    return seen
+
+
+def _rc(code: int, stderr: str = ""):
+    return lambda _argv: subprocess.CompletedProcess([], code, "", stderr)
+
+
+def test_tpm_that_answers_esapi_is_usable(devices: list[Path]) -> None:
+    provider = TPMProvider()
+    assert provider.detect() is True
+    assert provider.unusable_reason() is None
+    assert _FakeEsapi.calls == [(0x6, 0x12B, 1)]  # TPM_PROPERTIES, NV_BUFFER_MAX
+
+
+@pytest.mark.parametrize(
+    "accessible", [set(), {0}, {1}, {0, 1}], ids=["none", "tpm0", "tpmrm0", "both"]
+)
+def test_the_tss_picks_the_device_not_file_permissions(
+    devices: list[Path], monkeypatch: pytest.MonkeyPatch, accessible: set[int]
+) -> None:
+    """Whatever the modes say, a TPM that answers is usable, one that does not is not."""
+    monkeypatch.setattr(
+        "cmcp_runtime.tee.tpm.os.access", _access({devices[i] for i in accessible})
+    )
+    assert TPMProvider().detect() is True
+    _FakeEsapi.error = RuntimeError("tcti:IO failure")
+    provider = TPMProvider()
+    assert provider.detect() is False
+    reason = provider.unusable_reason() or ""
+    assert "did not answer: tcti:IO failure" in reason
+    # The permission hint appears only when no device is readable and writable.
+    assert ("add it to the device's group" in reason) is (not accessible)
+
+
+def test_esapi_is_preferred_when_both_backends_exist(
+    devices: list[Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.shutil.which", lambda _: "/usr/bin/tpm2_pcrread")
+    monkeypatch.setattr(
+        "cmcp_runtime.tee.tpm.subprocess.run", lambda *a, **k: pytest.fail("ran tools")
+    )
     assert TPMProvider().detect() is True
 
 
-def test_tpm_absent_has_no_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_backend_installed(devices: list[Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.shutil.which", lambda _: None)
+    provider = TPMProvider()
+    assert provider.detect() is False
+    assert "tpm2-tools is installed" in (provider.unusable_reason() or "")
+
+
+def test_tools_backend_reads_a_pcr(devices: list[Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _tools_only(monkeypatch, _rc(0))
+    assert TPMProvider().detect() is True
+    assert seen == [["tpm2_pcrread", "sha256:0"]]
+
+
+def test_tools_backend_falls_back_to_sha1_like_the_report(
+    devices: list[Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _tools_only(monkeypatch, lambda argv: _rc(0 if argv[1] == "sha1:0" else 1)(argv))
+    assert TPMProvider().detect() is True
+    assert [argv[1] for argv in seen] == ["sha256:0", "sha1:0"]
+
+
+@pytest.mark.parametrize(
+    "run, expected",
+    [
+        (_rc(1, "ERROR: Esys_Initialize"), "tpm2_pcrread exited 1: ERROR: Esys_Initialize"),
+        (lambda _a: (_ for _ in ()).throw(subprocess.TimeoutExpired("tpm2_pcrread", 10)), "timed out"),
+        (lambda _a: (_ for _ in ()).throw(FileNotFoundError("tpm2_pcrread")), "tpm2_pcrread"),
+        (lambda _a: (_ for _ in ()).throw(PermissionError("denied")), "denied"),
+    ],
+    ids=["exits-nonzero", "times-out", "binary-vanished", "not-executable"],
+)
+def test_tools_that_cannot_talk_to_the_tpm(
+    devices: list[Path], monkeypatch: pytest.MonkeyPatch, run, expected: str
+) -> None:
+    _tools_only(monkeypatch, run)
+    provider = TPMProvider()
+    assert provider.detect() is False
+    assert expected in (provider.unusable_reason() or "")
+
+
+def test_absent_tpm_is_not_a_fault_and_is_not_probed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr("cmcp_runtime.tee.tpm._TPM_DEVICES", [tmp_path / "missing"])
-    assert TPMProvider().unusable_reason() is None
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._tss2_error", lambda: pytest.fail("probed"))
+    provider = TPMProvider()
+    assert provider.detect() is False
+    assert provider.unusable_reason() is None
+
+
+def test_not_linux_is_not_probed(devices: list[Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    provider = TPMProvider()
+    assert provider.detect() is False
+    assert provider.unusable_reason() is None
+    assert _FakeEsapi.calls == []
+
+
+@pytest.mark.parametrize("broken", ["exists", "access"])
+def test_a_failing_check_is_a_reason_not_an_exception(
+    devices: list[Path], monkeypatch: pytest.MonkeyPatch, broken: str
+) -> None:
+    def boom(*_: object) -> bool:
+        raise PermissionError("EACCES on /dev")
+
+    if broken == "exists":
+        monkeypatch.setattr(Path, "exists", boom)
+    else:
+        _FakeEsapi.error = RuntimeError("no answer")
+        monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", boom)
+    provider = TPMProvider()
+    assert provider.detect() is False
+    assert "EACCES on /dev" in (provider.unusable_reason() or "")
+
+
+def test_detect_and_reason_share_one_probe(devices: list[Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reason explains the same look at the TPM that detect() decided on."""
+    _FakeEsapi.error = RuntimeError("first look")
+    provider = TPMProvider()
+    assert provider.detect() is False
+    _FakeEsapi.error = None  # the TPM comes back after detection
+    assert "first look" in (provider.unusable_reason() or "")
+    assert provider.detect() is True
+    assert provider.unusable_reason() is None
+    assert TPMProvider().detect() is True
