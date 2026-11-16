@@ -234,6 +234,33 @@ def test_unknown_method_returns_method_not_found(client: TestClient) -> None:
     assert body["error"]["code"] == -32601
 
 
+@pytest.mark.parametrize("method", ["notifications/initialized", "notifications/cancelled"])
+def test_notification_is_accepted_without_a_reply(client: TestClient, method: str) -> None:
+    """A notification has no id, so it gets 202 and no body, never an error."""
+    resp = client.post("/mcp", json={
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": {"requestId": 1},
+    })
+    assert resp.status_code == 202
+    assert resp.content == b""
+
+
+@pytest.mark.parametrize("method", ["tools/call", "tools/list", "initialize"])
+def test_request_method_without_id_is_refused(method: str) -> None:
+    """A request sent as a notification is refused and never runs a tool."""
+    proxy = _make_proxy(allowed=True)
+    tc = TestClient(MCPServer(proxy=proxy).app)
+    resp = tc.post("/mcp", json={
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": {"name": "mock_tool", "arguments": {}},
+    })
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == -32600
+    proxy.call_tool.assert_not_awaited()
+
+
 def test_tools_list_via_mcp(client: TestClient) -> None:
     """POST /mcp with tools/list returns tool list in JSON-RPC format."""
     resp = client.post("/mcp", json={

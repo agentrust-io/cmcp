@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Standard MCP clients could not connect.** `/mcp` answered the
+  `notifications/initialized` notification with a 404 `Method not found`, which
+  the official TypeScript SDK treats as a failed handshake. A notification (no
+  `id`) now gets 202 with no body. A request method (`initialize`, `tools/list`,
+  `tools/call`) sent without an `id` is refused with 400; before, a `tools/call`
+  without an `id` ran the tool.
+
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks
   succeed (#782). A rejected policy, identity or store configuration no longer
   leaves a newly sealed key bound to rejected inputs. Port binding happens later
