@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `tpm` extra for tpm2-pytss. On Linux, CI's test job installs it and runs the
   TPM tier against swtpm.
 
-### Fixed
+### Changed
 
 - **Claims are signed over RFC 8785 (JCS) and carry only observed TRACE fields
   (`cmcp_version` 1.1).** 1.0 signed sorted-key JSON with ASCII escapes, so a
@@ -42,7 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `prev_claim_hash` is now JCS too. `cmcp_verify` picks the canonical form from
   the signed `cmcp_version`, so 1.0 claims still verify. Consumers reading
   `trace.tool_transcript.entries` from new claims must read
-  `gateway.transcript_entries`.
+  `gateway.transcript_entries`. Verifiers from earlier releases refuse a 1.1
+  claim as `CLAIM_MALFORMED`, since they forbid the new fields, so upgrade
+  verifiers before gateways. While `model` is omitted a 1.1 claim is still not a
+  complete TRACE record; `trace_omitted` says so, and a verifier that checks
+  required fields reports it.
+
+### Fixed
+
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks
   succeed (#782). A rejected policy, identity or store configuration no longer
   leaves a newly sealed key bound to rejected inputs. Port binding happens later
