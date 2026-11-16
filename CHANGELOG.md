@@ -31,13 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the official TypeScript SDK treats as a failed handshake. The four client
   notifications every negotiated revision defines (`initialized`, `cancelled`,
   `progress`, `roots/list_changed`) now get 202 with no body when their params
-  fit the schema: `cancelled` needs a string or integer `requestId` (2025-11-25
-  made it optional only for tasks, which the gateway does not offer), and
-  `progress` needs `progressToken` and a numeric `progress`. They are accepted
-  and not acted on; a cancel does not stop a call already in flight, which MCP
-  allows. Any other message without an `id` is refused with 400 `Invalid
-  Request`, `notifications/tasks/status` included; before, a `tools/call`
-  without an `id` ran the tool. `method` must be a non-empty string and
+  fit the schema: `cancelled` needs a `requestId`, and `progress` needs a
+  `progressToken` and a `progress`, where ids are a string or a finite number
+  (the schema's `string | number`, so a cancel can name any id the gateway
+  accepts) and numbers are finite. `requestId` is required because 2025-11-25
+  made it optional only for tasks. They are accepted and not acted on: a cancel,
+  or a closed connection, does not stop a call already sent upstream, which MCP
+  allows, so the call is recorded as it completed. Any other message without an
+  `id` is refused with 400 `Invalid Request`, `notifications/tasks/status`
+  included, since `initialize` advertises no `tasks` capability; before, a
+  `tools/call` without an `id` ran the tool. `method` must be a non-empty string and
   `params`, when present, an object, for requests and notifications alike;
   before, a message with no `method` was answered `Method not found` and a
   non-object `params` on `tools/list` was ignored. `"id": null` still makes a
