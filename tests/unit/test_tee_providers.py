@@ -268,3 +268,52 @@ def test_downgrade_note_marks_an_unsigned_pcr_read() -> None:
 
 def test_downgrade_note_preserves_the_sha1_fallback_note() -> None:
     assert TPMProvider._downgrade_note("sha1-bank-fallback", None) == "sha1-bank-fallback"
+
+
+# ── TPMProvider: a TPM that is present but cannot be used ─────────────────────
+
+@pytest.fixture
+def fake_tpm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    device = tmp_path / "tpmrm0"
+    device.touch()
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TPM_DEVICES", [device])
+    monkeypatch.setattr(sys, "platform", "linux")
+    return device
+
+
+def test_tpm_detect_true_when_usable(fake_tpm: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: True)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", True)
+    assert TPMProvider().unusable_reason() is None
+    assert TPMProvider().detect() is True
+
+
+def test_tpm_detect_false_when_device_not_accessible(
+    fake_tpm: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: False)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", True)
+    assert TPMProvider().detect() is False
+    reason = TPMProvider().unusable_reason()
+    assert reason is not None and "cannot read and write" in reason and "tss" in reason
+
+
+def test_tpm_detect_false_when_no_tooling(fake_tpm: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: True)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.shutil.which", lambda _: None)
+    assert TPMProvider().detect() is False
+    reason = TPMProvider().unusable_reason()
+    assert reason is not None and "tpm2-tools" in reason
+
+
+def test_tpm_tools_alone_are_enough(fake_tpm: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.os.access", lambda *_: True)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
+    monkeypatch.setattr("cmcp_runtime.tee.tpm.shutil.which", lambda _: "/usr/bin/tpm2_pcrread")
+    assert TPMProvider().detect() is True
+
+
+def test_tpm_absent_has_no_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TPM_DEVICES", [tmp_path / "missing"])
+    assert TPMProvider().unusable_reason() is None

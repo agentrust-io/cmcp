@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dev mode crashed on machines with a TPM it could not use.** `provider: auto`
+  picked the TPM whenever `/dev/tpm0` or `/dev/tpmrm0` existed, even when the
+  user could not open it or no TPM tooling was installed, and startup aborted with
+  `ATTESTATION_REPORT_UNAVAILABLE`. The TPM is now chosen only when the user can
+  read and write it and tpm2-pytss or tpm2-tools is present. Otherwise dev mode
+  falls back to software-only and logs why, and production still refuses to
+  start, now naming the reason.
+
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks
   succeed (#782). A rejected policy, identity or store configuration no longer
   leaves a newly sealed key bound to rejected inputs. Port binding happens later
