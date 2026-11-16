@@ -231,8 +231,17 @@ def _kill_switch_conflict(agent_id: str) -> JSONResponse:
     )
 
 
-# Methods that are requests and must carry an id.
-_REQUEST_METHODS = frozenset({"initialize", "tools/list", "tools/call"})
+# The notifications a client sends a server, in every revision `initialize`
+# negotiates (ClientNotification in the MCP schema). They are accepted and
+# ignored: the gateway keeps no handshake state and has no request to cancel
+# or report progress on. Any other message without an id is refused, so an
+# unknown or misspelled method is never acknowledged as accepted.
+_CLIENT_NOTIFICATIONS = frozenset({
+    "notifications/initialized",
+    "notifications/cancelled",
+    "notifications/progress",
+    "notifications/roots/list_changed",
+})
 
 
 def _invalid_request(rpc_id: Any = None) -> JSONResponse:
@@ -611,32 +620,30 @@ class MCPServer:
         if msg.get("jsonrpc") != "2.0":
             return _invalid_request(rpc_id)
 
-        method = msg.get("method", "")
-        if not isinstance(method, str):
+        # JSON-RPC requires `method`. MCP defines every `params` as an object,
+        # which JSON-RPC's "structured value" rule allows; a non-object is not
+        # treated as an empty one, so a malformed handshake or call never
+        # succeeds. Absent `params` stays legal.
+        method = msg.get("method")
+        if not isinstance(method, str) or not method:
+            return _invalid_request(rpc_id)
+        params = msg.get("params", {})
+        if not isinstance(params, dict):
             return _invalid_request(rpc_id)
         if "id" not in msg:
-            # A notification gets no JSON-RPC reply. MCP's HTTP transport answers
-            # an accepted one with 202 and no body. A request method sent without
-            # an id is refused, so a tool never runs with no call to answer.
-            if method in _REQUEST_METHODS:
-                return _invalid_request()
-            return Response(status_code=202)
-        params = msg.get("params", {})
+            # A notification (no id, unlike `"id": null`) gets no JSON-RPC
+            # reply; MCP's HTTP transport answers an accepted one with 202 and
+            # no body. Anything else without an id is refused, including a
+            # request method, so a tool never runs with no call to answer.
+            if method in _CLIENT_NOTIFICATIONS:
+                return Response(status_code=202)
+            return _invalid_request()
 
         if method == "tools/call":
-            if not isinstance(params, dict):
-                return _invalid_request(rpc_id)
             return await self._handle_tool_call(rpc_id, params)
         if method == "tools/list":
             return await self._handle_tools_list(rpc_id)
         if method == "initialize":
-            # `InitializeRequestParams` is an object. Treating a non-object as
-            # an empty one would answer a malformed handshake with a successful
-            # negotiation, so it is rejected the same way `tools/call` rejects
-            # its own non-object params. Absent `params` stays legal and
-            # negotiates the newest revision.
-            if not isinstance(params, dict):
-                return _invalid_request(rpc_id)
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": rpc_id,
@@ -647,7 +654,7 @@ class MCPServer:
                 },
             })
         # INJECT-002: sanitize method before reflecting it in the error response
-        safe_method = (method or "")[:64].encode("ascii", errors="replace").decode("ascii")
+        safe_method = method[:64].encode("ascii", errors="replace").decode("ascii")
         return JSONResponse(
             {
                 "jsonrpc": "2.0",

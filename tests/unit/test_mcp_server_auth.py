@@ -879,3 +879,25 @@ def test_non_ascii_bearer_token_returns_401_not_500():
     )
     assert resp.status_code == 401
     assert resp.json()["error_code"] == "INVALID_BEARER_TOKEN"
+
+
+# A notification passes the same gates as a request.
+
+_NOTIFICATION = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+
+
+def test_notification_without_token_returns_401():
+    client = TestClient(_make_server(bearer_token="secret").app, raise_server_exceptions=False)
+    assert client.post("/mcp", json=_NOTIFICATION).status_code == 401
+    ok = client.post("/mcp", json=_NOTIFICATION, headers={"Authorization": "Bearer secret"})
+    assert ok.status_code == 202
+
+
+def test_oversized_notification_returns_413():
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
+        proxy = MagicMock()
+        proxy._catalog = MagicMock()
+        proxy._catalog.entries = {}
+        server = MCPServer(proxy, max_request_bytes=16)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    assert client.post("/mcp", content=json.dumps(_NOTIFICATION).encode()).status_code == 413

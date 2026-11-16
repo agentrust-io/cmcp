@@ -28,10 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Standard MCP clients could not connect.** `/mcp` answered the
   `notifications/initialized` notification with a 404 `Method not found`, which
-  the official TypeScript SDK treats as a failed handshake. A notification (no
-  `id`) now gets 202 with no body. A request method (`initialize`, `tools/list`,
-  `tools/call`) sent without an `id` is refused with 400; before, a `tools/call`
-  without an `id` ran the tool.
+  the official TypeScript SDK treats as a failed handshake. The four client
+  notifications every negotiated revision defines (`initialized`, `cancelled`,
+  `progress`, `roots/list_changed`) now get 202 with no body. Any other message
+  without an `id` is refused with 400 `Invalid Request`; before, a `tools/call`
+  without an `id` ran the tool. `method` must be a non-empty string and
+  `params`, when present, an object, for requests and notifications alike;
+  before, a message with no `method` was answered `Method not found` and a
+  non-object `params` on `tools/list` was ignored. `"id": null` still makes a
+  request.
 
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks
   succeed (#782). A rejected policy, identity or store configuration no longer
