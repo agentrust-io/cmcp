@@ -266,6 +266,11 @@ _VALID_PARAMS = [
     ("notifications/cancelled", {"requestId": 7}),
     ("notifications/cancelled", {"requestId": "c-1", "reason": "user stopped it"}),
     ("notifications/cancelled", {"requestId": 7, "extra": "kept, as in the schema"}),
+    # The schema types RequestId and ProgressToken as string or number.
+    ("notifications/cancelled", {"requestId": 1.5}),
+    ("notifications/cancelled", {"requestId": 1.0}),
+    ("notifications/cancelled", {"requestId": ""}),
+    ("notifications/progress", {"progressToken": 2.5, "progress": 0}),
     ("notifications/progress", {"progressToken": "t", "progress": 1}),
     ("notifications/progress", {"progressToken": 3, "progress": 0.5, "total": 2, "message": "half"}),
     ("notifications/progress", {"progressToken": "t", "progress": -1}),  # no minimum in the schema
@@ -279,7 +284,6 @@ _INVALID_PARAMS = [
     ("notifications/cancelled", {"reason": "no id"}),
     ("notifications/cancelled", {"requestId": True}),
     ("notifications/cancelled", {"requestId": None}),
-    ("notifications/cancelled", {"requestId": 1.5}),
     ("notifications/cancelled", {"requestId": [1]}),
     ("notifications/cancelled", {"requestId": 1, "reason": 5}),
     ("notifications/cancelled", {"requestId": 1, "reason": None}),
@@ -324,6 +328,60 @@ def test_every_accepted_notification_has_a_valid_case() -> None:
 
     assert set(_NOTIFICATIONS) == set(_CLIENT_NOTIFICATIONS)
     assert set(_NOTIFICATIONS) == {m for m, _ in _VALID_PARAMS}
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"requestId": float("nan")},
+        {"requestId": float("inf")},
+        {"requestId": 1, "reason": None},
+    ],
+)
+def test_validator_refuses_non_finite_and_null_values(params: dict[str, Any]) -> None:
+    """JSON cannot carry NaN or Infinity, but the validator does not rely on that."""
+    from cmcp_runtime.mcp.server import _accepts_notification
+
+    assert _accepts_notification("notifications/cancelled", params) is False
+    assert _accepts_notification(
+        "notifications/progress", {"progressToken": "t", "progress": float("nan")}
+    ) is False
+    assert _accepts_notification(
+        "notifications/progress", {"progressToken": "t", "progress": 1, "total": float("inf")}
+    ) is False
+
+
+def test_initialize_offers_no_tasks_so_task_status_is_refused() -> None:
+    resp, _ = _post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    assert "tasks" not in resp.json()["result"]["capabilities"]
+    refused, proxy = _notify("notifications/tasks/status", {"taskId": "t", "status": "working"})
+    _assert_refused(refused)
+    assert proxy.method_calls == []
+
+
+def test_the_stateless_revision_is_never_negotiated_inbound() -> None:
+    """2026-07-28 removed initialize and defines no client notifications on HTTP;
+    a client asking for it gets the newest handshake-era revision instead."""
+    resp, _ = _post({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2026-07-28"},
+    })
+    assert resp.json()["result"]["protocolVersion"] == "2025-11-25"
+
+
+@pytest.mark.parametrize("when", ["before-any-call", "after-the-call-completed"])
+def test_cancel_for_a_call_not_in_flight_is_accepted(when: str) -> None:
+    proxy = _make_proxy(allowed=True)
+    tc = TestClient(MCPServer(proxy=proxy).app)
+    if when == "after-the-call-completed":
+        done = tc.post("/mcp", json={
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "mock_tool", "arguments": {}},
+        })
+        assert done.status_code == 200
+    resp = tc.post("/mcp", json={
+        "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 9},
+    })
+    assert resp.status_code == 202 and resp.content == b""
 
 
 @pytest.mark.parametrize("version", ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])

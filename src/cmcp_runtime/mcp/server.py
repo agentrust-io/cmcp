@@ -13,6 +13,7 @@ import asyncio
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -231,15 +232,21 @@ def _kill_switch_conflict(agent_id: str) -> JSONResponse:
     )
 
 
-def _is_mcp_id(value: Any) -> bool:
-    """A RequestId or ProgressToken: a string or an integer, never a bool."""
-    if isinstance(value, bool):
-        return False
-    return isinstance(value, (str, int)) or (isinstance(value, float) and value.is_integer())
-
-
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite JSON number; a bool is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
+def _is_mcp_id(value: Any) -> bool:
+    """A RequestId or ProgressToken, which the MCP schema types as string or number.
+
+    Any finite number, fractional too: a cancel must be able to name any request
+    id the gateway accepts, and _valid_rpc_id accepts a fractional one, as
+    JSON-RPC does (it only discourages them).
+    """
+    return isinstance(value, str) or _is_number(value)
 
 
 def _is_str(value: Any) -> bool:
@@ -252,14 +259,21 @@ def _is_str(value: Any) -> bool:
 # A message without an id that is not one of these, or whose params do not fit,
 # is refused, so nothing malformed is acknowledged as accepted.
 #
+# Inbound the gateway negotiates only the handshake-era revisions (2024-11-05 to
+# 2025-11-25, see _LEGACY_PROTOCOL_VERSIONS), whose Streamable HTTP transport
+# POSTs client notifications and answers an accepted one with 202. 2026-07-28,
+# which defines no client notifications on HTTP, is never negotiated inbound.
+#
 # Each is accepted and not acted on. The gateway keeps no handshake state.
 # `progress` refers to requests the gateway never sends. `cancelled` refers to
 # a call the client made; it does not stop that call, which MCP allows (a
-# receiver MAY ignore a cancellation it cannot honour): a call already sent
-# upstream may have had its effect, and it is recorded as it completed.
-# `requestId` is required: 2025-11-25 made it optional only for tasks, which the
-# gateway does not offer. `notifications/tasks/status` is not accepted for the
-# same reason.
+# receiver MAY ignore a cancellation it cannot honour), and neither does a
+# client closing its connection: a call already sent upstream may have had its
+# effect, so it is completed and recorded as it happened rather than cut off
+# with an outcome nobody observed. `requestId` is required: 2025-11-25 made it
+# optional only for tasks. 2025-11-25 also lists `notifications/tasks/status`
+# as a client notification; it is refused because `initialize` advertises no
+# `tasks` capability, so no client has a task with this gateway to report on.
 _CLIENT_NOTIFICATIONS: dict[str, dict[str, tuple[Callable[[Any], bool], bool]]] = {
     "notifications/initialized": {},
     "notifications/cancelled": {"requestId": (_is_mcp_id, True), "reason": (_is_str, False)},
