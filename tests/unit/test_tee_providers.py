@@ -335,19 +335,36 @@ def test_probe_reads_pcrs_0_to_7_from_sha256(devices: list[Path]) -> None:
     assert _FakeEsapi.reads == ["sha256:0,1,2,3,4,5,6,7"]
 
 
-def test_probe_falls_back_to_sha1_like_the_report(devices: list[Path]) -> None:
-    _FakeEsapi.banks = {"sha256": RuntimeError("no bank"), "sha1": GOOD}
-    assert _probe() == (True, "")
-    assert _FakeEsapi.reads == ["sha256:0,1,2,3,4,5,6,7", "sha1:0,1,2,3,4,5,6,7"]
+SHA1 = [b"\x22" * 20] * 8
+
+
+def test_a_sha1_only_tpm_is_not_usable(devices: list[Path]) -> None:
+    """The quote covers SHA-256, so a TPM that reads only SHA-1 cannot give a
+    hardware report; detection says so instead of selecting it."""
+    _FakeEsapi.banks = {"sha256": RuntimeError("no sha256 bank"), "sha1": SHA1}
+    usable, reason = _probe()
+    assert usable is False and "SHA-256 PCR bank" in reason
+    assert _FakeEsapi.reads == ["sha256:0,1,2,3,4,5,6,7"]
+
+
+def test_a_sha1_only_report_is_downgraded_not_failed(devices: list[Path]) -> None:
+    """A TPM that loses SHA-256 after detection still reports honestly: SHA-1,
+    marked, as software-only."""
+    _FakeEsapi.banks = {"sha256": RuntimeError("no sha256 bank"), "sha1": SHA1}
+    report = TPMProvider().get_attestation_report(b"\x00" * 64)
+    assert report.provider == "software-only"
+    assert report.measurement_note == "sha1-bank-fallback"
 
 
 @pytest.mark.parametrize(
     "banks, expected",
     [
-        ({"sha256": RuntimeError("PCR 7 unreadable"), "sha1": RuntimeError("no sha1")}, "no sha1"),
-        ({"sha256": GOOD[:7]}, "got 7, expected 8"),
+        ({"sha256": RuntimeError("PCR 7 unreadable")}, "SHA-256 PCR bank: PCR 7 unreadable"),
+        ({"sha256": GOOD[:7]}, "expected 8 sha256 digests"),
+        ({"sha256": GOOD[:7] + [b"\x11"]}, "expected 8 sha256 digests"),
+        ({"sha256": GOOD + [b"\x11" * 32]}, "expected 8 sha256 digests"),
     ],
-    ids=["no-bank-reads", "seven-pcrs"],
+    ids=["bank-unreadable", "seven-pcrs", "short-digest", "nine-pcrs"],
 )
 def test_a_tpm_that_answers_but_cannot_give_the_report_pcrs_is_unusable(
     devices: list[Path], banks: dict, expected: str
@@ -423,17 +440,26 @@ def test_tools_probe_reads_the_report_selection(devices: list[Path], monkeypatch
     assert seen == [["tpm2_pcrread", "sha256:0,1,2,3,4,5,6,7"]]
 
 
-def test_tools_probe_falls_back_to_sha1(devices: list[Path], monkeypatch: pytest.MonkeyPatch) -> None:
-    seen = _tools(monkeypatch, lambda a: _done(0, _PCRREAD_OK) if a[1].startswith("sha1") else _done(1))
-    assert _probe() == (True, "")
-    assert [a[1] for a in seen] == ["sha256:0,1,2,3,4,5,6,7", "sha1:0,1,2,3,4,5,6,7"]
+_PCRREAD_SHA1 = "sha1:\n" + "".join(f"  {i} : 0x{'22' * 20}\n" for i in range(8))
+
+
+def test_tools_sha1_only_is_unusable_but_reports_downgraded(
+    devices: list[Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _tools(monkeypatch, lambda a: _done(0, _PCRREAD_SHA1) if a[1].startswith("sha1") else _done(1))
+    usable, reason = _probe()
+    assert usable is False and "exited 1" in reason
+    assert [a[1] for a in seen] == ["sha256:0,1,2,3,4,5,6,7"]
+    report = TPMProvider().get_attestation_report(b"\x00" * 64)
+    assert report.provider == "software-only"
+    assert report.measurement_note == "sha1-bank-fallback"
 
 
 @pytest.mark.parametrize(
     "answer, expected, calls",
     [
-        (lambda _a: _done(1, err="ERROR: Esys_PCR_Read"), "exited 1: ERROR: Esys_PCR_Read", 2),
-        (lambda _a: _done(0, "sha256:\n  0 : 0x" + "11" * 32 + "\n"), "parsed 1 PCRs", 1),
+        (lambda _a: _done(1, err="ERROR: Esys_PCR_Read"), "exited 1: ERROR: Esys_PCR_Read", 1),
+        (lambda _a: _done(0, "sha256:\n  0 : 0x" + "11" * 32 + "\n"), "expected PCRs 0-7", 1),
         (lambda _a: (_ for _ in ()).throw(subprocess.TimeoutExpired("tpm2_pcrread", 30)), "timed out", 1),
         (lambda _a: (_ for _ in ()).throw(FileNotFoundError("tpm2_pcrread")), "tpm2_pcrread", 1),
     ],
@@ -453,7 +479,7 @@ def test_probe_and_report_share_one_reader(devices: list[Path], monkeypatch: pyt
     """Whatever the report's PCR read needs, detection checks, by construction."""
     from cmcp_runtime.tee import tpm
 
-    def broken(_ectx: object) -> None:
+    def broken(_ectx: object, **_: object) -> None:
         raise RuntimeError("reader broke")
 
     monkeypatch.setattr(tpm, "_read_pcrs_tss2", broken)

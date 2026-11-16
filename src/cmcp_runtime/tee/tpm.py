@@ -199,17 +199,21 @@ class TpmProbe:
 
 
 def probe_tpm() -> TpmProbe:
-    """Check that the TPM gives the PCR read every attestation report starts with.
+    """Check that the TPM reads the SHA-256 PCRs 0-7 an attestation report quotes.
 
-    The read goes through the backend reports use, ESAPI on the default TCTI when
-    tpm2-pytss is installed and ``tpm2_pcrread`` otherwise, and through the same
-    function, so it reads what the report reads: PCRs 0-7 from SHA-256, else
-    SHA-1. Each backend picks its device itself, so the probe asks it rather than
-    guessing from file permissions. It is read-only. Usable does not promise a
-    hardware-attested report: without a quote and attestation key the report is
-    downgraded to software-only and says so, and a TPM that fails between the
-    probe and the report fails startup closed. No device node means no TPM,
-    which is not a fault.
+    The read goes through the backend reports use and the same function: ESAPI
+    on the default TCTI when tpm2-pytss is installed, ``tpm2_pcrread``
+    otherwise. The backend is chosen by which package is present, the same for
+    probe and report, and one never falls back to the other, so the probe never
+    passes on a backend the report would not use. Each picks its device itself,
+    so the probe asks it rather than guessing from file permissions.
+
+    It is read-only. It does not create an attestation key or quote, which would
+    change TPM state. So usable means the quoted bank reads; it does not promise
+    a hardware-attested report: without a quote the report is downgraded to
+    software-only and says so, and a TPM that fails between the probe and the
+    report fails startup closed. A TPM that reads only SHA-1 is not usable.
+    No device node means no TPM, which is not a fault.
     """
     try:
         if sys.platform != "linux":
@@ -257,34 +261,44 @@ def _warn_sha1_fallback() -> None:
     )
 
 
-def _read_pcrs_tss2(ectx: Any) -> tuple[list[bytes], str | None]:
-    """PCRs 0-7 from the SHA-256 bank, else SHA-1, as every report reads them.
+#: Digest size of each PCR bank the reader accepts.
+_PCR_DIGEST_SIZE = {"sha256": 32, "sha1": 20}
 
-    Returns the eight digests and "sha1-bank-fallback" when SHA-1 was used.
-    Raises when neither bank gives eight. Detection calls this too, so what it
-    checks is what the report needs.
+
+def _read_pcrs_tss2(ectx: Any, *, allow_sha1: bool) -> tuple[list[bytes], str | None]:
+    """PCRs 0-7 from the SHA-256 bank, the bank the quote covers.
+
+    With *allow_sha1* a report falls back to SHA-1 and returns
+    "sha1-bank-fallback", which downgrades it to software-only. Detection passes
+    False: a TPM that cannot read the quoted bank cannot give a hardware report.
+    Raises unless the bank gives exactly eight digests of its size.
     """
     from tpm2_pytss.types import TPML_PCR_SELECTION
 
-    note: str | None = None
+    bank, note = "sha256", None
     try:
         _, _, digests = ectx.pcr_read(TPML_PCR_SELECTION.parse(f"sha256:{_PCR_SELECTION}"))
     except Exception as exc:  # noqa: BLE001
+        if not allow_sha1:
+            raise RuntimeError(f"TPM could not read the SHA-256 PCR bank: {exc}") from exc
         logger.debug("SHA-256 PCR read failed (%s)", exc)
-        note = "sha1-bank-fallback"
+        bank, note = "sha1", "sha1-bank-fallback"
         _, _, digests = ectx.pcr_read(TPML_PCR_SELECTION.parse(f"sha1:{_PCR_SELECTION}"))
     raw = [bytes(digest) for digest in digests.digests]
-    if len(raw) < 8:
-        raise RuntimeError(f"TPM device found but could not read PCRs: got {len(raw)}, expected 8")
-    return raw[:8], note
+    size = _PCR_DIGEST_SIZE[bank]
+    if len(raw) != 8 or any(len(value) != size for value in raw):
+        raise RuntimeError(
+            f"TPM device found but could not read PCRs: expected 8 {bank} digests of "
+            f"{size} bytes, got {[len(value) for value in raw]}"
+        )
+    return raw, note
 
 
-def _read_pcrs_tools() -> tuple[list[bytes], str | None]:
-    """The same read through tpm2_pcrread. A bank that fails falls back to
-    SHA-1; a tool that cannot start or times out fails for both banks, so it
-    raises at once."""
+def _read_pcrs_tools(*, allow_sha1: bool) -> tuple[list[bytes], str | None]:
+    """The same read through tpm2_pcrread, with the same *allow_sha1* rule. A tool
+    that cannot start or times out fails for every bank, so it raises at once."""
     note: str | None = None
-    for bank in ("sha256", "sha1"):
+    for bank in ("sha256", "sha1") if allow_sha1 else ("sha256",):
         try:
             result = subprocess.run(  # noqa: S603  # nosec B603, B607
                 ["tpm2_pcrread", f"{bank}:{_PCR_SELECTION}"],  # noqa: S607
@@ -303,28 +317,25 @@ def _read_pcrs_tools() -> tuple[list[bytes], str | None]:
             f"TPM device found but could not read PCRs: tpm2_pcrread exited "
             f"{result.returncode}: {result.stderr.strip()[:200]}"
         )
-    values = _parse_tpm2_pcrread_output(result.stdout)
-    if len(values) < 8:
-        raise RuntimeError(f"TPM device found but could not read PCRs: parsed {len(values)} PCRs")
-    return values[:8], note
+    return _parse_tpm2_pcrread_output(result.stdout, bank), note
 
 
 def _tss2_error() -> str | None:
-    """None if ESAPI on the default TCTI reads the PCRs a report reads."""
+    """None if ESAPI on the default TCTI reads the SHA-256 PCRs a report quotes."""
     from tpm2_pytss.ESAPI import ESAPI
 
     try:
         with ESAPI() as ectx:
-            _read_pcrs_tss2(ectx)
+            _read_pcrs_tss2(ectx, allow_sha1=False)
     except Exception as exc:  # noqa: BLE001
         return str(exc) or type(exc).__name__
     return None
 
 
 def _tools_error() -> str | None:
-    """None if tpm2_pcrread reads the PCRs a report reads."""
+    """None if tpm2_pcrread reads the SHA-256 PCRs a report quotes."""
     try:
-        _read_pcrs_tools()
+        _read_pcrs_tools(allow_sha1=False)
     except RuntimeError as exc:
         return str(exc)
     return None
@@ -369,7 +380,7 @@ class TPMProvider(TEEProvider):
         )
 
         with ESAPI() as ectx:
-            raw_pcrs, measurement_note = _read_pcrs_tss2(ectx)
+            raw_pcrs, measurement_note = _read_pcrs_tss2(ectx, allow_sha1=True)
             if measurement_note is not None:
                 _warn_sha1_fallback()
 
@@ -708,7 +719,7 @@ class TPMProvider(TEEProvider):
 
     def _report_via_subprocess(self, nonce: bytes) -> AttestationReport:
         """Read PCRs 0-7 using tpm2_pcrread subprocess."""
-        pcr_values, measurement_note = _read_pcrs_tools()
+        pcr_values, measurement_note = _read_pcrs_tools(allow_sha1=True)
         if measurement_note is not None:
             _warn_sha1_fallback()
 
@@ -730,31 +741,54 @@ class TPMProvider(TEEProvider):
         )
 
 
-def _parse_tpm2_pcrread_output(output: str) -> list[bytes]:
+def _parse_tpm2_pcrread_output(output: str, bank: str = "sha256") -> list[bytes]:
     """
-    Parse tpm2_pcrread YAML-ish output into a list of raw PCR bytes.
+    PCRs 0-7 of *bank* from tpm2_pcrread output, in index order.
 
     Expected format (per PCR):
       sha256:
         0 : 0xABCD...
 
+    Only lines under the *bank* header count. Each of indices 0-7 must appear
+    exactly once with a digest of the bank's size, and nothing else may appear
+    there, so a short, repeated or missing PCR never becomes a measurement.
+
     ``lstrip("0x")`` cannot be used to drop the prefix: it strips a character set,
     so a value whose digits begin with 0 loses those digits as well.
     """
-    pcr_values: list[bytes] = []
-    for line in output.splitlines():
-        line = line.strip()
-        if ":" in line and line.split(":")[0].strip().isdigit():
-            _, _, hex_val = line.partition(":")
-            hex_val = hex_val.strip()
-            if hex_val[:2].lower() == "0x":
-                hex_val = hex_val[2:]
-            if not hex_val:
-                raise RuntimeError(f"TPM PCR read returned an empty value: {line!r}")
-            try:
-                pcr_values.append(bytes.fromhex(hex_val))
-            except ValueError as exc:
-                raise RuntimeError(
-                    f"TPM PCR read returned an unparseable value: {line!r}"
-                ) from exc
-    return pcr_values
+    size = _PCR_DIGEST_SIZE[bank]
+    found: dict[int, bytes] = {}
+    section: str | None = None
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        head, sep, rest = line.partition(":")
+        if sep and not rest.strip() and not head.strip().isdigit():
+            section = head.strip().lower()
+            continue
+        if not (sep and head.strip().isdigit()):
+            raise RuntimeError(f"TPM PCR read returned an unexpected line: {line!r}")
+        if section != bank:
+            continue
+        hex_val = rest.strip()
+        if hex_val[:2].lower() == "0x":
+            hex_val = hex_val[2:]
+        if not hex_val:
+            raise RuntimeError(f"TPM PCR read returned an empty value: {line!r}")
+        try:
+            value = bytes.fromhex(hex_val)
+        except ValueError as exc:
+            raise RuntimeError(f"TPM PCR read returned an unparseable value: {line!r}") from exc
+        index = int(head.strip())
+        if index not in range(8) or index in found or len(value) != size:
+            raise RuntimeError(
+                f"TPM PCR read returned PCR {index} with {len(value)} bytes; expected "
+                f"each of PCRs 0-7 once with a {size}-byte {bank} digest"
+            )
+        found[index] = value
+    if sorted(found) != list(range(8)):
+        raise RuntimeError(
+            f"TPM PCR read returned {bank} PCRs {sorted(found)}; expected PCRs 0-7"
+        )
+    return [found[i] for i in range(8)]
