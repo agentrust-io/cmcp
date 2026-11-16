@@ -18,7 +18,7 @@ import re
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -231,17 +231,61 @@ def _kill_switch_conflict(agent_id: str) -> JSONResponse:
     )
 
 
+def _is_mcp_id(value: Any) -> bool:
+    """A RequestId or ProgressToken: a string or an integer, never a bool."""
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (str, int)) or (isinstance(value, float) and value.is_integer())
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_str(value: Any) -> bool:
+    return isinstance(value, str)
+
+
 # The notifications a client sends a server, in every revision `initialize`
-# negotiates (ClientNotification in the MCP schema). They are accepted and
-# ignored: the gateway keeps no handshake state and has no request to cancel
-# or report progress on. Any other message without an id is refused, so an
-# unknown or misspelled method is never acknowledged as accepted.
-_CLIENT_NOTIFICATIONS = frozenset({
-    "notifications/initialized",
-    "notifications/cancelled",
-    "notifications/progress",
-    "notifications/roots/list_changed",
-})
+# negotiates (ClientNotification in the MCP schema), with the params members
+# each requires (True) or allows (False). Other members pass, as in the schema.
+# A message without an id that is not one of these, or whose params do not fit,
+# is refused, so nothing malformed is acknowledged as accepted.
+#
+# Each is accepted and not acted on. The gateway keeps no handshake state.
+# `progress` refers to requests the gateway never sends. `cancelled` refers to
+# a call the client made; it does not stop that call, which MCP allows (a
+# receiver MAY ignore a cancellation it cannot honour): a call already sent
+# upstream may have had its effect, and it is recorded as it completed.
+# `requestId` is required: 2025-11-25 made it optional only for tasks, which the
+# gateway does not offer. `notifications/tasks/status` is not accepted for the
+# same reason.
+_CLIENT_NOTIFICATIONS: dict[str, dict[str, tuple[Callable[[Any], bool], bool]]] = {
+    "notifications/initialized": {},
+    "notifications/cancelled": {"requestId": (_is_mcp_id, True), "reason": (_is_str, False)},
+    "notifications/progress": {
+        "progressToken": (_is_mcp_id, True),
+        "progress": (_is_number, True),
+        "total": (_is_number, False),
+        "message": (_is_str, False),
+    },
+    "notifications/roots/list_changed": {},
+}
+
+
+def _accepts_notification(method: str, params: dict[str, Any]) -> bool:
+    rules = _CLIENT_NOTIFICATIONS.get(method)
+    if rules is None:
+        return False
+    if "_meta" in params and not isinstance(params["_meta"], dict):
+        return False
+    for name, (valid, required) in rules.items():
+        if name in params:
+            if not valid(params[name]):
+                return False
+        elif required:
+            return False
+    return True
 
 
 def _invalid_request(rpc_id: Any = None) -> JSONResponse:
@@ -635,7 +679,7 @@ class MCPServer:
             # reply; MCP's HTTP transport answers an accepted one with 202 and
             # no body. Anything else without an id is refused, including a
             # request method, so a tool never runs with no call to answer.
-            if method in _CLIENT_NOTIFICATIONS:
+            if _accepts_notification(method, params):
                 return Response(status_code=202)
             return _invalid_request()
 
