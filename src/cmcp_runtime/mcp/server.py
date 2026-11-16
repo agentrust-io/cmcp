@@ -231,6 +231,10 @@ def _kill_switch_conflict(agent_id: str) -> JSONResponse:
     )
 
 
+# Methods that are requests and must carry an id.
+_REQUEST_METHODS = frozenset({"initialize", "tools/list", "tools/call"})
+
+
 def _invalid_request(rpc_id: Any = None) -> JSONResponse:
     """Return a bounded JSON-RPC Invalid Request response."""
     return JSONResponse(
@@ -610,6 +614,13 @@ class MCPServer:
         method = msg.get("method", "")
         if not isinstance(method, str):
             return _invalid_request(rpc_id)
+        if "id" not in msg:
+            # A notification gets no JSON-RPC reply. MCP's HTTP transport answers
+            # an accepted one with 202 and no body. A request method sent without
+            # an id is refused, so a tool never runs with no call to answer.
+            if method in _REQUEST_METHODS:
+                return _invalid_request()
+            return Response(status_code=202)
         params = msg.get("params", {})
 
         if method == "tools/call":
