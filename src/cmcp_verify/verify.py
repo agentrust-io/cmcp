@@ -188,6 +188,10 @@ class VerificationResult:
     attestation_age_seconds: int
     is_attestation_fresh: bool
     details: dict[str, str] = field(default_factory=dict)
+    #: Required TRACE fields the claim says it left out (1.1). VERIFIED speaks
+    #: for what the gateway signed; non-empty means `trace` is not a complete
+    #: TRACE record.
+    trace_omitted: list[str] = field(default_factory=list)
 
 
 def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
@@ -250,7 +254,10 @@ def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
     except Exception as exc:
         return False, f"cannot decode signature: {exc}"
 
-    body = _canonical_json(claim)
+    try:
+        body = _canonical_json(claim)
+    except rfc8785.CanonicalizationError as exc:
+        return False, f"claim has no RFC 8785 canonical form: {exc}"
     try:
         pub_key.verify(sig_bytes, body)
         return True, None
@@ -1519,4 +1526,5 @@ def verify_trace_claim(
         attestation_age_seconds=age,
         is_attestation_fresh=is_fresh,
         details=details,
+        trace_omitted=list(claim_json.get("gateway", {}).get("trace_omitted", [])),
     )

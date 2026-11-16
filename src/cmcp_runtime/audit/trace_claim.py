@@ -20,7 +20,7 @@ from agentrust_trace.models import (
     PolicyInfo,
     RuntimeInfo,
 )
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 AgentSubjectSource = Literal["config", "svid", "manifest-dev"]
 
@@ -262,6 +262,15 @@ class GatewayTrace(BaseModel):
     build_provenance: BuildProvenance | None = None
     appraisal: Appraisal | None = None
 
+    @field_validator("model", "build_provenance", "appraisal", mode="before")
+    @classmethod
+    def _absent_not_null(cls, value: Any) -> Any:
+        # Left out means absent, as the JSON Schema says; an explicit null is
+        # neither a value nor an omission.
+        if value is None:
+            raise ValueError("leave the member out instead of sending null")
+        return value
+
 
 class CallLogSummary(BaseModel):
     """Per-session call log summary included in the gateway addenda."""
@@ -347,6 +356,13 @@ class GatewayAddenda(BaseModel):
     transcript_entries: list[ToolTranscriptEntry] | None = None
     trace_omitted: list[TraceOmitted] | None = None
 
+    @field_validator("transcript_entries", "trace_omitted", mode="before")
+    @classmethod
+    def _absent_not_null(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("leave the member out instead of sending null")
+        return value
+
 
 ClaimVersion = Literal["1.0", "1.1"]
 #: Claim format the gateway emits. 1.1 signs over RFC 8785 (JCS) and signs only
@@ -359,7 +375,8 @@ class RuntimeClaim(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    cmcp_version: ClaimVersion = CLAIM_VERSION
+    # Required, never defaulted: it selects the bytes the signature covers.
+    cmcp_version: ClaimVersion
     trace: GatewayTrace
     gateway: GatewayAddenda
     signature: str = ""
@@ -385,9 +402,19 @@ class RuntimeClaim(BaseModel):
             raise ValueError("1.1 claims carry transcript entries in gateway.transcript_entries")
         if trace.appraisal is None or gateway.trace_omitted is None:
             raise ValueError("1.1 claims need trace.appraisal and gateway.trace_omitted")
-        missing = [name for name in _OMITTABLE if getattr(trace, name) is None]
-        if gateway.trace_omitted != missing:
+        # A set: order carries no meaning, a repeat is refused.
+        missing = {name for name in _OMITTABLE if getattr(trace, name) is None}
+        omitted = gateway.trace_omitted
+        if len(set(omitted)) != len(omitted) or set(omitted) != missing:
             raise ValueError("gateway.trace_omitted must list exactly the omitted TRACE fields")
+        # The signature covers the RFC 8785 form, so a 1.1 claim must have one:
+        # integers within +-(2**53 - 1), finite numbers, valid Unicode.
+        body = self.model_dump(exclude_none=True)
+        body.pop("signature", None)
+        try:
+            rfc8785.dumps(body)
+        except rfc8785.CanonicalizationError as exc:
+            raise ValueError(f"1.1 claims need an RFC 8785 canonical form: {exc}") from exc
         return self
 
 
@@ -589,6 +616,13 @@ def generate_trace_claim(
     )
 
     subject = _build_subject(signing_key)
+    # Members the gateway did not observe are left out, never sent as null.
+    measured: dict[str, Any] = {}
+    if gateway_code_digest is not None:
+        # SLSA level 0: the code was measured, its build was not attested.
+        measured["build_provenance"] = BuildProvenance(
+            slsa_level=0, digest=f"sha256:{gateway_code_digest}"
+        )
     trace = GatewayTrace(
         eat_profile="tag:agentrust-io.com,2026:trace-v0.2",
         iat=int(datetime.now(tz=UTC).timestamp()),
@@ -601,13 +635,8 @@ def generate_trace_claim(
             call_count=call_summary.tool_calls_total,
         ),
         cnf=_build_cnf(signing_key),
-        build_provenance=(
-            # SLSA level 0: the code was measured, its build was not attested.
-            BuildProvenance(slsa_level=0, digest=f"sha256:{gateway_code_digest}")
-            if gateway_code_digest is not None
-            else None
-        ),
         appraisal=Appraisal(status="none", verifier=subject),
+        **measured,
     )
 
     gateway = GatewayAddenda(
@@ -645,7 +674,7 @@ def generate_trace_claim(
         kill_switch=kill_switch,
         attestation_evidence=_build_evidence(attestation_report),
         policy_signing=_build_policy_signing(policy_bundle),
-        transcript_entries=transcript_entries,
+        **({} if transcript_entries is None else {"transcript_entries": transcript_entries}),
         trace_omitted=[name for name in _OMITTABLE if getattr(trace, name) is None],
         call_log_summary=call_log_summary,
         agent_identity=(
@@ -667,7 +696,7 @@ def generate_trace_claim(
         ),
     )
 
-    claim = RuntimeClaim(trace=trace, gateway=gateway)
+    claim = RuntimeClaim(cmcp_version=CLAIM_VERSION, trace=trace, gateway=gateway)
 
     if do_sign:
         claim.signature = sign_trace_claim(claim, signing_key)

@@ -45,8 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gateway.transcript_entries`. Verifiers from earlier releases refuse a 1.1
   claim as `CLAIM_MALFORMED`, since they forbid the new fields, so upgrade
   verifiers before gateways. While `model` is omitted a 1.1 claim is still not a
-  complete TRACE record; `trace_omitted` says so, and a verifier that checks
-  required fields reports it.
+  complete TRACE record; `trace_omitted` says so, `cmcp_verify` returns it on
+  its result and `cmcp verify` prints it. `cmcp_version` is required: a claim
+  without one is malformed rather than read as either version. A 1.1 claim
+  without an RFC 8785 form, such as one carrying an integer beyond 2^53 - 1, is
+  `CLAIM_MALFORMED`; before, verifying one raised. `trace_omitted` is a set,
+  explicit `null` for a 1.1 member is refused, and the JSON Schema now enforces
+  both, the exact omitted fields, and the JCS integer range. The schema also
+  gains the `azure-cvm-sev-snp` platform the runtime already emits.
 
 ### Fixed
 
