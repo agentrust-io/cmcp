@@ -263,3 +263,40 @@ def test_detect_provider_passes_expected_measurement_to_snp(dev_config):
 
     assert created, "SEVSNPProvider was not instantiated"
     assert created[0]._expected_measurement == "sha384:" + "f" * 96
+
+
+# ── detect_provider with a TPM that is present but cannot be used ─────────────
+
+class _UnusableTpm:
+    def detect(self) -> bool:
+        return False
+
+    def unusable_reason(self) -> str:
+        return "found /dev/tpmrm0 but this user cannot read and write it"
+
+
+def _only_tpm(name, config=None):
+    return _UnusableTpm() if name == "tpm" else None
+
+
+def test_unusable_tpm_falls_back_in_dev_mode_and_says_why(dev_config, caplog):
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", side_effect=_only_tpm), \
+         caplog.at_level("WARNING"):
+        provider = detect_provider(dev_config)
+    assert isinstance(provider, SoftwareOnlyProvider)
+    assert "cannot read and write" in caplog.text
+
+
+def test_unusable_tpm_is_named_when_production_refuses(no_dev_config):
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", side_effect=_only_tpm), \
+         pytest.raises(AttestationProviderUnsupported) as err:
+        detect_provider(no_dev_config)
+    assert "cannot read and write" in (err.value.detail or "")
+
+
+def test_unusable_tpm_is_named_when_configured_explicitly(no_dev_config):
+    no_dev_config.attestation.provider = TEEProviderEnum.TPM
+    with patch("cmcp_runtime.tee.detect._get_provider_impl", side_effect=_only_tpm), \
+         pytest.raises(AttestationProviderUnsupported) as err:
+        detect_provider(no_dev_config)
+    assert "cannot read and write" in (err.value.detail or "")

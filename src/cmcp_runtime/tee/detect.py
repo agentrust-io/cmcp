@@ -85,12 +85,13 @@ def detect_provider(config: Config) -> TEEProvider:
         if not impl.detect():
             raise AttestationProviderUnsupported(
                 f"Requested provider '{name}' not available on this host",
-                detail="Check that the TEE hardware is present and accessible",
+                detail=_reason(impl) or "Check that the TEE hardware is present and accessible",
             )
         logger.info("TEE provider: %s (explicitly configured)", name)
         return impl
 
     # Auto-detection
+    unusable: list[str] = []
     for name in _PROBE_ORDER:
         impl = _get_provider_impl(name, config)
         if impl is None:
@@ -98,13 +99,17 @@ def detect_provider(config: Config) -> TEEProvider:
         if impl.detect():
             logger.info("TEE provider: %s (auto-detected)", name)
             return impl
+        reason = _reason(impl)
+        if reason:
+            unusable.append(f"{name}: {reason}")
 
     # No hardware provider found
     if dev_mode:
         logger.warning(
-            "No hardware TEE detected. Running in development mode: "
+            "No usable hardware TEE detected. Running in development mode: "
             "attestation is not hardware-backed. "
-            "TRACE Claims produced here must not be used for compliance purposes."
+            "TRACE Claims produced here must not be used for compliance purposes.%s",
+            "".join(f" Skipped {u}." for u in unusable),
         )
         return SoftwareOnlyProvider()
 
@@ -112,5 +117,11 @@ def detect_provider(config: Config) -> TEEProvider:
         "No supported TEE provider detected and CMCP_DEV_MODE is not set. "
         "The gateway cannot start without hardware attestation. "
         "Set CMCP_DEV_MODE=1 for local development.",
-        detail=f"Probed: {', '.join(_PROBE_ORDER)}",
+        detail="; ".join([f"Probed: {', '.join(_PROBE_ORDER)}", *unusable]),
     )
+
+
+def _reason(impl: TEEProvider) -> str | None:
+    """A provider's reason that hardware it found cannot be used, if it gives one."""
+    reason = getattr(impl, "unusable_reason", None)
+    return reason() if callable(reason) else None

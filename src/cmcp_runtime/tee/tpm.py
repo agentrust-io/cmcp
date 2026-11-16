@@ -6,6 +6,8 @@ import hashlib
 import http.client
 import ipaddress
 import logging
+import os
+import shutil
 import socket
 import ssl
 import subprocess  # nosec B404
@@ -195,13 +197,37 @@ class TPMProvider(TEEProvider):
         return "tpm"
 
     def detect(self) -> bool:
-        """Return True if a TPM device file exists and is readable on Linux."""
+        """Return True if a TPM device on Linux can be used: this user can read and
+        write it, and tpm2-pytss or tpm2-tools is installed to talk to it."""
         try:
             if sys.platform != "linux":
                 return False
-            return any(dev.exists() for dev in _TPM_DEVICES)
+            return self.unusable_reason() is None and any(
+                dev.exists() for dev in _TPM_DEVICES
+            )
         except Exception:  # noqa: BLE001
             return False
+
+    def unusable_reason(self) -> str | None:
+        """Why a TPM that is present cannot be used, or None.
+
+        None also when there is no TPM at all: absence is not a fault.
+        """
+        present = [dev for dev in _TPM_DEVICES if dev.exists()]
+        if not present:
+            return None
+        if not any(os.access(dev, os.R_OK | os.W_OK) for dev in present):
+            names = ", ".join(str(dev) for dev in present)
+            return (
+                f"found {names} but this user cannot read and write it; "
+                "add the user to the device's group (often 'tss')"
+            )
+        if not _TSS2_AVAILABLE and shutil.which("tpm2_pcrread") is None:
+            return (
+                "found a TPM but neither tpm2-pytss nor tpm2-tools is installed; "
+                "install cmcp-runtime[tpm] or tpm2-tools"
+            )
+        return None
 
     def get_attestation_report(self, nonce: bytes) -> AttestationReport:
         """
