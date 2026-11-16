@@ -257,17 +257,129 @@ def _assert_refused(resp: Any, rpc_id: Any = None) -> None:
     assert resp.json()["id"] == rpc_id
 
 
-@pytest.mark.parametrize("method", _NOTIFICATIONS)
-@pytest.mark.parametrize("params", [None, {}, {"requestId": 1, "reason": "x"}])
-def test_client_notification_is_accepted_without_a_reply(method: str, params: Any) -> None:
-    """Each ClientNotification gets 202 and no body, and touches nothing."""
+_VALID_PARAMS = [
+    ("notifications/initialized", None),
+    ("notifications/initialized", {}),
+    ("notifications/initialized", {"_meta": {"k": "v"}}),
+    ("notifications/roots/list_changed", None),
+    ("notifications/roots/list_changed", {"_meta": {}}),
+    ("notifications/cancelled", {"requestId": 7}),
+    ("notifications/cancelled", {"requestId": "c-1", "reason": "user stopped it"}),
+    ("notifications/cancelled", {"requestId": 7, "extra": "kept, as in the schema"}),
+    ("notifications/progress", {"progressToken": "t", "progress": 1}),
+    ("notifications/progress", {"progressToken": 3, "progress": 0.5, "total": 2, "message": "half"}),
+    ("notifications/progress", {"progressToken": "t", "progress": -1}),  # no minimum in the schema
+]
+
+_INVALID_PARAMS = [
+    ("notifications/initialized", {"_meta": "x"}),
+    ("notifications/initialized", {"_meta": None}),
+    ("notifications/cancelled", None),
+    ("notifications/cancelled", {}),
+    ("notifications/cancelled", {"reason": "no id"}),
+    ("notifications/cancelled", {"requestId": True}),
+    ("notifications/cancelled", {"requestId": None}),
+    ("notifications/cancelled", {"requestId": 1.5}),
+    ("notifications/cancelled", {"requestId": [1]}),
+    ("notifications/cancelled", {"requestId": 1, "reason": 5}),
+    ("notifications/cancelled", {"requestId": 1, "reason": None}),
+    ("notifications/progress", None),
+    ("notifications/progress", {}),
+    ("notifications/progress", {"progress": 1}),
+    ("notifications/progress", {"progressToken": "t"}),
+    ("notifications/progress", {"progressToken": True, "progress": 1}),
+    ("notifications/progress", {"progressToken": "t", "progress": "1"}),
+    ("notifications/progress", {"progressToken": "t", "progress": False}),
+    ("notifications/progress", {"progressToken": "t", "progress": 1, "total": "2"}),
+    ("notifications/progress", {"progressToken": "t", "progress": 1, "message": 3}),
+    ("notifications/tasks/status", {"taskId": "t", "status": "working"}),
+]
+
+
+def _notify(method: str, params: Any) -> tuple[Any, MagicMock]:
     body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
     if params is not None:
         body["params"] = params
-    resp, proxy = _post(body)
+    return _post(body)
+
+
+@pytest.mark.parametrize("method, params", _VALID_PARAMS)
+def test_client_notification_is_accepted_without_a_reply(method: str, params: Any) -> None:
+    """Each ClientNotification with params its schema allows gets 202 and no body."""
+    resp, proxy = _notify(method, params)
     assert resp.status_code == 202
     assert resp.content == b""
     assert proxy.method_calls == []
+
+
+@pytest.mark.parametrize("method, params", _INVALID_PARAMS)
+def test_notification_with_params_its_schema_refuses_is_refused(method: str, params: Any) -> None:
+    resp, proxy = _notify(method, params)
+    _assert_refused(resp)
+    assert proxy.method_calls == []
+
+
+def test_every_accepted_notification_has_a_valid_case() -> None:
+    from cmcp_runtime.mcp.server import _CLIENT_NOTIFICATIONS
+
+    assert set(_NOTIFICATIONS) == set(_CLIENT_NOTIFICATIONS)
+    assert set(_NOTIFICATIONS) == {m for m, _ in _VALID_PARAMS}
+
+
+@pytest.mark.parametrize("version", ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])
+def test_handshake_completes_on_every_negotiated_revision(version: str) -> None:
+    proxy = _make_proxy(allowed=True)
+    tc = TestClient(MCPServer(proxy=proxy).app)
+    init = tc.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": version, "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}},
+    })
+    assert init.json()["result"]["protocolVersion"] == version
+    done = tc.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert done.status_code == 202 and done.content == b""
+    listed = tc.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    assert listed.status_code == 200
+
+
+def test_cancel_does_not_stop_an_in_flight_call() -> None:
+    """The cancel is accepted; the call it names still completes and is answered."""
+    import asyncio
+
+    import httpx
+
+    proxy = _make_proxy(allowed=True)
+    release = asyncio.Event()
+    started = asyncio.Event()
+    allowed = proxy.call_tool.side_effect
+
+    async def slow_call(*args: Any, **kwargs: Any) -> Any:
+        started.set()
+        await release.wait()
+        return allowed(*args, **kwargs)
+
+    proxy.call_tool = AsyncMock(side_effect=slow_call)
+    app = MCPServer(proxy=proxy).app
+
+    async def scenario() -> tuple[Any, Any]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            call = asyncio.create_task(client.post("/mcp", json={
+                "jsonrpc": "2.0", "id": 41, "method": "tools/call",
+                "params": {"name": "mock_tool", "arguments": {}},
+            }))
+            await started.wait()
+            cancel = await client.post("/mcp", json={
+                "jsonrpc": "2.0", "method": "notifications/cancelled",
+                "params": {"requestId": 41, "reason": "test"},
+            })
+            release.set()
+            return cancel, await call
+
+    cancel, call = asyncio.run(scenario())
+    assert cancel.status_code == 202
+    assert call.status_code == 200 and call.json()["id"] == 41
+    assert "result" in call.json()
+    proxy.call_tool.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
