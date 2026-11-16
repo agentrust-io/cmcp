@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.trace_claim import (
+    _PROVIDER_MAP,
     AttestationReportInfo,
     CallGraphSummary,
     CallSummary,
@@ -223,3 +224,215 @@ def test_manager_reads_code_digest_from_the_measurement():
         {"code": CODE, "policy": "cd" * 32, "config": "ef" * 32}
     )
     assert manager._gateway_code_digest() == CODE
+
+
+# ── Review round: version, JCS domain, schema parity, full verifier ─────────
+
+MAX_SAFE = 2**53 - 1
+
+
+def _full(claim: dict[str, Any]) -> Any:
+    from cmcp_verify import ApprovedHashes, verify_trace_claim
+
+    return verify_trace_claim(
+        claim,
+        ApprovedHashes(
+            policy_bundle_hash=claim["trace"]["policy"]["bundle_hash"],
+            tool_catalog_hash=claim["gateway"]["catalog"]["hash"],
+        ),
+    )
+
+
+def _resigned(claim: dict[str, Any], key: SigningKey) -> dict[str, Any]:
+    return _sign(claim, key, canonical_json(claim))
+
+
+def test_a_claim_without_a_version_is_malformed():
+    """The version picks the signed bytes, so it is never assumed."""
+    claim = _to_dict(_claim(SigningKey()))
+    del claim["cmcp_version"]
+    with pytest.raises(ValidationError):
+        RuntimeClaim.model_validate(claim)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(claim, SCHEMA)
+    assert _full(claim).failure_reason.value == "CLAIM_MALFORMED"
+
+
+@pytest.mark.parametrize(
+    "place, safe",
+    [
+        ("sequence_number", MAX_SAFE),
+        ("cross_boundary", MAX_SAFE),
+        ("cross_boundary", -MAX_SAFE),
+    ],
+)
+def test_safe_integers_are_accepted(place: str, safe: int):
+    key = SigningKey()
+    claim = _to_dict(_claim(key))
+    if place == "sequence_number":
+        claim["gateway"]["sequence_number"] = safe
+    else:
+        claim["gateway"]["call_summary"]["call_graph_summary"]["cross_boundary_events"] = [
+            {"n": safe}
+        ]
+    claim = _resigned(claim, key)
+    RuntimeClaim.model_validate(claim)
+    assert _verify_signature(claim) == (True, None)
+
+
+@pytest.mark.parametrize(
+    "place, unsafe",
+    [
+        ("sequence_number", MAX_SAFE + 1),
+        ("cross_boundary", MAX_SAFE + 1),
+        ("cross_boundary", -MAX_SAFE - 1),
+        ("cross_boundary", float("inf")),
+        ("cross_boundary", "\ud800"),
+    ],
+)
+def test_a_claim_with_no_canonical_form_is_malformed_not_raised(place: str, unsafe: Any):
+    claim = _to_dict(_claim(SigningKey()))
+    if place == "sequence_number":
+        claim["gateway"]["sequence_number"] = unsafe
+    else:
+        claim["gateway"]["call_summary"]["call_graph_summary"]["cross_boundary_events"] = [
+            {"n": unsafe}
+        ]
+    with pytest.raises(ValidationError, match="canonical form"):
+        RuntimeClaim.model_validate(claim)
+    result = _full(claim)
+    assert result.failure_reason.value == "CLAIM_MALFORMED"
+    ok, err = _verify_signature(claim)  # a direct caller gets a result too
+    assert ok is False and "canonical form" in (err or "")
+
+
+def test_schema_bounds_integers_to_the_jcs_range():
+    claim = _to_dict(_claim(SigningKey()))
+    claim["gateway"]["sequence_number"] = MAX_SAFE + 1
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(claim, SCHEMA)
+
+
+def _with_model(claim: dict[str, Any]) -> dict[str, Any]:
+    claim["trace"]["model"] = {"provider": "p", "model_id": "m"}
+    claim["gateway"]["trace_omitted"] = [
+        n for n in claim["gateway"]["trace_omitted"] if n != "model"
+    ]
+    return claim
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param(lambda c: c, id="as-emitted"),
+        pytest.param(
+            lambda c: c["gateway"].update(trace_omitted=["build_provenance", "model"]),
+            id="reversed-order",
+        ),
+        pytest.param(_with_model, id="model-observed"),
+    ],
+)
+def test_omissions_both_validators_accept(edit):
+    claim = _to_dict(_claim(SigningKey()))
+    edit(claim)
+    RuntimeClaim.model_validate(claim)
+    jsonschema.validate(claim, SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param(
+            lambda c: c["gateway"].update(trace_omitted=["model"]), id="absent-not-listed"
+        ),
+        pytest.param(
+            lambda c: c["gateway"].update(trace_omitted=["model", "model", "build_provenance"]),
+            id="repeat",
+        ),
+        pytest.param(
+            lambda c: _with_model(c)["gateway"]["trace_omitted"].append("model"),
+            id="present-but-listed",
+        ),
+        pytest.param(lambda c: c["trace"].update(model=None), id="null-model"),
+        pytest.param(
+            lambda c: c["trace"].update(build_provenance=None), id="null-build-provenance"
+        ),
+        pytest.param(lambda c: c["trace"].update(appraisal=None), id="null-appraisal"),
+        pytest.param(lambda c: c["gateway"].update(transcript_entries=None), id="null-entries"),
+        pytest.param(lambda c: c["gateway"].update(trace_omitted=None), id="null-omitted"),
+    ],
+)
+def test_omissions_both_validators_refuse(edit):
+    claim = _to_dict(_claim(SigningKey()))
+    edit(claim)
+    with pytest.raises(ValidationError):
+        RuntimeClaim.model_validate(claim)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(claim, SCHEMA)
+
+
+@pytest.mark.parametrize("provider", sorted(_PROVIDER_MAP))
+def test_every_provider_emits_a_schema_valid_claim(provider: str):
+    key = SigningKey()
+    report = AttestationReportInfo(
+        provider=provider,
+        measurement="ab" * 32,
+        report_data="cd" * 64,
+        attestation_generated_at="2026-06-04T00:00:00+00:00",
+        attestation_validity_seconds=86400,
+    )
+    chain = AuditChain("s")
+    claim = generate_trace_claim(
+        session_id="s",
+        signing_key=key,
+        attestation_report=report,
+        policy_bundle=PolicyBundleInfo(
+            hash="sha256:" + "0" * 64, enforcement_mode="enforcing", policy_version="1"
+        ),
+        tool_catalog=ToolCatalogInfo(hash="sha256:" + "1" * 64),
+        call_summary=CallSummary(
+            tool_calls_total=0,
+            tool_calls_allowed=0,
+            tool_calls_denied=0,
+            tool_calls_faulted=0,
+            tools_invoked=[],
+            session_max_sensitivity="public",
+            call_graph_summary=CallGraphSummary(
+                compliance_domains_touched=[], cross_boundary_events=[]
+            ),
+        ),
+        audit_chain_root=chain.chain_root,
+        audit_chain_tip=chain.chain_tip,
+        audit_chain_length=chain.length,
+    )
+    jsonschema.validate(_to_dict(claim), SCHEMA)
+
+
+def test_full_verifier_on_a_1_1_claim_reports_what_it_left_out():
+    claim = _to_dict(_claim(SigningKey(), CODE))
+    result = _full(claim)
+    assert result.failure_reason is None or result.failure_reason.value != "CLAIM_MALFORMED"
+    assert "signature" in result.verified_fields
+    assert result.trace_omitted == ["model"]
+
+
+def test_full_verifier_still_verifies_a_1_0_claim():
+    key = SigningKey()
+    legacy = _as_1_0(_to_dict(_claim(key)), key)
+    result = _full(legacy)
+    assert "signature" in result.verified_fields
+    assert result.trace_omitted == []
+
+
+def test_prev_claim_hash_is_the_jcs_hash_of_the_previous_signed_claim():
+    import hashlib
+
+    from tests.unit.test_session_manager import _make_ctx
+
+    manager = SessionManager(_make_ctx())
+    first_state, first_chain = manager.create_session()
+    first = manager.close_session(first_state.session_id, first_state, first_chain)
+    second_state, second_chain = manager.create_session()
+    second = manager.close_session(second_state.session_id, second_state, second_chain)
+    expected = "sha256:" + hashlib.sha256(rfc8785.dumps(first)).hexdigest()
+    assert second["gateway"]["prev_claim_hash"] == expected

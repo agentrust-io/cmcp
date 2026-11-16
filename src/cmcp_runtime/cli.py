@@ -348,6 +348,11 @@ def verify(
             "[cmcp verify] note: "
             + result.details.get("hardware_attestation", "hardware attestation not verified")
         )
+    if result.trace_omitted:
+        click.echo(
+            "[cmcp verify] note: not a complete TRACE record; the gateway did not observe "
+            + ", ".join(result.trace_omitted)
+        )
     click.echo(f"[cmcp verify] RESULT: {'PASS' if overall else 'FAIL'} ({result.status.value})")
     if not overall:
         raise SystemExit(1)

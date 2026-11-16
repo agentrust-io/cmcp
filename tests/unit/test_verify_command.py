@@ -89,6 +89,8 @@ def test_verify_software_only_is_partially_verified(claim_and_bundle):
     assert "signature                PASS" in result.output
     assert "hardware_attestation     FAIL" in result.output
     assert "not pinned" in result.output  # hashes unpinned by default
+    # A 1.1 claim says what it left out; the CLI says so rather than hide it.
+    assert "not a complete TRACE record; the gateway did not observe model" in result.output
 
 
 def test_verify_pinned_hashes_still_partial_without_hardware(claim_and_bundle):

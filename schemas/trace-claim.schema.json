@@ -25,6 +25,7 @@
         "iat": {
           "type": "integer",
           "minimum": 1700000000,
+          "maximum": 9007199254740991,
           "description": "Unix timestamp (seconds) when the claim was generated."
         },
         "subject": {
@@ -40,7 +41,7 @@
             "platform": {
               "type": "string",
               "enum": [
-                "intel-tdx", "amd-sev-snp", "nvidia-h100", "nvidia-blackwell",
+                "intel-tdx", "amd-sev-snp", "azure-cvm-sev-snp", "nvidia-h100", "nvidia-blackwell",
                 "aws-nitro", "arm-cca", "google-confidential-space", "tpm2",
                 "software-only"
               ]
@@ -84,7 +85,7 @@
               "type": "string",
               "pattern": "^sha(256|384):[0-9a-f]+"
             },
-            "call_count": { "type": "integer", "minimum": 0 },
+            "call_count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
             "transcript_uri": { "type": "string" },
             "entries": {
               "type": "array",
@@ -457,6 +458,7 @@
         "sequence_number": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 9007199254740991,
           "description": "Monotonically increasing claim counter for this gateway instance (AUDIT-005)."
         },
         "audit_chain": {
@@ -466,7 +468,7 @@
           "properties": {
             "root": { "type": "string" },
             "tip": { "type": "string" },
-            "length": { "type": "integer", "minimum": 0 }
+            "length": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
           }
         },
         "call_summary": {
@@ -478,10 +480,10 @@
             "call_graph_summary"
           ],
           "properties": {
-            "tool_calls_total": { "type": "integer", "minimum": 0 },
-            "tool_calls_allowed": { "type": "integer", "minimum": 0 },
-            "tool_calls_denied": { "type": "integer", "minimum": 0 },
-            "tool_calls_faulted": { "type": "integer", "minimum": 0 },
+            "tool_calls_total": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "tool_calls_allowed": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "tool_calls_denied": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "tool_calls_faulted": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
             "tools_invoked": { "type": "array", "items": { "type": "string" } },
             "session_max_sensitivity": { "type": "string" },
             "call_graph_summary": {
@@ -508,9 +510,9 @@
           "additionalProperties": false,
           "required": ["total_calls", "tools_called", "suspicious_sequences_detected"],
           "properties": {
-            "total_calls": { "type": "integer", "minimum": 0 },
+            "total_calls": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
             "tools_called": { "type": "array", "items": { "type": "string" } },
-            "suspicious_sequences_detected": { "type": "integer", "minimum": 0 }
+            "suspicious_sequences_detected": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
           }
         },
         "catalog": {
@@ -590,7 +592,8 @@
         },
         "attestation_validity_seconds": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "attestation_stale": { "type": "boolean" },
         "catalog_exceptions": {
@@ -623,9 +626,9 @@
           "required": ["enabled", "window_seconds", "deny_rate_threshold", "min_calls"],
           "properties": {
             "enabled": {"type": "boolean"},
-            "window_seconds": {"type": "integer", "minimum": 1},
+            "window_seconds": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
             "deny_rate_threshold": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-            "min_calls": {"type": "integer", "minimum": 1},
+            "min_calls": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
             "trigger": {
               "type": "string",
               "enum": ["deny_rate", "operator"],
@@ -667,7 +670,7 @@
         },
         "trace_omitted": {
           "type": "array",
-          "description": "1.1: the required TRACE fields this claim leaves out because the gateway did not observe them. Non-empty means trace is not a complete TRACE record.",
+          "description": "1.1: the required TRACE fields this claim leaves out because the gateway did not observe them, exactly those absent from trace. A set: order carries no meaning. Non-empty means trace is not a complete TRACE record.",
           "items": {
             "type": "string",
             "enum": [
@@ -708,6 +711,10 @@
           }
         }
       }
-    }
+    },
+    {"if": {"required": ["cmcp_version", "trace"], "properties": {"cmcp_version": {"const": "1.1"}, "trace": {"not": {"required": ["model"]}}}}, "then": {"properties": {"gateway": {"properties": {"trace_omitted": {"contains": {"const": "model"}}}}}}},
+    {"if": {"required": ["cmcp_version", "trace"], "properties": {"cmcp_version": {"const": "1.1"}, "trace": {"required": ["model"]}}}, "then": {"properties": {"gateway": {"properties": {"trace_omitted": {"not": {"contains": {"const": "model"}}}}}}}},
+    {"if": {"required": ["cmcp_version", "trace"], "properties": {"cmcp_version": {"const": "1.1"}, "trace": {"not": {"required": ["build_provenance"]}}}}, "then": {"properties": {"gateway": {"properties": {"trace_omitted": {"contains": {"const": "build_provenance"}}}}}}},
+    {"if": {"required": ["cmcp_version", "trace"], "properties": {"cmcp_version": {"const": "1.1"}, "trace": {"required": ["build_provenance"]}}}, "then": {"properties": {"gateway": {"properties": {"trace_omitted": {"not": {"contains": {"const": "build_provenance"}}}}}}}}
   ]
 }

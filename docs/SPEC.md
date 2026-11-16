@@ -198,7 +198,14 @@ non-empty list means `trace` is not a complete TRACE record.
 Claims with `cmcp_version` 1.0 put the entries under `trace.tool_transcript.entries`,
 carry no `model`, `build_provenance`, `appraisal` or `trace_omitted`, and are signed over
 sorted-key JSON with ASCII escapes. `cmcp_verify` picks the form from the signed
-`cmcp_version`, so both still verify.
+`cmcp_version`, so both still verify. `cmcp_version` is required and never
+assumed, since it selects the bytes the signature covers. A 1.1 claim must have
+an RFC 8785 form (integers within ±(2^53 − 1), finite numbers, valid Unicode);
+one without is malformed. `trace_omitted` is a set: order carries no meaning and
+a repeat is refused, and the 1.1 members are left out rather than sent as
+`null`. `cmcp_verify` returns the list as `trace_omitted` and `cmcp verify`
+prints it: a verified claim is authentic for what the gateway signed, not a
+complete TRACE record.
 
 Verification (no operator trust required):
 1. Verify the `trace.cnf.jwk` public key against `trace.runtime` (hardware-rooted attestation)
