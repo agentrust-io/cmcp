@@ -9,8 +9,8 @@
   "properties": {
     "cmcp_version": {
       "type": "string",
-      "enum": ["1.0"],
-      "description": "Version of the cMCP claim envelope format."
+      "enum": ["1.0", "1.1"],
+      "description": "Version of the cMCP claim envelope format. 1.1 signs over RFC 8785 (JCS) and carries only observed TRACE fields; 1.0 signs over sorted-key JSON with ASCII escapes."
     },
     "trace": {
       "type": "object",
@@ -88,7 +88,7 @@
             "transcript_uri": { "type": "string" },
             "entries": {
               "type": "array",
-              "description": "Privacy-preserving per-call view (#126): tool name, data class, and policy decision, derived from the audit chain. No raw parameters or response bodies.",
+              "description": "1.0 claims only; 1.1 carries it as gateway.transcript_entries. Privacy-preserving per-call view (#126): tool name, data class, and policy decision, derived from the audit chain. No raw parameters or response bodies.",
               "items": {
                 "type": "object",
                 "additionalProperties": false,
@@ -122,6 +122,323 @@
               }
             }
           }
+        },
+        "model": {
+          "type": "object",
+          "description": "Model identity and provenance.",
+          "required": [
+            "provider",
+            "model_id"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "description": "Model provider (e.g. 'example-provider')."
+            },
+            "model_id": {
+              "type": "string",
+              "description": "Model identifier as used by the provider."
+            },
+            "version": {
+              "type": "string",
+              "description": "Model version or snapshot identifier."
+            },
+            "weights_digest": {
+              "type": "string",
+              "description": "SHA-256 or SHA-384 digest of the model weights. Required for local/confidential-inference deployments.",
+              "pattern": "^sha(256:[0-9a-f]{64}|384:[0-9a-f]{96})$"
+            },
+            "aibom_uri": {
+              "type": "string",
+              "format": "uri",
+              "description": "URI to SPDX 3.0 AI Profile or CycloneDX 1.7 ML-BOM for this model."
+            }
+          },
+          "additionalProperties": false
+        },
+        "build_provenance": {
+          "type": "object",
+          "description": "SLSA provenance for the workload (agent code + container image).",
+          "required": [
+            "slsa_level",
+            "digest"
+          ],
+          "properties": {
+            "slsa_level": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3,
+              "description": "SLSA Build Level achieved. Level 0 = software-only (development/staging); Level 2 minimum for TRACE conformance; Level 3 for production mark."
+            },
+            "builder": {
+              "type": "string",
+              "description": "SLSA builder URI."
+            },
+            "digest": {
+              "type": "string",
+              "description": "SHA-256 or SHA-384 digest of the container image or workload binary.",
+              "pattern": "^sha(256:[0-9a-f]{64}|384:[0-9a-f]{96})$"
+            },
+            "provenance_uri": {
+              "type": "string",
+              "format": "uri",
+              "description": "URI to the SLSA provenance attestation on a Sigstore/Rekor or compatible log."
+            },
+            "provenance_depth": {
+              "type": "string",
+              "enum": [
+                "surface",
+                "builder",
+                "transitive"
+              ],
+              "description": "Depth of supply-chain verification the issuer claims for this record. surface: digest matches the workload artifact and builder is in a trusted set. builder: all of surface, plus provenance_uri resolves, the SLSA attestation signature verifies, its subject matches digest, and its builder.id matches builder. transitive: all of builder, plus every entry in the SLSA materials / resolvedDependencies has a verifiable publisher attestation. Records omitting this field are treated as surface by verifiers, so existing records keep their meaning."
+            }
+          },
+          "additionalProperties": false
+        },
+        "appraisal": {
+          "type": "object",
+          "description": "Verifier's EAR appraisal of the evidence (draft-ietf-rats-ar4si).",
+          "required": [
+            "status",
+            "verifier"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "affirming",
+                "warning",
+                "contraindicated",
+                "none"
+              ],
+              "description": "EAR appraisal status."
+            },
+            "verifier": {
+              "type": "string",
+              "format": "uri",
+              "description": "URI identifying the verifier the record names for this appraisal. In a record signed only by its producer this is the producer's claim, not authenticated by that verifier."
+            },
+            "policy_ref": {
+              "type": "string",
+              "format": "uri",
+              "description": "URI to the appraisal policy used."
+            },
+            "timestamp": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "description": "Unix epoch seconds when the appraisal was produced."
+            },
+            "provenance_depth_verified": {
+              "type": "string",
+              "enum": [
+                "surface",
+                "builder",
+                "transitive"
+              ],
+              "description": "Depth at which this verifier actually checked build_provenance, which is not necessarily the depth the issuer claimed. A verifier may downgrade when deeper evidence does not resolve, and records the lower depth rather than a failure of the higher one. A verifier does not record a depth higher than it executed."
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "re-execution"
+              ],
+              "description": "The method this appraisal used. A closed set, for the reason section 3.1.1 gives origin.kind: a verifier keys on it. This version defines one value, re-execution, the result of re-running a record's reproducibility claim (section 3.1.4). appraisal.status is untouched by it: the outcome below is not folded into the EAR status."
+            },
+            "re_execution": {
+              "type": "object",
+              "description": "The re-execution result, attributed to the party that re-ran the function and named as appraisal.verifier. In a record signed only by its producer this attribution is the producer's report, not authenticated by the verifier. Spec section 3.1.4. Present exactly when method is re-execution.",
+              "required": [
+                "outcome"
+              ],
+              "properties": {
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "reproduced",
+                    "diverged",
+                    "not-attempted"
+                  ],
+                  "description": "reproduced: the re-run completed on the closure alone and the digest of its transcript equals transcript_digest. diverged: the re-run completed on the closure alone and the digests differ. not-attempted: a closure blob could not be resolved, code_identity could not be obtained, the function read beyond the closure, the re-run did not run to completion, or the verifier could not establish that the re-run used the closure alone. not-attempted is never reported as either of the other two: absent is not pass, and absent is not failure."
+                },
+                "observed_digest": {
+                  "type": "string",
+                  "pattern": "^sha(256:[0-9a-f]{64}|384:[0-9a-f]{96})$",
+                  "description": "The verifier's digest of the transcript its re-run produced. Required when outcome is diverged, because divergence localises nothing by itself: producer tampering, a function that is not the deterministic one it is named as, and verifier drift are indistinguishable until a third party can compare transcripts."
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Why no outcome could be reported. Required when outcome is not-attempted: a named absence and a generic one are different findings, and this is where the finding is kept."
+                },
+                "verifier_code_identity": {
+                  "type": "string",
+                  "pattern": "^sha(256:[0-9a-f]{64}|384:[0-9a-f]{96})$",
+                  "description": "Digest of the verifier's own implementation. Self-asserted and carrying no weight singly; a correlation key across results, since two verifiers at different implementations disagreeing over the same closure is verifier drift, and that reading is unavailable without it."
+                }
+              },
+              "allOf": [
+                {
+                  "$comment": "Divergence without the observed digest cannot be compared by anyone.",
+                  "if": {
+                    "required": [
+                      "outcome"
+                    ],
+                    "properties": {
+                      "outcome": {
+                        "const": "diverged"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "observed_digest"
+                    ]
+                  }
+                },
+                {
+                  "$comment": "An inability to check is reported with its cause, never rounded to an outcome.",
+                  "if": {
+                    "required": [
+                      "outcome"
+                    ],
+                    "properties": {
+                      "outcome": {
+                        "const": "not-attempted"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "reason"
+                    ]
+                  }
+                }
+              ],
+              "additionalProperties": false
+            },
+            "platform_measurement": {
+              "type": "object",
+              "description": "Per-layer appraisal of the platform measurement, attributed to appraisal.verifier. In a record signed only by its producer this attribution is the producer's report. A member of appraisal in its own right, not an appraisal.method value, so it can sit next to a re-execution result. measurement must equal runtime.measurement, a cross-field rule the reference model enforces. Spec section 3.1.5.",
+              "required": [
+                "measurement",
+                "layers"
+              ],
+              "properties": {
+                "measurement": {
+                  "type": "string",
+                  "pattern": "^sha(256:[0-9a-f]{64}|384:[0-9a-f]{96})$",
+                  "description": "The digest this appraisal is about. Must equal runtime.measurement: a result about another measurement is not about this record."
+                },
+                "layers": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "description": "Keyed by the platform's name for the layer; on tpm2, pcr: followed by a register number from 0 to 23 in decimal without leading zeros. A result naming no layer establishes nothing.",
+                  "additionalProperties": {
+                    "type": "object",
+                    "description": "One layer's outcome. Spec section 3.1.5. reason is required when outcome is not-established and absent when it is established.",
+                    "required": [
+                      "outcome"
+                    ],
+                    "properties": {
+                      "outcome": {
+                        "type": "string",
+                        "enum": [
+                          "established",
+                          "not-established"
+                        ],
+                        "description": "established: the evidence establishes this layer. not-established: it does not, for the reason given; never reported as established, and a layer the result does not list is not established either."
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "layer-not-measured",
+                          "measured-not-appraised",
+                          "evidence-spans-multiple-boots"
+                        ],
+                        "description": "layer-not-measured: the layer holds no measurement, its value is the initial value or, on a TPM, a separator and nothing else. measured-not-appraised: the measurements replay to the quoted value and nothing in the evidence establishes that what ran was appraised before it ran. evidence-spans-multiple-boots: the evidence does not establish that the quote and the event log describe the same single boot, and the log does not replay to the quoted value."
+                      }
+                    },
+                    "allOf": [
+                      {
+                        "$comment": "A not-established layer carries its reason; an established one carries none.",
+                        "if": {
+                          "required": [
+                            "outcome"
+                          ],
+                          "properties": {
+                            "outcome": {
+                              "const": "not-established"
+                            }
+                          }
+                        },
+                        "then": {
+                          "required": [
+                            "reason"
+                          ]
+                        },
+                        "else": {
+                          "not": {
+                            "required": [
+                              "reason"
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "allOf": [
+            {
+              "$comment": "Section 3.1.4: re_execution is present when method is re-execution and absent otherwise. Mirrors the cross-field check in the reference model.",
+              "if": {
+                "required": [
+                  "method"
+                ],
+                "properties": {
+                  "method": {
+                    "const": "re-execution"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "re_execution"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "re_execution"
+                  ]
+                }
+              }
+            },
+            {
+              "$comment": "Section 3.1.5, rule 5: a verifier that writes platform_measurement has performed an appraisal, so status is not none. Mirrors the check in the reference model.",
+              "if": {
+                "required": [
+                  "platform_measurement"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "status": {
+                    "not": {
+                      "const": "none"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
         }
       }
     },
@@ -315,12 +632,82 @@
               "description": "deny_rate when the threshold was crossed, operator when an operator tripped it. Absent when the switch did not trip."
             }
           }
+        },
+        "transcript_entries": {
+          "type": "array",
+          "description": "1.1: privacy-preserving per-call view (#126), kept outside the TRACE block.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tool_name",
+              "data_class",
+              "decision"
+            ],
+            "properties": {
+              "tool_name": {
+                "type": "string"
+              },
+              "data_class": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "allow",
+                  "deny",
+                  "redact",
+                  "advisory_deny",
+                  "fault",
+                  "n/a"
+                ]
+              }
+            }
+          }
+        },
+        "trace_omitted": {
+          "type": "array",
+          "description": "1.1: the required TRACE fields this claim leaves out because the gateway did not observe them. Non-empty means trace is not a complete TRACE record.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "model",
+              "build_provenance"
+            ]
+          },
+          "uniqueItems": true
         }
       }
     },
     "signature": {
       "type": "string",
-      "description": "Base64url-encoded Ed25519 signature over the canonical JSON body (all fields except this one)."
+      "description": "Base64url-encoded Ed25519 signature over the canonical JSON body (all fields except this one): RFC 8785 for 1.1, sorted-key ASCII JSON for 1.0."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "cmcp_version": { "const": "1.1" } } },
+      "then": {
+        "properties": {
+          "trace": {
+            "required": ["appraisal"],
+            "properties": { "tool_transcript": { "not": { "required": ["entries"] } } }
+          },
+          "gateway": { "required": ["trace_omitted"] }
+        }
+      },
+      "else": {
+        "properties": {
+          "trace": {
+            "not": { "anyOf": [
+              { "required": ["model"] }, { "required": ["build_provenance"] }, { "required": ["appraisal"] }
+            ] }
+          },
+          "gateway": {
+            "not": { "anyOf": [ { "required": ["transcript_entries"] }, { "required": ["trace_omitted"] } ] }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -10,8 +10,17 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from agentrust_trace.models import JWK, ConfirmationKey, PolicyInfo, RuntimeInfo
-from pydantic import BaseModel, ConfigDict, Field
+import rfc8785
+from agentrust_trace.models import (
+    JWK,
+    Appraisal,
+    BuildProvenance,
+    ConfirmationKey,
+    ModelInfo,
+    PolicyInfo,
+    RuntimeInfo,
+)
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AgentSubjectSource = Literal["config", "svid", "manifest-dev"]
 
@@ -219,9 +228,11 @@ class ToolTranscriptEntry(BaseModel):
 
 
 class ToolTranscriptOut(BaseModel):
-    """cmcp tool_transcript: the canonical TRACE fields plus the privacy-preserving
-    entries array (issue #126). ``hash`` binds the full transcript to the audit chain
-    tip; ``entries`` lets a regulator read the per-call decision trail offline.
+    """cmcp tool_transcript: the canonical TRACE fields. ``hash`` binds the full
+    transcript to the audit chain tip.
+
+    ``entries`` is only read from 1.0 claims. From 1.1 the per-call trail
+    (issue #126) lives in ``gateway.transcript_entries``, outside the TRACE block.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -245,6 +256,11 @@ class GatewayTrace(BaseModel):
     data_class: str
     tool_transcript: ToolTranscriptOut | None = None
     cnf: ConfirmationKey
+    # 1.1 only. ``model`` stays absent until the gateway sees model calls, and
+    # ``build_provenance`` until it has measured its own code.
+    model: ModelInfo | None = None
+    build_provenance: BuildProvenance | None = None
+    appraisal: Appraisal | None = None
 
 
 class CallLogSummary(BaseModel):
@@ -299,6 +315,11 @@ class KillSwitchState(BaseModel):
     trigger: Literal["deny_rate", "operator"] | None = None
 
 
+#: Required TRACE fields a 1.1 claim may leave out, in ``trace_omitted`` order.
+TraceOmitted = Literal["model", "build_provenance"]
+_OMITTABLE: tuple[TraceOmitted, ...] = ("model", "build_provenance")
+
+
 class GatewayAddenda(BaseModel):
     """cmcp-specific fields outside the canonical TRACE spec."""
 
@@ -321,6 +342,16 @@ class GatewayAddenda(BaseModel):
     kill_switch: KillSwitchState | None = None
     attestation_evidence: AttestationEvidence | None = None
     policy_signing: PolicySigningOut | None = None
+    # 1.1 only: the per-call trail, and the required TRACE fields the gateway
+    # left out because it did not observe them.
+    transcript_entries: list[ToolTranscriptEntry] | None = None
+    trace_omitted: list[TraceOmitted] | None = None
+
+
+ClaimVersion = Literal["1.0", "1.1"]
+#: Claim format the gateway emits. 1.1 signs over RFC 8785 (JCS) and signs only
+#: observed TRACE fields; 1.0 claims are still read and verified.
+CLAIM_VERSION: ClaimVersion = "1.1"
 
 
 class RuntimeClaim(BaseModel):
@@ -328,10 +359,36 @@ class RuntimeClaim(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    cmcp_version: str = "1.0"
+    cmcp_version: ClaimVersion = CLAIM_VERSION
     trace: GatewayTrace
     gateway: GatewayAddenda
     signature: str = ""
+
+    @model_validator(mode="after")
+    def _shape_matches_version(self) -> RuntimeClaim:
+        trace, gateway = self.trace, self.gateway
+        transcript = trace.tool_transcript
+        if self.cmcp_version == "1.0":
+            if any(
+                v is not None
+                for v in (
+                    trace.model,
+                    trace.build_provenance,
+                    trace.appraisal,
+                    gateway.transcript_entries,
+                    gateway.trace_omitted,
+                )
+            ):
+                raise ValueError("1.0 claims carry none of the 1.1 fields")
+            return self
+        if transcript is not None and transcript.entries is not None:
+            raise ValueError("1.1 claims carry transcript entries in gateway.transcript_entries")
+        if trace.appraisal is None or gateway.trace_omitted is None:
+            raise ValueError("1.1 claims need trace.appraisal and gateway.trace_omitted")
+        missing = [name for name in _OMITTABLE if getattr(trace, name) is None]
+        if gateway.trace_omitted != missing:
+            raise ValueError("gateway.trace_omitted must list exactly the omitted TRACE fields")
+        return self
 
 
 # ── Serialization and signing ──────────────────────────────────────────────────
@@ -346,11 +403,15 @@ REFUSAL_RECEIPT_TYPE = "cmcp.kill-switch.refusal/v1"
 
 
 def canonical_json(claim_dict: dict[str, Any]) -> bytes:
-    """Canonical serialization for signing: sorted keys, no whitespace, UTF-8.
+    """Canonical serialization for signing, without the 'signature' field.
 
-    The 'signature' field is excluded from the body being signed.
+    A 1.1 claim uses RFC 8785 (JCS), as TRACE verifiers do. Anything else keeps
+    the 1.0 form (sorted keys, ASCII escapes), so older claims and receipts
+    still verify.
     """
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
+    if claim_dict.get("cmcp_version") == "1.1":
+        return rfc8785.dumps(body)
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
@@ -507,6 +568,7 @@ def generate_trace_claim(
     prev_claim_hash: str | None = None,
     kill_switch_triggered: bool = False,
     kill_switch: KillSwitchState | None = None,
+    gateway_code_digest: str | None = None,
     do_sign: bool = True,
 ) -> RuntimeClaim:
     """Generate a RuntimeClaim from session data, validate it via Pydantic, and optionally sign it.
@@ -514,6 +576,11 @@ def generate_trace_claim(
     signing_key must be a SigningKey instance (audit/keys.py) - it is always required
     to build the JWK confirmation key in trace.cnf.  Set do_sign=False to produce an
     unsigned claim (e.g. in tests).
+
+    The claim signs only what the gateway observed. ``model`` is always left out
+    (the gateway never sees model calls), ``build_provenance`` is left out unless
+    *gateway_code_digest* (the measured code, hex) is given, and both are named
+    in ``gateway.trace_omitted``. ``appraisal`` says no appraisal was made.
     """
     tool_transcript_hash = (
         audit_chain_tip
@@ -521,19 +588,26 @@ def generate_trace_claim(
         else f"sha256:{audit_chain_tip}"
     )
 
+    subject = _build_subject(signing_key)
     trace = GatewayTrace(
         eat_profile="tag:agentrust-io.com,2026:trace-v0.2",
         iat=int(datetime.now(tz=UTC).timestamp()),
-        subject=_build_subject(signing_key),
+        subject=subject,
         runtime=_build_runtime(attestation_report),
         policy=_build_policy(policy_bundle),
         data_class=call_summary.session_max_sensitivity,
         tool_transcript=ToolTranscriptOut(
             hash=tool_transcript_hash,
             call_count=call_summary.tool_calls_total,
-            entries=transcript_entries,
         ),
         cnf=_build_cnf(signing_key),
+        build_provenance=(
+            # SLSA level 0: the code was measured, its build was not attested.
+            BuildProvenance(slsa_level=0, digest=f"sha256:{gateway_code_digest}")
+            if gateway_code_digest is not None
+            else None
+        ),
+        appraisal=Appraisal(status="none", verifier=subject),
     )
 
     gateway = GatewayAddenda(
@@ -571,6 +645,8 @@ def generate_trace_claim(
         kill_switch=kill_switch,
         attestation_evidence=_build_evidence(attestation_report),
         policy_signing=_build_policy_signing(policy_bundle),
+        transcript_entries=transcript_entries,
+        trace_omitted=[name for name in _OMITTABLE if getattr(trace, name) is None],
         call_log_summary=call_log_summary,
         agent_identity=(
             AgentIdentityOut(

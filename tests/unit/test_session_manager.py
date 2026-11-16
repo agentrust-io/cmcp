@@ -124,10 +124,24 @@ def test_close_session_produces_gateway_claim() -> None:
     mgr = SessionManager(_make_ctx())
     state, chain = mgr.create_session()
     claim = mgr.close_session(state.session_id, state, chain)
-    assert claim["cmcp_version"] == "1.0"
+    assert claim["cmcp_version"] == "1.1"
     assert "trace" in claim
     assert "gateway" in claim
     assert "signature" in claim
+
+
+def test_close_session_claim_carries_the_measured_code() -> None:
+    from cmcp_runtime.tee.measurement import measurement_from_components
+
+    ctx = _make_ctx()
+    ctx.gateway_measurement = measurement_from_components(
+        {"code": "ab" * 32, "policy": "cd" * 32, "config": "ef" * 32}
+    )
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    claim = mgr.close_session(state.session_id, state, chain)
+    assert claim["trace"]["build_provenance"] == {"slsa_level": 0, "digest": "sha256:" + "ab" * 32}
+    assert claim["gateway"]["trace_omitted"] == ["model"]
 
 
 def test_close_session_claim_is_signed() -> None:
@@ -231,7 +245,7 @@ def test_get_trace_claim_returns_claim_for_closed_session() -> None:
     mgr.close_session(state.session_id, state, chain)
     result = mgr.get_trace_claim(state.session_id)
     assert result is not None
-    assert result["cmcp_version"] == "1.0"
+    assert result["cmcp_version"] == "1.1"
 
 
 # ── get_audit_bundle ──────────────────────────────────────────────────────────
@@ -451,7 +465,7 @@ def test_transcript_prefers_effective_data_class_over_catalog() -> None:
         effective_data_class="confidential",
     )
     claim = mgr.close_session(state.session_id, state, chain)
-    entries = claim["trace"]["tool_transcript"]["entries"]
+    entries = claim["gateway"]["transcript_entries"]
     assert entries[0]["data_class"] == "confidential"
 
 
@@ -463,7 +477,7 @@ def test_transcript_falls_back_to_catalog_when_no_effective_data_class() -> None
     state, chain = mgr.create_session()
     chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
     claim = mgr.close_session(state.session_id, state, chain)
-    entries = claim["trace"]["tool_transcript"]["entries"]
+    entries = claim["gateway"]["transcript_entries"]
     assert entries[0]["data_class"] == "pii"
 
 

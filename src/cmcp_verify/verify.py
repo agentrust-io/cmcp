@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+import rfc8785
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
@@ -179,8 +180,14 @@ class VerificationResult:
 
 
 def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
-    """Reproduce the gateway's canonical serialization for signature verification."""
+    """Reproduce the gateway's canonical serialization for signature verification.
+
+    The signed ``cmcp_version`` picks it: RFC 8785 (JCS) for 1.1, the 1.0 form
+    (sorted keys, ASCII escapes) otherwise.
+    """
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
+    if claim_dict.get("cmcp_version") == "1.1":
+        return rfc8785.dumps(body)
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
