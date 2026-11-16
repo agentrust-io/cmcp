@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+import rfc8785
+
 from cmcp_runtime.agent_manifest import AgentManifestBinding
 from cmcp_runtime.audit.chain import AuditChain, AuditEntry
 from cmcp_runtime.audit.trace_claim import (
@@ -38,6 +40,7 @@ from cmcp_runtime.session.call_log import CallLog, SessionCallLog
 from cmcp_runtime.session.state import SessionState, effective_sensitivity_order
 from cmcp_runtime.startup import RuntimeContext
 from cmcp_runtime.tee.base import AttestationReport, make_audit_bound_nonce
+from cmcp_runtime.tee.measurement import GatewayMeasurement
 
 logger = logging.getLogger(__name__)
 
@@ -499,20 +502,23 @@ class SessionManager:
             prev_claim_hash=self._last_claim_hash,
             kill_switch_triggered=state.kill_switch_triggered,
             kill_switch=self._kill_switch_state(state),
+            gateway_code_digest=self._gateway_code_digest(),
             do_sign=True,
         )
 
         claim_dict = claim.model_dump(exclude_none=True)
-        # Record canonical hash of this claim for the next claim's prev_claim_hash link.
-        self._last_claim_hash = (
-            "sha256:"
-            + hashlib.sha256(
-                json.dumps(claim_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-            ).hexdigest()
-        )
+        # Record the JCS hash of this signed claim for the next claim's prev_claim_hash link.
+        self._last_claim_hash = "sha256:" + hashlib.sha256(rfc8785.dumps(claim_dict)).hexdigest()
         self._closed_claims[session_id] = claim_dict
         logger.info("Session closed: session_id=%s sequence_number=%d", session_id, _CLAIM_SEQUENCE)
         return claim_dict
+
+    def _gateway_code_digest(self) -> str | None:
+        """The measured code digest, or None when the gateway was not measured."""
+        measurement = getattr(self._ctx, "gateway_measurement", None)
+        if not isinstance(measurement, GatewayMeasurement):
+            return None
+        return measurement.components["code"]
 
     def _kill_switch_state(self, state: SessionState) -> KillSwitchState | None:
         ks_cfg = getattr(self._ctx.config, "kill_switch", None)

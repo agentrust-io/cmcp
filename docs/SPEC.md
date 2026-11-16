@@ -135,9 +135,16 @@ and a full worked example is in [the quickstart](quickstart.md). The envelope is
 `GatewayClaim`: canonical TRACE v0.2 fields live under `trace`, cMCP-specific addenda live
 under `gateway`, and `signature` is detached (computed over every other field).
 
+The claim signs only what the gateway observed. It never sees model calls, so
+`trace.model` is left out; `trace.build_provenance` is present only when the
+gateway measured its own code (SLSA level 0: measured, build not attested); and
+`trace.appraisal` has status `none`, since the gateway appraises nothing.
+`gateway.trace_omitted` names every required TRACE field left out, so a
+non-empty list means `trace` is not a complete TRACE record.
+
 ```json
 {
-  "cmcp_version": "1.0",
+  "cmcp_version": "1.1",
   "trace": {
     "eat_profile": "tag:agentrust-io.com,2026:trace-v0.2",
     "iat": 1730000000,
@@ -155,12 +162,11 @@ under `gateway`, and `signature` is detached (computed over every other field).
     "data_class": "<highest sensitivity reached this session>",
     "tool_transcript": {
       "hash": "sha256:<audit chain tip>",
-      "call_count": 42,
-      "entries": [
-        { "tool_name": "salesforce.query", "data_class": "pii", "decision": "allow" }
-      ]
+      "call_count": 42
     },
-    "cnf": { "jwk": { "kty": "OKP", "crv": "Ed25519", "x": "<base64url>", "kid": "cmcp-<id>" } }
+    "cnf": { "jwk": { "kty": "OKP", "crv": "Ed25519", "x": "<base64url>", "kid": "cmcp-<id>" } },
+    "build_provenance": { "slsa_level": 0, "digest": "sha256:<measured gateway code>" },
+    "appraisal": { "status": "none", "verifier": "spiffe://cmcp.gateway/tee/<key-prefix>" }
   },
   "gateway": {
     "session_id": "<uuid>",
@@ -179,11 +185,20 @@ under `gateway`, and `signature` is detached (computed over every other field).
     "attestation_generated_at": "<ISO 8601>",
     "attestation_validity_seconds": 86400,
     "attestation_stale": false,
-    "catalog_exceptions": []
+    "catalog_exceptions": [],
+    "transcript_entries": [
+      { "tool_name": "salesforce.query", "data_class": "pii", "decision": "allow" }
+    ],
+    "trace_omitted": ["model"]
   },
-  "signature": "<base64url Ed25519 over the canonical JSON of every field except signature>"
+  "signature": "<base64url Ed25519 over the RFC 8785 (JCS) form of every field except signature>"
 }
 ```
+
+Claims with `cmcp_version` 1.0 put the entries under `trace.tool_transcript.entries`,
+carry no `model`, `build_provenance`, `appraisal` or `trace_omitted`, and are signed over
+sorted-key JSON with ASCII escapes. `cmcp_verify` picks the form from the signed
+`cmcp_version`, so both still verify.
 
 Verification (no operator trust required):
 1. Verify the `trace.cnf.jwk` public key against `trace.runtime` (hardware-rooted attestation)

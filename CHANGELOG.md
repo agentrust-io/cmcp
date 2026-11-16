@@ -26,6 +26,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claims are signed over RFC 8785 (JCS) and carry only observed TRACE fields
+  (`cmcp_version` 1.1).** 1.0 signed sorted-key JSON with ASCII escapes, so a
+  genuine claim with a non-ASCII tool name, or a whole-number float such as
+  `deny_rate_threshold: 1.0`, failed every TRACE verifier other than cMCP's own.
+  1.0 also failed TRACE Level 0: it had no `appraisal`, and its `trace` block held
+  `tool_transcript.entries`, which TRACE does not define. A 1.1 claim:
+  - adds `trace.appraisal` with status `none` (the gateway appraises nothing);
+  - adds `trace.build_provenance` (SLSA level 0, the measured code digest) only
+    when the gateway measured itself;
+  - never fills `trace.model`, which the gateway does not observe;
+  - lists each left-out required TRACE field in `gateway.trace_omitted`;
+  - moves the per-call entries to `gateway.transcript_entries`.
+
+  `prev_claim_hash` is now JCS too. `cmcp_verify` picks the canonical form from
+  the signed `cmcp_version`, so 1.0 claims still verify. Consumers reading
+  `trace.tool_transcript.entries` from new claims must read
+  `gateway.transcript_entries`.
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks
   succeed (#782). A rejected policy, identity or store configuration no longer
   leaves a newly sealed key bound to rejected inputs. Port binding happens later
