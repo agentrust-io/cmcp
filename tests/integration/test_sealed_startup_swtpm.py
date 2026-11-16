@@ -299,7 +299,8 @@ def test_a_tpm_that_has_gone_away_is_reported_not_raised(
     _stop(_start(config_path))
     tpm.stop()
     text = _refused(caplog, config_path)
-    assert "ATTESTATION_REPORT_UNAVAILABLE" in text
+    # Detection asks the TPM, so a dead one is refused before any report is tried.
+    assert "ATTESTATION_PROVIDER_UNSUPPORTED" in text and "did not answer" in text
 
 
 def test_a_store_rewritten_behind_the_lock_is_refused(

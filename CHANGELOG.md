@@ -29,10 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dev mode crashed on machines with a TPM it could not use.** `provider: auto`
   picked the TPM whenever `/dev/tpm0` or `/dev/tpmrm0` existed, even when the
   user could not open it or no TPM tooling was installed, and startup aborted with
-  `ATTESTATION_REPORT_UNAVAILABLE`. The TPM is now chosen only when the user can
-  read and write it and tpm2-pytss or tpm2-tools is present. Otherwise dev mode
-  falls back to software-only and logs why, and production still refuses to
-  start, now naming the reason.
+  `ATTESTATION_REPORT_UNAVAILABLE`. Detection now asks the TPM: it opens the
+  backend the report uses (ESAPI on the default TCTI, or `tpm2_pcrread`) and
+  needs one read-only answer, so the TSS picks the device as it will later and
+  a configured TCTI is honoured. A TPM that does not answer is skipped. Dev mode
+  falls back to software-only and logs why, auto-detection moves on to the next
+  provider, and production and an explicit `provider: tpm` still refuse to
+  start, now naming the reason. An answer does not promise that a later quote,
+  key or NV operation succeeds; those still fail closed. A dead TPM is now
+  reported as `ATTESTATION_PROVIDER_UNSUPPORTED` at detection.
 
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks
   succeed (#782). A rejected policy, identity or store configuration no longer

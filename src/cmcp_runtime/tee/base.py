@@ -56,6 +56,13 @@ class TEEProvider(ABC):
     def detect(self) -> bool:
         """Return True if this provider's hardware is available and accessible."""
 
+    def unusable_reason(self) -> str | None:
+        """Why hardware that detect() found cannot be used, or None.
+
+        None when there is no such hardware: absence is not a fault.
+        """
+        return None
+
     @abstractmethod
     def get_attestation_report(self, nonce: bytes) -> AttestationReport:
         """
