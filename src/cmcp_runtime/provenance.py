@@ -59,6 +59,7 @@ class ProvenanceOutcome(StrEnum):
 
 #: Ordered weakest to strongest, for `required_kind` comparisons.
 _KIND_ORDER = ("publisher-asserted", "observer-attested", "tee-attested")
+_PRIVATE_JWK_PARAMS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 
 
 @dataclass(frozen=True)
@@ -77,17 +78,23 @@ class ProvenanceResult:
         """Whether this satisfies a configured minimum assurance."""
         if required_kind is None:
             return True
-        if self.outcome is not ProvenanceOutcome.VERIFIED or self.kind is None:
+        if not isinstance(required_kind, str) or required_kind not in _KIND_ORDER:
+            raise ValueError(f"unknown provenance required_kind: {required_kind!r}")
+        if (
+            self.outcome is not ProvenanceOutcome.VERIFIED
+            or not isinstance(self.kind, str)
+            or self.kind not in _KIND_ORDER
+        ):
             return False
         return _KIND_ORDER.index(self.kind) >= _KIND_ORDER.index(required_kind)
 
     def to_audit(self) -> dict[str, str]:
         block = {"provenance": self.outcome.value}
-        if self.kind:
+        if isinstance(self.kind, str) and self.kind:
             block["provenance_kind"] = self.kind
-        if self.publisher:
+        if isinstance(self.publisher, str) and self.publisher:
             block["provenance_publisher"] = self.publisher[:256]
-        if self.detail:
+        if isinstance(self.detail, str) and self.detail:
             block["provenance_detail"] = self.detail[:512]
         return block
 
@@ -123,11 +130,30 @@ def check_server_provenance(
             detail="agentrust-trace is not installed; provenance was not checked",
         )
 
+    def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in out:
+                raise ValueError(f"duplicate JSON object key: {key!r}")
+            out[key] = value
+        return out
+
+    def _no_nonfinite(token: str) -> Any:
+        raise ValueError(f"non-finite JSON constant: {token}")
+
     try:
-        record = json.loads(pathlib.Path(record_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        record = json.loads(
+            pathlib.Path(record_path).read_text(encoding="utf-8"),
+            object_pairs_hook=_no_duplicate_keys,
+            parse_constant=_no_nonfinite,
+        )
+    except (OSError, ValueError, RecursionError) as exc:
         return ProvenanceResult(
             ProvenanceOutcome.INVALID, detail=f"could not read the record: {exc}"
+        )
+    if not isinstance(record, dict):
+        return ProvenanceResult(
+            ProvenanceOutcome.INVALID, detail="provenance record must be a JSON object"
         )
 
     if trusted_jwk is None:
@@ -140,9 +166,16 @@ def check_server_provenance(
                 "the record cannot be used to check the record"
             ),
         )
+    if not isinstance(trusted_jwk, dict) or _PRIVATE_JWK_PARAMS.intersection(trusted_jwk):
+        return ProvenanceResult(
+            ProvenanceOutcome.INVALID,
+            detail="trusted_jwk must be a public JWK object without private key parameters",
+        )
 
-    kind = record.get("kind")
-    publisher = record.get("publisher")
+    raw_kind = record.get("kind")
+    raw_publisher = record.get("publisher")
+    kind = raw_kind if isinstance(raw_kind, str) else None
+    publisher = raw_publisher if isinstance(raw_publisher, str) else None
 
     try:
         verify_record(record, trusted_jwk)
