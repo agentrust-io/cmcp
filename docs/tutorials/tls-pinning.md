@@ -89,16 +89,18 @@ cMCP checks this fingerprint every time it connects to the tool server. If the c
 
 After updating `catalog.json`, recompute the catalog hash (the fingerprint of the whole catalog) and set `CMCP_CATALOG_HASH`.
 
-cMCP computes that hash over a normalised form of the catalog entries, sorted by `tool_name`, and not over the file's raw bytes. The snippet below does the same computation:
+cMCP computes that hash over the RFC 8785 (JCS) bytes of the catalog entries, sorted by `tool_name` in Unicode code-point order, and not over the file's raw bytes. Read the catalog as UTF-8. The snippet below does the same computation:
 
 ```bash
 python3 -c "
-import json, hashlib
-with open('catalog.json') as f:
-    entries = json.load(f)
+import hashlib
+import json
+import rfc8785
+from pathlib import Path
+entries = json.loads(Path('catalog.json').read_text(encoding='utf-8'))
 sorted_entries = sorted(entries, key=lambda e: e['tool_name'])
-canonical = json.dumps(sorted_entries, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
-print('sha256:' + hashlib.sha256(canonical.encode()).hexdigest())
+canonical = rfc8785.dumps(sorted_entries)
+print('sha256:' + hashlib.sha256(canonical).hexdigest())
 "
 ```
 

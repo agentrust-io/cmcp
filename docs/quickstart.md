@@ -138,7 +138,7 @@ Write `policies/schema.cedarschema` (one line):
 
 Write `catalog.json`. The catalog is the list of tools the gateway is allowed to forward to, with an approved description of each. It lists two tools: `salesforce.contacts` (sensitive, the policy blocks it) and `echo` (non-sensitive, the policy allows it). Both point at the mock upstream you start below.
 
-Each entry carries a `definition_hash`, a fingerprint of the approved tool description, so the gateway can notice if a tool server later changes what it claims to do. Technically it is the SHA-256 of the canonical JSON of `approved_definition` (sorted keys, no whitespace, ASCII-safe). The values below are precomputed to match.
+Each entry carries a `definition_hash`, a fingerprint of the approved tool description, so the gateway can notice if a tool server later changes what it claims to do. Technically it is the SHA-256 of the RFC 8785 (JCS) bytes of `approved_definition`. Python JSON formatting is not the same for non-ASCII text or numbers such as `1e-7`. The values below are precomputed to match.
 
 ```json
 [
@@ -198,18 +198,18 @@ Each entry carries a `definition_hash`, a fingerprint of the approved tool descr
 ]
 ```
 
-The `tls_fingerprint` values above are placeholders (they only need to match the `SHA256:<base64>` format for the demo). If you change any field in an `approved_definition`, recompute its `definition_hash`; the runtime rejects catalog entries where the hash does not match:
+The `tls_fingerprint` values above are placeholders (they only need to match the `SHA256:<base64>` format for the demo). If you change any field in an `approved_definition`, recompute its `definition_hash` from the UTF-8 catalog file; the runtime rejects catalog entries where the hash does not match:
 
 ```bash
 python3 -c "
-import json, hashlib
-d = {
-  'description': 'Returns its input unchanged. For testing only.',
-  'input_schema': {'type': 'object', 'properties': {'message': {'type': 'string'}}},
-  'output_schema': {'type': 'object', 'properties': {'message': {'type': 'string'}}}
-}
-s = json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
-print('sha256:' + hashlib.sha256(s.encode()).hexdigest())
+import hashlib
+import json
+import rfc8785
+from pathlib import Path
+entries = json.loads(Path('catalog.json').read_text(encoding='utf-8'))
+for entry in entries:
+    canonical = rfc8785.dumps(entry['approved_definition'])
+    print(entry['tool_name'] + ' sha256:' + hashlib.sha256(canonical).hexdigest())
 "
 ```
 

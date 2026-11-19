@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Catalog hashes, definition hashes, and TRACE Claim signatures now use RFC 8785 (JCS) canonical UTF-8 bytes (#837).** Earlier releases hashed and signed `json.dumps(..., sort_keys=True, ensure_ascii=True)`. Any existing `definition_hash`, `CMCP_CATALOG_HASH` / `tool_catalog.hash`, or signed TRACE Claim containing non-ASCII text, floating-point or scientific-notation numbers normalized differently by RFC 8785, or object keys whose UTF-16 code-unit order differs from Unicode code-point order produces a different digest and must be recomputed following the repin procedure in [`docs/spec/attestation.md`](docs/spec/attestation.md#54-catalog-update-procedure) (§5.1–§5.4). In addition, the `rfc8785` serializer enforces the I-JSON safe-integer limit (`±(2^53 - 1)`); catalogs containing integers of `2^53` or more (such as `"maximum": 9223372036854775807`) are now refused with `ConfigError` at load time.
+
 ### Added
 
 - **A sealed TRACE signing key on the TPM tier (#462), off by default.** With
