@@ -139,7 +139,7 @@ def verify_sev_snp_measurement(
     result = SNPVerificationResult(verified=True)
 
     # Step 1: Format check
-    if not measurement.startswith("sha384:"):
+    if not isinstance(measurement, str) or not measurement.startswith("sha384:"):
         result.verified = False
         result.failure_reason = "invalid_measurement_format"
         result.unverified_fields.append("vcek_cert_chain")
@@ -147,7 +147,7 @@ def verify_sev_snp_measurement(
         return result
 
     hex_part = measurement[len("sha384:"):]
-    if len(hex_part) != 96:
+    if len(hex_part) != 96 or any(c not in "0123456789abcdef" for c in hex_part):
         result.verified = False
         result.failure_reason = "invalid_measurement_format"
         result.unverified_fields.append("vcek_cert_chain")
@@ -200,8 +200,19 @@ def verify_sev_snp_measurement(
             # silently ignoring a mismatch would accept an SNP report for a
             # different enclave whose measurement happens to match.
             if report_data_hex is not None:
+                if (
+                    not isinstance(report_data_hex, str)
+                    or not report_data_hex
+                    or len(report_data_hex) > 128
+                    or len(report_data_hex) % 2 != 0
+                    or any(c not in "0123456789abcdefABCDEF" for c in report_data_hex)
+                ):
+                    result.verified = False
+                    result.failure_reason = "report_data_mismatch"
+                    result.unverified_fields.append("vcek_cert_chain")
+                    return result
                 extracted_rd = report.report_data
-                expected_rd = bytes.fromhex(report_data_hex[:128])
+                expected_rd = bytes.fromhex(report_data_hex)
                 # Pad expected to 64 bytes if shorter
                 if len(expected_rd) < 64:
                     expected_rd = expected_rd + b"\x00" * (64 - len(expected_rd))
