@@ -12,7 +12,7 @@ from cmcp_runtime.tee.tdreport import (
     TDREPORT_SIZE,
     TdReport,
 )
-from cmcp_verify.tdx import verify_tdx_measurement
+from cmcp_verify.tdx import verify_tdx_measurement, verify_tdx_quote
 
 _MRTD_OFFSET = MRTD_OFFSET
 _REPORT_SIZE = TDREPORT_SIZE
@@ -217,3 +217,43 @@ def test_measurement_does_not_move_with_the_nonce(monkeypatch):
     window = slice(_OLD_MRTD_OFFSET, _OLD_MRTD_OFFSET + MRTD_SIZE)
     assert first_report[window] != second_report[window]
 
+
+def test_tdx_invalid_measurement_format_rejected_before_raw_evidence():
+    for bad_meas in (None, 123, "sha384:" + "Z" * 96, "sha384:" + "A" * 96, "sha384:abcd"):
+        res = verify_tdx_measurement(bad_meas, None)  # type: ignore[arg-type]
+        assert res.verified is False
+        assert res.failure_reason == "invalid_measurement_format"
+
+
+def test_tdx_malformed_report_data_hex_classified_as_report_data_mismatch(monkeypatch):
+    monkeypatch.setattr("cmcp_verify.tdx._check_dcap_reachable", lambda: False)
+    mrtd = _mrtd()
+    report = _make_tdreport(mrtd, bytes([0x11]) * REPORT_DATA_SIZE)
+    res = verify_tdx_measurement(_measurement_of(mrtd), report, report_data_hex="not-hex!")
+    assert res.verified is False
+    assert res.failure_reason == "report_data_mismatch"
+
+
+def test_tdx_oversized_report_data_hex_rejected_in_direct_and_quote_paths(monkeypatch):
+    monkeypatch.setattr("cmcp_verify.tdx._check_dcap_reachable", lambda: False)
+    mrtd = _mrtd()
+    nonce = bytes([0x11]) * REPORT_DATA_SIZE
+    valid_hex = nonce.hex()
+    assert len(valid_hex) == REPORT_DATA_SIZE * 2
+    oversized_hex = valid_hex + "aa"
+
+    report = _make_tdreport(mrtd, nonce)
+    direct = verify_tdx_measurement(
+        _measurement_of(mrtd), report, report_data_hex=oversized_hex
+    )
+    assert direct.verified is False
+    assert direct.failure_reason == "report_data_mismatch"
+    assert "report_data" not in direct.verified_fields
+
+    from tests.unit.test_tdx_quote_verify import _build_quote
+
+    quote, root = _build_quote(report_data=nonce)
+    quote_res = verify_tdx_quote(quote, root, oversized_hex)
+    assert quote_res.verified is False
+    assert quote_res.failure_reason == "report_data_mismatch"
+    assert "report_data" not in quote_res.verified_fields
