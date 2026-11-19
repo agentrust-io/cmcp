@@ -401,6 +401,7 @@ CRYPTO-001: software-only (dev) mode -- TEE key binding cannot be verified; this
 [cmcp verify] audit_chain              PASS
 [cmcp verify] hardware_attestation     FAIL  software-only mode - not hardware-backed
 [cmcp verify] note: software-only mode - not hardware-backed
+[cmcp verify] note: not a complete TRACE record; the gateway did not observe model, build_provenance
 [cmcp verify] RESULT: FAIL (partially_verified)
 ```
 
@@ -447,10 +448,14 @@ The receipt names the machine type, the rules that were loaded, how many calls w
     | `trace.tool_transcript.hash` | SHA-256 of the audit chain tip - binds the call log to this Trust Record |
     | `trace.tool_transcript.call_count` | Number of tool calls in the session |
     | `trace.cnf.jwk` | Ed25519 public key used to sign this claim - bound to the TEE signing key |
+    | `trace.build_provenance` | Digest of the gateway's measured code, only when it was measured (not in dev mode) |
+    | `trace.appraisal` | Always status `none`: the gateway reports evidence, it does not appraise it |
+    | `gateway.transcript_entries` | Per-call tool name, data class and decision, with no payloads |
+    | `gateway.trace_omitted` | Required TRACE fields left out because the gateway did not observe them, such as `model` |
     | `gateway.audit_chain.root` / `.tip` | Hash-chained audit log root and tip; verifying individual entries requires the exported audit bundle |
     | `gateway.call_summary` | Per-session statistics: total, allowed, denied, faulted calls and tools invoked |
     | `gateway.catalog.drift_detected` | `true` if any tool definition changed after catalog load - signals a rug-pull attempt (a tool server quietly changing what a tool does after it was approved) |
-    | `signature` | Ed25519 signature over canonical JSON of the entire claim body (excluding `signature`) |
+    | `signature` | Ed25519 signature over the RFC 8785 (JCS) form of the entire claim body (excluding `signature`) |
 
 ---
 

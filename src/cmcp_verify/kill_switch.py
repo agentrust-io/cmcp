@@ -89,11 +89,16 @@ def verify_kill_switch_refusal(
         errors.append("claim does not record that the kill switch stopped this session")
 
     digest = receipt.get("claim_digest")
+    try:
+        claim_bytes: bytes | None = _canonical_json(claim)
+    except ValueError as exc:  # unsupported version, or no RFC 8785 form
+        claim_bytes = None
+        errors.append(f"claim has no canonical form to bind: {exc}")
     if not isinstance(digest, str):
         errors.append(
             "receipt is not bound to a signed claim (issued before the session's claim existed)"
         )
-    elif digest != "sha256:" + hashlib.sha256(_canonical_json(claim)).hexdigest():
+    elif claim_bytes is not None and digest != "sha256:" + hashlib.sha256(claim_bytes).hexdigest():
         errors.append("receipt claim_digest does not match the claim")
 
     identity = gateway.get("agent_identity")

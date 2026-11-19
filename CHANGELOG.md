@@ -24,6 +24,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `tpm` extra for tpm2-pytss. On Linux, CI's test job installs it and runs the
   TPM tier against swtpm.
 
+### Changed
+
+- **Claims are signed over RFC 8785 (JCS) and carry only observed TRACE fields
+  (`cmcp_version` 1.1).** 1.0 signed sorted-key JSON with ASCII escapes, so a
+  genuine claim with a non-ASCII tool name, or a whole-number float such as
+  `deny_rate_threshold: 1.0`, failed every TRACE verifier other than cMCP's own.
+  1.0 also failed TRACE Level 0: it had no `appraisal`, and its `trace` block held
+  `tool_transcript.entries`, which TRACE does not define. A 1.1 claim:
+  - adds `trace.appraisal` with status `none` (the gateway appraises nothing);
+  - adds `trace.build_provenance` (SLSA level 0, the measured code digest) only
+    when the gateway measured itself;
+  - never fills `trace.model`, which the gateway does not observe;
+  - lists each left-out required TRACE field in `gateway.trace_omitted`;
+  - moves the per-call entries to `gateway.transcript_entries`.
+
+  `prev_claim_hash` is now JCS too. `cmcp_verify` picks the canonical form from
+  the signed `cmcp_version`, so 1.0 claims still verify. Consumers reading
+  `trace.tool_transcript.entries` from new claims must read
+  `gateway.transcript_entries`. Verifiers from earlier releases refuse a 1.1
+  claim as `CLAIM_MALFORMED`, since they forbid the new fields, so upgrade
+  verifiers before gateways. While `model` is omitted a 1.1 claim is still not a
+  complete TRACE record; `trace_omitted` says so, `cmcp_verify` returns it on
+  its result and `cmcp verify` prints it. `cmcp_version` is required: a claim
+  without one is malformed rather than read as either version. A 1.1 claim
+  without an RFC 8785 form, such as one carrying an integer beyond 2^53 - 1, is
+  `CLAIM_MALFORMED`; before, verifying one raised. `trace_omitted` is a set,
+  explicit `null` for a 1.1 member is refused, and the JSON Schema now enforces
+  both, the exact omitted fields, and the JCS integer range. The schema also
+  gains the `azure-cvm-sev-snp` platform the runtime already emits.
+
+  The model and the schema now accept the same claims, for 1.0 as for 1.1: the
+  claim models validate strictly (before, `true` passed as a count and `"1"` as
+  a number), integers stay within ±(2^53 - 1), `null` is refused outside
+  `cross_boundary_events`, `signature`, `catalog_exceptions` and
+  `catalog.drift_detected` are required, and the schema requires
+  `gateway_version`, `sequence_number` and `cnf.jwk.crv`/`x`, which the model
+  always did. cMCP never emitted a claim these refuse. Both canonical forms
+  refuse a `cmcp_version` other than 1.0 or 1.1 (a receipt, which has none,
+  keeps the 1.0 form), and `verify_kill_switch_refusal` reports such a claim
+  instead of raising.
+
 ### Fixed
 
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks

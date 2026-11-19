@@ -20,12 +20,13 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+import rfc8785
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
-from cmcp_runtime.audit.trace_claim import RuntimeClaim
+from cmcp_runtime.audit.trace_claim import NullMemberError, RuntimeClaim
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
 from cmcp_verify.platform_policy import SnpPlatformPolicy
@@ -176,11 +177,24 @@ class VerificationResult:
     attestation_age_seconds: int
     is_attestation_fresh: bool
     details: dict[str, str] = field(default_factory=dict)
+    #: Required TRACE fields the claim says it left out (1.1). VERIFIED speaks
+    #: for what the gateway signed; non-empty means `trace` is not a complete
+    #: TRACE record.
+    trace_omitted: list[str] = field(default_factory=list)
 
 
 def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
-    """Reproduce the gateway's canonical serialization for signature verification."""
+    """Reproduce the gateway's canonical serialization for signature verification.
+
+    The signed ``cmcp_version`` picks it: RFC 8785 (JCS) for 1.1, the 1.0 form
+    (sorted keys, ASCII escapes) otherwise.
+    """
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
+    version = claim_dict.get("cmcp_version")
+    if version == "1.1":
+        return rfc8785.dumps(body)
+    if version not in (None, "1.0"):
+        raise ValueError(f"unsupported cmcp_version {version!r}")
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
@@ -232,7 +246,10 @@ def _verify_signature(claim: dict[str, Any]) -> tuple[bool, str | None]:
     except Exception as exc:
         return False, f"cannot decode signature: {exc}"
 
-    body = _canonical_json(claim)
+    try:
+        body = _canonical_json(claim)
+    except ValueError as exc:  # rfc8785.CanonicalizationError is a ValueError
+        return False, f"claim has no canonical form to verify: {exc}"
     try:
         pub_key.verify(sig_bytes, body)
         return True, None
@@ -536,6 +553,10 @@ def _coerce_measurement_digest(value: str | bytes) -> bytes | None:
 def _validation_error_path(exc: ValidationError) -> str:
     """Return the most specific non-missing schema location for diagnostics."""
     errors = exc.errors()
+    for error in errors:
+        null = error.get("ctx", {}).get("error")
+        if isinstance(null, NullMemberError):  # raised for the whole claim, names its member
+            return null.path
     for error in errors:
         if error["type"] == "missing":
             continue
@@ -1498,4 +1519,5 @@ def verify_trace_claim(
         attestation_age_seconds=age,
         is_attestation_fresh=is_fresh,
         details=details,
+        trace_omitted=list(claim_json.get("gateway", {}).get("trace_omitted", [])),
     )

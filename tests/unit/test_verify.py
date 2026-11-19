@@ -813,9 +813,9 @@ def test_tee_key_binding_attack_path_mismatched_fingerprint():
     claim_dict["trace"]["cnf"]["jwk"]["kid"] = f"cmcp-{attacker_key.public_key_hex[:8]}"
 
     # Attacker re-signs the body so Ed25519 verification passes.
-    body = {k: v for k, v in claim_dict.items() if k != "signature"}
-    body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    raw_sig = attacker_key.sign(body_bytes)
+    from cmcp_runtime.audit.trace_claim import canonical_json
+
+    raw_sig = attacker_key.sign(canonical_json(claim_dict))
     claim_dict["signature"] = base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
 
     result = verify_trace_claim(claim_dict, _approved())
