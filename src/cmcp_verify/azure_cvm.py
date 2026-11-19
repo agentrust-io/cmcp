@@ -22,8 +22,10 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import struct
 from dataclasses import dataclass, field
+from typing import Any
 
 from agent_manifest import (
     SNP_OFFSETS,
@@ -41,12 +43,29 @@ from cmcp_verify.sev_snp import verify_snp_report_signature, verify_vcek_chain
 _SNP_REPORT_SIZE = SNP_REPORT_LEN
 
 _TPM_GENERATED_VALUE = 0xFF544347
+_TPM_ST_ATTEST_QUOTE = 0x8018
 # TPMT_SIGNATURE sigAlg values.
 _ALG_RSASSA = 0x0014
 _ALG_RSAPSS = 0x0016
 # TPM hash-alg id -> hash. SHA1 is listed only to identify a quote's declared
 # alg; it is not chosen or used to secure anything here.
 _ALG_HASH = {0x0004: hashes.SHA1(), 0x000B: hashes.SHA256(), 0x000C: hashes.SHA384()}  # noqa: S303  # nosec B303
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+_PRIVATE_JWK_PARAMS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        out[key] = value
+    return out
+
+
+def _no_nonfinite_constant(value: str) -> Any:
+    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
 
 
 @dataclass
@@ -70,29 +89,45 @@ def _extract_extra_data(quote_msg: bytes) -> bytes:
     some producers wrap it in a TPM2B (2-byte big-endian size prefix). Handle
     both by locating the magic.
     """
+    if len(quote_msg) < 6:
+        raise ValueError("TPMS_ATTEST truncated")
     if struct.unpack_from(">I", quote_msg, 0)[0] == _TPM_GENERATED_VALUE:
         attest = quote_msg
-    elif len(quote_msg) >= 6 and struct.unpack_from(">I", quote_msg, 2)[0] == _TPM_GENERATED_VALUE:
+    elif struct.unpack_from(">I", quote_msg, 2)[0] == _TPM_GENERATED_VALUE:
         size = struct.unpack_from(">H", quote_msg, 0)[0]
+        if 2 + size > len(quote_msg):
+            raise ValueError("TPM2B_ATTEST size exceeds buffer")
         attest = quote_msg[2 : 2 + size]
     else:
         raise ValueError("TPMS_ATTEST magic not found")
+    if len(attest) < 6 or struct.unpack_from(">H", attest, 4)[0] != _TPM_ST_ATTEST_QUOTE:
+        raise ValueError("TPMS_ATTEST is not a TPM_ST_ATTEST_QUOTE")
     offset = 6  # magic(4) + type(2)
+    if offset + 2 > len(attest):
+        raise ValueError("TPMS_ATTEST qualifiedSigner truncated")
     qs_size = struct.unpack_from(">H", attest, offset)[0]
     offset += 2 + qs_size  # skip qualifiedSigner
+    if offset + 2 > len(attest):
+        raise ValueError("TPMS_ATTEST extraData header truncated")
     ed_size = struct.unpack_from(">H", attest, offset)[0]
     offset += 2
+    if offset + ed_size > len(attest):
+        raise ValueError("TPMS_ATTEST extraData truncated")
     return attest[offset : offset + ed_size]
 
 
 def _verify_quote_signature(quote_msg: bytes, quote_sig: bytes, ak: rsa.RSAPublicKey) -> bool:
     """Verify a TPMT_SIGNATURE over quote_msg with the AK (RSASSA/RSAPSS)."""
+    if len(quote_sig) < 6:
+        return False
     sig_alg = struct.unpack_from(">H", quote_sig, 0)[0]
     hash_alg = struct.unpack_from(">H", quote_sig, 2)[0]
     algo = _ALG_HASH.get(hash_alg)
     if algo is None:
         return False
     sig_size = struct.unpack_from(">H", quote_sig, 4)[0]
+    if 6 + sig_size != len(quote_sig):
+        return False
     signature = quote_sig[6 : 6 + sig_size]
     if sig_alg == _ALG_RSASSA:
         pad: padding.AsymmetricPadding = padding.PKCS1v15()
@@ -108,15 +143,40 @@ def _verify_quote_signature(quote_msg: bytes, quote_sig: bytes, ak: rsa.RSAPubli
 
 
 def _ak_from_runtime_data(runtime_data: bytes) -> rsa.RSAPublicKey:
-    keys = json.loads(runtime_data).get("keys", [])
-    ak = next((k for k in keys if k.get("kid") == "HCLAkPub"), None)
-    if ak is None:
-        raise ValueError("runtime data does not carry HCLAkPub")
+    doc = json.loads(
+        runtime_data.decode("utf-8"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_no_nonfinite_constant,
+    )
+    if not isinstance(doc, dict):
+        raise ValueError("runtime data must be a JSON object")
+    keys = doc.get("keys", [])
+    if not isinstance(keys, list):
+        raise ValueError("runtime data keys must be a list")
+    matches = [k for k in keys if isinstance(k, dict) and k.get("kid") == "HCLAkPub"]
+    if len(matches) != 1:
+        raise ValueError("runtime data must carry exactly one HCLAkPub key")
+    ak = matches[0]
+    if _PRIVATE_JWK_PARAMS.intersection(ak):
+        raise ValueError("HCLAkPub must not contain private or symmetric JWK parameters")
+    if ak.get("kty") != "RSA":
+        raise ValueError("HCLAkPub kty must be RSA")
 
-    def _b64u(v: str) -> int:
-        return int.from_bytes(base64.urlsafe_b64decode(v + "=" * ((4 - len(v) % 4) % 4)), "big")
+    def _b64u(v: Any) -> int:
+        if not isinstance(v, str) or not _B64URL_RE.fullmatch(v) or len(v) % 4 == 1:
+            raise ValueError("HCLAkPub integer must use canonical unpadded base64url")
+        raw = base64.urlsafe_b64decode(v + "=" * ((4 - len(v) % 4) % 4))
+        if not raw or raw[0] == 0:
+            raise ValueError("HCLAkPub Base64urlUInt must not have leading zero byte")
+        if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != v:
+            raise ValueError("HCLAkPub integer must use canonical unpadded base64url")
+        return int.from_bytes(raw, "big")
 
-    return rsa.RSAPublicNumbers(_b64u(ak["e"]), _b64u(ak["n"])).public_key()
+    e_int = _b64u(ak["e"])
+    n_int = _b64u(ak["n"])
+    if e_int < 3 or e_int % 2 == 0 or n_int < 3 or n_int % 2 == 0:
+        raise ValueError("HCLAkPub RSA public parameters must be odd integers >= 3")
+    return rsa.RSAPublicNumbers(e_int, n_int).public_key()
 
 
 def verify_azure_cvm_measurement(
@@ -138,7 +198,11 @@ def verify_azure_cvm_measurement(
 
     # Step a: parse the evidence envelope.
     try:
-        env = json.loads(raw_evidence)
+        env = json.loads(
+            raw_evidence.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_no_nonfinite_constant,
+        )
         snp = base64.b64decode(env["snp_report"])
         runtime = base64.b64decode(env["runtime_data"])
         quote_msg = base64.b64decode(env["quote_msg"])
@@ -208,6 +272,15 @@ def verify_azure_cvm_measurement(
             result.verified = False
             result.failure_reason = "quote_parse_error"
             result.details["quote"] = str(exc)
+            return result
+        if (
+            not isinstance(report_data_hex, str)
+            or not report_data_hex
+            or len(report_data_hex) % 2 != 0
+            or not _HEX_RE.fullmatch(report_data_hex)
+        ):
+            result.verified = False
+            result.failure_reason = "quote_nonce_mismatch"
             return result
         # The quote commits sha256(nonce); the nonce itself is report_data, checked
         # against the key thumbprint + audit root by the generic CRYPTO-001/AUDIT-006
