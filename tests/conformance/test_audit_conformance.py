@@ -379,9 +379,9 @@ def _signed_bundle(chain: AuditChain, key: SigningKey) -> dict:
 class TestExternalExecutionEvidence301:
     """#301: optional external_execution_evidence bound to an audit entry."""
 
-    def test_absent_receipt_verifies_with_null_evidence_field(self):
+    def test_absent_receipt_is_internally_consistent(self):
         # Receipt-less entries serialize and hash deterministically, and a
-        # bundle with no receipts verifies without any keys configured.
+        # bundle with no receipts remains internally consistent without keys.
         chain = AuditChain("sess-301-a")
         entry = chain.append("tool_call", call_id="c1", tool_name="t", policy_decision="allow")
         d = asdict(entry)
@@ -390,9 +390,9 @@ class TestExternalExecutionEvidence301:
             json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
         ).hexdigest()
         assert entry.entry_hash == expected
-        assert verify_audit_bundle(_bundle(chain)).verified
+        assert verify_audit_bundle(_bundle(chain)).internally_consistent
 
-    def test_populated_receipt_verifies(self):
+    def test_populated_receipt_is_internally_consistent(self):
         priv, pub, key_id = _ed25519_keypair()
         chain = AuditChain("sess-301-b")
         chain.append(
@@ -405,7 +405,7 @@ class TestExternalExecutionEvidence301:
         result = verify_audit_bundle(
             _bundle(chain), external_evidence_keys={key_id: pub}
         )
-        assert result.verified, result.failures
+        assert result.internally_consistent, result.failures
 
     def test_exported_bundle_with_receipt_verifies_end_to_end(self):
         priv, pub, key_id = _ed25519_keypair()
@@ -422,6 +422,7 @@ class TestExternalExecutionEvidence301:
             _signed_bundle(chain, signing_key),
             _claim_dict(chain, signing_key),
             external_evidence_keys={key_id: pub},
+            trusted_public_key=signing_key.public_key_bytes,
         )
         assert result.verified, result.failures
 
@@ -442,7 +443,7 @@ class TestExternalExecutionEvidence301:
         result = verify_audit_bundle(
             _bundle(chain), external_evidence_keys={key_id: pub}
         )
-        assert not result.verified
+        assert not result.internally_consistent
         assert any("signature is invalid" in f for f in result.failures)
 
     def test_linked_call_id_mismatch_fails(self):
@@ -464,7 +465,7 @@ class TestExternalExecutionEvidence301:
         result = verify_audit_bundle(
             _bundle(chain), external_evidence_keys={key_id: pub}
         )
-        assert not result.verified
+        assert not result.internally_consistent
         assert any("linked_call_id" in f for f in result.failures)
         # The signature check must not run after the binding mismatch: there must
         # be no signature-validity outcome recorded for the misbound receipt.
@@ -484,7 +485,7 @@ class TestExternalExecutionEvidence301:
         result = verify_audit_bundle(
             _bundle(chain), external_evidence_keys={"0" * 64: b"\x00" * 32}
         )
-        assert not result.verified
+        assert not result.internally_consistent
         assert any("no trusted key" in f for f in result.failures)
 
     def test_key_id_mismatch_fails(self):
@@ -500,5 +501,5 @@ class TestExternalExecutionEvidence301:
         result = verify_audit_bundle(
             _bundle(chain), external_evidence_keys={key_id: b"\x00" * len(pub)}
         )
-        assert not result.verified
+        assert not result.internally_consistent
         assert any("issuer_key_id does not match" in f for f in result.failures)

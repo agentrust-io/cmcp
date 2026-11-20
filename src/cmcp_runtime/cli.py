@@ -343,7 +343,20 @@ def verify(
     bundle_ok = True
     if audit_bundle is not None:
         bundle = _load_verify_json(audit_bundle)
-        bundle_result = verify_audit_bundle(bundle, claim)
+        bundle_trusted_key = None
+        if trusted_key is not None:
+            try:
+                bundle_trusted_key = bytes.fromhex(
+                    trusted_key.lower().removeprefix("0x")
+                )
+            except ValueError:
+                pass
+        bundle_result = verify_audit_bundle(
+            bundle,
+            claim,
+            claim_verification=result,
+            trusted_public_key=bundle_trusted_key,
+        )
         bundle_ok = bundle_result.verified
         _line(
             "audit_bundle",

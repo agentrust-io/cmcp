@@ -183,10 +183,26 @@ def test_verify_fails_on_tampered_claim(claim_and_bundle, tmp_path):
     assert "signature" in result.output
 
 
-def test_verify_audit_bundle_passes(claim_and_bundle):
-    # The audit bundle itself verifies (PASS), but the software-only claim is
-    # only partially_verified, so the overall CLI result is still FAIL.
-    claim_file, bundle_file, claim, _, _ = claim_and_bundle
+def test_verify_audit_bundle_requires_authenticated_claim_or_key(claim_and_bundle):
+    claim_file, bundle_file, _, _, _ = claim_and_bundle
+
+    result = CliRunner().invoke(main, [
+        "verify",
+        str(claim_file),
+        "--audit-bundle",
+        str(bundle_file),
+    ])
+
+    assert result.exit_code == 1, result.output
+    assert "audit_bundle             FAIL" in result.output
+    assert "claim_verification did not fully verify the claim" in result.output
+
+
+def test_verify_audit_bundle_passes_with_trusted_key(claim_and_bundle):
+    # The pinned gateway key authenticates the bundle (PASS), but the
+    # software-only claim is only partially_verified, so the overall CLI result
+    # is still FAIL.
+    claim_file, bundle_file, claim, _, signing_key = claim_and_bundle
     assert claim["trace"]["tool_transcript"]["call_count"] == 1
     call_summary = claim["gateway"]["call_summary"]
     assert {
@@ -206,11 +222,17 @@ def test_verify_audit_bundle_passes(claim_and_bundle):
         "tools_invoked": ["fixture-tool"],
     }
     result = CliRunner().invoke(main, [
-        "verify", str(claim_file), "--audit-bundle", str(bundle_file),
+        "verify",
+        str(claim_file),
+        "--audit-bundle",
+        str(bundle_file),
+        "--trusted-key",
+        signing_key.public_key_hex,
     ])
     assert result.exit_code == 1, result.output
     assert "audit_bundle             PASS" in result.output
     assert "RESULT: FAIL (partially_verified)" in result.output
+
 
 def test_verify_rejects_tool_transcript_hash_mismatch(claim_and_bundle, tmp_path):
     """A re-signed claim must still bind tool_transcript.hash to audit_chain.tip."""

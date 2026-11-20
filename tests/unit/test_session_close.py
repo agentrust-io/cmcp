@@ -170,7 +170,10 @@ def test_audit_export_after_reset_serves_the_chain_only_under_the_successor(serv
     bundle = client.get(f"/audit/export?session_id={new_id}").json()
     assert bundle["session_id"] == new_id
     assert {e["session_id"] for e in bundle["entries"]} == {old_id}
-    assert verify_audit_bundle(bundle).verified
+    assert verify_audit_bundle(
+        bundle,
+        trusted_public_key=server._session_manager._ctx.signing_key.public_key_bytes,
+    ).verified
 
 
 def _stateful_stdio_catalog(script: str) -> ToolCatalog:

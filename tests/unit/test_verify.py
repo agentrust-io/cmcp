@@ -621,6 +621,15 @@ def test_hardware_backed_happy_path_is_verified(monkeypatch):
     assert "hardware_attestation" in result.verified_fields
     assert "hardware_attestation" not in result.unverified_fields
     assert result.status == VerificationStatus.VERIFIED
+    expected_claim_digest = hashlib.sha256(
+        json.dumps(
+            claim_dict,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode()
+    ).hexdigest()
+    assert result.claim_digest == expected_claim_digest
 
 
 def test_snp_report_without_verified_chain_stays_partial(monkeypatch):

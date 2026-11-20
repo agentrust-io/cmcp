@@ -12,8 +12,16 @@ root, tip and counts matched.
 
 from __future__ import annotations
 
+import hashlib
+import json
+
+from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.session.manager import SessionManager
-from cmcp_verify import verify_audit_bundle
+from cmcp_verify import (
+    VerificationResult,
+    VerificationStatus,
+    verify_audit_bundle,
+)
 from tests.unit.test_session_manager import _make_ctx
 
 
@@ -34,11 +42,107 @@ def _epoch_failures(result):
     return [f for f in result.failures if "session" in f]
 
 
-def test_single_session_bundle_verifies():
+def _verified_claim_result(claim):
+    claim_digest = hashlib.sha256(
+        json.dumps(
+            claim,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode()
+    ).hexdigest()
+    return VerificationResult(
+        status=VerificationStatus.VERIFIED,
+        verified_fields=[],
+        unverified_fields=[],
+        failure_reason=None,
+        attestation_age_seconds=0,
+        is_attestation_fresh=True,
+        claim_digest=claim_digest,
+    )
+
+
+def test_self_signed_claim_does_not_authenticate_bundle():
     mgr, state, chain = _session_with_a_call()
     claim, bundle = _close(mgr, state, chain)
     result = verify_audit_bundle(bundle, claim)
+
+    assert result.internally_consistent
+    assert not result.verified
+    assert any("bundle authenticity requires" in failure for failure in result.failures)
+
+
+def test_single_session_bundle_verifies_with_trusted_key():
+    mgr, state, chain = _session_with_a_call()
+    claim, bundle = _close(mgr, state, chain)
+    result = verify_audit_bundle(
+        bundle,
+        claim,
+        trusted_public_key=mgr._ctx.signing_key.public_key_bytes,
+    )
     assert result.verified, result.failures
+
+
+def test_matching_verified_claim_result_authenticates_bundle():
+    mgr, state, chain = _session_with_a_call()
+    claim, bundle = _close(mgr, state, chain)
+
+    result = verify_audit_bundle(
+        bundle,
+        claim,
+        claim_verification=_verified_claim_result(claim),
+    )
+
+    assert result.verified, result.failures
+
+
+def test_verified_claim_result_cannot_be_reused_for_another_claim():
+    mgr, state, chain = _session_with_a_call()
+    claim, bundle = _close(mgr, state, chain)
+    claim_verification = _verified_claim_result(claim)
+    altered_claim = dict(claim)
+    altered_claim["signature"] = "another-claim-signature"
+
+    result = verify_audit_bundle(
+        bundle,
+        altered_claim,
+        claim_verification=claim_verification,
+    )
+
+    assert result.internally_consistent
+    assert not result.verified
+    assert "claim_verification does not match claim_json" in result.failures
+
+
+def test_trusted_key_rejects_an_invalid_claim_signature():
+    mgr, state, chain = _session_with_a_call()
+    claim, bundle = _close(mgr, state, chain)
+    claim["signature"] = "invalid-signature"
+
+    result = verify_audit_bundle(
+        bundle,
+        claim,
+        trusted_public_key=mgr._ctx.signing_key.public_key_bytes,
+    )
+
+    assert result.internally_consistent
+    assert not result.verified
+    assert "claim signature is invalid for trusted_public_key" in result.failures
+
+
+def test_bundle_signed_by_another_key_is_rejected():
+    mgr, state, chain = _session_with_a_call()
+    claim, bundle = _close(mgr, state, chain)
+    result = verify_audit_bundle(
+        bundle,
+        claim,
+        trusted_public_key=SigningKey().public_key_bytes,
+    )
+
+    assert result.internally_consistent
+    assert not result.verified
+    assert "claim confirmation key does not match trusted_public_key" in result.failures
+    assert "bundle_signature is invalid" in result.failures
 
 
 def test_reset_with_recorded_transition_verifies():
@@ -56,7 +160,11 @@ def test_reset_with_recorded_transition_verifies():
     claim, bundle = _close(mgr, state, chain)
 
     assert {e["session_id"] for e in bundle["entries"]} == {old_id, new_id}
-    result = verify_audit_bundle(bundle, claim)
+    result = verify_audit_bundle(
+        bundle,
+        claim,
+        trusted_public_key=mgr._ctx.signing_key.public_key_bytes,
+    )
     assert result.verified, result.failures
 
 

@@ -176,12 +176,21 @@ class VerificationResult:
     attestation_age_seconds: int
     is_attestation_fresh: bool
     details: dict[str, str] = field(default_factory=dict)
+    claim_digest: str | None = None
 
 
 def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
     """Reproduce the gateway's canonical serialization for signature verification."""
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def _signed_claim_digest(claim_dict: dict[str, Any]) -> str:
+    """Bind a verification result to the exact signed claim object it assessed."""
+    canonical = json.dumps(
+        claim_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _jwk_x_to_hex(x_b64: str) -> str | None:
@@ -560,11 +569,12 @@ def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None, str | Non
 
 @dataclass
 class AuditBundleResult:
-    """Outcome of verifying an exported audit bundle against a claim."""
+    """Authenticity and consistency outcome for an exported audit bundle."""
 
     verified: bool
     entry_count: int
     failures: list[str] = field(default_factory=list)
+    internally_consistent: bool = False
 
 
 def _external_evidence_failure(entry_index: int, reason: str) -> str:
@@ -623,6 +633,8 @@ def verify_audit_bundle(
     claim_json: dict[str, Any] | None = None,
     *,
     external_evidence_keys: dict[str, bytes] | None = None,
+    claim_verification: VerificationResult | None = None,
+    trusted_public_key: bytes | None = None,
 ) -> AuditBundleResult:
     """
     Verify an exported audit bundle (GET /audit/export):
@@ -630,14 +642,18 @@ def verify_audit_bundle(
     1. Recompute every entry hash from its canonical body and check the
        prev_entry_hash linkage from "genesis" to the tip.
     2. If a claim is provided, cross-check the bundle's root/tip/length
-       against gateway.audit_chain and verify the bundle_signature with the
-       claim's confirmation key (trace.cnf.jwk.x).
+       against gateway.audit_chain.
     3. #301: if external_evidence_keys is provided (issuer_key_id -> raw Ed25519
        public key bytes), verify any external_execution_evidence receipt bound to an
        entry: linked_call_id must equal the entry call_id, and the issuer
        signature must verify over the canonical receipt (all fields except
        signature). This is opt-in: receipt-less entries and callers that do not
        supply keys are unaffected, so existing evidence keeps verifying.
+    4. Authenticate bundle_signature with an explicit trusted_public_key, or
+       with the confirmation key from the exact claim represented by a VERIFIED
+       claim_verification result. When an explicit key and claim are supplied,
+       the same key must authenticate the claim signature. Unauthenticated
+       bundles can be internally consistent, but are never verified.
     """
     if not isinstance(bundle_json, dict):
         return _audit_bundle_shape_failure("bundle")
@@ -769,6 +785,8 @@ def verify_audit_bundle(
                     )
                 )
 
+    internally_consistent = not failures
+
     if claim_json is not None:
         chain = claim_json.get("gateway", {}).get("audit_chain", {})
         transcript = claim_json.get("trace", {}).get("tool_transcript", {})
@@ -858,33 +876,74 @@ def verify_audit_bundle(
                 f"bundle has {len(entries)} entries, claim says {chain.get('length')}"
             )
 
-        sig_b64 = bundle_json.get("bundle_signature", "")
-        x_b64 = claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
-        if not sig_b64:
-            failures.append("bundle_signature is missing")
-        elif not x_b64:
-            failures.append("claim has no confirmation key to check bundle_signature against")
+    authenticated_key: bytes | None = None
+    if trusted_public_key is not None:
+        if not isinstance(trusted_public_key, bytes) or len(trusted_public_key) != 32:
+            failures.append("trusted_public_key must be 32 raw Ed25519 public key bytes")
         else:
-            try:
-                pad = 4 - (len(x_b64) % 4)
-                pub = Ed25519PublicKey.from_public_bytes(
-                    base64.urlsafe_b64decode(x_b64 + ("=" * pad if pad != 4 else ""))
+            authenticated_key = trusted_public_key
+            if claim_json is not None:
+                x_b64 = (
+                    claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
                 )
-                pad = 4 - (len(sig_b64) % 4)
-                sig = base64.urlsafe_b64decode(sig_b64 + ("=" * pad if pad != 4 else ""))
-                digest = hashlib.sha256(
-                    json.dumps(
-                        entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-                    ).encode()
-                ).digest()
-                pub.verify(sig, digest)
-            except InvalidSignature:
-                failures.append("bundle_signature is invalid")
-            except Exception as exc:
-                failures.append(f"bundle_signature could not be checked: {exc}")
+                claim_key_hex = _jwk_x_to_hex(x_b64) if isinstance(x_b64, str) else None
+                claim_key = bytes.fromhex(claim_key_hex) if claim_key_hex is not None else None
+                if claim_key is None or not hmac.compare_digest(claim_key, trusted_public_key):
+                    failures.append(
+                        "claim confirmation key does not match trusted_public_key"
+                    )
+                else:
+                    claim_signature_ok, _ = _verify_signature(claim_json)
+                    if not claim_signature_ok:
+                        failures.append(
+                            "claim signature is invalid for trusted_public_key"
+                        )
+    elif claim_verification is not None:
+        if claim_json is None:
+            failures.append("claim_verification requires claim_json")
+        elif not isinstance(claim_verification, VerificationResult):
+            failures.append("claim_verification is not a VerificationResult")
+        elif claim_verification.status is not VerificationStatus.VERIFIED:
+            failures.append("claim_verification did not fully verify the claim")
+        elif claim_verification.claim_digest != _signed_claim_digest(claim_json):
+            failures.append("claim_verification does not match claim_json")
+        else:
+            x_b64 = claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
+            claim_key_hex = _jwk_x_to_hex(x_b64) if isinstance(x_b64, str) else None
+            claim_key = bytes.fromhex(claim_key_hex) if claim_key_hex is not None else None
+            if claim_key is None or len(claim_key) != 32:
+                failures.append("verified claim has no valid Ed25519 confirmation key")
+            else:
+                authenticated_key = claim_key
+    else:
+        failures.append(
+            "bundle authenticity requires a verified claim result or trusted_public_key"
+        )
+
+    sig_b64 = bundle_json.get("bundle_signature", "")
+    if not sig_b64:
+        failures.append("bundle_signature is missing")
+    elif authenticated_key is not None:
+        try:
+            pub = Ed25519PublicKey.from_public_bytes(authenticated_key)
+            pad = 4 - (len(sig_b64) % 4)
+            sig = base64.urlsafe_b64decode(sig_b64 + ("=" * pad if pad != 4 else ""))
+            digest = hashlib.sha256(
+                json.dumps(
+                    entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                ).encode()
+            ).digest()
+            pub.verify(sig, digest)
+        except InvalidSignature:
+            failures.append("bundle_signature is invalid")
+        except Exception as exc:
+            failures.append(f"bundle_signature could not be checked: {exc}")
 
     return AuditBundleResult(
-        verified=not failures, entry_count=len(entries), failures=failures
+        verified=not failures,
+        entry_count=len(entries),
+        failures=failures,
+        internally_consistent=internally_consistent,
     )
 
 
@@ -1498,4 +1557,5 @@ def verify_trace_claim(
         attestation_age_seconds=age,
         is_attestation_fresh=is_fresh,
         details=details,
+        claim_digest=_signed_claim_digest(claim_json),
     )

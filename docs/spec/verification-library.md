@@ -34,6 +34,7 @@ class VerificationResult:
     failure_reason: Optional[str] # None if status != UNVERIFIED
     attestation_age_seconds: int  # how old the attestation is
     is_attestation_fresh: bool    # attestation_age_seconds < configured validity window
+    claim_digest: Optional[str]   # binds this result to the exact signed claim
 
 @dataclass
 class ApprovedHashes:
@@ -88,6 +89,7 @@ class AuditBundleResult:
     verified: bool
     entry_count: int
     failures: list[str]
+    internally_consistent: bool
 
 class ReceiptState(Enum):
     ABSENT = "absent"
@@ -110,11 +112,17 @@ def verify_audit_bundle(
     claim_json: Optional[dict] = None,
     *,
     external_evidence_keys: Optional[dict[str, bytes]] = None,
+    claim_verification: Optional[VerificationResult] = None,
+    trusted_public_key: Optional[bytes] = None,
 ) -> AuditBundleResult:
     """
-    Verify an exported audit bundle. When external_evidence_keys is supplied,
-    each key is issuer_key_id -> raw 32-byte Ed25519 public key. issuer_key_id
-    is lowercase hex SHA-256(public_key_bytes).
+    Verify an exported audit bundle. verified=True requires a valid bundle
+    signature under either trusted_public_key or the confirmation key from the
+    exact fully verified claim represented by claim_verification. When a claim
+    and trusted_public_key are both supplied, that key must also verify the
+    claim signature. When external_evidence_keys is supplied, each key is
+    issuer_key_id -> raw 32-byte Ed25519 public key. issuer_key_id is lowercase
+    hex SHA-256(public_key_bytes).
     """
     ...
 
@@ -136,6 +144,13 @@ def verify_embodied_action_evidence(
     """
     ...
 ```
+
+`internally_consistent` reports the unkeyed hash-chain, session-transition, and
+opt-in external-evidence checks independently of authenticity. It can be true
+for an unsigned or attacker-signed bundle, so callers must use `verified` for a
+trust decision. A `claim_verification` result is accepted only when its status
+is `VERIFIED` and its digest matches `claim_json`; otherwise callers must supply
+the gateway's raw 32-byte Ed25519 public key from a trusted source.
 
 `external_execution_evidence.evidence_hash` is the digest of the detached evidence payload attested by the issuer, not the digest of the receipt envelope. For JSON evidence payloads, the hash pre-image is the UTF-8 bytes of the RFC 8785/JCS canonical JSON representation. For non-JSON evidence payloads, the pre-image is the exact byte string identified by the issuer's evidence format. The field value is `sha256:<hex>` or `sha384:<hex>`.
 

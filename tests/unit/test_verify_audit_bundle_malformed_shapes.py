@@ -107,11 +107,15 @@ def test_missing_entries_preserves_existing_failure() -> None:
     )
 
 
-def test_valid_entry_preserves_success() -> None:
+def test_valid_unsigned_entry_reports_internal_consistency_only() -> None:
     assert verify_audit_bundle(_one_entry_bundle()) == AuditBundleResult(
-        verified=True,
+        verified=False,
         entry_count=1,
-        failures=[],
+        failures=[
+            "bundle authenticity requires a verified claim result or trusted_public_key",
+            "bundle_signature is missing",
+        ],
+        internally_consistent=True,
     )
 
 

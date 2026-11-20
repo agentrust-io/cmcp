@@ -125,12 +125,23 @@ with open("audit-bundle.json") as f:
     bundle = json.load(f)
 with open("claim.json") as f:
     claim = json.load(f)
+with open("gateway-public-key.hex") as f:
+    trusted_gateway_key = bytes.fromhex(f.read().strip())
 
-result = verify_audit_bundle(bundle, claim)
+result = verify_audit_bundle(
+    bundle,
+    claim,
+    trusted_public_key=trusted_gateway_key,
+)
 print(f"Bundle verified: {result.verified}, entries: {result.entry_count}")
 if result.failures:
     print(f"Failures: {result.failures}")
 ```
+
+Obtain `gateway-public-key.hex` through a trusted channel. A key copied from the
+claim or bundle does not authenticate either artifact. Callers that already
+have a `VERIFIED` result from `verify_trace_claim` can instead pass it as
+`claim_verification`; the verifier binds that result to the exact claim.
 
 ---
 

@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `verify_audit_bundle()` now requires either a matching fully verified TRACE
+  Claim result or an explicitly trusted gateway key before returning
+  `verified=True`. Unauthenticated hash chains are exposed only as
+  `internally_consistent`, so recomputed, truncated, or attacker-signed audit
+  histories cannot be mistaken for authentic gateway output.
 - **The operator token was measured.** Only the bearer token was excluded from
   the measured configuration, so `CMCP_OPERATOR_TOKEN` fed the gateway digest
   (since #629): rotating it changed the digest, and a digest over it reached the
