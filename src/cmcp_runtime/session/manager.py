@@ -24,6 +24,7 @@ from cmcp_runtime.audit.trace_claim import (
     CallSummary,
     KillSwitchState,
     PolicyBundleInfo,
+    TpmGatewayMeasurementInfo,
     ToolCatalogInfo,
     ToolTranscriptEntry,
     canonical_json,
@@ -37,7 +38,12 @@ from cmcp_runtime.policy.decisions import claim_value
 from cmcp_runtime.session.call_log import CallLog, SessionCallLog
 from cmcp_runtime.session.state import SessionState, effective_sensitivity_order
 from cmcp_runtime.startup import RuntimeContext
-from cmcp_runtime.tee.base import AttestationReport, make_audit_bound_nonce
+from cmcp_runtime.tee.base import (
+    AttestationReport,
+    make_audit_bound_nonce,
+    make_trace_bound_nonce,
+)
+from cmcp_runtime.tee.measurement import GatewayMeasurement
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +58,27 @@ def _b64(data: object) -> str | None:
     if not isinstance(data, (bytes, bytearray)):
         return None
     return base64.urlsafe_b64encode(bytes(data)).rstrip(b"=").decode()
+
+
+def _gateway_measurement(ctx: RuntimeContext) -> GatewayMeasurement | None:
+    """Return only a concrete measurement, never a loose test-double attribute."""
+    measurement = getattr(ctx, "gateway_measurement", None)
+    return measurement if isinstance(measurement, GatewayMeasurement) else None
+
+
+def _attestation_info(report: AttestationReport) -> AttestationReportInfo:
+    """Convert one provider report into the signed TRACE claim representation."""
+    return AttestationReportInfo(
+        provider=report.provider,
+        measurement=report.measurement,
+        report_data=report.report_data,
+        attestation_generated_at=report.attestation_generated_at.isoformat(),
+        attestation_validity_seconds=report.attestation_validity_seconds,
+        measurement_note=report.measurement_note,
+        raw_evidence=_b64(report.raw_evidence),
+        quote_signature=_b64(report.quote_signature),
+        cert_chain=_b64(report.attestation_key_chain_pem),
+    )
 
 
 # Module-level counter so sequence numbers are monotonic across all sessions
@@ -102,15 +129,14 @@ class SessionManager:
         Create a new session. Returns (state, chain).
 
         AUDIT-002 / AUDIT-006: after constructing the chain, request a per-session
-        TEE attestation report whose nonce commits the chain root.  The nonce is
-        jwk_thumbprint(key) || SHA-256(chain_root) so the hardware-signed
-        report_data binds BOTH the gateway key (report_data[:32]) and this chain's
-        root (report_data[32:64]).  This report is stored on the chain and used to
-        build the claim in close_session(), so the chain root reaches the verifier
-        inside the attested report_data - not just as an unbound advisory field.
+        TEE attestation report whose nonce commits the chain root. On measured
+        hardware the second half is a domain-separated compound commitment to the
+        gateway measurement and chain root; the first half remains the key
+        thumbprint. This report is stored on the chain and used to build the claim
+        in close_session().
         A rogue operator who rebuilds a fresh, internally-consistent chain gets a
-        different root that no longer matches report_data[32:64], so verification
-        fails.  In dev / Level-0 mode (software-only provider) the anchor is still
+        different compound commitment, so verification fails. In dev / Level-0
+        mode (software-only provider) the anchor is still
         set and the report is still stored so the binding is exercised - the
         security guarantee is limited to what a software TEE provides.
         """
@@ -159,16 +185,23 @@ class SessionManager:
             sinks=self._audit_sinks,
         )
 
-        # AUDIT-006: derive a per-session nonce that commits the chain root into
-        # report_data, then KEEP the resulting report so close_session() builds the
-        # claim from it.  nonce = jwk_thumbprint(key) || SHA-256(chain_root):
-        #   report_data[:32]   -> gateway key (unchanged key binding, CRYPTO-001)
-        #   report_data[32:64] -> SHA-256(chain_root) (new chain-root commitment)
+        # Bind the key, gateway measurement and chain root in one report_data
+        # value. Software-only and old hand-built contexts have no established
+        # gateway measurement, so they retain the audit-only development path.
         chain_root = chain.chain_root
 
         try:
-            nonce = make_audit_bound_nonce(
-                self._ctx.signing_key.public_key_bytes, chain_root
+            measurement = _gateway_measurement(self._ctx)
+            nonce = (
+                make_trace_bound_nonce(
+                    self._ctx.signing_key.public_key_bytes,
+                    measurement.digest,
+                    chain_root,
+                )
+                if measurement is not None
+                else make_audit_bound_nonce(
+                    self._ctx.signing_key.public_key_bytes, chain_root
+                )
             )
             report = self._ctx.tee_provider.get_attestation_report(nonce)
             # AUDIT-006: store the report so its report_data (committing chain_root)
@@ -186,11 +219,10 @@ class SessionManager:
                     session_id,
                 )
         except Exception as exc:
-            # Non-fatal: log and continue.  The anchor is still set so that
-            # internal chain-substitution detection works.  The claim falls back
-            # to the shared startup report (no chain-root commitment) and the
-            # verifier will flag the missing binding.  In production, callers
-            # should validate that the TEE provider is not software-only.
+            # Non-fatal while opening: the anchor is still set so internal
+            # chain-substitution detection works. Hardware claim issuance later
+            # refuses this state; software-only development keeps its historical
+            # best-effort fallback.
             logger.warning(
                 "AUDIT-006: per-session TEE attestation call failed - "
                 "chain root is not hardware-bound into report_data. session_id=%s error=%s",
@@ -260,10 +292,7 @@ class SessionManager:
 
         ctx = self._ctx
         # AUDIT-006: prefer the per-session report whose report_data commits this
-        # chain's root.  Fall back to the shared startup report only if the
-        # per-session TEE call failed at create_session() time (a warning was
-        # already emitted there); in that case the chain root is not bound into
-        # report_data.
+        # chain's root. On hardware it must also commit the gateway measurement.
         #
         # #372: on a hardware platform that fallback report carries no
         # chain-root commitment, and the verifier fail-closes on it anyway - so
@@ -280,28 +309,91 @@ class SessionManager:
                 "commitment. A hardware-attested claim must not be issued unbound.",
                 detail=session_id,
             )
-        report = chain.session_report or ctx.attestation_report
+
+        gateway_measurement = _gateway_measurement(ctx)
+        if ctx.attestation_report.provider != "software-only":
+            if gateway_measurement is None:
+                raise TeeFault(
+                    f"Refusing to issue a TRACE Claim for session {session_id}: "
+                    "hardware attestation has no established gateway measurement, "
+                    "so code, policy, configuration, and audit root cannot be "
+                    "bound in one receipt.",
+                    detail=session_id,
+                )
+            expected_nonce = make_trace_bound_nonce(
+                ctx.signing_key.public_key_bytes,
+                gateway_measurement.digest,
+                chain.chain_root,
+            )
+            report = chain.session_report
+            assert report is not None
+            if (
+                report.provider != ctx.attestation_report.provider
+                or report.report_data != expected_nonce.hex()
+            ):
+                # A policy reload may have changed the gateway measurement after
+                # this session opened. Re-attest at close so the claim describes
+                # the measurement paired with the policy/configuration now signed.
+                try:
+                    refreshed = ctx.tee_provider.get_attestation_report(expected_nonce)
+                except Exception as exc:
+                    raise TeeFault(
+                        f"Refusing to issue a TRACE Claim for session {session_id}: "
+                        "the gateway measurement changed and compound re-attestation "
+                        f"failed: {exc}",
+                        detail=session_id,
+                    ) from exc
+                if (
+                    not isinstance(refreshed, AttestationReport)
+                    or refreshed.provider != ctx.attestation_report.provider
+                    or refreshed.report_data != expected_nonce.hex()
+                ):
+                    raise TeeFault(
+                        f"Refusing to issue a TRACE Claim for session {session_id}: "
+                        "the TEE provider did not return the requested compound-bound "
+                        "hardware report.",
+                        detail=session_id,
+                    )
+                chain.set_session_report(refreshed)
+                report = refreshed
+        else:
+            report = chain.session_report or ctx.attestation_report
 
         # Convert AttestationReport (datetime) to AttestationReportInfo (str).
-        generated_at_str = report.attestation_generated_at.isoformat()
         age_seconds = (
             datetime.now(UTC) - report.attestation_generated_at
         ).total_seconds()
         attestation_stale = age_seconds > report.attestation_validity_seconds
+        attestation_info = _attestation_info(report)
 
-        attestation_info = AttestationReportInfo(
-            provider=report.provider,
-            measurement=report.measurement,
-            report_data=report.report_data,
-            attestation_generated_at=generated_at_str,
-            attestation_validity_seconds=report.attestation_validity_seconds,
-            measurement_note=report.measurement_note,
-            raw_evidence=_b64(report.raw_evidence),
-            # #370: without these the quote is unauthenticated -- the verifier has
-            # the signature and chain checks but nothing to run them on.
-            quote_signature=_b64(report.quote_signature),
-            cert_chain=_b64(report.attestation_key_chain_pem),
-        )
+        tpm_gateway_measurement: TpmGatewayMeasurementInfo | None = None
+        if report.provider == "tpm":
+            startup_report = ctx.attestation_report
+            nv_evidence = getattr(ctx, "measurement_evidence", None)
+            cert_chain = startup_report.attestation_key_chain_pem
+            try:
+                startup_nonce = bytes.fromhex(startup_report.report_data)
+            except (TypeError, ValueError) as exc:
+                raise TeeFault(
+                    "Refusing to issue a TPM TRACE Claim: the startup measurement "
+                    "nonce is malformed.",
+                    detail=session_id,
+                ) from exc
+            if (
+                len(startup_nonce) != 64
+                or not isinstance(nv_evidence, bytes)
+                or not isinstance(cert_chain, bytes)
+            ):
+                raise TeeFault(
+                    "Refusing to issue a TPM TRACE Claim: the signed NV-certify "
+                    "gateway-measurement evidence or its certified AK chain is absent.",
+                    detail=session_id,
+                )
+            tpm_gateway_measurement = TpmGatewayMeasurementInfo(
+                nonce=_b64(startup_nonce) or "",
+                nv_certify=_b64(nv_evidence) or "",
+                cert_chain=_b64(cert_chain) or "",
+            )
 
         # One read of the store, so hash, version and signer describe the same
         # bundle even if a reload swaps it while this claim is being built.
@@ -499,6 +591,12 @@ class SessionManager:
             prev_claim_hash=self._last_claim_hash,
             kill_switch_triggered=state.kill_switch_triggered,
             kill_switch=self._kill_switch_state(state),
+            gateway_measurement=(
+                gateway_measurement.digest_hex
+                if gateway_measurement is not None and report.provider != "software-only"
+                else None
+            ),
+            tpm_gateway_measurement=tpm_gateway_measurement,
             do_sign=True,
         )
 

@@ -35,6 +35,11 @@ _TPM_DEVICES = [Path("/dev/tpm0"), Path("/dev/tpmrm0")]
 # PCR selection quoted alongside the measurement.
 _QUOTE_PCR_SELECTION = "sha256:0,1,2,3,4,5,6,7"
 
+
+def _quote_qualifying_data(nonce: bytes) -> bytes:
+    """Fit the complete TRACE nonce into TPM quote qualifyingData."""
+    return hashlib.sha256(nonce).digest()
+
 # Platforms that provision an attestation key expose it at a persistent handle with a
 # certificate in NV. Azure Trusted Launch uses these two; both are TCG-conventional
 # ranges rather than Azure inventions, so the probe is harmless elsewhere.
@@ -271,7 +276,10 @@ class TPMProvider(TEEProvider):
                 quoted, signature = ectx.quote(
                     ak_handle,
                     _QUOTE_PCR_SELECTION,
-                    TPM2B_DATA(nonce[:32]),
+                    # Some TPMs cap qualifyingData below 64 bytes. Hashing the
+                    # complete nonce preserves the key plus compound binding in
+                    # one fixed-size value, matching the Azure CVM construction.
+                    TPM2B_DATA(_quote_qualifying_data(nonce)),
                 )
                 raw_evidence = bytes(quoted.attestationData)
                 quote_signature = signature.marshal()

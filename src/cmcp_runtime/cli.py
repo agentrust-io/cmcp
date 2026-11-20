@@ -262,6 +262,12 @@ def _load_verify_json(path: str) -> Any:
     help="Approved launch measurement (repeatable), in the claim's measurement "
          "format. Without one, a hardware claim is at most partially verified.",
 )
+@click.option(
+    "--gateway-measurement",
+    default=None,
+    help="Approved SHA-256 gateway code/policy/config measurement. Enables the "
+         "compound claim binding and TPM NV-certify appraisal.",
+)
 def verify(
     claim_file: str,
     policy_hash: str | None,
@@ -273,6 +279,7 @@ def verify(
     agent_manifest_trust_anchor: str | None,
     trusted_tpm_ca: str | None,
     launch_measurements: tuple[str, ...],
+    gateway_measurement: str | None,
 ) -> None:
     """Verify a signed TRACE Claim (and optionally its audit bundle).
 
@@ -323,6 +330,7 @@ def verify(
         trusted_agent_manifest_keys=manifest_keys,
         trusted_agent_manifest_key_issuers=manifest_key_issuers,
         trusted_tpm_ca_pem=tpm_ca_bundle,
+        expected_gateway_measurement=gateway_measurement,
         expected_launch_measurements=launch_measurements or None,
     )
 

@@ -55,11 +55,9 @@ def verify_tpm_measurement(
     - measurement field format: must start with "sha256:" followed by 64 hex chars
 
     What requires raw_evidence (TPM2B_ATTEST):
-    - the quote's qualifying_data equals expected_qualifying_data. The gateway
-      commits the attestation nonce's first 32 bytes -- the RFC 7638 JWK Thumbprint
-      of the TEE public key (docs/spec/attestation.md §3.3) -- as the TPM2_Quote
-      qualifying_data. The caller re-derives that thumbprint from cnf.jwk and passes
-      it here, so a key substituted after attestation is detected.
+    - the quote's qualifying_data equals expected_qualifying_data. Legacy claims
+      use the key thumbprint; compound claims use SHA-256 of the complete 64-byte
+      nonce so the gateway measurement and audit root are authenticated too.
     - PCR digest in quote matches measurement field
 
     EK cert chain validation: always marked as unverified_fields here, because
@@ -195,7 +193,7 @@ def _parse_tpm2b_attest(
             result["qualifying_data_verified"] = True
         else:
             result["qualifying_data_error"] = (
-                "qualifying_data does not match expected key thumbprint"
+                "qualifying_data does not match the expected TRACE binding"
             )
 
     return True, result

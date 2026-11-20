@@ -27,6 +27,8 @@ from cmcp_runtime.tee.base import (
     SoftwareOnlyProvider,
     jwk_thumbprint,
     make_measurement_bound_nonce,
+    make_trace_bound_nonce,
+    trace_binding_commitment,
 )
 from cmcp_runtime.tee.measurement import GatewayMeasurement, gateway_measurement
 from cmcp_runtime.tee.report_binding import (
@@ -124,6 +126,24 @@ def test_nonce_is_fresh_per_start_despite_being_deterministic() -> None:
     start_a = make_measurement_bound_nonce(_KEY, _DIGEST)
     start_b = make_measurement_bound_nonce(bytes(range(32, 64)), _DIGEST)
     assert start_a != start_b
+
+
+def test_trace_nonce_compounds_measurement_and_audit_root() -> None:
+    root = "cd" * 32
+    nonce = make_trace_bound_nonce(_KEY, _DIGEST, root)
+
+    assert nonce[:32] == jwk_thumbprint(_KEY)
+    assert nonce[32:] == trace_binding_commitment(_KEY, _DIGEST, root)
+    assert nonce[32:] != _DIGEST
+
+
+def test_trace_nonce_changes_for_each_security_input() -> None:
+    root = "cd" * 32
+    baseline = make_trace_bound_nonce(_KEY, _DIGEST, root)
+
+    assert make_trace_bound_nonce(b"\x01" * 32, _DIGEST, root) != baseline
+    assert make_trace_bound_nonce(_KEY, b"\x02" * 32, root) != baseline
+    assert make_trace_bound_nonce(_KEY, _DIGEST, "ef" * 32) != baseline
 
 
 # ── which providers use it ────────────────────────────────────────────────────

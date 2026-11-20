@@ -17,6 +17,11 @@ _ALLOWED_PROVIDERS: frozenset[str] = frozenset({
     "software-only",
 })
 
+# Domain-separates the compound commitment used by closed-session TRACE claims.
+# The value is part of the verifier contract; changing it requires a new scheme.
+TRACE_BINDING_SCHEME = "cmcp-trace-binding-v1"
+_TRACE_BINDING_DOMAIN = TRACE_BINDING_SCHEME.encode("ascii") + b"\x00"
+
 
 @dataclass
 class AttestationReport:
@@ -61,12 +66,10 @@ class TEEProvider(ABC):
         """
         Produce a hardware attestation report.
 
-        nonce is the 64-byte value defined in docs/spec/attestation.md §3.3:
-        the RFC 7638 JWK Thumbprint of the gateway public key (32 bytes) followed
-        by a random salt (32 bytes). See make_nonce(). This binds the report to a
-        specific gateway key (verifiable from cnf.jwk) and makes each instance's
-        report fresh. Session linkage is carried separately by the signed claim
-        body (gateway.session_id), not by the nonce.
+        nonce is a 64-byte value defined in docs/spec/attestation.md §3.3. Its
+        first half is the RFC 7638 JWK thumbprint. The second is a random salt, a
+        gateway measurement, an audit-root commitment, or the versioned compound
+        TRACE commitment, depending on the report's purpose.
         """
 
     @abstractmethod
@@ -129,6 +132,63 @@ def make_audit_bound_nonce(tee_public_key: bytes, chain_root_hex: str) -> bytes:
     session_id and the session_start timestamp).
     """
     return jwk_thumbprint(tee_public_key) + audit_root_commitment(chain_root_hex)
+
+
+def trace_binding_commitment(
+    tee_public_key: bytes,
+    gateway_measurement_digest: bytes,
+    chain_root_hex: str,
+) -> bytes:
+    """Bind one key, gateway measurement, and audit root into 32 bytes.
+
+    ``report_data`` has only one 32-byte application slot after the key
+    thumbprint. Hashing the fixed-width values under a versioned domain lets a
+    single hardware report authenticate both security properties without making
+    either verifier check interpret the same bytes as two unrelated digests.
+    """
+    if len(gateway_measurement_digest) != 32:
+        raise ValueError(
+            "gateway_measurement_digest must be 32 bytes, got "
+            f"{len(gateway_measurement_digest)}"
+        )
+    root_hex = chain_root_hex.removeprefix("sha256:")
+    try:
+        chain_root = bytes.fromhex(root_hex)
+    except ValueError as exc:
+        raise ValueError("chain_root_hex must be a SHA-256 hex digest") from exc
+    if len(chain_root) != 32:
+        raise ValueError(
+            f"chain_root_hex must decode to 32 bytes, got {len(chain_root)}"
+        )
+    fingerprint = jwk_thumbprint(tee_public_key)
+    return hashlib.sha256(
+        _TRACE_BINDING_DOMAIN
+        + fingerprint
+        + gateway_measurement_digest
+        + chain_root
+    ).digest()
+
+
+def make_trace_bound_nonce(
+    tee_public_key: bytes,
+    gateway_measurement_digest: bytes,
+    chain_root_hex: str,
+) -> bytes:
+    """Build the hardware nonce for a closed-session TRACE claim.
+
+    Layout (64 bytes, ``cmcp-trace-binding-v1``)::
+
+        jwk_thumbprint(pubkey) ||
+        SHA-256(domain || thumbprint || gateway_measurement || audit_root)
+
+    The claim carries the gateway measurement and audit root as signed fields,
+    allowing a verifier to reconstruct the second half and pin the measurement
+    independently. Any substitution of the key, measurement, or root changes the
+    hardware-authenticated nonce.
+    """
+    return jwk_thumbprint(tee_public_key) + trace_binding_commitment(
+        tee_public_key, gateway_measurement_digest, chain_root_hex
+    )
 
 
 def make_measurement_bound_nonce(

@@ -18,6 +18,7 @@ from cmcp_runtime.audit.trace_claim import (
     CallSummary,
     PolicyBundleInfo,
     RuntimeClaim,
+    TpmGatewayMeasurementInfo,
     ToolCatalogInfo,
     _to_dict,
     canonical_json,
@@ -50,7 +51,12 @@ def _make_call_summary() -> CallSummary:
     )
 
 
-def _make_claim(signing_key: SigningKey | None = None) -> RuntimeClaim:
+def _make_claim(
+    signing_key: SigningKey | None = None,
+    *,
+    gateway_measurement: str | None = None,
+    tpm_gateway_measurement: TpmGatewayMeasurementInfo | None = None,
+) -> RuntimeClaim:
     key = signing_key or SigningKey()
     sign = signing_key is not None
     chain = AuditChain("sess-001")
@@ -68,6 +74,8 @@ def _make_claim(signing_key: SigningKey | None = None) -> RuntimeClaim:
         audit_chain_root=chain.chain_root,
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,
+        gateway_measurement=gateway_measurement,
+        tpm_gateway_measurement=tpm_gateway_measurement,
         do_sign=sign,
     )
 
@@ -377,6 +385,31 @@ def test_gateway_claim_roundtrips_through_dict():
     claim = _make_claim()
     d = _to_dict(claim)
     RuntimeClaim.model_validate(d)
+
+
+def test_compound_and_tpm_measurement_fields_are_signed_schema_fields():
+    tpm = TpmGatewayMeasurementInfo(
+        nonce="nonce-b64url",
+        nv_certify="nv-b64url",
+        cert_chain="chain-b64url",
+    )
+    claim = _make_claim(
+        gateway_measurement="sha256:" + "a" * 64,
+        tpm_gateway_measurement=tpm,
+    )
+
+    encoded = _to_dict(claim)
+
+    assert encoded["gateway"]["attestation_binding"] == {
+        "scheme": "cmcp-trace-binding-v1",
+        "gateway_measurement": "sha256:" + "a" * 64,
+    }
+    assert encoded["gateway"]["tpm_gateway_measurement"] == {
+        "nonce": "nonce-b64url",
+        "nv_certify": "nv-b64url",
+        "cert_chain": "chain-b64url",
+    }
+    RuntimeClaim.model_validate(encoded)
 
 
 def test_to_dict_includes_signature_field():

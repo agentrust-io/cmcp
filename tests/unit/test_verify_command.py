@@ -171,6 +171,19 @@ def test_verify_fails_with_wrong_pinned_hash(claim_and_bundle):
     assert "RESULT: FAIL" in result.output
 
 
+def test_verify_passes_gateway_measurement_to_claim_verifier(claim_and_bundle):
+    claim_file, _, _, _, _ = claim_and_bundle
+
+    result = CliRunner().invoke(
+        main,
+        ["verify", str(claim_file), "--gateway-measurement", "not-a-digest"],
+    )
+
+    assert result.exit_code == 1
+    assert "measurement_binding" in result.output
+    assert "not valid hex" in result.output
+
+
 def test_verify_fails_on_tampered_claim(claim_and_bundle, tmp_path):
     """The tamper demo: change one field, signature verification fails."""
     _, _, claim, _, _ = claim_and_bundle

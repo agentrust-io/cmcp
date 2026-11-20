@@ -25,8 +25,10 @@ from cmcp_runtime.audit.trace_claim import (
     CallGraphSummary,
     CallSummary,
     PolicyBundleInfo,
+    TpmGatewayMeasurementInfo,
     ToolCatalogInfo,
     _to_dict,
+    canonical_json,
     generate_trace_claim,
 )
 from cmcp_runtime.config import EnforcementMode
@@ -89,18 +91,30 @@ def _make_signed_claim(
     provider="software-only",
     agent_identity: AgentIdentityInfo | None = None,
     report_data: str | None = None,
+    key: SigningKey | None = None,
+    gateway_measurement: bytes | None = None,
+    tpm_gateway_measurement: TpmGatewayMeasurementInfo | None = None,
+    cert_chain: bytes | None = None,
 ):
-    key = SigningKey()
+    key = key or SigningKey()
     chain = AuditChain("test-session")
     measurement = "DEVELOPMENT_ONLY" if provider == "software-only" else "ab" * 32
     # Bind both the key (report_data[:32]) and the chain root (report_data[32:64],
     # AUDIT-006) for hardware providers; software-only ignores report_data here.
     # A caller may override to bind something else, e.g. the #552 measurement.
-    report_data = report_data or (
-        _make_nonce_for_key(key, chain.chain_root)
-        if provider != "software-only"
-        else "00" * 32
-    )
+    if report_data is None:
+        if gateway_measurement is not None:
+            from cmcp_runtime.tee.base import make_trace_bound_nonce
+
+            report_data = make_trace_bound_nonce(
+                key.public_key_bytes, gateway_measurement, chain.chain_root
+            ).hex()
+        else:
+            report_data = (
+                _make_nonce_for_key(key, chain.chain_root)
+                if provider != "software-only"
+                else "00" * 32
+            )
 
     claim = generate_trace_claim(
         session_id="test-session",
@@ -111,6 +125,11 @@ def _make_signed_claim(
             report_data=report_data,
             attestation_generated_at=datetime.now(tz=UTC).isoformat(),
             attestation_validity_seconds=86400,
+            cert_chain=(
+                base64.urlsafe_b64encode(cert_chain).rstrip(b"=").decode()
+                if cert_chain is not None
+                else None
+            ),
         ),
         policy_bundle=PolicyBundleInfo(
             hash=policy_hash,
@@ -134,6 +153,12 @@ def _make_signed_claim(
         audit_chain_tip=chain.chain_tip,
         audit_chain_length=chain.length,
         agent_identity=agent_identity,
+        gateway_measurement=(
+            "sha256:" + gateway_measurement.hex()
+            if gateway_measurement is not None
+            else None
+        ),
+        tpm_gateway_measurement=tpm_gateway_measurement,
         do_sign=True,
     )
     return _to_dict(claim), key
@@ -1105,6 +1130,7 @@ def _claim_binding_measurement(digest: bytes):
     return _make_signed_claim(
         provider="sev-snp",
         report_data=_make_measurement_nonce_for_key(key, digest),
+        key=key,
     )
 
 
@@ -1114,6 +1140,120 @@ def test_measurement_binding_is_verified_when_it_matches():
         claim, _APPROVED, expected_gateway_measurement=_MEASUREMENT
     )
     assert "measurement_binding" in result.verified_fields
+    # The legacy direct measurement occupies the audit-root slot, so one report
+    # still cannot satisfy both checks. New producers use the compound scheme.
+    assert "audit_chain_binding" in result.unverified_fields
+
+
+@pytest.mark.parametrize(
+    "provider", ["sev-snp", "azure-cvm-sev-snp", "tdx"]
+)
+def test_compound_claim_verifies_measurement_and_audit_root_together(
+    provider: str,
+):
+    claim, _ = _make_signed_claim(
+        provider=provider, gateway_measurement=_MEASUREMENT
+    )
+
+    result = verify_trace_claim(
+        claim, _APPROVED, expected_gateway_measurement=_MEASUREMENT
+    )
+
+    assert "public_key_binding" in result.verified_fields
+    assert "audit_chain_binding" in result.verified_fields
+    assert "measurement_binding" in result.verified_fields
+
+
+def test_compound_claim_rejects_resigned_measurement_substitution():
+    claim, key = _make_signed_claim(
+        provider="sev-snp", gateway_measurement=_MEASUREMENT
+    )
+    claim["gateway"]["attestation_binding"]["gateway_measurement"] = (
+        "sha256:" + (b"\xee" * 32).hex()
+    )
+    claim["signature"] = base64.urlsafe_b64encode(
+        key.sign(canonical_json(claim))
+    ).rstrip(b"=").decode()
+
+    result = verify_trace_claim(
+        claim, _APPROVED, expected_gateway_measurement=_MEASUREMENT
+    )
+
+    assert "audit_chain_binding" in result.unverified_fields
+    assert "measurement_binding" in result.unverified_fields
+
+
+def test_tpm_compound_claim_requires_nv_measurement_evidence():
+    claim, _ = _make_signed_claim(
+        provider="tpm", gateway_measurement=_MEASUREMENT
+    )
+
+    result = verify_trace_claim(
+        claim,
+        _APPROVED,
+        expected_gateway_measurement=_MEASUREMENT,
+        trusted_tpm_ca_pem=b"pinned-root",
+    )
+
+    assert "measurement_binding" in result.unverified_fields
+    assert "tpm_gateway_measurement is absent" in result.details["measurement_binding"]
+
+
+def test_tpm_compound_claim_appraises_bound_nv_pair(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from cmcp_runtime.tee.base import jwk_thumbprint
+    from cmcp_verify.nv_policy import GatewayNvAppraisalPolicy
+
+    key = SigningKey()
+    startup_nonce = jwk_thumbprint(key.public_key_bytes) + b"\x7a" * 32
+    ak_chain = (
+        b"-----BEGIN CERTIFICATE-----\nYWstbGVhZg==\n"
+        b"-----END CERTIFICATE-----\n"
+    )
+    tpm_evidence = TpmGatewayMeasurementInfo(
+        nonce=base64.urlsafe_b64encode(startup_nonce).rstrip(b"=").decode(),
+        nv_certify=base64.urlsafe_b64encode(b"nv-envelope").rstrip(b"=").decode(),
+        cert_chain=base64.urlsafe_b64encode(ak_chain).rstrip(b"=").decode(),
+    )
+    claim, _ = _make_signed_claim(
+        provider="tpm",
+        key=key,
+        gateway_measurement=_MEASUREMENT,
+        tpm_gateway_measurement=tpm_evidence,
+        cert_chain=ak_chain,
+    )
+    seen: dict[str, object] = {}
+
+    def _passing_nv(envelope: bytes, **kwargs: object):
+        seen["envelope"] = envelope
+        seen.update(kwargs)
+
+        class _Result:
+            verified = True
+            failure_reason = None
+            details: dict[str, str] = {}
+
+        return _Result()
+
+    monkeypatch.setattr(
+        "cmcp_verify.nv_certify.verify_gateway_measurement", _passing_nv
+    )
+
+    result = verify_trace_claim(
+        claim,
+        _APPROVED,
+        expected_gateway_measurement=_MEASUREMENT,
+        trusted_tpm_ca_pem=b"pinned-root",
+    )
+
+    assert "measurement_binding" in result.verified_fields
+    assert seen["expected_nonce"] == startup_nonce
+    assert seen["ak_chain_pem"] == ak_chain
+    assert seen["trusted_roots_pem"] == b"pinned-root"
+    policy = seen["policy"]
+    assert isinstance(policy, GatewayNvAppraisalPolicy)
+    assert policy.expected_gateway_digest == _MEASUREMENT
 
 
 def test_measurement_binding_mismatch_is_reported():

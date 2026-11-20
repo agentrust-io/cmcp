@@ -28,6 +28,7 @@ from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
 from cmcp_runtime.audit.trace_claim import RuntimeClaim
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
+from cmcp_runtime.tee.base import TRACE_BINDING_SCHEME, trace_binding_commitment
 from cmcp_verify.platform_policy import SnpPlatformPolicy
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,23 @@ def _leaf_public_key_pem(chain_pem: bytes) -> bytes:
         return leaf.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
     except Exception:  # noqa: BLE001
         return b""
+
+
+def _leaf_certificate_der(chain_pem: bytes) -> bytes | None:
+    """Decode the first PEM certificate for stable AK identity comparison."""
+    begin = b"-----BEGIN CERTIFICATE-----"
+    end = b"-----END CERTIFICATE-----"
+    start = chain_pem.find(begin)
+    finish = chain_pem.find(end, start + len(begin)) if start >= 0 else -1
+    if start < 0 or finish < 0:
+        return None
+    body = b"".join(chain_pem[start + len(begin) : finish].split())
+    if not body:
+        return None
+    try:
+        return base64.b64decode(body, validate=True)
+    except Exception:  # noqa: BLE001 - malformed PEM fails the identity check
+        return None
 
 
 _SW_ONLY_FIRMWARE = "software-only-dev-mode"
@@ -354,22 +372,20 @@ def _check_audit_chain_binding(
     AUDIT-006: verify that the audit-chain root is committed to the hardware-signed
     report_data, not merely carried as an unauthenticated advisory field.
 
-    The gateway submits a per-session attestation nonce of the form
+    Current gateways submit a per-session attestation nonce of the form
 
-        jwk_thumbprint(key) (32) || SHA-256(chain_root_bytes) (32)
+        jwk_thumbprint(key) ||
+        SHA-256(domain || thumbprint || gateway_measurement || chain_root)
 
-    so the TEE commits SHA-256(chain_root) into report_data[32:64].  The nonce is
-    surfaced as trace.runtime.nonce (base64url of the full 64-byte value).
+    Legacy claims used ``thumbprint || SHA-256(chain_root)``. The verifier keeps
+    that read path for compatibility, but new compound claims can satisfy audit
+    and gateway-measurement appraisal at the same time.
 
-    The verifier re-derives SHA-256(SHA-256-hex-decode(gateway.audit_chain.root))
-    and compares it constant-time against nonce[32:64].  A mismatch means the chain
-    root in the claim is NOT the one attested by the hardware: a rogue operator who
-    rebuilt a fresh, internally-consistent chain (different root) re-signed the claim
-    with the in-enclave key but could not forge the TEE-committed report_data.  This
-    is FATAL.
+    The verifier reconstructs the selected commitment from the signed claim fields
+    and compares it constant-time against the nonce. A mismatch is fatal.
 
     Returns:
-        (True,  None)          -- chain root commitment matches report_data[32:64]
+        (True,  None)          -- selected nonce commitment binds the chain root
         (False, reason)        -- mismatch / missing commitment; reject (fail closed)
         (None,  warning_msg)   -- software-only / Level-0 mode; not hardware-backed
     """
@@ -377,6 +393,30 @@ def _check_audit_chain_binding(
     if not root:
         # _check_audit_chain already reports the empty-root failure; nothing to bind.
         return False, "gateway.audit_chain.root is empty -- cannot verify chain-root binding"
+
+    binding = claim.get("gateway", {}).get("attestation_binding")
+    if isinstance(binding, dict):
+        if binding.get("scheme") != TRACE_BINDING_SCHEME:
+            return False, "gateway.attestation_binding.scheme is unsupported"
+        measurement = _coerce_measurement_digest(
+            binding.get("gateway_measurement", "")
+        )
+        if measurement is None or len(measurement) != 32:
+            return False, (
+                "gateway.attestation_binding.gateway_measurement is not a "
+                "SHA-256 digest"
+            )
+        compound_ok, compound_msg = _check_compound_trace_binding(
+            claim, measurement
+        )
+        if not compound_ok:
+            return False, compound_msg
+        if is_sw_only:
+            return None, (
+                "software-only mode -- compound audit binding is not "
+                "hardware-backed"
+            )
+        return True, None
 
     # The chain root may carry a "sha256:" prefix in some serializations; the bytes
     # committed to the TEE are those of the bare hex digest (the entry_hash).
@@ -440,32 +480,28 @@ def _check_measurement_binding(
     *,
     is_sw_only: bool,
 ) -> tuple[bool | None, str | None]:
-    """#552: verify report_data[32:64] commits the gateway measurement.
+    """Verify the hardware nonce commits the approved gateway measurement.
 
-    On SEV-SNP, TDX and Azure CVM the gateway's startup attestation nonce is
+    Current session claims use a compound nonce:
 
-        jwk_thumbprint(key) (32) || gateway_measurement.digest (32)
+        jwk_thumbprint(key) ||
+        SHA-256(domain || thumbprint || gateway_measurement || chain_root)
 
-    so the hardware signs the digest over the installed code, the policy bundle and
-    the effective configuration. The digest is a raw 32-byte SHA-256 and goes in
-    unreshaped, so this compares it directly rather than re-hashing it, which is the
-    one way this check differs from :func:`_check_audit_chain_binding`.
+    This lets the same report jointly satisfy the audit-root check. Legacy startup
+    claims that directly placed the measurement in bytes [32:64] remain readable,
+    but cannot also satisfy the legacy audit-root check unless the digests collide.
 
     ``expected_measurement_digest`` must come from the verifier, not from the claim.
     That is the whole point: the claim is what is being appraised. It is the same
     out-of-band trust input as ``trusted_ark_pem`` or ``ApprovedHashes``, obtained
     from the build that was approved to run.
 
-    **This is the freshness check for a field with no history.** Unlike the TPM's
-    ``TPM_NT_EXTEND`` index, ``report_data`` holds one value and no chain, so a
-    report produced before a policy reload is internally well-formed and cannot be
-    told from a current one by inspection. The gateway re-attests on every
-    policy-bundle reload; recompute-and-compare here is what catches a gateway that
-    did not. A mismatch is FATAL: the code, policy or config now running is not the
-    one this hardware report committed.
+    A mismatch is fatal: the code, policy or config is not the verifier-approved
+    gateway measurement. TPM additionally requires the carried NV-certify pair;
+    the quote's caller-supplied nonce alone does not prove what was measured.
 
     Returns:
-        (True,  None)          -- report_data[32:64] commits the expected measurement
+        (True,  None)          -- selected nonce commits the expected measurement
         (False, reason)        -- mismatch or missing commitment; reject (fail closed)
         (None,  warning_msg)   -- software-only / Level-0 mode; not hardware-backed
     """
@@ -474,6 +510,34 @@ def _check_measurement_binding(
             f"expected measurement digest is {len(expected_measurement_digest)} bytes, "
             "not 32; a caller supplied something that is not a raw SHA-256"
         )
+
+    binding = claim.get("gateway", {}).get("attestation_binding")
+    if isinstance(binding, dict):
+        if binding.get("scheme") != TRACE_BINDING_SCHEME:
+            return False, "gateway.attestation_binding.scheme is unsupported"
+        claimed = _coerce_measurement_digest(
+            binding.get("gateway_measurement", "")
+        )
+        if claimed is None or len(claimed) != 32:
+            return False, (
+                "gateway.attestation_binding.gateway_measurement is not a "
+                "SHA-256 digest"
+            )
+        if not hmac.compare_digest(claimed, expected_measurement_digest):
+            return False, (
+                "gateway measurement does not match the verifier-approved digest"
+            )
+        compound_ok, compound_msg = _check_compound_trace_binding(
+            claim, expected_measurement_digest
+        )
+        if not compound_ok:
+            return False, compound_msg
+        if is_sw_only:
+            return None, (
+                "software-only mode -- compound measurement binding is not "
+                "hardware-backed"
+            )
+        return True, None
 
     nonce_b64 = claim.get("trace", {}).get("runtime", {}).get("nonce", "")
     if not nonce_b64:
@@ -527,10 +591,114 @@ def _coerce_measurement_digest(value: str | bytes) -> bytes | None:
     """Accept a raw 32-byte digest or its hex form, with or without ``sha256:``."""
     if isinstance(value, bytes):
         return value
+    if not isinstance(value, str):
+        return None
     try:
         return bytes.fromhex(value.removeprefix("sha256:"))
     except ValueError:
         return None
+
+
+def _check_compound_trace_binding(
+    claim: dict[str, Any], gateway_measurement_digest: bytes
+) -> tuple[bool, str | None]:
+    """Reconstruct the v1 key+measurement+audit-root hardware nonce."""
+    runtime = claim.get("trace", {}).get("runtime", {})
+    report_data_hex = _platform_report_data(runtime.get("nonce"))
+    if report_data_hex is None:
+        return False, (
+            "trace.runtime.nonce must be the canonical 64-byte compound binding"
+        )
+
+    x_b64 = claim.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
+    key_hex = _jwk_x_to_hex(x_b64) if x_b64 else None
+    if key_hex is None:
+        return False, "trace.cnf.jwk.x cannot reconstruct the compound binding"
+    try:
+        public_key = bytes.fromhex(key_hex)
+        if len(public_key) != 32:
+            return False, "trace.cnf.jwk.x is not a 32-byte Ed25519 public key"
+        expected = (
+            _jwk_thumbprint_sha256(x_b64)
+            + trace_binding_commitment(
+                public_key,
+                gateway_measurement_digest,
+                claim.get("gateway", {}).get("audit_chain", {}).get("root", ""),
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        return False, f"compound attestation binding is malformed: {exc}"
+
+    if not hmac.compare_digest(bytes.fromhex(report_data_hex), expected):
+        return False, (
+            "trace.runtime.nonce does not jointly commit the claim key, gateway "
+            "measurement, and audit-chain root"
+        )
+    return True, None
+
+
+def _check_tpm_gateway_measurement(
+    claim: dict[str, Any],
+    expected_gateway_digest: bytes,
+    *,
+    trusted_tpm_ca_pem: bytes | None,
+) -> tuple[bool, str | None]:
+    """Appraise the TPM NV-certify pair carried by a compound-bound claim."""
+    evidence = claim.get("gateway", {}).get("tpm_gateway_measurement")
+    if not isinstance(evidence, dict):
+        return False, "gateway.tpm_gateway_measurement is absent"
+    if trusted_tpm_ca_pem is None:
+        return False, "no trusted_tpm_ca_pem pinned for TPM gateway measurement"
+
+    nonce = _decode_evidence(evidence.get("nonce"))
+    envelope = _decode_evidence(evidence.get("nv_certify"))
+    cert_chain = _decode_evidence(evidence.get("cert_chain"))
+    if nonce is None or len(nonce) != 64:
+        return False, "TPM gateway-measurement nonce is absent or not 64 bytes"
+    if envelope is None or cert_chain is None:
+        return False, "TPM NV-certify envelope or certified AK chain is absent"
+
+    runtime = claim.get("trace", {}).get("runtime", {})
+    quote_cert_chain = _evidence_field(claim, runtime, "cert_chain")
+    nv_leaf = _leaf_certificate_der(cert_chain)
+    quote_leaf = (
+        _leaf_certificate_der(quote_cert_chain)
+        if quote_cert_chain is not None
+        else None
+    )
+    if (
+        nv_leaf is None
+        or quote_leaf is None
+        or not hmac.compare_digest(nv_leaf, quote_leaf)
+    ):
+        return False, (
+            "TPM NV-certify pair and session quote do not use the same certified AK"
+        )
+
+    x_b64 = claim.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x", "")
+    if not x_b64 or not hmac.compare_digest(
+        nonce[:32], _jwk_thumbprint_sha256(x_b64)
+    ):
+        return False, "TPM NV-certify pair is not bound to trace.cnf.jwk"
+
+    from cmcp_verify.nv_certify import verify_gateway_measurement
+    from cmcp_verify.nv_policy import GatewayNvAppraisalPolicy
+
+    policy = GatewayNvAppraisalPolicy.for_measurement_index(
+        expected_gateway_digest=expected_gateway_digest
+    )
+    result = verify_gateway_measurement(
+        envelope,
+        ak_chain_pem=cert_chain,
+        trusted_roots_pem=trusted_tpm_ca_pem,
+        expected_nonce=nonce,
+        policy=policy,
+    )
+    if not result.verified:
+        detail = result.details.get("error") or result.details.get("which")
+        suffix = f": {detail}" if detail else ""
+        return False, f"TPM gateway measurement failed: {result.failure_reason}{suffix}"
+    return True, None
 
 
 def _validation_error_path(exc: ValidationError) -> str:
@@ -918,11 +1086,11 @@ def verify_trace_claim(
        issuer keys are provided.
     6. Attestation freshness check
     7. Audit chain consistency check
-    7b. AUDIT-006: audit-chain root binding -- report_data[32:64] commits SHA-256(chain_root)
-    7c. #552: gateway measurement binding -- report_data[32:64] commits the gateway
-        measurement digest. Only runs when expected_gateway_measurement is supplied,
-        because the expected value has to come from the verifier rather than the
-        claim. See _check_measurement_binding for which report carries it.
+    7b. AUDIT-006: audit-chain root binding through the compound report_data nonce
+    7c. Gateway measurement binding through that same compound nonce. On TPM this
+        also appraises the carried NV-certify pair. Only runs when
+        expected_gateway_measurement is supplied, because approval must come from
+        the verifier rather than the claim.
     8. Platform-specific attestation verification (dispatched per-platform)
 
     ``snp_platform_policy`` is a verifier-owned policy over authenticated SNP
@@ -1144,12 +1312,9 @@ def verify_trace_claim(
         if chain_err:
             details["chain_error"] = chain_err
 
-    # Step 7b: AUDIT-006 -- audit-chain root binding into report_data.
-    # The chain root must be committed to the hardware-signed report_data
-    # (report_data[32:64] == SHA-256(chain_root)), not merely asserted in the
-    # advisory gateway.audit_chain.root field.  A mismatch is FATAL: it means a
-    # rogue operator rebuilt the chain and re-signed the claim but could not forge
-    # the TEE-committed commitment.  Only attempted when the chain is well-formed.
+    # Step 7b: AUDIT-006 -- audit-chain root binding into report_data. Current
+    # claims use the compound key+measurement+root commitment; legacy claims use
+    # the direct root commitment. Only attempted when the chain is well-formed.
     if chain_ok:
         root_binding, root_binding_msg = _check_audit_chain_binding(
             claim_json, is_sw_only=_is_sw_only
@@ -1183,7 +1348,23 @@ def verify_trace_claim(
                 claim_json, _expected_digest, is_sw_only=_is_sw_only
             )
             if m_binding is True:
-                verified.append("measurement_binding")
+                if _runtime.get("platform") == "tpm2":
+                    nv_binding, nv_binding_msg = _check_tpm_gateway_measurement(
+                        claim_json,
+                        _expected_digest,
+                        trusted_tpm_ca_pem=trusted_tpm_ca_pem,
+                    )
+                    if nv_binding:
+                        verified.append("measurement_binding")
+                    else:
+                        unverified.append("measurement_binding")
+                        failure = failure or VerificationError.MEASUREMENT_NOT_BOUND
+                        details["measurement_binding"] = (
+                            nv_binding_msg
+                            or "TPM gateway measurement verification failed"
+                        )
+                else:
+                    verified.append("measurement_binding")
             elif m_binding is False:
                 unverified.append("measurement_binding")
                 failure = failure or VerificationError.MEASUREMENT_NOT_BOUND
@@ -1219,11 +1400,19 @@ def verify_trace_claim(
 
         tpm_established_links: set[str] = set()
         raw_bytes = _evidence_field(claim_json, _runtime, "raw_evidence")
-        # The TPM quote commits the attestation nonce's first 32 bytes -- the RFC 7638
-        # JWK Thumbprint of the TEE key -- as qualifying_data (§3.3). Re-derive it from
-        # cnf.jwk.x so a substituted key is detected.
+        # Legacy TPM claims signed only the key thumbprint. Compound-bound claims
+        # sign SHA-256 of the complete 64-byte nonce, authenticating the gateway
+        # measurement and audit root as well as the key.
         _tpm_jwk_x = claim_json.get("trace", {}).get("cnf", {}).get("jwk", {}).get("x")
-        _expected_qd = _jwk_thumbprint_sha256(_tpm_jwk_x) if _tpm_jwk_x else None
+        _compound = claim_json.get("gateway", {}).get("attestation_binding")
+        if (
+            isinstance(_compound, dict)
+            and _compound.get("scheme") == TRACE_BINDING_SCHEME
+            and report_data_hex is not None
+        ):
+            _expected_qd = hashlib.sha256(bytes.fromhex(report_data_hex)).digest()
+        else:
+            _expected_qd = _jwk_thumbprint_sha256(_tpm_jwk_x) if _tpm_jwk_x else None
         tpm_result = verify_tpm_measurement(
             measurement=_runtime.get("measurement", ""),
             raw_evidence=raw_bytes,

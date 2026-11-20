@@ -95,6 +95,15 @@ class AttestationReportInfo:
 
 
 @dataclass
+class TpmGatewayMeasurementInfo:
+    """TPM NV-certify evidence binding the gateway digest to the claim key."""
+
+    nonce: str
+    nv_certify: str
+    cert_chain: str
+
+
+@dataclass
 class AgentIdentityInfo:
     manifest_id: str
     agent_id: str
@@ -280,6 +289,27 @@ class AttestationEvidence(BaseModel):
     ek_cert_chain: str | None = None  # EK's own path to the manufacturer CA
 
 
+class AttestationBindingOut(BaseModel):
+    """Compound hardware commitment carried by a closed-session claim."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scheme: Literal["cmcp-trace-binding-v1"]
+    gateway_measurement: Annotated[
+        str, Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    ]
+
+
+class TpmGatewayMeasurementOut(BaseModel):
+    """Signed TPM NV transition proving the compound digest was measured."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nonce: str  # base64url of the startup nonce bound into both NV certifies
+    nv_certify: str  # base64url of the NV-certify envelope
+    cert_chain: str  # base64url of the certifying AK's leaf-first PEM chain
+
+
 class KillSwitchState(BaseModel):
     """What the kill switch was set to do for this session, and what it did.
 
@@ -320,6 +350,8 @@ class GatewayAddenda(BaseModel):
     kill_switch_triggered: bool = False
     kill_switch: KillSwitchState | None = None
     attestation_evidence: AttestationEvidence | None = None
+    attestation_binding: AttestationBindingOut | None = None
+    tpm_gateway_measurement: TpmGatewayMeasurementOut | None = None
     policy_signing: PolicySigningOut | None = None
 
 
@@ -507,6 +539,8 @@ def generate_trace_claim(
     prev_claim_hash: str | None = None,
     kill_switch_triggered: bool = False,
     kill_switch: KillSwitchState | None = None,
+    gateway_measurement: str | None = None,
+    tpm_gateway_measurement: TpmGatewayMeasurementInfo | None = None,
     do_sign: bool = True,
 ) -> RuntimeClaim:
     """Generate a RuntimeClaim from session data, validate it via Pydantic, and optionally sign it.
@@ -570,6 +604,23 @@ def generate_trace_claim(
         kill_switch_triggered=kill_switch_triggered,
         kill_switch=kill_switch,
         attestation_evidence=_build_evidence(attestation_report),
+        attestation_binding=(
+            AttestationBindingOut(
+                scheme="cmcp-trace-binding-v1",
+                gateway_measurement=gateway_measurement,
+            )
+            if gateway_measurement is not None
+            else None
+        ),
+        tpm_gateway_measurement=(
+            TpmGatewayMeasurementOut(
+                nonce=tpm_gateway_measurement.nonce,
+                nv_certify=tpm_gateway_measurement.nv_certify,
+                cert_chain=tpm_gateway_measurement.cert_chain,
+            )
+            if tpm_gateway_measurement is not None
+            else None
+        ),
         policy_signing=_build_policy_signing(policy_bundle),
         call_log_summary=call_log_summary,
         agent_identity=(

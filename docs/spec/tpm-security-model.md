@@ -98,7 +98,15 @@ An NV read is not covered by the quote signature, so the value needs its own sig
 
 Because extends accumulate, one certified value cannot be checked against anything: there is no absolute value to expect, and `TPM2_NV_Certify` signs only the current value. **Decided: certify twice, bracketing the extend.** The collector certifies the index, extends it, and certifies again. An authorization-grade verifier must independently supply the exact permitted NV Name, certified offset and extent size, and expected gateway digest; it then checks both signatures and phase bindings plus `post == H(pre || expected_gateway_digest)`. This proves only that the accepted AK signed a matching transition for that authorized public template and range. It deliberately does not prove the history behind the first value, a unique index incarnation, or cross-boot continuity. The two calls commit different qualifying data (`pre` / `post`), so each blob's role is signed rather than inferred from its position.
 
-**P2 collection and a standalone appraisal primitive are implemented; claim carriage is not.** Startup collects a pair through `cmcp_runtime.tee.measurement.certify_and_extend_gateway_measurement`, and `cmcp_verify.nv_certify.verify_gateway_measurement` can appraise an explicitly configured policy. The current TRACE claim schema, `verify_trace_claim`, and `cmcp verify` command do not carry or invoke that pair, so this is not yet an end-to-end relying-party property of ordinary runtime claims. Only the platform attestation key is used to certify: a transient key would give a verifiable signature with no provenance, so a platform without a certified key falls back to the unsigned local extend and emits no signed pair.
+**P2 collection and ordinary-claim appraisal are implemented.** Startup collects a
+pair through `cmcp_runtime.tee.measurement.certify_and_extend_gateway_measurement`.
+The TRACE claim carries that pair, its startup nonce and the certifying AK chain;
+`verify_trace_claim` invokes `cmcp_verify.nv_certify.verify_gateway_measurement`
+when the relying party supplies an approved gateway digest and pinned TPM root.
+The pair must use the same certified AK as the session quote and its nonce must bind
+the TRACE key. Only the platform attestation key is used to certify: a transient
+key would give a verifiable signature with no provenance, so a hardware TRACE claim
+is refused when the signed pair or certified chain is unavailable.
 
 Agent Manifest 0.11.2 is the wire-format authority for this path:
 `parse_tpm_nv_certify` parses and type-checks the signed common header plus
@@ -135,13 +143,20 @@ cMCP should describe three tiers rather than one attestation story.
 |---|---|---|
 | Confidential compute (TDX, SEV-SNP) | Vendor-signed report, memory encrypted | Host operator and local code execution |
 | TPM, target model in section 5 | AK-signed quote chained to a vendor CA, gateway measured into a non-resettable index, signing key sealed to that policy | Local code execution below the gateway measurement |
-| TPM, as implemented today | AK-signed quote over PCRs 0-7 in the TRACE path; startup also collects a bracketing `TPM2_NV_Certify` pair for a validated `TPM_NT_EXTEND` public template, but that pair is not yet carried in or appraised by ordinary TRACE claims | Quote assurance described above; the NV pair is a directly testable primitive, not yet a runtime relying-party guarantee |
+| TPM, as implemented today | AK-signed quote over PCRs 0-7 and the complete compound TRACE nonce; the claim also carries a bracketing `TPM2_NV_Certify` pair for a validated `TPM_NT_EXTEND` public template | Quote assurance plus verifier-pinned appraisal of the gateway digest and its NV transition; no proof of index-incarnation continuity |
 
 Two things about row three, both load-bearing and neither visible in a one-line summary.
 
 **Chain verification is host-dependent, not a given.** Azure Trusted Launch runs two vTPM CA hierarchies concurrently: one chains to the root pinned in `cmcp_verify/tpm_roots.py` over AIA, the other carries no AIA extension at all and therefore cannot produce a chain. On the latter, evidence is signed and fresh but proves nothing about *where* the key lives, so key provenance is unavailable. See [hardware-validation.md](../testing/hardware-validation.md) and #453.
 
-**The gateway measurement pair is collected but not yet a TRACE-claim property.** The standalone appraisal requires a relying-party-authorized NV Name, exact range, expected digest, nonce, root, and AK chain. With those inputs it authenticates one transition; it does not approve collector-claimed metadata, establish index-incarnation continuity, or prove that a digest denotes safe code. The current runtime does not transport this startup evidence to `verify_trace_claim`, and policy reload does not replace it, so documentation and callers must not describe the ordinary claim path as appraising it.
+**The gateway measurement pair is a TRACE-claim property when explicitly
+appraised.** The verifier derives the authorized NV Name and exact range from the
+cMCP measurement-index policy, and receives the expected digest and trusted TPM
+root out of band. With those inputs it authenticates one transition and ties its AK
+and nonce to the session claim. It still does not establish index-incarnation
+continuity or prove that a digest denotes safe code. Policy reload does not replace
+the startup NV pair, so a verifier recomputing the changed gateway digest rejects
+the old pair rather than treating it as current.
 
 The gap between rows two and three is the remaining work in section 5. Naming it plainly is more useful to anyone evaluating the project than any claim we could round up to.
 

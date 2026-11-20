@@ -292,43 +292,81 @@ A TRACE Claim whose `cnf.jwk` public key was substituted after attestation fails
 
 #### 3.3.2 Measurement binding (SEV-SNP, TDX, Azure CVM)
 
-On platforms whose hardware report carries only a **launch** measurement, the 32-byte salt is replaced by the gateway measurement digest:
+On platforms whose hardware report carries only a **launch** measurement, the
+startup/reload report replaces the 32-byte salt with the gateway measurement:
 
 ```
 nonce = JWK_thumbprint(tee_public_key) (32 bytes) || gateway_measurement.digest (32 bytes)
 ```
 
-`gateway_measurement.digest` is the SHA-256 over the installed code, the policy bundle and the effective configuration defined for the TPM tier (see `docs/spec/tpm-security-model.md`). It is already a raw 32-byte SHA-256, so it occupies the second half unreshaped and a verifier compares it against a digest it recomputes, not against a hash of one.
+`gateway_measurement.digest` is the SHA-256 over the installed code, policy bundle
+and effective configuration defined for the TPM tier (see
+`docs/spec/tpm-security-model.md`). Closed-session TRACE claims do not reuse this
+direct layout. They must bind that digest and the session audit root at once, so
+their report uses the versioned compound layout:
+
+```
+nonce = JWK_thumbprint(tee_public_key) ||
+        SHA-256("cmcp-trace-binding-v1" || 0x00 ||
+                JWK_thumbprint(tee_public_key) ||
+                gateway_measurement.digest || audit_chain_root)
+```
+
+The signed claim carries `gateway.attestation_binding.gateway_measurement` and
+`gateway.audit_chain.root`. A verifier reconstructs the nonce from those fields
+and independently compares the measurement with its approved digest. Re-signing
+either substituted field does not help because the hardware report still commits
+the original compound value.
 
 **Why the launch measurement is not sufficient.** `SNP_REPORT.measurement` and TDX's `MRTD` are fixed at boot. They do not move when the Cedar bundle reloads mid-session, so without this binding the policy actually in force is committed to nothing. TPM startup uses a separate `TPM_NT_EXTEND` NV path; these platforms have no such index. That comparison is architectural, not a claim of current parity: the TPM pair is startup-scoped today and is neither refreshed on reload nor carried in ordinary TRACE claims.
 
-**Applies to** the `sev-snp`, `tdx` and `azure-cvm-sev-snp` providers. The `tpm` provider keeps the random salt of §3.3 and collects its NV pair separately. The pair's pre-value may reflect an append-only history within one index incarnation, but a stateless verifier does not approve that history or rule out owner-authorized redefinition.
+**Applies to** the `sev-snp`, `tdx`, `azure-cvm-sev-snp`, and `tpm` session
+reports. TPM quotes sign SHA-256 of the complete nonce because some TPMs cannot
+accept all 64 bytes as qualifying data. TPM additionally carries the startup
+`TPM2_NV_Certify` pair: caller-supplied quote data alone cannot prove the gateway
+digest was measured. The verifier requires the pair and session quote to use the
+same certified AK, binds the pair to the claim key, and appraises the configured NV
+Name, range, digest and extend relation against verifier-owned policy.
 
-**Freshness.** The salt is gone but freshness is not: the gateway generates a new signing key on every start, so `report_data[:32]` still differs between two starts of byte-identical code, policy and config. A sealed, persistent key (Section 4.2) gives that difference up. On the TPM tier the salt still changes `report_data`, but the TPM quote signs only `report_data[:32]`, so the salt does not reach what the TPM signs; Section 4.2 states the limit.
+**Freshness.** The salt is gone from compound session reports but freshness is not:
+the audit root includes the unique session identifier and start timestamp. The TPM
+quote signs a hash of all 64 nonce bytes, not only the key thumbprint.
 
 **Refreshed on every policy-bundle reload.** `report_data` holds one value and no history, so a report produced before a bundle reload still looks well-formed on its own, and nothing in it says whether it is current. The gateway re-attests on **every** reload, including a reload that finds the bundle unchanged: the same digest signed now and that digest signed an hour ago are different assertions, and only the latest report reaches a verifier. The hook is `PolicyEvaluator._maybe_reload` calling `refresh_measurement_binding`, fired whenever `PolicyStore.reload_if_stale` reports that the bundle was re-read.
 
 The cost is bounded by `policy_reload_interval_seconds`, not by request rate, because `reload_if_stale` stamps its clock before the attempt. It is zero in the default configuration, where reloading is off.
 
-A gateway that fails to refresh is caught verifier-side, not runtime-side:
+A session opened before a successful reload is re-attested when it closes. A
+gateway that retained a stale measurement is caught verifier-side:
 
 ```
 expected = gateway_measurement_digest_supplied_by_the_verifier
-actual_nonce = base64url_decode(trace.runtime.nonce)
-assert actual_nonce[32:64] == expected
+assert claim.gateway.attestation_binding.gateway_measurement == expected
+assert base64url_decode(claim.trace.runtime.nonce) ==
+       compound_nonce(claim_key, expected, claim.gateway.audit_chain.root)
 ```
 
-The digest is compared directly, not re-hashed: it is already a raw 32-byte SHA-256. This is the one way the check differs from the AUDIT-006 one below it, which commits `SHA-256(chain_root)`.
+`cmcp_verify.verify_trace_claim` implements this as step 7c, enabled by passing
+`expected_gateway_measurement` (raw 32 bytes, hex, or `sha256:`-prefixed hex).
+`cmcp verify --gateway-measurement` exposes the same verifier-owned input. It is
+opt-in because a value read from the claim would ask the claim to approve itself.
+A mismatch is `MEASUREMENT_NOT_BOUND` and is fatal.
 
-`cmcp_verify.verify_trace_claim` implements this as step 7c, enabled by passing `expected_gateway_measurement` (raw 32 bytes, hex, or `sha256:`-prefixed hex). It is opt-in because the expected value has to be an out-of-band trust input, like `ApprovedHashes` or `trusted_ark_pem`: a check that read the expected digest out of the claim would be asking the claim to vouch for itself. A mismatch is `MEASUREMENT_NOT_BOUND` and is fatal in software-only mode too, since the digest is computed the same way there and a mismatch is a real disagreement about what is running.
+A reload re-attestation failure is logged and the previous runtime report is kept
+rather than refusing traffic. Claim close then requests the required compound
+report and refuses issuance if that request fails; an old measurement cannot be
+silently presented as the current bound state.
 
-A re-attestation that fails is logged and the previous report is kept rather than the gateway refusing traffic; the stale binding fails the check above, so the weakness is detectable rather than silent.
+**Which report carries it.** The ordinary claim carries the per-session compound
+report. Startup/reload reports retain the direct measurement layout for runtime
+state, but are not substituted for a missing session report. A hardware claim is
+refused if the compound report cannot be produced. TPM claims also carry the
+startup NV-certify pair under `gateway.tpm_gateway_measurement`; absence of that
+pair prevents gateway-measurement verification.
 
-**Which report carries it.** This binding is on the gateway's **startup** report. A TRACE Claim for a session carries the per-session report instead when one was produced (AUDIT-006), and that report commits the audit-chain root in the same bytes. The startup report reaches a claim only where no per-session report was produced. Committing both gateway identity and session activity in one 64-byte field is not possible as the layout stands, and #552 scopes the audit-chain-root binding out.
-
-**Not the per-session report.** AUDIT-006 (§3.3.1 and below) puts `SHA-256(chain_root)` in `report_data[32:64]` of the *per-session* report. This section governs the *startup* report. The two are different reports and do not contend for the field.
-
-**Session binding** is carried separately, by `gateway.session_id` inside the Ed25519-signed claim body: not by the nonce. The hardware report is generated once per enclave instance at startup, before any session exists, so it cannot bind a specific `session_id`. Because the signature covers `session_id`, a claim cannot be presented under a different session without breaking verification. See §3.3.1.
+**Session binding** remains carried by `gateway.session_id` inside the signed claim
+body. The audit root in the compound nonce is unique to that session and prevents
+substituting another internally consistent chain.
 
 #### 3.3.1 Session binding
 
@@ -377,7 +415,13 @@ This replaces the rule that stood here before: that an upgrade mints a fresh key
 
 **What it guarantees.** The blob is useless on any other TPM. A gateway whose measured inputs differ from the sealed digest, with its measurement code intact, does not get the key and does not start. The key survives restarts, so claims from a restart pass a pin to the first key and claims from a re-provisioned key fail it.
 
-**What it does not.** Anyone who can issue owner-authorized TPM commands can write an approved digest into the gate and unseal; on Azure, guest root can. A modified gateway that reports the approved digest gets the key. The extend index has the same limits. The key is sealed data, so a verifier cannot confirm from evidence that it is sealed, and no claim field says so. With the key persistent, two starts produce quotes over the same qualifying data: the provider passes `report_data[:32]`, the key thumbprint, to `TPM2_Quote`, and the random salt in `report_data[32:64]` changes `report_data` but not what the TPM signs. The `TPM2_NV_Certify` pair binds the full nonce but is not carried in ordinary TRACE claims. Binding the full nonce into the quote would change what producers and verifiers check, so it is a separate decision.
+**What it does not.** Anyone who can issue owner-authorized TPM commands can write
+an approved digest into the gate and unseal; on Azure, guest root can. A modified
+gateway that reports the approved digest gets the key. The extend index has the
+same limits. The key is sealed data, so a verifier cannot confirm from evidence
+that it is sealed, and no claim field says so. TPM session quotes now sign SHA-256
+of the complete compound nonce, and ordinary claims carry the NV-certify pair, but
+neither property proves that a persistent signing key itself remained sealed.
 
 **Not covered.** `TPM2_PolicyPCR` over boot state is deferred to P4 (`tpm-security-model.md`): with the TCG event log at 0 bytes on cloud vTPMs, PCR values after a firmware or kernel update cannot be predicted, so a PCR-bound key could not be resealed ahead of the reboot and every host update would be an outage. Also not covered: configurable owner authorization, `TPM2_PolicyAuthorize` tickets, a maximum key age, key transparency, and the other tiers.
 

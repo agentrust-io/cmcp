@@ -16,9 +16,10 @@ actually in force was committed to nothing.
 ## What this module does
 
 Nothing new is invented. The already-validated digest is wired into the one field
-those platforms do sign over a caller-supplied value: ``report_data``. The nonce
-layout is :func:`~cmcp_runtime.tee.base.make_measurement_bound_nonce`, which is the
-same 64-byte shape AUDIT-006 already uses for the audit-chain root.
+those platforms do sign over a caller-supplied value: ``report_data``. Startup and
+reload reports use :func:`~cmcp_runtime.tee.base.make_measurement_bound_nonce`.
+Closed-session claims use a domain-separated compound commitment through
+``make_trace_bound_nonce`` so the same report can also bind the audit-chain root.
 
 ## Why re-attesting on reload is not optional
 
@@ -42,9 +43,8 @@ The startup path is stricter, and deliberately so: see ``_gateway_measurement`` 
 :mod:`cmcp_runtime.startup`, where an unmeasurable gateway on one of these
 platforms is fatal in production for the same reason it is fatal on the TPM tier.
 
-Out of scope, per #552: binding the audit-chain root (that is session activity
-rather than gateway identity, and AUDIT-006 already owns report_data[32:64] on the
-per-session report), and validation on real SEV-SNP and TDX silicon.
+Validation of the compound claim binding on real SEV-SNP and TDX silicon remains
+outside #552's original hardware-validation scope.
 """
 
 from __future__ import annotations

@@ -139,10 +139,8 @@ class AuditChain:
         # AUDIT-002: TEE-anchored chain root.  None until set_tee_anchor() is called.
         self._tee_anchor: str | None = None
         # AUDIT-006: per-session attestation report whose report_data commits the
-        # chain root (report_data[32:64] == SHA-256(chain_root)).  None until
-        # set_session_report() is called.  When present, the claim is built from
-        # this report instead of the shared startup report, so the hardware-signed
-        # report_data carries this session's chain-root commitment.
+        # chain root. On measured hardware this is a compound commitment to the
+        # gateway measurement and root. None until set_session_report() is called.
         self._session_report: AttestationReport | None = None
         self._append_session_start()
 
@@ -193,12 +191,10 @@ class AuditChain:
         AUDIT-006: record the per-session attestation report whose report_data
         commits this chain's root.
 
-        The caller produces this report at session start by submitting a nonce of
-        the form jwk_thumbprint(key) || SHA-256(chain_root) to the TEE (see
-        tee.base.make_audit_bound_nonce).  close_session() then builds the claim
-        from this report so the hardware-signed report_data surfaced in the claim
-        binds the chain root.  If never set (TEE call failed / dev fallback), the
-        claim falls back to the shared startup report and a warning is emitted.
+        The caller produces this report at session start by submitting either the
+        compound nonce from ``tee.base.make_trace_bound_nonce`` or the audit-only
+        development nonce. ``close_session()`` refreshes a compound report when
+        the gateway measurement changed, then surfaces it in the claim.
         """
         self._session_report = report
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import struct
 import subprocess
 import sys
@@ -14,7 +15,7 @@ from agent_manifest import SNP_OFFSETS, SNP_REPORT_LEN, parse_snp_report
 
 from cmcp_runtime.tee.sev_snp import SEVSNPProvider
 from cmcp_runtime.tee.tdx import TDXProvider, _TdxReportReq
-from cmcp_runtime.tee.tpm import TPMProvider
+from cmcp_runtime.tee.tpm import TPMProvider, _quote_qualifying_data
 
 # ── SNP report layout (HW-006) ────────────────────────────────────────────────
 # The layout is agent-manifest's; these assert the resolved version still agrees
@@ -178,6 +179,13 @@ def test_tpm_detect_returns_false_on_non_linux() -> None:
 
 def test_tpm_provider_name() -> None:
     assert TPMProvider().provider_name() == "tpm"
+
+
+def test_tpm_quote_binds_the_complete_compound_nonce() -> None:
+    nonce = bytes(range(64))
+
+    assert _quote_qualifying_data(nonce) == hashlib.sha256(nonce).digest()
+    assert _quote_qualifying_data(nonce) != nonce[:32]
 
 
 def test_tpm_get_report_raises_when_no_tss2(monkeypatch: pytest.MonkeyPatch) -> None:

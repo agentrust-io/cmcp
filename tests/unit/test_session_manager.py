@@ -299,11 +299,13 @@ def test_audit_bundle_broken_chain_raises_value_error() -> None:
 
 
 def test_close_session_uses_per_session_report_committing_chain_root() -> None:
-    """AUDIT-006 end-to-end: a TEE that returns a per-session report whose
-    report_data commits the chain root makes close_session() build the claim from
-    THAT report, and the resulting claim passes the verifier's chain-root binding.
+    """One report jointly commits the gateway measurement and audit root.
+
+    The producer must emit the compound schema and both verifier checks must pass
+    against the same hardware nonce.
     """
     from cmcp_runtime.tee.base import AttestationReport
+    from cmcp_runtime.tee.measurement import GatewayMeasurement
     from cmcp_verify.verify import (
         ApprovedHashes,
         VerificationError,
@@ -311,6 +313,11 @@ def test_close_session_uses_per_session_report_committing_chain_root() -> None:
     )
 
     ctx = _make_ctx()
+    ctx.attestation_report.provider = "sev-snp"
+    ctx.gateway_measurement = GatewayMeasurement(
+        digest=b"\x42" * 32,
+        components={"code": "a" * 64, "policy": "b" * 64, "config": "c" * 64},
+    )
 
     def _report_from_nonce(nonce: bytes) -> AttestationReport:
         # Tagged sev-snp so the nonce is surfaced as trace.runtime.nonce and the
@@ -333,25 +340,138 @@ def test_close_session_uses_per_session_report_committing_chain_root() -> None:
 
     claim = mgr.close_session(state.session_id, state, chain)
 
-    # report_data[32:64] in the claim commits the chain root.
+    # report_data[32:64] is the compound commitment, not either digest alone.
     nonce_b64 = claim["trace"]["runtime"]["nonce"]
     pad = 4 - (len(nonce_b64) % 4)
     nonce_bytes = base64.urlsafe_b64decode(
         nonce_b64 + ("=" * pad if pad != 4 else "")
     )
-    assert nonce_bytes[32:64] == hashlib.sha256(
-        bytes.fromhex(chain.chain_root)
-    ).digest()
+    from cmcp_runtime.tee.base import make_trace_bound_nonce
+
+    assert nonce_bytes == make_trace_bound_nonce(
+        ctx.signing_key.public_key_bytes,
+        ctx.gateway_measurement.digest,
+        chain.chain_root,
+    )
+    assert claim["gateway"]["attestation_binding"] == {
+        "scheme": "cmcp-trace-binding-v1",
+        "gateway_measurement": ctx.gateway_measurement.digest_hex,
+    }
 
     approved = ApprovedHashes(
         policy_bundle_hash=ctx.policy_bundle.bundle.bundle_hash,
         tool_catalog_hash=ctx.catalog.catalog_hash,
     )
     result = verify_trace_claim(
-        claim, approved, trusted_public_key_hex=ctx.signing_key.public_key_hex
+        claim,
+        approved,
+        trusted_public_key_hex=ctx.signing_key.public_key_hex,
+        expected_gateway_measurement=ctx.gateway_measurement.digest,
     )
     assert "audit_chain_binding" in result.verified_fields, result.details
+    assert "measurement_binding" in result.verified_fields, result.details
     assert result.failure_reason != VerificationError.CHAIN_ROOT_NOT_BOUND
+
+
+def test_close_session_refreshes_compound_report_after_measurement_change() -> None:
+    """A policy reload cannot leave the claim carrying its session-open digest."""
+    from cmcp_runtime.tee.base import AttestationReport, make_trace_bound_nonce
+    from cmcp_runtime.tee.measurement import GatewayMeasurement
+
+    ctx = _make_ctx()
+    ctx.attestation_report.provider = "sev-snp"
+    before = GatewayMeasurement(
+        digest=b"\x31" * 32,
+        components={"code": "a" * 64, "policy": "b" * 64, "config": "c" * 64},
+    )
+    after = GatewayMeasurement(
+        digest=b"\x32" * 32,
+        components={"code": "a" * 64, "policy": "d" * 64, "config": "c" * 64},
+    )
+    ctx.gateway_measurement = before
+    requested: list[bytes] = []
+
+    def _report_from_nonce(nonce: bytes) -> AttestationReport:
+        requested.append(nonce)
+        return AttestationReport(
+            provider="sev-snp",
+            measurement="ab" * 32,
+            report_data=nonce.hex(),
+            raw_evidence=None,
+            attestation_generated_at=datetime.now(UTC),
+            attestation_validity_seconds=86400,
+        )
+
+    ctx.tee_provider.get_attestation_report.side_effect = _report_from_nonce
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+    ctx.gateway_measurement = after
+
+    claim = mgr.close_session(state.session_id, state, chain)
+
+    assert len(requested) == 2
+    expected = make_trace_bound_nonce(
+        ctx.signing_key.public_key_bytes, after.digest, chain.chain_root
+    )
+    assert requested[-1] == expected
+    assert claim["gateway"]["attestation_binding"]["gateway_measurement"] == (
+        after.digest_hex
+    )
+
+
+def test_tpm_close_carries_nv_pair_and_certifying_chain() -> None:
+    """The ordinary TPM claim transports every input needed for NV appraisal."""
+    from cmcp_runtime.tee.base import AttestationReport, jwk_thumbprint
+    from cmcp_runtime.tee.measurement import GatewayMeasurement
+
+    ctx = _make_ctx()
+    startup_nonce = jwk_thumbprint(ctx.signing_key.public_key_bytes) + b"\x55" * 32
+    ak_chain = b"certified-ak-chain"
+    ctx.attestation_report = AttestationReport(
+        provider="tpm",
+        measurement="sha256:" + "ab" * 32,
+        report_data=startup_nonce.hex(),
+        raw_evidence=b"startup-quote",
+        attestation_generated_at=datetime.now(UTC),
+        attestation_validity_seconds=86400,
+        attestation_key_chain_pem=ak_chain,
+    )
+    ctx.gateway_measurement = GatewayMeasurement(
+        digest=b"\x43" * 32,
+        components={"code": "a" * 64, "policy": "b" * 64, "config": "c" * 64},
+    )
+    ctx.measurement_evidence = b"signed-nv-envelope"
+
+    def _report_from_nonce(nonce: bytes) -> AttestationReport:
+        return AttestationReport(
+            provider="tpm",
+            measurement="sha256:" + "ab" * 32,
+            report_data=nonce.hex(),
+            raw_evidence=b"session-quote",
+            attestation_generated_at=datetime.now(UTC),
+            attestation_validity_seconds=86400,
+            attestation_key_chain_pem=ak_chain,
+        )
+
+    ctx.tee_provider.get_attestation_report.side_effect = _report_from_nonce
+    mgr = SessionManager(ctx)
+    state, chain = mgr.create_session()
+
+    claim = mgr.close_session(state.session_id, state, chain)
+
+    evidence = claim["gateway"]["tpm_gateway_measurement"]
+
+    def decode(value: str) -> bytes:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+    assert decode(evidence["nonce"]) == startup_nonce
+    assert decode(evidence["nv_certify"]) == (
+        b"signed-nv-envelope"
+    )
+    assert decode(evidence["cert_chain"]) == ak_chain
+    assert claim["gateway"]["attestation_evidence"]["cert_chain"] == (
+        evidence["cert_chain"]
+    )
 
 
 def test_close_session_falls_back_to_startup_report_when_tee_fails() -> None:
