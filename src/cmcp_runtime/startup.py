@@ -25,7 +25,7 @@ from cmcp_runtime.audit.keys import SigningKey
 from cmcp_runtime.audit.store import SqliteAuditStore
 from cmcp_runtime.catalog.loader import ToolCatalog, load_catalog
 from cmcp_runtime.catalog.scanner import CatalogScanner
-from cmcp_runtime.config import Config, load_config
+from cmcp_runtime.config import Config, EnforcementMode, load_config
 from cmcp_runtime.errors import (
     AttestationProviderUnsupported,
     CatalogHashMismatch,
@@ -460,7 +460,11 @@ def _finish_sealed_start(
     return HeldSealedKey(start.store, start.lock, opened, measurement.digest)
 
 
-def run_startup(config_path: str) -> RuntimeContext:
+def run_startup(
+    config_path: str,
+    *,
+    enforcement_override: EnforcementMode | None = None,
+) -> RuntimeContext:
     """
     Execute the ordered startup sequence. Any failure before step 6 (network bind)
     is fatal - the gateway exits with code 1.
@@ -476,19 +480,34 @@ def run_startup(config_path: str) -> RuntimeContext:
     (Step 6: bind network port - done by the caller after this returns)
     """
     with ExitStack() as cleanup:
-        context = _run_startup(config_path, cleanup)
+        context = _run_startup(
+            config_path,
+            cleanup,
+            enforcement_override=enforcement_override,
+        )
         # The returned HeldSealedKey now owns the store lock.
         cleanup.pop_all()
         return context
 
 
-def _run_startup(config_path: str, cleanup: ExitStack) -> RuntimeContext:
+def _run_startup(
+    config_path: str,
+    cleanup: ExitStack,
+    *,
+    enforcement_override: EnforcementMode | None = None,
+) -> RuntimeContext:
     # Step 1: config
     try:
         config = load_config(config_path)
     except ConfigError as exc:
         _fatal("CONFIG_ERROR", str(exc))
         sys.exit(1)
+
+    # The CLI override is part of the effective startup configuration. Apply it
+    # before provider detection, measurement, and Agent Manifest verification so
+    # every security boundary observes the same enforcement mode the proxy uses.
+    if enforcement_override is not None:
+        config.attestation.enforcement_mode = enforcement_override
 
     # Step 2: TEE detection and attestation
     try:

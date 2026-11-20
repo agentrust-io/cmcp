@@ -178,7 +178,7 @@ def start(config: str, enforcement: str | None) -> None:
     """Start the cMCP Runtime."""
     import uvicorn
 
-    from cmcp_runtime.config import parse_listen_addr
+    from cmcp_runtime.config import EnforcementMode, parse_listen_addr
     from cmcp_runtime.observability.otel import configure_tracer_provider
     from cmcp_runtime.startup import run_startup
 
@@ -186,12 +186,8 @@ def start(config: str, enforcement: str | None) -> None:
     # first session's entries are exported too. No-op unless CMCP_OTEL_ENABLED.
     configure_tracer_provider()
 
-    ctx = run_startup(config)
-
-    # Apply CLI override after loading config, before proxy is instantiated.
-    if enforcement is not None:
-        from cmcp_runtime.config import EnforcementMode
-        ctx.config.attestation.enforcement_mode = EnforcementMode(enforcement)
+    enforcement_override = EnforcementMode(enforcement) if enforcement is not None else None
+    ctx = run_startup(config, enforcement_override=enforcement_override)
 
     server = build_server(ctx)
 

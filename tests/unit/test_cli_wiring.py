@@ -12,18 +12,58 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from click.testing import CliRunner
 from starlette.testclient import TestClient
 
 from cmcp_runtime.audit.store import SqliteAuditStore
-from cmcp_runtime.cli import build_server
-from cmcp_runtime.config import AttestationConfig, Config
+from cmcp_runtime.cli import build_server, main
+from cmcp_runtime.config import AttestationConfig, Config, EnforcementMode
 from cmcp_runtime.policy.bundle import PolicyStore
 from cmcp_runtime.startup import RuntimeContext
 
 BEARER = "test-secret-token"
+
+
+def test_cli_passes_enforcement_override_into_startup(tmp_path, monkeypatch):
+    import uvicorn
+
+    import cmcp_runtime.cli as cli
+    import cmcp_runtime.observability.otel as otel
+    import cmcp_runtime.startup as startup
+
+    config_path = tmp_path / "cmcp-config.yaml"
+    config_path.write_text("")
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(listen_addr="127.0.0.1:8443"),
+        attestation_report=SimpleNamespace(provider="software-only"),
+    )
+    server = SimpleNamespace(app=object())
+    run_startup = MagicMock(return_value=ctx)
+    run_server = MagicMock()
+    monkeypatch.setattr(startup, "run_startup", run_startup)
+    monkeypatch.setattr(otel, "configure_tracer_provider", MagicMock())
+    monkeypatch.setattr(cli, "build_server", MagicMock(return_value=server))
+    monkeypatch.setattr(uvicorn, "run", run_server)
+
+    result = CliRunner().invoke(
+        main,
+        ["start", "--config", str(config_path), "--enforcement", "advisory"],
+    )
+
+    assert result.exit_code == 0, result.output
+    run_startup.assert_called_once_with(
+        str(config_path),
+        enforcement_override=EnforcementMode.ADVISORY,
+    )
+    run_server.assert_called_once_with(
+        server.app,
+        host="127.0.0.1",
+        port=8443,
+    )
 
 
 @pytest.fixture

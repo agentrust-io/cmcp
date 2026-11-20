@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from cmcp_runtime.agent_manifest import SIGNED_FIELDS, signing_pre_image
 from cmcp_runtime.catalog.loader import load_catalog
+from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.policy.bundle import load_policy_bundle
 from cmcp_runtime.startup import RuntimeContext, run_startup
 
@@ -57,10 +58,15 @@ def _write_agent_manifest_files(
     *,
     policy_hash: str,
     catalog_hash: str,
+    enforcement_mode: str | None = None,
 ) -> tuple[Path, Path]:
     priv = Ed25519PrivateKey.generate()
     pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     key_id = hashlib.sha256(pub).hexdigest()
+    policy_bundle = {"hash": policy_hash, "policy_language": "cedar"}
+    if enforcement_mode is not None:
+        policy_bundle["enforcement_mode"] = enforcement_mode
+
     manifest = {
         "@context": "https://agentmanifest.agentrust-io.com/v0.1/context.json",
         "@type": "AgentManifest",
@@ -77,7 +83,7 @@ def _write_agent_manifest_files(
             # carry system_prompt, policy_bundle and model_identity.
             "system_prompt": {"hash": "sha256:" + "a" * 64},
             "model_identity": {"version": "example-model", "deployment_type": "api"},
-            "policy_bundle": {"hash": policy_hash, "policy_language": "cedar"},
+            "policy_bundle": policy_bundle,
             "tool_manifest": {"catalog_hash": catalog_hash},
         },
         "delegation_chain": [],
@@ -258,6 +264,67 @@ def test_startup_binds_configured_agent_manifest(complete_setup):
     ctx = run_startup(str(config_path))
     assert ctx.agent_manifest is not None
     assert ctx.agent_manifest.agent_id == AGENT_ID
+
+
+def test_startup_applies_enforcement_override_before_measurement(
+    complete_setup, monkeypatch
+):
+    import cmcp_runtime.startup as startup
+
+    observed_modes = []
+    measure_gateway = startup._measure_gateway
+
+    def observe_measurement_config(config, tee_provider):
+        observed_modes.append(config.attestation.enforcement_mode)
+        return measure_gateway(config, tee_provider)
+
+    monkeypatch.setattr(startup, "_measure_gateway", observe_measurement_config)
+
+    ctx = run_startup(
+        complete_setup,
+        enforcement_override=EnforcementMode.ADVISORY,
+    )
+
+    assert observed_modes == [EnforcementMode.ADVISORY]
+    assert ctx.config.attestation.enforcement_mode == EnforcementMode.ADVISORY
+
+
+@pytest.mark.parametrize(
+    "enforcement_override",
+    [EnforcementMode.ADVISORY, EnforcementMode.SILENT],
+)
+def test_startup_rejects_override_not_authorized_by_agent_manifest(
+    complete_setup, caplog, enforcement_override
+):
+    config_path = Path(complete_setup)
+    tmp_path = config_path.parent
+    policy_hash = load_policy_bundle(str(tmp_path / "policy")).bundle_hash
+    catalog_hash = load_catalog(str(tmp_path / "catalog.json")).catalog_hash
+    manifest_path, key_path = _write_agent_manifest_files(
+        tmp_path,
+        policy_hash=policy_hash,
+        catalog_hash=catalog_hash,
+        enforcement_mode="enforce",
+    )
+    config_path.write_text(
+        config_path.read_text()
+        + "\nagent_manifest:\n"
+        + f"  path: {manifest_path}\n"
+        + f"  trust_anchor_path: {key_path}\n"
+        + f"  authenticated_subject: {AGENT_ID}\n"
+    )
+
+    with caplog.at_level("CRITICAL", logger="cmcp_runtime.startup"), pytest.raises(
+        SystemExit
+    ) as exc_info:
+        run_startup(
+            str(config_path),
+            enforcement_override=enforcement_override,
+        )
+
+    assert exc_info.value.code == 1
+    assert "AGENT_MANIFEST_BINDING_FAILED" in caplog.text
+    assert "enforcement_mode" in caplog.text
 
 
 def test_startup_fails_on_agent_manifest_subject_mismatch(complete_setup):
