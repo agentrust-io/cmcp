@@ -8,6 +8,7 @@ MCPServer so no asyncio/anyio machinery is needed in test code.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -232,6 +233,338 @@ def test_unknown_method_returns_method_not_found(client: TestClient) -> None:
     })
     body = resp.json()
     assert body["error"]["code"] == -32601
+
+
+# ── Notifications: a message with no id (#D6) ────────────────────────────────
+
+_NOTIFICATIONS = [
+    "notifications/initialized",
+    "notifications/cancelled",
+    "notifications/progress",
+    "notifications/roots/list_changed",
+]
+
+
+def _post(body: Any) -> tuple[Any, MagicMock]:
+    proxy = _make_proxy(allowed=True)
+    resp = TestClient(MCPServer(proxy=proxy).app).post("/mcp", json=body)
+    return resp, proxy
+
+
+def _assert_refused(resp: Any, rpc_id: Any = None) -> None:
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == -32600
+    assert resp.json()["id"] == rpc_id
+
+
+_VALID_PARAMS = [
+    ("notifications/initialized", None),
+    ("notifications/initialized", {}),
+    ("notifications/initialized", {"_meta": {"k": "v"}}),
+    ("notifications/roots/list_changed", None),
+    ("notifications/roots/list_changed", {"_meta": {}}),
+    ("notifications/cancelled", {"requestId": 7}),
+    ("notifications/cancelled", {"requestId": "c-1", "reason": "user stopped it"}),
+    ("notifications/cancelled", {"requestId": 7, "extra": "kept, as in the schema"}),
+    # The schema types RequestId and ProgressToken as string or number.
+    ("notifications/cancelled", {"requestId": 1.5}),
+    ("notifications/cancelled", {"requestId": 1.0}),
+    ("notifications/cancelled", {"requestId": ""}),
+    ("notifications/progress", {"progressToken": 2.5, "progress": 0}),
+    ("notifications/progress", {"progressToken": "t", "progress": 1}),
+    ("notifications/progress", {"progressToken": 3, "progress": 0.5, "total": 2, "message": "half"}),
+    ("notifications/progress", {"progressToken": "t", "progress": -1}),  # no minimum in the schema
+]
+
+_INVALID_PARAMS = [
+    ("notifications/initialized", {"_meta": "x"}),
+    ("notifications/initialized", {"_meta": None}),
+    ("notifications/cancelled", None),
+    ("notifications/cancelled", {}),
+    ("notifications/cancelled", {"reason": "no id"}),
+    ("notifications/cancelled", {"requestId": True}),
+    ("notifications/cancelled", {"requestId": None}),
+    ("notifications/cancelled", {"requestId": [1]}),
+    ("notifications/cancelled", {"requestId": 1, "reason": 5}),
+    ("notifications/cancelled", {"requestId": 1, "reason": None}),
+    ("notifications/progress", None),
+    ("notifications/progress", {}),
+    ("notifications/progress", {"progress": 1}),
+    ("notifications/progress", {"progressToken": "t"}),
+    ("notifications/progress", {"progressToken": True, "progress": 1}),
+    ("notifications/progress", {"progressToken": "t", "progress": "1"}),
+    ("notifications/progress", {"progressToken": "t", "progress": False}),
+    ("notifications/progress", {"progressToken": "t", "progress": 1, "total": "2"}),
+    ("notifications/progress", {"progressToken": "t", "progress": 1, "message": 3}),
+    ("notifications/tasks/status", {"taskId": "t", "status": "working"}),
+]
+
+
+def _notify(method: str, params: Any) -> tuple[Any, MagicMock]:
+    body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+    if params is not None:
+        body["params"] = params
+    return _post(body)
+
+
+@pytest.mark.parametrize("method, params", _VALID_PARAMS)
+def test_client_notification_is_accepted_without_a_reply(method: str, params: Any) -> None:
+    """Each ClientNotification with params its schema allows gets 202 and no body."""
+    resp, proxy = _notify(method, params)
+    assert resp.status_code == 202
+    assert resp.content == b""
+    assert proxy.method_calls == []
+
+
+@pytest.mark.parametrize("method, params", _INVALID_PARAMS)
+def test_notification_with_params_its_schema_refuses_is_refused(method: str, params: Any) -> None:
+    resp, proxy = _notify(method, params)
+    _assert_refused(resp)
+    assert proxy.method_calls == []
+
+
+def test_every_accepted_notification_has_a_valid_case() -> None:
+    from cmcp_runtime.mcp.server import _CLIENT_NOTIFICATIONS
+
+    assert set(_NOTIFICATIONS) == set(_CLIENT_NOTIFICATIONS)
+    assert set(_NOTIFICATIONS) == {m for m, _ in _VALID_PARAMS}
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"requestId": float("nan")},
+        {"requestId": float("inf")},
+        {"requestId": 1, "reason": None},
+    ],
+)
+def test_validator_refuses_non_finite_and_null_values(params: dict[str, Any]) -> None:
+    """JSON cannot carry NaN or Infinity, but the validator does not rely on that."""
+    from cmcp_runtime.mcp.server import _accepts_notification
+
+    assert _accepts_notification("notifications/cancelled", params) is False
+    assert _accepts_notification(
+        "notifications/progress", {"progressToken": "t", "progress": float("nan")}
+    ) is False
+    assert _accepts_notification(
+        "notifications/progress", {"progressToken": "t", "progress": 1, "total": float("inf")}
+    ) is False
+
+
+def test_initialize_offers_no_tasks_so_task_status_is_refused() -> None:
+    resp, _ = _post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    assert "tasks" not in resp.json()["result"]["capabilities"]
+    refused, proxy = _notify("notifications/tasks/status", {"taskId": "t", "status": "working"})
+    _assert_refused(refused)
+    assert proxy.method_calls == []
+
+
+def test_the_stateless_revision_is_never_negotiated_inbound() -> None:
+    """2026-07-28 removed initialize and defines no client notifications on HTTP;
+    a client asking for it gets the newest handshake-era revision instead."""
+    resp, _ = _post({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2026-07-28"},
+    })
+    assert resp.json()["result"]["protocolVersion"] == "2025-11-25"
+
+
+@pytest.mark.parametrize("when", ["before-any-call", "after-the-call-completed"])
+def test_cancel_for_a_call_not_in_flight_is_accepted(when: str) -> None:
+    proxy = _make_proxy(allowed=True)
+    tc = TestClient(MCPServer(proxy=proxy).app)
+    if when == "after-the-call-completed":
+        done = tc.post("/mcp", json={
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "mock_tool", "arguments": {}},
+        })
+        assert done.status_code == 200
+    resp = tc.post("/mcp", json={
+        "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 9},
+    })
+    assert resp.status_code == 202 and resp.content == b""
+
+
+@pytest.mark.parametrize("version", ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])
+def test_handshake_completes_on_every_negotiated_revision(version: str) -> None:
+    proxy = _make_proxy(allowed=True)
+    tc = TestClient(MCPServer(proxy=proxy).app)
+    init = tc.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": version, "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}},
+    })
+    assert init.json()["result"]["protocolVersion"] == version
+    done = tc.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert done.status_code == 202 and done.content == b""
+    listed = tc.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    assert listed.status_code == 200
+
+
+def test_cancel_does_not_stop_an_in_flight_call() -> None:
+    """The cancel is accepted; the call it names still completes and is answered."""
+    import asyncio
+
+    import httpx
+
+    proxy = _make_proxy(allowed=True)
+    release = asyncio.Event()
+    started = asyncio.Event()
+    allowed = proxy.call_tool.side_effect
+
+    async def slow_call(*args: Any, **kwargs: Any) -> Any:
+        started.set()
+        await release.wait()
+        return allowed(*args, **kwargs)
+
+    proxy.call_tool = AsyncMock(side_effect=slow_call)
+    app = MCPServer(proxy=proxy).app
+
+    async def scenario() -> tuple[Any, Any]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            call = asyncio.create_task(client.post("/mcp", json={
+                "jsonrpc": "2.0", "id": 41, "method": "tools/call",
+                "params": {"name": "mock_tool", "arguments": {}},
+            }))
+            await started.wait()
+            cancel = await client.post("/mcp", json={
+                "jsonrpc": "2.0", "method": "notifications/cancelled",
+                "params": {"requestId": 41, "reason": "test"},
+            })
+            release.set()
+            return cancel, await call
+
+    cancel, call = asyncio.run(scenario())
+    assert cancel.status_code == 202
+    assert call.status_code == 200 and call.json()["id"] == 41
+    assert "result" in call.json()
+    proxy.call_tool.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "tools/call",
+        "tools/list",
+        "initialize",
+        "ping",
+        "unknown/arbitrary-method",
+        "notifications/initialised",
+        "notifications/tools/list_changed",  # server-to-client only
+    ],
+)
+def test_other_message_without_id_is_refused(method: str) -> None:
+    """Without an id only a ClientNotification is accepted; a request never runs."""
+    resp, proxy = _post({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": {"name": "mock_tool", "arguments": {}},
+    })
+    _assert_refused(resp)
+    assert proxy.method_calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"jsonrpc": "2.0"}, id="no-method"),
+        pytest.param({"jsonrpc": "2.0", "method": ""}, id="empty-method"),
+        pytest.param({"jsonrpc": "2.0", "method": None}, id="null-method"),
+        pytest.param({"jsonrpc": "2.0", "method": 7}, id="number-method"),
+        pytest.param({"jsonrpc": "1.0", "method": "notifications/initialized"}, id="bad-version"),
+        pytest.param({"method": "notifications/initialized"}, id="no-version"),
+    ]
+    + [
+        pytest.param(
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": bad},
+            id=f"params-{type(bad).__name__}",
+        )
+        for bad in ("invalid", 1, True, None, [], ["a"])
+    ],
+)
+def test_malformed_notification_is_refused(body: dict[str, Any]) -> None:
+    """A malformed message is never acknowledged as an accepted notification."""
+    resp, proxy = _post(body)
+    _assert_refused(resp)
+    assert proxy.method_calls == []
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"jsonrpc":"2.0","method":"notifications/initialized","method":"tools/call"}',
+        b'{"jsonrpc":"2.0","method":"notifications/initialized","params":{"x":NaN}}',
+        b'{"jsonrpc":"2.0","method":"notifications/initialized"',
+    ],
+    ids=["duplicate-key", "nan", "truncated"],
+)
+def test_parser_still_refuses_bad_json_without_id(raw: bytes) -> None:
+    proxy = _make_proxy(allowed=True)
+    resp = TestClient(MCPServer(proxy=proxy).app).post(
+        "/mcp", content=raw, headers={"Content-Type": "application/json"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == -32700
+    assert proxy.method_calls == []
+
+
+def test_null_id_keeps_request_semantics() -> None:
+    """`"id": null` is present, so the message is a request and gets a reply."""
+    resp, _ = _post({"jsonrpc": "2.0", "id": None, "method": "tools/list"})
+    assert resp.status_code == 200
+    assert resp.json()["id"] is None
+    assert "tools" in resp.json()["result"]
+    resp, proxy = _post({
+        "jsonrpc": "2.0",
+        "id": None,
+        "method": "tools/call",
+        "params": {"name": "mock_tool", "arguments": {}},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["id"] is None
+    proxy.call_tool.assert_awaited_once()
+
+
+@pytest.mark.parametrize("rpc_id", [True, False, [], {}])
+def test_bad_id_is_still_refused(rpc_id: Any) -> None:
+    resp, proxy = _post({"jsonrpc": "2.0", "id": rpc_id, "method": "tools/list"})
+    _assert_refused(resp)
+    assert proxy.method_calls == []
+
+
+def test_fractional_id_is_allowed() -> None:
+    """JSON-RPC says ids SHOULD NOT be fractional, not MUST NOT."""
+    resp, _ = _post({"jsonrpc": "2.0", "id": 1.5, "method": "tools/list"})
+    assert resp.status_code == 200
+    assert resp.json()["id"] == 1.5
+
+
+@pytest.mark.parametrize("method", ["tools/call", "tools/list", "initialize", "unknown/x"])
+@pytest.mark.parametrize("params", ["invalid", [], None])
+def test_request_with_non_object_params_is_refused(method: str, params: Any) -> None:
+    resp, proxy = _post({"jsonrpc": "2.0", "id": 9, "method": method, "params": params})
+    _assert_refused(resp, 9)
+    assert proxy.method_calls == []
+
+
+@pytest.mark.parametrize("body", [{"jsonrpc": "2.0", "id": 3}, {"jsonrpc": "2.0", "id": 3, "method": ""}])
+def test_request_without_method_is_invalid_not_unknown(body: dict[str, Any]) -> None:
+    resp, _ = _post(body)
+    _assert_refused(resp, 3)
+
+
+def test_requests_with_id_are_unchanged() -> None:
+    resp, _ = _post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    assert resp.status_code == 200
+    assert resp.json()["result"]["protocolVersion"] == "2025-11-25"
+    resp, proxy = _post({
+        "jsonrpc": "2.0",
+        "id": "c1",
+        "method": "tools/call",
+        "params": {"name": "mock_tool", "arguments": {}},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "c1"
+    proxy.call_tool.assert_awaited_once()
 
 
 def test_tools_list_via_mcp(client: TestClient) -> None:

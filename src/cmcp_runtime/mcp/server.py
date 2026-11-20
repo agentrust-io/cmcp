@@ -13,12 +13,13 @@ import asyncio
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -229,6 +230,76 @@ def _kill_switch_conflict(agent_id: str) -> JSONResponse:
         },
         status_code=409,
     )
+
+
+def _is_number(value: Any) -> bool:
+    """A finite JSON number; a bool is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
+def _is_mcp_id(value: Any) -> bool:
+    """A RequestId or ProgressToken, which the MCP schema types as string or number.
+
+    Any finite number, fractional too: a cancel must be able to name any request
+    id the gateway accepts, and _valid_rpc_id accepts a fractional one, as
+    JSON-RPC does (it only discourages them).
+    """
+    return isinstance(value, str) or _is_number(value)
+
+
+def _is_str(value: Any) -> bool:
+    return isinstance(value, str)
+
+
+# The notifications a client sends a server, in every revision `initialize`
+# negotiates (ClientNotification in the MCP schema), with the params members
+# each requires (True) or allows (False). Other members pass, as in the schema.
+# A message without an id that is not one of these, or whose params do not fit,
+# is refused, so nothing malformed is acknowledged as accepted.
+#
+# Inbound the gateway negotiates only the handshake-era revisions (2024-11-05 to
+# 2025-11-25, see _LEGACY_PROTOCOL_VERSIONS), whose Streamable HTTP transport
+# POSTs client notifications and answers an accepted one with 202. 2026-07-28,
+# which defines no client notifications on HTTP, is never negotiated inbound.
+#
+# Each is accepted and not acted on. The gateway keeps no handshake state.
+# `progress` refers to requests the gateway never sends. `cancelled` refers to
+# a call the client made; it does not stop that call, which MCP allows (a
+# receiver MAY ignore a cancellation it cannot honour), and neither does a
+# client closing its connection: a call already sent upstream may have had its
+# effect, so it is completed and recorded as it happened rather than cut off
+# with an outcome nobody observed. `requestId` is required: 2025-11-25 made it
+# optional only for tasks. 2025-11-25 also lists `notifications/tasks/status`
+# as a client notification; it is refused because `initialize` advertises no
+# `tasks` capability, so no client has a task with this gateway to report on.
+_CLIENT_NOTIFICATIONS: dict[str, dict[str, tuple[Callable[[Any], bool], bool]]] = {
+    "notifications/initialized": {},
+    "notifications/cancelled": {"requestId": (_is_mcp_id, True), "reason": (_is_str, False)},
+    "notifications/progress": {
+        "progressToken": (_is_mcp_id, True),
+        "progress": (_is_number, True),
+        "total": (_is_number, False),
+        "message": (_is_str, False),
+    },
+    "notifications/roots/list_changed": {},
+}
+
+
+def _accepts_notification(method: str, params: dict[str, Any]) -> bool:
+    rules = _CLIENT_NOTIFICATIONS.get(method)
+    if rules is None:
+        return False
+    if "_meta" in params and not isinstance(params["_meta"], dict):
+        return False
+    for name, (valid, required) in rules.items():
+        if name in params:
+            if not valid(params[name]):
+                return False
+        elif required:
+            return False
+    return True
 
 
 def _invalid_request(rpc_id: Any = None) -> JSONResponse:
@@ -607,25 +678,30 @@ class MCPServer:
         if msg.get("jsonrpc") != "2.0":
             return _invalid_request(rpc_id)
 
-        method = msg.get("method", "")
-        if not isinstance(method, str):
+        # JSON-RPC requires `method`. MCP defines every `params` as an object,
+        # which JSON-RPC's "structured value" rule allows; a non-object is not
+        # treated as an empty one, so a malformed handshake or call never
+        # succeeds. Absent `params` stays legal.
+        method = msg.get("method")
+        if not isinstance(method, str) or not method:
             return _invalid_request(rpc_id)
         params = msg.get("params", {})
+        if not isinstance(params, dict):
+            return _invalid_request(rpc_id)
+        if "id" not in msg:
+            # A notification (no id, unlike `"id": null`) gets no JSON-RPC
+            # reply; MCP's HTTP transport answers an accepted one with 202 and
+            # no body. Anything else without an id is refused, including a
+            # request method, so a tool never runs with no call to answer.
+            if _accepts_notification(method, params):
+                return Response(status_code=202)
+            return _invalid_request()
 
         if method == "tools/call":
-            if not isinstance(params, dict):
-                return _invalid_request(rpc_id)
             return await self._handle_tool_call(rpc_id, params)
         if method == "tools/list":
             return await self._handle_tools_list(rpc_id)
         if method == "initialize":
-            # `InitializeRequestParams` is an object. Treating a non-object as
-            # an empty one would answer a malformed handshake with a successful
-            # negotiation, so it is rejected the same way `tools/call` rejects
-            # its own non-object params. Absent `params` stays legal and
-            # negotiates the newest revision.
-            if not isinstance(params, dict):
-                return _invalid_request(rpc_id)
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": rpc_id,
@@ -636,7 +712,7 @@ class MCPServer:
                 },
             })
         # INJECT-002: sanitize method before reflecting it in the error response
-        safe_method = (method or "")[:64].encode("ascii", errors="replace").decode("ascii")
+        safe_method = method[:64].encode("ascii", errors="replace").decode("ascii")
         return JSONResponse(
             {
                 "jsonrpc": "2.0",
