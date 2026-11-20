@@ -17,10 +17,15 @@ from unittest.mock import MagicMock
 import pytest
 from starlette.testclient import TestClient
 
+from cmcp_runtime.audit import trace_claim
 from cmcp_runtime.audit.store import SqliteAuditStore
 from cmcp_runtime.cli import build_server
 from cmcp_runtime.config import AttestationConfig, Config
+from cmcp_runtime.mcp import proxy as proxy_module
+from cmcp_runtime.mcp import server as server_module
+from cmcp_runtime.policy import evaluator as evaluator_module
 from cmcp_runtime.policy.bundle import PolicyStore
+from cmcp_runtime.session import manager as manager_module
 from cmcp_runtime.startup import RuntimeContext
 
 BEARER = "test-secret-token"
@@ -82,6 +87,23 @@ def test_health_exempt_from_auth(ctx):
     server = build_server(ctx)
     client = TestClient(server.app)
     assert client.get("/health").status_code != 401
+
+
+def test_build_server_retains_pre_measurement_enforcement_objects(ctx, monkeypatch):
+    """Disk-backed module replacements after startup cannot change server composition."""
+
+    def unexpected_late_load(*args, **kwargs):
+        pytest.fail("build_server resolved an enforcement class after measurement")
+
+    monkeypatch.setattr(trace_claim, "_PROVIDER_MAP", {"software-only": "replaced"})
+    monkeypatch.setattr(proxy_module, "CMCPProxy", unexpected_late_load)
+    monkeypatch.setattr(server_module, "MCPServer", unexpected_late_load)
+    monkeypatch.setattr(evaluator_module, "PolicyEvaluator", unexpected_late_load)
+    monkeypatch.setattr(manager_module, "SessionManager", unexpected_late_load)
+
+    server = build_server(ctx)
+
+    assert server._proxy._attestation_platform == "software-only"
 
 
 def test_production_build_does_not_open_execution_registry(ctx, monkeypatch):

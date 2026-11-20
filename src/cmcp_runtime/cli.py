@@ -6,16 +6,22 @@ import contextlib
 import io
 import json
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import click
 
+# These are the enforcement objects authenticated by run_startup's gateway
+# measurement. Bind and retain them while the CLI is imported, before start()
+# measures and attests the installed files; build_server must not resolve them
+# from replaceable package paths after that boundary.
 from cmcp_runtime import __version__
-
-if TYPE_CHECKING:
-    from cmcp_runtime.mcp.server import MCPServer
-    from cmcp_runtime.startup import RuntimeContext
-    from cmcp_runtime.trace_gate import TraceGate
+from cmcp_runtime.audit.trace_claim import _PROVIDER_MAP
+from cmcp_runtime.mcp.proxy import CMCPProxy
+from cmcp_runtime.mcp.server import MCPServer
+from cmcp_runtime.policy.evaluator import PolicyEvaluator
+from cmcp_runtime.session.manager import SessionManager
+from cmcp_runtime.startup import RuntimeContext, run_startup
+from cmcp_runtime.trace_gate import TraceGate
 
 
 def _marker(preferred: str, fallback: str, stream: object) -> str:
@@ -68,12 +74,6 @@ def build_server(ctx: RuntimeContext, *, trace_gate: TraceGate | None = None) ->
     that is validated but not passed through is silently inert in production
     (the AUTH-001 bearer token and AUDIT-001 store were both lost this way).
     """
-    from cmcp_runtime.audit.trace_claim import _PROVIDER_MAP
-    from cmcp_runtime.mcp.proxy import CMCPProxy
-    from cmcp_runtime.mcp.server import MCPServer
-    from cmcp_runtime.policy.evaluator import PolicyEvaluator
-    from cmcp_runtime.session.manager import SessionManager
-
     # Resolve provider string to canonical platform name for Cedar context.
     # Falls back to the raw provider string if not in the map (e.g. future providers).
     attestation_platform = _PROVIDER_MAP.get(
@@ -180,7 +180,6 @@ def start(config: str, enforcement: str | None) -> None:
 
     from cmcp_runtime.config import parse_listen_addr
     from cmcp_runtime.observability.otel import configure_tracer_provider
-    from cmcp_runtime.startup import run_startup
 
     # AARM R8: install the tracer provider before any session exists, so the
     # first session's entries are exported too. No-op unless CMCP_OTEL_ENABLED.
