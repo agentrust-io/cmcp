@@ -1,0 +1,3 @@
+{
+  "requirements/confinement.txt": "composed requirements with an include, outside the exact-pin lock subset"
+}
