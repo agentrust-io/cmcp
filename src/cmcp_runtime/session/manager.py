@@ -24,9 +24,9 @@ from cmcp_runtime.audit.trace_claim import (
     CallSummary,
     KillSwitchState,
     PolicyBundleInfo,
-    TpmGatewayMeasurementInfo,
     ToolCatalogInfo,
     ToolTranscriptEntry,
+    TpmGatewayMeasurementInfo,
     canonical_json,
     generate_trace_claim,
 )
