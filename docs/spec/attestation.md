@@ -57,7 +57,7 @@ measurement = SHA-256(PCR0 || PCR1 || PCR2 || PCR3 || PCR4 || PCR5 || PCR6 || PC
 
 Each PCR value is the raw 32-byte SHA-256 digest read from the TPM. Concatenation is in bank index order (0 through 7), no separators. The result is a 32-byte SHA-256 digest encoded as lowercase hex. The PCR bank used is SHA-256. If the platform only offers a SHA-1 bank, the runtime logs a warning and uses SHA-1 PCR values zero-extended to 32 bytes before hashing; this is noted in `attestation_report.measurement_note: "sha1-bank-fallback"`.
 
-Quote generation: the gateway calls `TPM2_Quote` with `qualifying_data` set to the first 32 bytes of the §3.3 nonce: the `JWK_thumbprint(tee_public_key)`: because TPM `qualifying_data` carries a single digest. A verifier re-derives the thumbprint from `cnf.jwk.x` and checks it against the quote's `qualifying_data`. The quote and its signature are stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use.
+Quote generation: the gateway calls `TPM2_Quote` with `qualifying_data` set to the SHA-256 digest of the complete §3.3 nonce, fitting the nonce commitment into a single digest. A verifier checks the key thumbprint against the nonce and checks the digest of that nonce against the quote's `qualifying_data`. The quote and its signature are stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use.
 
 #### SEV-SNP (High Assurance)
 
@@ -270,7 +270,7 @@ nonce = JWK_thumbprint(tee_public_key) (32 bytes) || random_salt (32 bytes)
 
 - `JWK_thumbprint(tee_public_key)`: the RFC 7638 JWK Thumbprint of the Ed25519 public key: SHA-256 over the canonical JSON of the required OKP members in lexicographic order (`crv`, `kty`, `x`). This is re-derivable by any verifier from `cnf.jwk.x`.
 - `random_salt`: 32 random bytes generated once per enclave startup, so two enclave instances produce distinct nonces even with the same key (e.g. blue-green deploy). On SEV-SNP, TDX and Azure CVM this half carries the gateway measurement instead; see §3.3.2.
-- The 64-byte value is passed as the `report_data` / `user_data` / `reportdata` / `qualifying_data` field when requesting the hardware attestation report. The field name varies by provider; the semantic is the same: a caller-supplied value included in the signed measurement.
+- The 64-byte value is passed as the `report_data` / `user_data` / `reportdata` field when requesting the hardware attestation report. For TPM quotes, its SHA-256 digest is passed as `qualifying_data`. The field name varies by provider; the semantic is the same: the signed measurement commits to the caller-supplied nonce.
 
 In a canonical TRACE Claim this value is serialized as `trace.runtime.nonce`
 (unpadded base64url), not as a separate `trace.runtime.report_data` field.

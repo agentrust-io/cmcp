@@ -8,6 +8,7 @@ runs stands in for the process exiting.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -365,10 +366,8 @@ def test_a_bundle_changed_after_the_reload_was_verified_is_not_sealed_to(
     _stop(ctx)
 
 
-def test_the_quote_signs_the_key_thumbprint_and_not_the_salt(tpm: Swtpm) -> None:
-    """A limit stated in attestation.md 4.2. The quote's qualifying data is
-    report_data[:32], the key thumbprint, so with a sealed key two starts quote over the
-    same value: the per-start salt changes report_data but not what the TPM signs."""
+def test_the_quote_commits_to_the_complete_nonce(tpm: Swtpm) -> None:
+    """The quote commits to the SHA-256 digest of the entire report nonce."""
     from tpm2_pytss.types import TPMS_ATTEST
 
     from cmcp_runtime.tee.tpm import TPMProvider
@@ -380,12 +379,11 @@ def test_the_quote_signs_the_key_thumbprint_and_not_the_salt(tpm: Swtpm) -> None
         return bytes(attest.extraData), report.report_data
 
     key, other_key = b"\x01" * 32, b"\x02" * 32
-    same_key_a, data_a = quoted(key + b"\xaa" * 32)
-    same_key_b, data_b = quoted(key + b"\xbb" * 32)
-    other, _ = quoted(other_key + b"\xaa" * 32)
-    assert data_a != data_b  # the salt does change report_data
-    assert same_key_a == same_key_b == key  # but not the signed qualifying data
-    assert other == other_key
+    nonces = (key + b"\xaa" * 32, key + b"\xbb" * 32, other_key + b"\xaa" * 32)
+    for nonce in nonces:
+        qualifying_data, report_data = quoted(nonce)
+        assert report_data == nonce.hex()
+        assert qualifying_data == hashlib.sha256(nonce).digest()
 
 
 @pytest.mark.parametrize(
