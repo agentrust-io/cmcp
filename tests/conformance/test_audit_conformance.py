@@ -60,7 +60,7 @@ def _summary(chain):
     )
 
 
-def _claim_dict(chain, key, seq=1, prev=None):
+def _claim_dict(chain, key, seq=1, prev=None, *, do_sign=False):
     c = generate_trace_claim(
         session_id=chain._session_id,
         signing_key=key,
@@ -77,7 +77,7 @@ def _claim_dict(chain, key, seq=1, prev=None):
         audit_chain_length=chain.length,
         sequence_number=seq,
         prev_claim_hash=prev,
-        do_sign=False,
+        do_sign=do_sign,
     )
     return c.model_dump(exclude_none=True)
 
@@ -420,7 +420,7 @@ class TestExternalExecutionEvidence301:
         )
         result = verify_audit_bundle(
             _signed_bundle(chain, signing_key),
-            _claim_dict(chain, signing_key),
+            _claim_dict(chain, signing_key, do_sign=True),
             external_evidence_keys={key_id: pub},
             trusted_public_key=signing_key.public_key_bytes,
         )
