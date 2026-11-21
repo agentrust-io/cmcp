@@ -345,12 +345,10 @@ def verify(
         bundle = _load_verify_json(audit_bundle)
         bundle_trusted_key = None
         if trusted_key is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 bundle_trusted_key = bytes.fromhex(
                     trusted_key.lower().removeprefix("0x")
                 )
-            except ValueError:
-                pass
         bundle_result = verify_audit_bundle(
             bundle,
             claim,
