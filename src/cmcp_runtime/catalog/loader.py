@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import jsonschema
+import rfc8785
 
 from cmcp_runtime.errors import (
     CatalogHashMismatch,
@@ -152,8 +153,7 @@ _PRIVATE_JWK_MEMBERS: frozenset[str] = frozenset(
 
 
 def _compute_definition_hash(definition: dict[str, Any]) -> str:
-    canonical = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return f"sha256:{_sha256_hex(canonical.encode())}"
+    return f"sha256:{_sha256_hex(rfc8785.dumps(definition))}"
 
 
 def definition_digest(
@@ -170,8 +170,7 @@ def definition_digest(
     on our side would read as drift on theirs. This digest covers only what both
     sides can be expected to agree on.
 
-    Uses the same canonical JSON form as :func:`_compute_definition_hash`, so the
-    two can never disagree about how a value is serialised.
+    This local comparison digest is distinct from the RFC 8785 catalog hash.
     """
     canonical = json.dumps(
         {
@@ -214,8 +213,7 @@ def advertised_definition_digest(tool: dict[str, Any]) -> str:
 def _catalog_hash(raw_entries: list[dict[str, Any]]) -> str:
     """SHA-256 of canonical JSON of entries sorted by tool_name."""
     sorted_entries = sorted(raw_entries, key=lambda e: e["tool_name"])
-    canonical = json.dumps(sorted_entries, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return f"sha256:{_sha256_hex(canonical.encode())}"
+    return f"sha256:{_sha256_hex(rfc8785.dumps(sorted_entries))}"
 
 
 def _load_entry_schema() -> dict[str, Any]:
@@ -269,11 +267,11 @@ def load_catalog(
     path = Path(catalog_path)
     try:
         raw_list: list[dict[str, Any]] = json.loads(
-            path.read_text(),
+            path.read_text(encoding="utf-8"),
             parse_constant=_reject_nonfinite_json_constant,
             object_pairs_hook=_reject_duplicate_keys,
         )
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"Cannot read catalog file: {exc}") from exc
     except (json.JSONDecodeError, ValueError) as exc:
         raise ConfigError(f"Catalog JSON parse error: {exc}") from exc
@@ -373,7 +371,13 @@ def load_catalog(
         )
 
         # Verify definition_hash if present in the entry
-        computed_def_hash = _compute_definition_hash(raw_def)
+        try:
+            computed_def_hash = _compute_definition_hash(raw_def)
+        except rfc8785.CanonicalizationError as exc:
+            raise ConfigError(
+                f"Catalog entry '{tool_name}': approved_definition cannot be canonicalized "
+                f"under RFC 8785: {exc}"
+            ) from exc
         if "definition_hash" in raw and raw["definition_hash"] != computed_def_hash:
             raise ConfigError(
                 f"Catalog entry '{tool_name}': definition_hash mismatch. "
@@ -402,7 +406,10 @@ def load_catalog(
             schema_validation_mode=schema_validation_mode,
         )
 
-    computed_hash = _catalog_hash(raw_list)
+    try:
+        computed_hash = _catalog_hash(raw_list)
+    except rfc8785.CanonicalizationError as exc:
+        raise ConfigError(f"Catalog cannot be canonicalized under RFC 8785: {exc}") from exc
     if expected_hash is not None:
         expected_hex = expected_hash.removeprefix("sha256:")
         actual_hex = computed_hash.removeprefix("sha256:")

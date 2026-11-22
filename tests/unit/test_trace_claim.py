@@ -8,6 +8,8 @@ import pathlib
 
 import jsonschema
 import pytest
+import rfc8785
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from cmcp_runtime.audit.chain import AuditChain
 from cmcp_runtime.audit.keys import SigningKey
@@ -22,6 +24,7 @@ from cmcp_runtime.audit.trace_claim import (
     _to_dict,
     canonical_json,
     generate_trace_claim,
+    sign_trace_claim,
 )
 
 
@@ -91,6 +94,41 @@ def test_canonical_json_sorted_keys():
     d = {"z": 3, "a": 1, "m": 2}
     result = canonical_json(d).decode()
     assert result.index('"a"') < result.index('"m"') < result.index('"z"')
+
+
+def test_signature_uses_rfc8785_for_unicode_and_exponents():
+    key = SigningKey()
+    claim = _make_claim(key)
+    claim.gateway.call_summary.tools_invoked = ["café_lookup"]
+    from cmcp_runtime.audit.trace_claim import KillSwitchState
+
+    claim.gateway.kill_switch = KillSwitchState(
+        enabled=True, window_seconds=60, deny_rate_threshold=1e-7, min_calls=5
+    )
+    claim.signature = sign_trace_claim(claim, key)
+    data = _to_dict(claim)
+    signature = base64.urlsafe_b64decode(data["signature"] + "==")
+    body = {k: v for k, v in data.items() if k != "signature"}
+    Ed25519PublicKey.from_public_bytes(key.public_key_bytes).verify(signature, rfc8785.dumps(body))
+    from cmcp_verify.verify import _verify_signature
+
+    assert _verify_signature(data)[0]
+
+
+def test_canonical_json_uses_utf16_key_order():
+    value = {"\uffff": 1, "\U00010000": 2, "café": 1e-7}
+    assert canonical_json(value) == '{"café":1e-7,"\U00010000":2,"\uffff":1}'.encode()
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), "\ud800", 2**53])
+def test_invalid_jcs_claim_fails_closed(invalid):
+    from cmcp_verify.verify import _verify_signature
+
+    data = _to_dict(_make_claim(SigningKey()))
+    data["invalid"] = invalid
+    valid, error = _verify_signature(data)
+    assert not valid
+    assert "cannot be canonicalized" in error
 
 
 # ── generate_trace_claim ──────────────────────────────────────────────────────

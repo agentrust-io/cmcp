@@ -443,17 +443,44 @@ definition_hash = lowercase_hex(SHA-256(canonical_json(approved_definition)))
 ```
 
 `canonical_json` uses RFC 8785 (sorted keys, no insignificant whitespace).
+Older cMCP versions used Python's ASCII-escaped JSON serialization for these
+hashes and TRACE claim signatures. Existing claims or pinned catalog and
+definition hashes containing non-ASCII text, certain numbers, or keys ordered
+differently by JCS may therefore change. Stored `definition_hash` values must be
+regenerated first, then the catalog pin recomputed, and affected signed TRACE
+Claims reissued as a separate step; see the upgrade sequence in Section 5.4.
+Stored audit-chain entry hashes are unchanged by this transition. Although RFC
+8785 Appendix B Note 1 permits integers outside the IEEE 754 safe-integer range
+when implementations agree, the runtime's `rfc8785` library enforces the I-JSON
+safe-integer range (`-(2^53 - 1)` through `2^53 - 1`); a catalog whose
+`approved_definition` or entry fields contain an integer of `2^53` or more (for
+example `"maximum": 9223372036854775807`) is refused at load time with
+`ConfigError`.
 
 ### 5.2 Catalog Hash Computation
 
 The catalog hash that goes into `tool_catalog.hash` in the TRACE Claim:
 
 ```
-sorted_entries = sort(entries, key=tool_name, order=lexicographic_ascending)
+sorted_entries = sort(entries, key=tool_name, order=unicode_code_point_ascending)
 catalog_hash = lowercase_hex(SHA-256(canonical_json(sorted_entries)))
 ```
 
 Only the `entries` array (sorted) is hashed, not the `catalog_version` or `updated_at` fields. This ensures the catalog hash is stable across metadata-only updates.
+
+Compare `tool_name` as a sequence of Unicode code points, without locale
+collation, case folding, or normalization. At the first differing code point,
+the smaller numeric value sorts first; a proper prefix sorts before the longer
+name. This entry-array order preserves the Python runtime's existing behavior.
+It is separate from RFC 8785's UTF-16 ordering of object member names: JCS does
+not reorder array elements. Implementations using UTF-16 strings must compare
+decoded code points rather than relying on their default string comparator.
+For example, `tool_\uff5a` sorts before `tool_\U00010000` under this rule;
+UTF-16 code-unit ordering would reverse them and change the catalog hash.
+The two-entry interoperability control is in
+`tests/unit/test_catalog_jcs_hashes.py`. This clarification does not authorize
+changing existing catalog pins or bypassing the canonical-byte transition
+requirements described above.
 
 At enclave startup, the runtime:
 1. Loads the catalog document from the configured path.
@@ -507,14 +534,22 @@ A tool that appears in `tools/list` from a server but is absent from the catalog
 The catalog does not support hot-reload in Phase 1. Updates require:
 
 1. Edit the catalog document: add, modify, or remove `entries`.
-2. Recompute `definition_hash` for any modified `approved_definition`.
+2. Recompute `definition_hash` for every entry whose `approved_definition` was modified. When upgrading across the RFC 8785 transition, also recompute it for every stored entry whose canonical bytes change under RFC 8785, even if its `approved_definition` is unchanged (see the upgrade sequence below). The loader recomputes each hash and refuses an entry whose stored `definition_hash` differs, with `definition_hash mismatch`.
 3. Commit the updated catalog to version control. This creates an auditable record of who approved the change and when.
-4. Compute the new `catalog_hash` locally and record it in the commit message or PR description for pre-deployment verification.
+4. Only after every stored `definition_hash` is correct, compute the new `catalog_hash` locally, update the pinned `CMCP_CATALOG_HASH`, and record the value in the commit message or PR description for pre-deployment verification. The catalog hash covers the stored `definition_hash` fields, so a value computed before step 2 is stale.
 5. Deploy the new runtime configuration. This requires an enclave restart.
 6. On restart, the gateway loads the new catalog and checks it against the pinned `CMCP_CATALOG_HASH`. Subsequent TRACE Claims will contain the new `tool_catalog.hash`. The catalog is not part of the gateway measurement, which covers code, policy and configuration, so no hardware report or NV index commits it; a verifier checks it through `tool_catalog.hash` and its approved hashes.
 7. Verify: after startup, call `GET /v1/status` which returns the active `catalog_hash`. Confirm it matches the expected value from step 4.
 
 There is no partial catalog update. The entire catalog is replaced atomically at restart. This prevents a TOCTOU window between loading individual tool definitions.
+
+#### Upgrade sequence across the RFC 8785 (JCS) transition
+
+Operators moving from a release that hashed ASCII-escaped Python JSON to RFC 8785 must run these in order:
+
+1. **Regenerate every affected `definition_hash`.** An unchanged `approved_definition` can hash differently under RFC 8785 when it contains non-ASCII text, numbers that JCS formats differently (for example `1.0`, `1e-07`, or `1e16`), or object keys whose UTF-16 code-unit order differs from code-point order. Its legacy stored hash then fails `load_catalog` with `definition_hash mismatch`. Recompute the hash of every stored entry with `rfc8785` (see `docs/tutorials/tool-catalog-authoring.md`) and replace the stored value. Entries whose canonical bytes are unchanged keep the same hash, so recomputing all of them is safe.
+2. **Recompute and repin the catalog hash.** With step 1 complete, compute `catalog_hash` as in Section 5.2 and update `CMCP_CATALOG_HASH` (and any attestation policy pin of `tool_catalog.hash`), then complete the remaining procedure steps above (commit, deploy, restart, verify). Do not compute the pin before step 1.
+3. **Reissue and re-sign affected TRACE Claims, separately.** Repinning updates only the tool catalog. It cannot change a TRACE Claim that was already issued and signed: that claim's signature covers the legacy canonical bytes, and a verifier running RFC 8785 rejects it whenever those bytes differ. Each affected claim (non-ASCII text, affected numbers, or reordered keys in the signed body) must be re-emitted and re-signed under RFC 8785 with the signing key that matches its `cnf.jwk`; if that key is no longer available, the claim stays a legacy record that does not verify under RFC 8785. Digests computed over a claim's canonical bytes, such as `prev_claim_hash` links and kill-switch receipt `claim_digest` values, change with it. Claims whose canonical bytes are identical under both serializations remain valid. Neither the catalog procedure nor an enclave restart performs this step.
 
 ---
 
