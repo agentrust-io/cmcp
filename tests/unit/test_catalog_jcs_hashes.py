@@ -282,4 +282,3 @@ def test_kill_switch_refusal_reports_uncanonicalizable_claim():
     res = verify_kill_switch_refusal(receipt, claim)
     assert not res.valid
     assert "claim cannot be canonicalized" in res.errors
-

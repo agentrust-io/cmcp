@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **Catalog hashes, definition hashes, and TRACE Claim signatures now use RFC 8785 (JCS) canonical UTF-8 bytes (#837).** Earlier releases hashed and signed `json.dumps(..., sort_keys=True, ensure_ascii=True)`. Any existing `definition_hash`, `CMCP_CATALOG_HASH` / `tool_catalog.hash`, or signed TRACE Claim containing non-ASCII text, floating-point or scientific-notation numbers normalized differently by RFC 8785, or object keys whose UTF-16 code-unit order differs from Unicode code-point order produces a different digest and must be recomputed following the repin procedure in [`docs/spec/attestation.md`](docs/spec/attestation.md#54-catalog-update-procedure) (§5.1–§5.4). In addition, the `rfc8785` serializer enforces the I-JSON safe-integer limit (`±(2^53 - 1)`); catalogs containing integers of `2^53` or more (such as `"maximum": 9223372036854775807`) are now refused with `ConfigError` at load time.
+- **Catalog hashes, definition hashes, and TRACE Claim signatures now use RFC 8785 (JCS) canonical UTF-8 bytes (#837).** Earlier releases hashed and signed `json.dumps(..., sort_keys=True, ensure_ascii=True)`. An existing `definition_hash`, `CMCP_CATALOG_HASH` / `tool_catalog.hash`, or signed TRACE Claim containing non-ASCII text, floating-point or scientific-notation numbers normalized differently by RFC 8785, or object keys whose UTF-16 code-unit order differs from Unicode code-point order produces a different digest. Upgrade in this order, following the [upgrade sequence](docs/spec/attestation.md#upgrade-sequence-across-the-rfc-8785-jcs-transition) in [`docs/spec/attestation.md` §5.4](docs/spec/attestation.md#54-catalog-update-procedure):
+  1. Recompute the stored `definition_hash` of every affected catalog entry, including entries whose `approved_definition` is unchanged. A legacy stored hash on an unchanged non-ASCII definition fails `load_catalog` with `definition_hash mismatch`.
+  2. Only then recompute the catalog hash and update `CMCP_CATALOG_HASH` / `tool_catalog.hash`. The catalog hash covers the stored `definition_hash` fields, so a pin computed before step 1 is stale.
+  3. Separately, reissue and re-sign affected TRACE Claims. Repinning the catalog updates only the tool catalog and cannot change claims that were already signed; those must be re-emitted and re-signed under RFC 8785.
+
+  In addition, the `rfc8785` serializer enforces the I-JSON safe-integer limit (`±(2^53 - 1)`); catalogs containing integers of `2^53` or more (such as `"maximum": 9223372036854775807`) are now refused with `ConfigError` at load time.
 
 ### Added
 
