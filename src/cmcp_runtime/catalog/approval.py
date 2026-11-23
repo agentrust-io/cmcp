@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,7 +69,10 @@ def _utf16_order(key: Any) -> bytes:
 def _canonical_members(value: Any) -> Any:
     """Rebuild containers in canonical order, refusing what JCS cannot pin down."""
     if isinstance(value, dict):
-        return {k: _canonical_members(v) for k, v in sorted(value.items(), key=lambda kv: _utf16_order(kv[0]))}
+        return {
+            k: _canonical_members(v)
+            for k, v in sorted(value.items(), key=lambda kv: _utf16_order(kv[0]))
+        }
     if isinstance(value, list):
         return [_canonical_members(item) for item in value]
     if isinstance(value, float):
@@ -85,7 +89,9 @@ def canonical_json(value: Any) -> bytes:
     `ensure_ascii` would put ASCII escapes where an interoperating producer puts
     UTF-8 bytes, giving two different signing inputs for one record.
     """
-    text = json.dumps(_canonical_members(value), ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    text = json.dumps(
+        _canonical_members(value), ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
     try:
         return text.encode("utf-8")
     except UnicodeEncodeError as exc:
@@ -111,12 +117,14 @@ def _b64(value: bytes) -> str:
 
 def _decode(value: str) -> bytes:
     """Decode a signature the schema has already constrained to unpadded base64url."""
+    if not isinstance(value, str) or len(value) % 4 == 1:
+        raise CatalogApprovalError("signature is not valid base64url")
     try:
         raw = base64.urlsafe_b64decode(value + "=" * ((4 - len(value) % 4) % 4))
     except (ValueError, TypeError) as exc:
         raise CatalogApprovalError("signature is not valid base64url") from exc
-    if len(raw) != 64:
-        raise CatalogApprovalError("signature must decode to 64 bytes")
+    if len(raw) != 64 or _b64(raw) != value:
+        raise CatalogApprovalError("signature must be canonical 64-byte base64url")
     return raw
 
 
@@ -160,9 +168,35 @@ def _approval_schema() -> dict[str, Any]:
                 "catalog approval schema is missing from the CMCP installation; "
                 "refusing to verify a record without structural validation"
             )
+
+        def _no_dup_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            out: dict[str, Any] = {}
+            for k, v in pairs:
+                if k in out:
+                    raise ValueError(f"duplicate JSON object key: {k!r}")
+                out[k] = v
+            return out
+
+        def _no_nonfinite(token: str) -> Any:
+            raise ValueError(f"non-finite JSON constant: {token}")
+
+        def _finite_float(token: str) -> float:
+            val = float(token)
+            if not math.isfinite(val):
+                raise ValueError(f"non-finite JSON number: {token}")
+            return val
+
         try:
-            _schema_cache = dict(json.loads(CATALOG_APPROVAL_SCHEMA_PATH.read_text()))
-        except (OSError, json.JSONDecodeError) as exc:
+            loaded = json.loads(
+                CATALOG_APPROVAL_SCHEMA_PATH.read_text(encoding="utf-8"),
+                object_pairs_hook=_no_dup_pairs,
+                parse_constant=_no_nonfinite,
+                parse_float=_finite_float,
+            )
+            if not isinstance(loaded, dict):
+                raise ValueError("catalog approval schema must be a JSON object")
+            _schema_cache = dict(loaded)
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
             raise CatalogApprovalError(f"cannot load catalog approval schema: {exc}") from exc
     return _schema_cache
 
@@ -212,10 +246,18 @@ def verify_catalog_change(
         raise CatalogApprovalMismatch("record does not apply to the expected catalog")
     if expected_sequence is not None and record["sequence"] != expected_sequence:
         raise CatalogApprovalMismatch("record is not the expected sequence number")
-    if expected_previous_record_hash is not None and record["previous_record_hash"] != expected_previous_record_hash:
+    if (
+        expected_previous_record_hash is not None
+        and record["previous_record_hash"] != expected_previous_record_hash
+    ):
         raise CatalogApprovalMismatch("record is not the expected next chain element")
-    if expected_previous_catalog_hash is not None and record["previous_catalog_hash"] != expected_previous_catalog_hash:
-        raise CatalogApprovalMismatch("previous_catalog_hash does not match the expected checkpoint")
+    if (
+        expected_previous_catalog_hash is not None
+        and record["previous_catalog_hash"] != expected_previous_catalog_hash
+    ):
+        raise CatalogApprovalMismatch(
+            "previous_catalog_hash does not match the expected checkpoint"
+        )
     if record["new_catalog_hash"] != runtime_catalog_hash:
         raise CatalogApprovalMismatch("new_catalog_hash does not match runtime catalog hash")
 
@@ -241,7 +283,10 @@ def verify_catalog_change(
             raise CatalogApprovalMismatch(f"reviewer key {key_id!r} is revoked")
         if reviewer is None:
             raise CatalogApprovalMismatch(f"reviewer key {key_id!r} is not trusted")
-        if approval["principal_id"] != reviewer.principal_id or approval["issuer"] != reviewer.issuer:
+        if (
+            approval["principal_id"] != reviewer.principal_id
+            or approval["issuer"] != reviewer.issuer
+        ):
             raise CatalogApprovalMismatch("approval principal or issuer does not match trusted key")
         if reviewer.role is not None and approval["role"] != reviewer.role:
             raise CatalogApprovalMismatch("approval role does not match trusted key")
@@ -256,13 +301,21 @@ def verify_catalog_change(
         except InvalidSignature as exc:
             raise CatalogApprovalMismatch("approval signature is invalid") from exc
         if policy["distinct_principals"] and approval["principal_id"] in principals:
-            raise CatalogApprovalMismatch("approval set repeats a principal under a distinct-principal policy")
+            raise CatalogApprovalMismatch(
+                "approval set repeats a principal under a distinct-principal policy"
+            )
         if policy["distinct_roles"] and approval["role"] in roles:
-            raise CatalogApprovalMismatch("approval set repeats a role under a distinct-role policy")
+            raise CatalogApprovalMismatch(
+                "approval set repeats a role under a distinct-role policy"
+            )
         if key_id in keys_used:
             raise CatalogApprovalMismatch("approval set reuses a reviewer key")
         valid += 1
         principals.add(approval["principal_id"])
         roles.add(approval["role"])
         keys_used.add(key_id)
-    return {"verified": True, "valid_approvals": valid, "new_catalog_hash": record["new_catalog_hash"]}
+    return {
+        "verified": True,
+        "valid_approvals": valid,
+        "new_catalog_hash": record["new_catalog_hash"],
+    }
