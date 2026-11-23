@@ -49,7 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ATTESTATION_REPORT_UNAVAILABLE`. Detection now reads the SHA-256 PCRs 0-7 the
   report quotes, through the same function and backend (ESAPI on the default
   TCTI, or `tpm2_pcrread`). The TSS picks the device as it will later, and a
-  configured TCTI is honoured. A TPM that cannot give that read is skipped. Dev
+  configured TCTI is used for that read. Detection only asks when `/dev/tpm0` or
+  `/dev/tpmrm0` exists: a TPM reached only through a TCTI with no local device
+  node, such as a `swtpm` socket, is not detected. A TPM that cannot give that
+  read is skipped. Dev
   mode falls back to software-only and logs why, auto-detection moves on to the
   next provider, and production and an explicit `provider: tpm` still refuse to
   start, now naming the reason. A TPM that reads only SHA-1 is now refused at

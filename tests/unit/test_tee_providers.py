@@ -497,6 +497,20 @@ def test_absent_tpm_is_not_a_fault_and_is_not_probed(
     assert _probe() == (False, "")
 
 
+def test_a_tcti_without_a_device_node_is_not_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The documented prerequisite: a TPM reached only through a configured TCTI
+    (a swtpm socket here) with no local device node is not asked, so not detected."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("TPM2TOOLS_TCTI", "swtpm:host=127.0.0.1,port=2321")
+    monkeypatch.setenv("TCTI", "swtpm:host=127.0.0.1,port=2321")
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TPM_DEVICES", [tmp_path / "missing"])
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._tss2_error", lambda: pytest.fail("probed"))
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._tools_error", lambda: pytest.fail("probed"))
+    assert _probe() == (False, "")
+
+
 def test_not_linux_is_not_probed(devices: list[Path], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     assert _probe() == (False, "")
@@ -529,5 +543,3 @@ def test_detect_and_reason_share_one_probe(devices: list[Path]) -> None:
     assert "first look" in (provider.unusable_reason() or "")
     assert provider.detect() is True
     assert provider.unusable_reason() is None
-
-

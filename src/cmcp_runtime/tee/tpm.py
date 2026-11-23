@@ -213,7 +213,9 @@ def probe_tpm() -> TpmProbe:
     a hardware-attested report: without a quote the report is downgraded to
     software-only and says so, and a TPM that fails between the probe and the
     report fails startup closed. A TPM that reads only SHA-1 is not usable.
-    No device node means no TPM, which is not a fault.
+    No device node means no TPM, which is not a fault. The backend is only
+    asked when a node exists, so a TPM reachable only through a configured TCTI
+    with no local node (a ``swtpm`` socket, say) is not detected.
     """
     try:
         if sys.platform != "linux":
