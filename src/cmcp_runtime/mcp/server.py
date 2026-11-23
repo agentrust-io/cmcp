@@ -118,10 +118,18 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return obj
 
 
+def _is_integer(value: Any) -> bool:
+    """A JSON integer: an int (not a bool) or an integral float such as 1.0.
+    An int is never converted to a float, so a huge one cannot overflow."""
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+
+
 def _valid_rpc_id(value: Any) -> bool:
-    # JSON-RPC 2.0 id must be a string, number, or null -- not a bool, even
-    # though bool is an int subclass in Python.
-    return value is None or (isinstance(value, (str, int, float)) and not isinstance(value, bool))
+    # MCP narrows JSON-RPC: a request id is a string or an integer and never
+    # null (base protocol, Requests, in every revision the gateway negotiates).
+    return isinstance(value, str) or _is_integer(value)
 
 
 def _over_string_cap(text: str) -> bool:
@@ -233,20 +241,16 @@ def _kill_switch_conflict(agent_id: str) -> JSONResponse:
 
 
 def _is_number(value: Any) -> bool:
-    """A finite JSON number; a bool is not one."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    """A finite JSON number; a bool is not one. An int is never converted."""
+    if isinstance(value, bool):
         return False
-    return math.isfinite(value)
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
 
 
 def _is_mcp_id(value: Any) -> bool:
-    """A RequestId or ProgressToken, which the MCP schema types as string or number.
-
-    Any finite number, fractional too: a cancel must be able to name any request
-    id the gateway accepts, and _valid_rpc_id accepts a fractional one, as
-    JSON-RPC does (it only discourages them).
-    """
-    return isinstance(value, str) or _is_number(value)
+    """A RequestId or ProgressToken: a string or an integer, as MCP requires.
+    The same rule as a request id, so a cancel can name any request accepted."""
+    return _valid_rpc_id(value)
 
 
 def _is_str(value: Any) -> bool:
@@ -671,7 +675,7 @@ class MCPServer:
             return parsed
         msg = parsed
 
-        # #518: strict jsonrpc/id validation, matching scripts/mock_upstream.py.
+        # #518: strict jsonrpc/id validation; MCP ids are a string or integer.
         rpc_id = msg.get("id")
         if "id" in msg and not _valid_rpc_id(rpc_id):
             return _invalid_request()

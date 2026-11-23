@@ -635,11 +635,13 @@ def test_object_id_returns_invalid_request():
     assert resp.json()["error"]["code"] == -32600
 
 
-def test_null_id_is_valid_notification():
+def test_null_id_returns_invalid_request():
+    # MCP: a request id is a string or integer and never null.
     server = _make_server()
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.post("/mcp", json={"jsonrpc": "2.0", "method": "initialize", "id": None})
-    assert resp.status_code == 200
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == -32600
 
 
 def test_string_id_is_valid():

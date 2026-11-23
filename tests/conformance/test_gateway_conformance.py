@@ -266,11 +266,11 @@ _VALID_PARAMS = [
     ("notifications/cancelled", {"requestId": 7}),
     ("notifications/cancelled", {"requestId": "c-1", "reason": "user stopped it"}),
     ("notifications/cancelled", {"requestId": 7, "extra": "kept, as in the schema"}),
-    # The schema types RequestId and ProgressToken as string or number.
-    ("notifications/cancelled", {"requestId": 1.5}),
+    # MCP requires a request id or progress token to be a string or integer.
     ("notifications/cancelled", {"requestId": 1.0}),
+    ("notifications/cancelled", {"requestId": 10**400}),
     ("notifications/cancelled", {"requestId": ""}),
-    ("notifications/progress", {"progressToken": 2.5, "progress": 0}),
+    ("notifications/progress", {"progressToken": 10**400, "progress": 0}),
     ("notifications/progress", {"progressToken": "t", "progress": 1}),
     ("notifications/progress", {"progressToken": 3, "progress": 0.5, "total": 2, "message": "half"}),
     ("notifications/progress", {"progressToken": "t", "progress": -1}),  # no minimum in the schema
@@ -284,6 +284,8 @@ _INVALID_PARAMS = [
     ("notifications/cancelled", {"reason": "no id"}),
     ("notifications/cancelled", {"requestId": True}),
     ("notifications/cancelled", {"requestId": None}),
+    ("notifications/cancelled", {"requestId": 1.5}),
+    ("notifications/progress", {"progressToken": 2.5, "progress": 0}),
     ("notifications/cancelled", {"requestId": [1]}),
     ("notifications/cancelled", {"requestId": 1, "reason": 5}),
     ("notifications/cancelled", {"requestId": 1, "reason": None}),
@@ -507,35 +509,33 @@ def test_parser_still_refuses_bad_json_without_id(raw: bytes) -> None:
     assert proxy.method_calls == []
 
 
-def test_null_id_keeps_request_semantics() -> None:
-    """`"id": null` is present, so the message is a request and gets a reply."""
-    resp, _ = _post({"jsonrpc": "2.0", "id": None, "method": "tools/list"})
-    assert resp.status_code == 200
-    assert resp.json()["id"] is None
-    assert "tools" in resp.json()["result"]
+@pytest.mark.parametrize("method", ["tools/list", "tools/call", "initialize"])
+def test_null_id_is_refused_before_dispatch(method: str) -> None:
+    """MCP: a request id MUST NOT be null. `"id": null` is not a notification
+    either (it has an id), so it is refused and nothing runs."""
     resp, proxy = _post({
         "jsonrpc": "2.0",
         "id": None,
-        "method": "tools/call",
-        "params": {"name": "mock_tool", "arguments": {}},
+        "method": method,
+        "params": {"name": "mock_tool", "arguments": {}} if method == "tools/call" else {},
     })
-    assert resp.status_code == 200
-    assert resp.json()["id"] is None
-    proxy.call_tool.assert_awaited_once()
+    _assert_refused(resp)
+    assert proxy.method_calls == []
 
 
-@pytest.mark.parametrize("rpc_id", [True, False, [], {}])
+@pytest.mark.parametrize("rpc_id", [True, False, [], {}, 1.5, float("-0.5")])
 def test_bad_id_is_still_refused(rpc_id: Any) -> None:
     resp, proxy = _post({"jsonrpc": "2.0", "id": rpc_id, "method": "tools/list"})
     _assert_refused(resp)
     assert proxy.method_calls == []
 
 
-def test_fractional_id_is_allowed() -> None:
-    """JSON-RPC says ids SHOULD NOT be fractional, not MUST NOT."""
-    resp, _ = _post({"jsonrpc": "2.0", "id": 1.5, "method": "tools/list"})
+@pytest.mark.parametrize("rpc_id", ["", "req-1", 0, -3, 1.0, 10**400])
+def test_string_and_integer_ids_are_answered(rpc_id: Any) -> None:
+    """Any string or integer, a huge one too: it is never turned into a float."""
+    resp, _ = _post({"jsonrpc": "2.0", "id": rpc_id, "method": "tools/list"})
     assert resp.status_code == 200
-    assert resp.json()["id"] == 1.5
+    assert resp.json()["id"] == rpc_id
 
 
 @pytest.mark.parametrize("method", ["tools/call", "tools/list", "initialize", "unknown/x"])
