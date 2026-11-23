@@ -259,6 +259,22 @@ def test_a_claim_without_a_version_is_malformed():
     assert _full(claim).failure_reason.value == "CLAIM_MALFORMED"
 
 
+@pytest.mark.parametrize("wire", ["1", True, 1.5])
+def test_a_signed_slsa_level_the_schema_refuses_fails_the_schema_check(wire: Any):
+    """The original wire value stays what was signed: a string "1" was turned
+    into 1 by agentrust-trace 0.11.0's model, and the schema check reported
+    verified on a claim the published schema rejects."""
+    key = SigningKey()
+    claim = _to_dict(_claim(key, CODE))
+    claim["trace"]["build_provenance"]["slsa_level"] = wire
+    claim = _resigned(claim, key)
+    assert _verify_signature(claim)[0] is True  # signed as it stands
+    assert not jsonschema.Draft202012Validator(SCHEMA).is_valid(claim)
+    result = _full(claim)
+    assert "schema" not in result.verified_fields
+    assert result.failure_reason.value == "CLAIM_MALFORMED"
+
+
 @pytest.mark.parametrize(
     "place, safe",
     [

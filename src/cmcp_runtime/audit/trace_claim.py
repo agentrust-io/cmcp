@@ -203,6 +203,16 @@ def _has_unsafe_integer(value: Any) -> bool:
 
 #: An integer as the JSON Schema reads it, within the safe range for every version.
 JsonInt = Annotated[int, BeforeValidator(_json_integer), AfterValidator(_safe_integer)]
+
+
+class ClaimBuildProvenance(BuildProvenance):
+    """``slsa_level`` decided as the schema decides it, with any agentrust-trace
+    installed: 0.11.0 turns the string ``"1"`` into ``1``, which the published
+    claim schema rejects, so a verifier would report a schema check it failed."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    slsa_level: Annotated[JsonInt, Field(ge=0, le=3)]
 Count = Annotated[JsonInt, Field(ge=0)]
 
 
@@ -335,7 +345,7 @@ class GatewayTrace(BaseModel):
     # 1.1 only. ``model`` stays absent until the gateway sees model calls, and
     # ``build_provenance`` until it has measured its own code.
     model: ModelInfo | None = None
-    build_provenance: BuildProvenance | None = None
+    build_provenance: ClaimBuildProvenance | None = None
     appraisal: Appraisal | None = None
 
 
@@ -699,7 +709,7 @@ def generate_trace_claim(
     measured: dict[str, Any] = {}
     if gateway_code_digest is not None:
         # SLSA level 0: the code was measured, its build was not attested.
-        measured["build_provenance"] = BuildProvenance(
+        measured["build_provenance"] = ClaimBuildProvenance(
             slsa_level=0, digest=f"sha256:{gateway_code_digest}"
         )
     trace = GatewayTrace(
