@@ -60,8 +60,7 @@ def _verify_claim_signature(claim_json: dict, public_key_hex: str) -> bool:
         sig_bytes = base64.urlsafe_b64decode(sig_b64 + "==")
         pub_raw = bytes.fromhex(public_key_hex)
         pub_key = Ed25519PublicKey.from_public_bytes(pub_raw)
-        body = {k: v for k, v in claim_json.items() if k != "signature"}
-        body_bytes = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        body_bytes = canonical_json(claim_json)  # the claim's own version picks the form
         pub_key.verify(sig_bytes, body_bytes)
         return True
     except Exception:

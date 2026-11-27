@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import math
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -219,16 +220,46 @@ def client_bridge(gateway_url: str, token_env: str) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
+def _unique_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate object member {key!r}")
+        out[key] = value
+    return out
+
+
+def _no_constant(token: str) -> Any:
+    raise ValueError(f"{token} is not JSON")
+
+
+def _finite_number(token: str) -> float:
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError(f"{token} is too large for a finite number")
+    return value
+
+
 def _load_verify_json(path: str) -> Any:
+    """Read a claim or audit bundle as strict JSON. A repeated member, NaN,
+    Infinity or a number that overflows has no single meaning, and two parsers
+    could read the signed bytes differently, so each is refused."""
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            return json.load(
+                f,
+                object_pairs_hook=_unique_members,
+                parse_constant=_no_constant,
+                parse_float=_finite_number,
+            )
     except json.JSONDecodeError as exc:
         raise click.ClickException(
             f"Invalid JSON in {path!r} at line {exc.lineno}, column {exc.colno}: {exc.msg}"
         ) from exc
     except UnicodeDecodeError as exc:
         raise click.ClickException(f"Cannot decode {path!r} as UTF-8: {exc}") from exc
+    except ValueError as exc:  # the hooks above; the two ValueError subclasses are caught first
+        raise click.ClickException(f"Invalid JSON in {path!r}: {exc}") from exc
     except OSError as exc:
         raise click.ClickException(f"Cannot read {path!r}: {exc}") from exc
 
@@ -358,6 +389,11 @@ def verify(
         click.echo(
             "[cmcp verify] note: "
             + result.details.get("hardware_attestation", "hardware attestation not verified")
+        )
+    if result.trace_omitted:
+        click.echo(
+            "[cmcp verify] note: not a complete TRACE record; the gateway did not observe "
+            + ", ".join(result.trace_omitted)
         )
     click.echo(f"[cmcp verify] RESULT: {'PASS' if overall else 'FAIL'} ({result.status.value})")
     if not overall:

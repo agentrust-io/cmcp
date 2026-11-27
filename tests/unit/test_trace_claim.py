@@ -98,7 +98,7 @@ def test_canonical_json_sorted_keys():
 
 def test_generate_claim_version():
     claim = _make_claim()
-    assert claim.cmcp_version == "1.0"
+    assert claim.cmcp_version == "1.1"
 
 
 def test_generate_claim_RUNTIME_VERSION():
@@ -515,7 +515,7 @@ def _claim_with_entries() -> RuntimeClaim:
 
 def test_transcript_entries_present_and_ordered():
     claim = _claim_with_entries()
-    entries = claim.trace.tool_transcript.entries
+    entries = claim.gateway.transcript_entries
     assert entries is not None
     assert [e.tool_name for e in entries] == [
         "document_reader",
@@ -551,7 +551,7 @@ def test_transcript_entries_carry_no_payloads():
     """Privacy: serialized entries expose only tool_name, data_class, decision."""
     claim = _claim_with_entries()
     dumped = claim.model_dump(exclude_none=True)
-    for entry in dumped["trace"]["tool_transcript"]["entries"]:
+    for entry in dumped["gateway"]["transcript_entries"]:
         assert set(entry.keys()) == {"tool_name", "data_class", "decision"}
 
 
@@ -571,7 +571,7 @@ def test_transcript_entries_hash_roundtrip():
 def test_transcript_entries_optional():
     """call_count is still set when no entries are supplied (backward compatible)."""
     claim = _make_claim()
-    assert claim.trace.tool_transcript.entries is None
+    assert claim.gateway.transcript_entries is None
     assert claim.trace.tool_transcript.call_count == 2
 
 

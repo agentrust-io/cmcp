@@ -817,7 +817,7 @@ async def test_o3_call_summary_and_transcript_differential(outcome):
     baseline_transcript = baseline["trace"]["tool_transcript"]
     observed_transcript = observed["trace"]["tool_transcript"]
     assert observed_transcript["call_count"] == baseline_transcript["call_count"]
-    assert observed_transcript["entries"] == baseline_transcript["entries"]
+    assert observed["gateway"]["transcript_entries"] == baseline["gateway"]["transcript_entries"]
     summary = observed["gateway"]["call_summary"]
     actual_tool_terminal = outcome in ("allow", "deny")
     assert summary["tool_calls_total"] == int(actual_tool_terminal)

@@ -103,6 +103,38 @@ def test_verify_reports_malformed_audit_bundle_json(claim_and_bundle):
 
 
 @pytest.mark.parametrize("target", ["claim", "bundle"])
+@pytest.mark.parametrize(
+    "member, reason",
+    [
+        pytest.param("{top}", "duplicate object member {top!r}", id="repeated-member"),
+        pytest.param('"x": NaN', "NaN is not JSON", id="nan"),
+        pytest.param('"x": Infinity', "Infinity is not JSON", id="infinity"),
+        pytest.param('"x": -Infinity', "-Infinity is not JSON", id="minus-infinity"),
+        pytest.param('"x": 1e400', "1e400 is too large for a finite number", id="overflow"),
+    ],
+)
+def test_verify_refuses_json_two_parsers_could_read_differently(
+    claim_and_bundle, target, member, reason
+):
+    """A repeated member, NaN, Infinity and an overflowing number are refused in
+    a claim and in an audit bundle, rather than read the way Python reads them."""
+    claim_file, bundle_file, _, _, _ = claim_and_bundle
+    path = claim_file if target == "claim" else bundle_file
+    top = "cmcp_version" if target == "claim" else "session_id"  # a member each file has
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("{") and top in json.loads(text)
+    member = member.replace("{top}", f'"{top}": "repeated"')
+    reason = reason.replace("{top!r}", repr(top))
+    path.write_text("{" + member + ", " + text[1:], encoding="utf-8")
+    result = CliRunner().invoke(main, [
+        "verify", str(claim_file), "--audit-bundle", str(bundle_file),
+    ])
+    assert result.exit_code == 1
+    assert f"Invalid JSON in {str(path)!r}: {reason}" in result.stderr
+    assert isinstance(result.exception, SystemExit)
+
+
+@pytest.mark.parametrize("target", ["claim", "bundle"])
 def test_verify_reports_invalid_utf8(claim_and_bundle, target):
     claim_file, bundle_file, _, _, _ = claim_and_bundle
     path = claim_file if target == "claim" else bundle_file
@@ -147,6 +179,8 @@ def test_verify_software_only_is_partially_verified(claim_and_bundle):
     assert "signature                PASS" in result.output
     assert "hardware_attestation     FAIL" in result.output
     assert "not pinned" in result.output  # hashes unpinned by default
+    # A 1.1 claim says what it left out; the CLI says so rather than hide it.
+    assert "not a complete TRACE record; the gateway did not observe model" in result.output
 
 
 def test_verify_pinned_hashes_still_partial_without_hardware(claim_and_bundle):
@@ -339,14 +373,9 @@ def test_verify_rejects_call_summary_mismatch(
     else:
         claim["gateway"][section][field_name] = tampered_value
 
-    body = {k: v for k, v in claim.items() if k != "signature"}
-    body_bytes = json.dumps(
-        body,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode()
-    raw_sig = signing_key.sign(body_bytes)
+    from cmcp_runtime.audit.trace_claim import canonical_json
+
+    raw_sig = signing_key.sign(canonical_json(claim))  # the claim's own version picks the form
     claim["signature"] = base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode()
 
     tampered_claim = tmp_path / f"{field_name}-mismatch.json"
@@ -357,7 +386,11 @@ def test_verify_rejects_call_summary_mismatch(
     ])
 
     assert result.exit_code == 1, result.output
-    assert "signature                PASS" in result.output
+    if isinstance(tampered_value, bool):
+        # A bool is not a count: the claim is malformed before its signature is read.
+        assert "schema                   FAIL" in result.output
+    else:
+        assert "signature                PASS" in result.output
     assert "audit_bundle             FAIL" in result.output
     assert expected_error in result.output
 
