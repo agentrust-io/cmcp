@@ -214,7 +214,9 @@ def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
         return rfc8785.dumps(body)
     if version not in (None, "1.0"):
         raise ValueError(f"unsupported cmcp_version {version!r}")
-    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode()
 
 
 def _jwk_x_to_hex(x_b64: str) -> str | None:
@@ -593,7 +595,16 @@ def _validation_error_path(exc: ValidationError) -> str:
 
 
 def _validate_schema(claim: dict[str, Any]) -> tuple[bool, str | None, str | None]:
-    """Validate claim structure using the RuntimeClaim Pydantic model."""
+    """Validate claim structure using the RuntimeClaim Pydantic model.
+
+    The claim must first be a JSON document: the model types free-form evidence
+    as Any, and a value JSON cannot hold would otherwise pass it and reach the
+    signed bytes, or the serializer.
+    """
+    try:
+        check_json_tree(claim)
+    except ClaimShapeError as exc:
+        return False, str(exc), exc.path or "claim"
     try:
         RuntimeClaim.model_validate(claim)
         return True, None, None

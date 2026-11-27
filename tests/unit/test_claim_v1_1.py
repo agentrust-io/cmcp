@@ -791,3 +791,124 @@ def test_the_tree_check_looks_past_a_null():
 
     with pytest.raises(ClaimShapeError, match="contains itself"):
         check_json_tree({"a": None, "b": _self_list()})
+
+
+# ── Values JSON cannot hold, and shared containers ───────────────────────────
+#
+# Free-form evidence is typed Any, so only a check of the whole document keeps
+# a native value JSON cannot hold from reaching the signed bytes or the
+# serializer. A container shared by several members is repeated in the JSON
+# form, so [x, x] nested n deep is 2**(n + 1) values from n + 1 objects.
+
+_NOT_JSON = {
+    "object": object(),
+    "bytes": b"x",
+    "set": {1},
+    "nan": float("nan"),
+    "infinity": float("inf"),
+    "minus-infinity": float("-inf"),
+    "integer-member-name": {1: "a"},
+}
+
+
+def _signed_any_way(claim: dict[str, Any], key: SigningKey) -> dict[str, Any]:
+    """Signed over what a lenient serializer would emit, as a producer might have."""
+    body = {k: v for k, v in claim.items() if k != "signature"}
+    try:
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    except TypeError:
+        raw = b"{}"  # no JSON form at all; the signature cannot matter
+    return _sign(claim, key, raw)
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.1"])
+@pytest.mark.parametrize("name", list(_NOT_JSON))
+def test_a_value_json_cannot_hold_is_malformed_never_raised_nor_credited(version, name):
+    from cmcp_verify import VerificationError
+
+    key = SigningKey()
+    claim = _to_dict(_claim(key))
+    if version == "1.0":
+        claim = _as_1_0(claim, key)
+    _events(claim).append({"evidence": _NOT_JSON[name]})
+    result = _full(_signed_any_way(claim, key))
+    assert result.failure_reason == VerificationError.CLAIM_MALFORMED
+    assert not {"schema", "signature"} & set(result.verified_fields)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_both_1_0_serializers_refuse_a_non_finite_number(value):
+    """The backstop: neither writes NaN or Infinity, which are not JSON."""
+    from cmcp_verify.verify import _canonical_json as verifier_form
+
+    key = SigningKey()
+    claim = _as_1_0(_to_dict(_claim(key)), key)
+    _events(claim).append({"evidence": value})
+    claim.pop("signature")
+    with pytest.raises(ValueError):
+        canonical_json(claim)
+    with pytest.raises(ValueError):
+        verifier_form(claim)
+
+
+def _shared(depth: int) -> list[Any]:
+    node: list[Any] = []
+    for _ in range(depth):
+        node = [node, node]
+    return node
+
+
+def test_a_shared_container_bomb_is_refused_quickly():
+    import time
+
+    from cmcp_verify import VerificationError, verify_kill_switch_refusal
+    from tests.unit.test_kill_switch_evidence import _receipt_pair
+
+    # 41 objects, 2**41 values, within the depth limit so the repeats are what stop it.
+    claim = _to_dict(_claim(SigningKey()))
+    _events(claim).append({"evidence": _shared(40)})
+    started = time.perf_counter()
+    assert _full(claim).failure_reason == VerificationError.CLAIM_MALFORMED
+    claim, receipt = _receipt_pair("1.1")
+    _events(claim).append({"evidence": _shared(40)})
+    result = verify_kill_switch_refusal(receipt, claim)
+    assert result.valid is False
+    assert any("repeated values" in error for error in result.errors)
+    assert time.perf_counter() - started < 2
+
+
+def test_repeats_are_bounded_and_unshared_values_are_not():
+    from cmcp_runtime.audit.trace_claim import (
+        _MAX_REPEATED_VALUES,
+        ClaimShapeError,
+        check_json_tree,
+    )
+
+    # A list walked a second time repeats itself and each of its items.
+    check_json_tree({"a": (shared := [0] * (_MAX_REPEATED_VALUES - 1)), "b": shared})
+    with pytest.raises(ClaimShapeError, match="repeated values"):
+        check_json_tree({"a": (shared := [0] * _MAX_REPEATED_VALUES), "b": shared})
+    # Values that are not shared are never limited, however many.
+    check_json_tree({"a": [{"n": i} for i in range(5 * _MAX_REPEATED_VALUES)]})
+
+
+def test_a_tuple_is_walked_as_the_array_it_serializes_to():
+    from cmcp_runtime.audit.trace_claim import ClaimShapeError, check_json_tree
+
+    check_json_tree({"a": (1, [2], {"b": None})})
+    loop: list[Any] = []
+    loop.append((loop,))
+    with pytest.raises(ClaimShapeError, match="contains itself"):
+        check_json_tree({"a": loop})
+    with pytest.raises(ClaimShapeError, match="not a JSON value"):
+        check_json_tree({"a": (object(),)})
+
+
+def test_shared_tuples_count_as_repeats_too():
+    from cmcp_runtime.audit.trace_claim import ClaimShapeError, check_json_tree
+
+    node: tuple[Any, ...] = ()
+    for _ in range(40):
+        node = (node, node)
+    with pytest.raises(ClaimShapeError, match="repeated values"):
+        check_json_tree({"a": node})

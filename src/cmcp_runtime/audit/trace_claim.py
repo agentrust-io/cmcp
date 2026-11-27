@@ -6,6 +6,7 @@ import base64
 import hashlib
 import importlib.metadata
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
@@ -171,64 +172,107 @@ _FREE_FORM = ("gateway", "call_summary", "call_graph_summary", "cross_boundary_e
 #: Deeper than any claim nests: a claim is about six levels deep. The bound keeps
 #: an untrusted object graph from exhausting the recursion of later steps.
 _MAX_DEPTH = 64
+#: Values walked again because a container is shared by more than one member.
+#: JSON parsed from text never shares, so this only limits a native object graph,
+#: whose serialized form repeats each shared container: [x, x] nested n deep is
+#: n + 1 objects and 2**(n + 1) values. Unshared values are not limited.
+_MAX_REPEATED_VALUES = 10_000
 
 
 class ClaimShapeError(ValueError):
-    """A claim that is not a JSON tree: a member contains itself, or nests too
-    deeply. ``path`` names the member for diagnostics."""
+    """A claim that is not a JSON document: a member contains itself, nests too
+    deeply, or is not a JSON value. ``path`` names the member for diagnostics."""
 
     def __init__(self, path: str, problem: str) -> None:
         super().__init__(f"{path or 'the claim'} {problem}")
         self.path = path
 
 
-def _walk(value: Any, *, nulls: bool) -> str | None:
+def _json_value_error(node: Any) -> str | None:
+    """Why a leaf is not a JSON value, or None."""
+    if node is None or isinstance(node, (bool, int, str)):
+        return None
+    if isinstance(node, float):
+        return None if math.isfinite(node) else f"is {node}, which JSON cannot hold"
+    return f"is a {type(node).__name__}, not a JSON value"
+
+
+def _walk(value: Any, *, nulls: bool, json_only: bool) -> str | None:
     """Check that *value* is a JSON tree; with *nulls*, also return the first
-    member that is null outside the free-form evidence.
+    member that is null outside the free-form evidence; with *json_only*, also
+    that every member name is a string and every value a JSON value.
 
     Walks iteratively, so no input can exhaust the stack. A container met again
     on its own path is a cycle, which JSON cannot express; one shared between
-    two places is not, and is walked at each. Raises ClaimShapeError for a
-    cycle or for nesting deeper than _MAX_DEPTH, free-form evidence included.
+    two places is not, and is walked at each, as its JSON form repeats it.
+    Raises ClaimShapeError for a cycle, nesting deeper than _MAX_DEPTH, more
+    than _MAX_REPEATED_VALUES values walked again through shared containers, or
+    (with *json_only*) a value JSON cannot hold, free-form evidence included.
     """
-    # (node, path, inside free-form evidence, leaving): leaving entries take a
-    # container off the active path once its children are done.
-    stack: list[tuple[Any, tuple[str, ...], bool, bool]] = [(value, (), False, False)]
+    # (node, path, inside free-form evidence, inside a repeat, leaving): leaving
+    # entries take a container off the active path once its children are done;
+    # "inside a repeat" marks values under a container already walked once.
+    stack: list[tuple[Any, tuple[str, ...], bool, bool, bool]] = [
+        (value, (), False, False, False)
+    ]
     active: set[int] = set()
+    seen: set[int] = set()
+    repeated = 0
     while stack:
-        node, path, free, leaving = stack.pop()
+        node, path, free, repeat, leaving = stack.pop()
         if leaving:
             active.discard(id(node))
             continue
+        container = isinstance(node, (dict, list, tuple))
+        repeat = repeat or (container and id(node) in seen)
+        if repeat:
+            repeated += 1
+            if repeated > _MAX_REPEATED_VALUES:
+                raise ClaimShapeError(
+                    ".".join(path),
+                    f"shares containers past {_MAX_REPEATED_VALUES} repeated values",
+                )
         if nulls and node is None and path and not free:
             return ".".join(path)
         if isinstance(node, dict):
+            if json_only and not all(isinstance(k, str) for k in node):
+                raise ClaimShapeError(".".join(path), "has a member name that is not a string")
             children: list[tuple[str, Any]] = [(str(k), v) for k, v in node.items()]
-        elif isinstance(node, list):
+        elif isinstance(node, (list, tuple)):  # a tuple serializes as the array it is
             children = [(str(i), v) for i, v in enumerate(node)]
         else:
+            problem = _json_value_error(node) if json_only else None
+            if problem:
+                raise ClaimShapeError(".".join(path), problem)
             continue
         if id(node) in active:
             raise ClaimShapeError(".".join(path), "contains itself")
         if len(path) >= _MAX_DEPTH:
             raise ClaimShapeError(".".join(path), f"nests deeper than {_MAX_DEPTH} levels")
         active.add(id(node))
-        stack.append((node, path, free, True))
+        seen.add(id(node))
+        stack.append((node, path, free, repeat, True))
         inner = free or path == _FREE_FORM
         # Reversed, so members are visited in order and the first null is found first.
-        stack.extend((child, (*path, key), inner, False) for key, child in reversed(children))
+        stack.extend(
+            (child, (*path, key), inner, repeat, False) for key, child in reversed(children)
+        )
     return None
 
 
 def _null_path(value: Any) -> str | None:
-    """The first member that is null, outside the free-form evidence, or None."""
-    return _walk(value, nulls=True)
+    """The first member that is null, outside the free-form evidence, or None.
+    Leaves are not type-checked here: the model validates them, and the gateway
+    builds claims from model objects rather than JSON."""
+    return _walk(value, nulls=True, json_only=False)
 
 
 def check_json_tree(value: Any) -> None:
-    """Raise ClaimShapeError unless *value* is a JSON tree: no container that
-    contains itself, nesting no deeper than _MAX_DEPTH."""
-    _walk(value, nulls=False)
+    """Raise ClaimShapeError unless *value* is a JSON document: a tree with no
+    container that contains itself, nesting no deeper than _MAX_DEPTH, at most
+    _MAX_REPEATED_VALUES values repeated through shared containers, string member
+    names, and only JSON values (finite numbers) at its leaves."""
+    _walk(value, nulls=False, json_only=True)
 
 
 def _has_unsafe_integer(value: Any) -> bool:
@@ -581,7 +625,9 @@ def canonical_json(claim_dict: dict[str, Any]) -> bytes:
         return rfc8785.dumps(body)
     if version not in (None, "1.0"):
         raise ValueError(f"unsupported cmcp_version {version!r}")
-    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode()
 
 
 def sign_trace_claim(claim: RuntimeClaim, signing_key: Any) -> str:

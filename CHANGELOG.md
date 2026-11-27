@@ -65,10 +65,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps the 1.0 form), and `verify_kill_switch_refusal` reports such a claim
   instead of raising.
 
-  The verifiers take native Python objects, so a container that contains itself,
-  or nesting deeper than 64 levels, is refused as `CLAIM_MALFORMED` by
-  `verify_trace_claim` and reported as an error by `verify_kill_switch_refusal`;
-  before, either could raise. A value shared by two members is still accepted.
+  The verifiers take native Python objects, so a claim must be a JSON document:
+  a container that contains itself, nesting deeper than 64 levels, a member name
+  that is not a string, or a value JSON cannot hold (such as `bytes`, a `set`,
+  `NaN` or `Infinity`, which the model let through in free-form evidence) is
+  refused as `CLAIM_MALFORMED` by `verify_trace_claim` before the schema is
+  credited, and reported as an error by `verify_kill_switch_refusal`; before,
+  each could raise, and a 1.0 claim signed over `NaN` verified. A container
+  shared by several members is still accepted, but more than 10,000 values
+  repeated through shared containers are refused, since the JSON form repeats
+  them and `[x, x]` nested 40 deep is 2^41 values. A tuple is read as the array
+  it serializes to. Both 1.0 serializers now refuse `NaN` and `Infinity`.
   `cmcp verify` reads claim and audit bundle files as strict JSON: a repeated
   object member, `NaN`, `Infinity` or a number that overflows is refused, since
   two parsers could read such a file differently.
