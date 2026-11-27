@@ -6,6 +6,8 @@ import hashlib
 import http.client
 import ipaddress
 import logging
+import os
+import shutil
 import socket
 import ssl
 import subprocess  # nosec B404
@@ -188,20 +190,179 @@ _TPM2_CAP_TPM_PROPERTIES = 0x00000006
 _TPM2_PT_NV_BUFFER_MAX = 0x0000012B
 
 
+@dataclass(frozen=True)
+class TpmProbe:
+    """One look at the TPM. ``reason`` is set when one is present but unusable."""
+
+    usable: bool
+    reason: str | None = None
+
+
+def probe_tpm() -> TpmProbe:
+    """Check that the TPM reads the SHA-256 PCRs 0-7 an attestation report quotes.
+
+    The read goes through the backend reports use and the same function: ESAPI
+    on the default TCTI when tpm2-pytss is installed, ``tpm2_pcrread``
+    otherwise. The backend is chosen by which package is present, the same for
+    probe and report, and one never falls back to the other, so the probe never
+    passes on a backend the report would not use. Each picks its device itself,
+    so the probe asks it rather than guessing from file permissions.
+
+    It is read-only. It does not create an attestation key or quote, which would
+    change TPM state. So usable means the quoted bank reads; it does not promise
+    a hardware-attested report: without a quote, or if only SHA-1 reads by
+    then, the report is downgraded to software-only and says so, and a TPM that
+    stops answering raises. Production refuses either. A TPM that reads only
+    SHA-1 is not usable.
+    No device node means no TPM, which is not a fault. The backend is only
+    asked when a node exists, so a TPM reachable only through a configured TCTI
+    with no local node (a ``swtpm`` socket, say) is not detected.
+    """
+    try:
+        if sys.platform != "linux":
+            return TpmProbe(usable=False)
+        present = [dev for dev in _TPM_DEVICES if dev.exists()]
+        if not present:
+            return TpmProbe(usable=False)
+        names = ", ".join(str(dev) for dev in present)
+        if not _TSS2_AVAILABLE and shutil.which("tpm2_pcrread") is None:
+            return TpmProbe(
+                usable=False,
+                reason=(
+                    f"found {names} but neither tpm2-pytss nor tpm2-tools is available "
+                    "(tpm2_pcrread is not on this process's PATH); "
+                    "install cmcp-runtime[tpm] or tpm2-tools"
+                ),
+            )
+        error = _tss2_error() if _TSS2_AVAILABLE else _tools_error()
+        if error is None:
+            return TpmProbe(usable=True)
+        # The TSS does not say which device it tried, so a node this user cannot
+        # open is named as a possible cause, not as the cause.
+        blocked = [str(dev) for dev in present if not os.access(dev, os.R_OK | os.W_OK)]
+        if blocked:
+            error += (
+                f"; this user cannot read and write {', '.join(blocked)}, which may be "
+                "the cause: add the user to the device's group (often 'tss')"
+            )
+        return TpmProbe(usable=False, reason=f"found {names} but it did not answer: {error}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("TPM probe failed", exc_info=True)
+        return TpmProbe(
+            usable=False, reason=f"the TPM check itself failed: {type(exc).__name__}: {exc}"
+        )
+
+
+_PCR_SELECTION = "0,1,2,3,4,5,6,7"
+
+
+def _warn_sha1_fallback() -> None:
+    logger.warning(
+        "TPM SHA-1 fallback: SHA-256 PCR bank unavailable. "
+        "Downgrading attestation to software-only. "
+        "TRACE Claim will not present as hardware-attested."
+    )
+
+
+#: Digest size of each PCR bank the reader accepts.
+_PCR_DIGEST_SIZE = {"sha256": 32, "sha1": 20}
+
+
+def _read_pcrs_tss2(ectx: Any, *, allow_sha1: bool) -> tuple[list[bytes], str | None]:
+    """PCRs 0-7 from the SHA-256 bank, the bank the quote covers.
+
+    With *allow_sha1* a report falls back to SHA-1 and returns
+    "sha1-bank-fallback", which downgrades it to software-only. Detection passes
+    False: a TPM that cannot read the quoted bank cannot give a hardware report.
+    Raises unless the bank gives exactly eight digests of its size.
+    """
+    from tpm2_pytss.types import TPML_PCR_SELECTION
+
+    bank, note = "sha256", None
+    try:
+        _, _, digests = ectx.pcr_read(TPML_PCR_SELECTION.parse(f"sha256:{_PCR_SELECTION}"))
+    except Exception as exc:  # noqa: BLE001
+        if not allow_sha1:
+            raise RuntimeError(f"TPM could not read the SHA-256 PCR bank: {exc}") from exc
+        logger.debug("SHA-256 PCR read failed (%s)", exc)
+        bank, note = "sha1", "sha1-bank-fallback"
+        _, _, digests = ectx.pcr_read(TPML_PCR_SELECTION.parse(f"sha1:{_PCR_SELECTION}"))
+    raw = [bytes(digest) for digest in digests.digests]
+    size = _PCR_DIGEST_SIZE[bank]
+    if len(raw) != 8 or any(len(value) != size for value in raw):
+        raise RuntimeError(
+            f"TPM device found but could not read PCRs: expected 8 {bank} digests of "
+            f"{size} bytes, got {[len(value) for value in raw]}"
+        )
+    return raw, note
+
+
+def _read_pcrs_tools(*, allow_sha1: bool) -> tuple[list[bytes], str | None]:
+    """The same read through tpm2_pcrread, with the same *allow_sha1* rule. A tool
+    that cannot start or times out fails for every bank, so it raises at once."""
+    note: str | None = None
+    for bank in ("sha256", "sha1") if allow_sha1 else ("sha256",):
+        try:
+            result = subprocess.run(  # noqa: S603  # nosec B603, B607
+                ["tpm2_pcrread", f"{bank}:{_PCR_SELECTION}"],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"TPM device found but could not read PCRs: {exc}") from exc
+        if result.returncode == 0:
+            break
+        note = "sha1-bank-fallback"
+    else:
+        raise RuntimeError(
+            f"TPM device found but could not read PCRs: tpm2_pcrread exited "
+            f"{result.returncode}: {result.stderr.strip()[:200]}"
+        )
+    return _parse_tpm2_pcrread_output(result.stdout, bank), note
+
+
+def _tss2_error() -> str | None:
+    """None if ESAPI on the default TCTI reads the SHA-256 PCRs a report quotes."""
+    from tpm2_pytss.ESAPI import ESAPI
+
+    try:
+        with ESAPI() as ectx:
+            _read_pcrs_tss2(ectx, allow_sha1=False)
+    except Exception as exc:  # noqa: BLE001
+        return str(exc) or type(exc).__name__
+    return None
+
+
+def _tools_error() -> str | None:
+    """None if tpm2_pcrread reads the SHA-256 PCRs a report quotes."""
+    try:
+        _read_pcrs_tools(allow_sha1=False)
+    except RuntimeError as exc:
+        return str(exc)
+    return None
+
+
 class TPMProvider(TEEProvider):
     """TPM 2.0 attestation provider using tpm2-pytss or subprocess fallback."""
 
     def provider_name(self) -> str:
         return "tpm"
 
+    def __init__(self) -> None:
+        self._probe: TpmProbe | None = None
+
     def detect(self) -> bool:
-        """Return True if a TPM device file exists and is readable on Linux."""
-        try:
-            if sys.platform != "linux":
-                return False
-            return any(dev.exists() for dev in _TPM_DEVICES)
-        except Exception:  # noqa: BLE001
-            return False
+        """Return True if a TPM answered through the backend reports will use."""
+        self._probe = probe_tpm()
+        return self._probe.usable
+
+    def unusable_reason(self) -> str | None:
+        """Why the TPM found by the last detect() cannot be used, or None."""
+        if self._probe is None:
+            self._probe = probe_tpm()
+        return self._probe.reason
 
     def get_attestation_report(self, nonce: bytes) -> AttestationReport:
         """
@@ -219,39 +380,12 @@ class TPMProvider(TEEProvider):
         from tpm2_pytss.ESAPI import ESAPI
         from tpm2_pytss.types import (
             TPM2B_DATA,
-            TPML_PCR_SELECTION,
         )
 
         with ESAPI() as ectx:
-            # Try SHA-256 first; fall back to SHA-1
-            measurement_note: str | None = None
-            raw_pcrs: list[bytes] = []
-
-            try:
-                pcr_sel = TPML_PCR_SELECTION.parse("sha256:0,1,2,3,4,5,6,7")
-                _, _, digests = ectx.pcr_read(pcr_sel)
-                for digest in digests.digests:
-                    raw_pcrs.append(bytes(digest))
-            except Exception as exc:  # noqa: BLE001
-                # Fall back to SHA-1
-                logger.warning("SHA-256 PCR read failed (%s)", exc)
-                measurement_note = "sha1-bank-fallback"
-                logger.warning(
-                    "TPM SHA-1 fallback: SHA-256 PCR bank unavailable. "
-                    "Downgrading attestation to software-only. "
-                    "TRACE Claim will not present as hardware-attested."
-                )
-                pcr_sel = TPML_PCR_SELECTION.parse("sha1:0,1,2,3,4,5,6,7")
-                _, _, digests = ectx.pcr_read(pcr_sel)
-                raw_pcrs = []
-                for digest in digests.digests:
-                    raw_pcrs.append(bytes(digest))
-
-            # Ensure we got 8 PCRs
-            if len(raw_pcrs) < 8:
-                raise RuntimeError(
-                    f"TPM device found but could not read PCRs: got {len(raw_pcrs)}, expected 8"
-                )
+            raw_pcrs, measurement_note = _read_pcrs_tss2(ectx, allow_sha1=True)
+            if measurement_note is not None:
+                _warn_sha1_fallback()
 
             concatenated = b"".join(raw_pcrs[:8])
             measurement = "sha256:" + hashlib.sha256(concatenated).hexdigest()
@@ -588,45 +722,9 @@ class TPMProvider(TEEProvider):
 
     def _report_via_subprocess(self, nonce: bytes) -> AttestationReport:
         """Read PCRs 0-7 using tpm2_pcrread subprocess."""
-        try:
-            result = subprocess.run(  # noqa: S603  # nosec B603, B607
-                ["tpm2_pcrread", "sha256:0,1,2,3,4,5,6,7"],  # noqa: S607
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-            raise RuntimeError(f"TPM device found but could not read PCRs: {exc}") from exc
-
-        if result.returncode != 0:
-            # Try SHA-1
-            result = subprocess.run(  # noqa: S603  # nosec B603, B607
-                ["tpm2_pcrread", "sha1:0,1,2,3,4,5,6,7"],  # noqa: S607
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"TPM device found but could not read PCRs: tpm2_pcrread exited "
-                    f"{result.returncode}: {result.stderr.strip()}"
-                )
-            measurement_note: str | None = "sha1-bank-fallback"
-            logger.warning(
-                "TPM SHA-1 fallback: SHA-256 PCR bank unavailable. "
-                "Downgrading attestation to software-only. "
-                "TRACE Claim will not present as hardware-attested."
-            )
-        else:
-            measurement_note = None
-
-        pcr_values = _parse_tpm2_pcrread_output(result.stdout)
-        if len(pcr_values) < 8:
-            raise RuntimeError(
-                f"TPM device found but could not read PCRs: parsed {len(pcr_values)} PCRs"
-            )
+        pcr_values, measurement_note = _read_pcrs_tools(allow_sha1=True)
+        if measurement_note is not None:
+            _warn_sha1_fallback()
 
         concatenated = b"".join(pcr_values[:8])
         measurement = "sha256:" + hashlib.sha256(concatenated).hexdigest()
@@ -646,31 +744,54 @@ class TPMProvider(TEEProvider):
         )
 
 
-def _parse_tpm2_pcrread_output(output: str) -> list[bytes]:
+def _parse_tpm2_pcrread_output(output: str, bank: str = "sha256") -> list[bytes]:
     """
-    Parse tpm2_pcrread YAML-ish output into a list of raw PCR bytes.
+    PCRs 0-7 of *bank* from tpm2_pcrread output, in index order.
 
     Expected format (per PCR):
       sha256:
         0 : 0xABCD...
 
+    Only lines under the *bank* header count. Each of indices 0-7 must appear
+    exactly once with a digest of the bank's size, and nothing else may appear
+    there, so a short, repeated or missing PCR never becomes a measurement.
+
     ``lstrip("0x")`` cannot be used to drop the prefix: it strips a character set,
     so a value whose digits begin with 0 loses those digits as well.
     """
-    pcr_values: list[bytes] = []
-    for line in output.splitlines():
-        line = line.strip()
-        if ":" in line and line.split(":")[0].strip().isdigit():
-            _, _, hex_val = line.partition(":")
-            hex_val = hex_val.strip()
-            if hex_val[:2].lower() == "0x":
-                hex_val = hex_val[2:]
-            if not hex_val:
-                raise RuntimeError(f"TPM PCR read returned an empty value: {line!r}")
-            try:
-                pcr_values.append(bytes.fromhex(hex_val))
-            except ValueError as exc:
-                raise RuntimeError(
-                    f"TPM PCR read returned an unparseable value: {line!r}"
-                ) from exc
-    return pcr_values
+    size = _PCR_DIGEST_SIZE[bank]
+    found: dict[int, bytes] = {}
+    section: str | None = None
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        head, sep, rest = line.partition(":")
+        if sep and not rest.strip() and not head.strip().isdigit():
+            section = head.strip().lower()
+            continue
+        if not (sep and head.strip().isdigit()):
+            raise RuntimeError(f"TPM PCR read returned an unexpected line: {line!r}")
+        if section != bank:
+            continue
+        hex_val = rest.strip()
+        if hex_val[:2].lower() == "0x":
+            hex_val = hex_val[2:]
+        if not hex_val:
+            raise RuntimeError(f"TPM PCR read returned an empty value: {line!r}")
+        try:
+            value = bytes.fromhex(hex_val)
+        except ValueError as exc:
+            raise RuntimeError(f"TPM PCR read returned an unparseable value: {line!r}") from exc
+        index = int(head.strip())
+        if index not in range(8) or index in found or len(value) != size:
+            raise RuntimeError(
+                f"TPM PCR read returned PCR {index} with {len(value)} bytes; expected "
+                f"each of PCRs 0-7 once with a {size}-byte {bank} digest"
+            )
+        found[index] = value
+    if sorted(found) != list(range(8)):
+        raise RuntimeError(
+            f"TPM PCR read returned {bank} PCRs {sorted(found)}; expected PCRs 0-7"
+        )
+    return [found[i] for i in range(8)]

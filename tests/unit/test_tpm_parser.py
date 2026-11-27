@@ -51,3 +51,43 @@ def test_parser_rejects_an_unparseable_value_instead_of_dropping_it() -> None:
 def test_parser_rejects_an_empty_value() -> None:
     with pytest.raises(RuntimeError, match="empty"):
         _parse_tpm2_pcrread_output("sha256:\n  0 : 0x\n")
+
+
+def _rows(bank: str, size: int, indices=range(8)) -> str:
+    return f"{bank}:\n" + "".join(f"  {i} : 0x{'ab' * size}\n" for i in indices)
+
+
+@pytest.mark.parametrize(
+    "output, message",
+    [
+        (_rows("sha256", 32, [0, 1, 2, 3, 4, 5, 6, 6]), "PCR 6"),
+        (_rows("sha256", 32, [0, 1, 2, 3, 4, 5, 6, 8]), "PCR 8"),
+        (_rows("sha256", 32, range(7)), "expected PCRs 0-7"),
+        (_rows("sha256", 1), "1 bytes"),
+        (_rows("sha256", 32, range(7)) + "  7 : 0xab\n", "1 bytes"),
+        (_rows("sha256", 20), "20 bytes"),
+        (_rows("sha1", 20), "expected PCRs 0-7"),
+        ("  0 : 0x" + "ab" * 32 + "\n", "expected PCRs 0-7"),
+        (_rows("sha256", 32) + "garbage line\n", "unexpected line"),
+    ],
+    ids=[
+        "duplicate", "out-of-range", "missing", "one-byte-digests", "one-short-digest",
+        "sha1-size-in-sha256", "only-another-bank", "no-header", "stray-line",
+    ],
+)
+def test_parser_refuses_anything_but_pcrs_0_to_7_of_the_bank(output: str, message: str) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        _parse_tpm2_pcrread_output(output)
+
+
+def test_parser_reads_only_the_requested_bank_in_index_order() -> None:
+    reordered = "sha256:\n" + "".join(f"  {i} : 0x{i:02x}{'00' * 31}\n" for i in reversed(range(8)))
+    output = _rows("sha1", 20) + reordered
+    values = _parse_tpm2_pcrread_output(output)
+    assert [v[0] for v in values] == list(range(8))
+    assert _parse_tpm2_pcrread_output(output, "sha1") == [bytes.fromhex("ab" * 20)] * 8
+
+
+def test_blank_lines_between_pcrs_are_skipped():
+    output = "\n".join(["", "sha256:", "", *[f"  {i} : 0x" + "0a" * 32 + "\n" for i in range(8)], ""])
+    assert _parse_tpm2_pcrread_output(output) == [b"\x0a" * 32] * 8

@@ -43,8 +43,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   digest for every deployment on upgrade; deployments setting `sink_policy`
   also receive this mapping correction.
 
+- **Dev mode crashed on machines with a TPM it could not use.** `provider: auto`
+  picked the TPM whenever `/dev/tpm0` or `/dev/tpmrm0` existed, even when the
+  user could not open it or no TPM tooling was installed, and startup aborted with
+  `ATTESTATION_REPORT_UNAVAILABLE`. Detection now reads the SHA-256 PCRs 0-7 the
+  report quotes, through the same function and backend (ESAPI on the default
+  TCTI, or `tpm2_pcrread`). The TSS picks the device as it will later, and a
+  configured TCTI is used for that read. Detection only asks when `/dev/tpm0` or
+  `/dev/tpmrm0` exists: a TPM reached only through a TCTI with no local device
+  node, such as a `swtpm` socket, is not detected. A TPM that cannot give that
+  read is skipped. Dev mode falls back to software-only and logs why,
+  auto-detection moves on to the next provider, and production and an explicit
+  `provider: tpm` still refuse to start, now naming the reason. A TPM that reads
+  only SHA-1 is now refused at detection. A dead TPM is now reported as
+  `ATTESTATION_PROVIDER_UNSUPPORTED` at detection.
+- **A malformed `tpm2_pcrread` output can no longer become a measurement.** The
+  parser took any line shaped like `N : 0x...`, so short digests, a repeated or
+  missing PCR, or values from another bank were measured. It now takes PCRs
+  0-7 of the read bank exactly once each, at the bank's digest size, and the
+  ESAPI path checks the same count and size.
+
 ### Security
 
+- **Production could start on a software-only report from a hardware
+  provider.** Detection refused `provider: software-only` outside dev mode, but a
+  TPM read through tpm2-pytss could still return a report downgraded to
+  software-only, after a quote that failed or after the SHA-256 read failed and
+  SHA-1 answered, and the gateway ran on it. Startup now refuses any
+  software-only report outside dev mode with `ATTESTATION_NOT_HARDWARE_BACKED`,
+  naming the provider and the `measurement_note`. In dev mode such a report
+  still runs and says so. A production gateway on `tpm2_pcrread` alone, which
+  makes no quote, stops earlier, as before: extending the measurement NV index
+  needs tpm2-pytss, so it exits with `MEASUREMENT_UNAVAILABLE`. A TPM that stops
+  answering between detection and the report fails with
+  `ATTESTATION_REPORT_UNAVAILABLE`, as before.
 - **The operator token was measured.** Only the bearer token was excluded from
   the measured configuration, so `CMCP_OPERATOR_TOKEN` fed the gateway digest
   (since #629): rotating it changed the digest, and a digest over it reached the

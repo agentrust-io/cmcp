@@ -582,6 +582,22 @@ def _run_startup(config_path: str, cleanup: ExitStack) -> RuntimeContext:
         )
         sys.exit(1)
 
+    # A hardware provider can still return a software-only report: a TPM read
+    # through tpm2-tools, or whose quote failed, or that fell back to SHA-1. Only
+    # development may run unattested (docs/spec/attestation.md section 1.1), the
+    # same rule detection applies to provider=software-only.
+    if attestation_report.provider == "software-only" and not config.dev_mode:
+        _fatal(
+            "ATTESTATION_NOT_HARDWARE_BACKED",
+            f"TEE provider '{tee_provider.provider_name()}' produced a software-only "
+            "attestation report; production requires a hardware-attested report. "
+            "Set CMCP_DEV_MODE=1 only in development.",
+            provider=tee_provider.provider_name(),
+            measurement_note=attestation_report.measurement_note,
+            action="startup_aborted",
+        )
+        sys.exit(1)
+
     # AUTH-001 (CRITICAL): require a bearer token in production to authenticate
     # inbound MCP calls. Without it, any network client can invoke any tool.
     if config.bearer_token is None and not config.dev_mode:
