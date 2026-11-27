@@ -116,7 +116,7 @@ When `CMCP_DEV_MODE=1` is set and no hardware TEE is detected:
 ```
 
 Rules:
-- Outside development mode the gateway refuses to start on a `software-only` report, including one a hardware provider downgraded (section 1.2), with `ATTESTATION_NOT_HARDWARE_BACKED`.
+- Outside development mode the gateway refuses to start on a `software-only` report, including one a hardware provider downgraded (section 1.2), with `ATTESTATION_NOT_HARDWARE_BACKED`. A TPM read through `tpm2_pcrread` alone stops earlier, with `MEASUREMENT_UNAVAILABLE`: extending the gateway measurement into the NV index needs `tpm2-pytss`.
 - TRACE Claims with `attestation_assurance: "none"` must not be used for compliance purposes.
 - The runtime logs a prominent warning at startup: `"WARNING: running in software-only mode. TRACE Claims have no hardware attestation and cannot be used for compliance."`.
 - Signing still occurs (the ephemeral Ed25519 key is generated in normal process memory), but the signature only proves the claim was not tampered with after issuance -- it provides no hardware-backed assurance of the enclave's integrity.

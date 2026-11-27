@@ -67,15 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Production could start on a software-only report from a hardware
   provider.** Detection refused `provider: software-only` outside dev mode, but a
-  detected TPM could still return a report downgraded to software-only: read
-  through `tpm2_pcrread`, which makes no quote, after a quote that failed, or
-  after the SHA-256 read failed and SHA-1 answered. The gateway ran on it. Startup
-  now refuses any software-only report outside dev mode with
-  `ATTESTATION_NOT_HARDWARE_BACKED`, naming the provider and the
-  `measurement_note`. In dev mode such a report still runs and says so. A TPM
-  that stops answering between detection and the report fails startup with
-  `ATTESTATION_REPORT_UNAVAILABLE`, as before. Production on the `tpm2_pcrread`
-  backend alone now refuses to start; install `cmcp-runtime[tpm]` for quotes.
+  TPM read through tpm2-pytss could still return a report downgraded to
+  software-only, after a quote that failed or after the SHA-256 read failed and
+  SHA-1 answered, and the gateway ran on it. Startup now refuses any
+  software-only report outside dev mode with `ATTESTATION_NOT_HARDWARE_BACKED`,
+  naming the provider and the `measurement_note`. In dev mode such a report
+  still runs and says so. A production gateway on `tpm2_pcrread` alone, which
+  makes no quote, stops earlier, as before: extending the measurement NV index
+  needs tpm2-pytss, so it exits with `MEASUREMENT_UNAVAILABLE`. A TPM that stops
+  answering between detection and the report fails with
+  `ATTESTATION_REPORT_UNAVAILABLE`, as before.
 - **The operator token was measured.** Only the bearer token was excluded from
   the measured configuration, so `CMCP_OPERATOR_TOKEN` fed the gateway digest
   (since #629): rotating it changed the digest, and a digest over it reached the

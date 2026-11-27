@@ -210,9 +210,10 @@ def probe_tpm() -> TpmProbe:
 
     It is read-only. It does not create an attestation key or quote, which would
     change TPM state. So usable means the quoted bank reads; it does not promise
-    a hardware-attested report: without a quote the report is downgraded to
-    software-only and says so, and a TPM that fails between the probe and the
-    report fails startup closed. A TPM that reads only SHA-1 is not usable.
+    a hardware-attested report: without a quote, or if only SHA-1 reads by
+    then, the report is downgraded to software-only and says so, and a TPM that
+    stops answering raises. Production refuses either. A TPM that reads only
+    SHA-1 is not usable.
     No device node means no TPM, which is not a fault. The backend is only
     asked when a node exists, so a TPM reachable only through a configured TCTI
     with no local node (a ``swtpm`` socket, say) is not detected.
