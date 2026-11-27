@@ -304,6 +304,11 @@ class _FakeEsapi:
 @pytest.fixture
 def devices(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     """Two device nodes, both present, with tpm2-pytss faked and nothing else."""
+    return fake_tss2(tmp_path, monkeypatch)
+
+
+def fake_tss2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """The devices fixture's setup, for tests in other files."""
     found = [tmp_path / "tpm0", tmp_path / "tpmrm0"]
     for dev in found:
         dev.touch()
@@ -486,6 +491,14 @@ def test_probe_and_report_share_one_reader(devices: list[Path], monkeypatch: pyt
     assert _probe()[0] is False
     with pytest.raises(RuntimeError, match="reader broke"):
         TPMProvider().get_attestation_report(b"\x00" * 64)
+
+
+def test_the_reason_is_found_without_a_prior_detect(devices: list[Path]) -> None:
+    """unusable_reason() probes on its own when detect() has not run."""
+    _FakeEsapi.open_error = RuntimeError("tcti:IO failure")
+    provider = TPMProvider()
+    assert "tcti:IO failure" in (provider.unusable_reason() or "")
+    assert provider.detect() is False
 
 
 def test_absent_tpm_is_not_a_fault_and_is_not_probed(

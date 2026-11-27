@@ -868,3 +868,132 @@ def test_a_tpm_that_fails_after_detection_fails_startup_closed(complete_setup, c
         run_startup(complete_setup)
     assert exc_info.value.code == 1
     assert "ATTESTATION_REPORT_UNAVAILABLE" in caplog.text
+
+
+# ── A hardware provider's software-only report ───────────────────────────────
+#
+# A TPM can be detected and still give a report that proves nothing about the
+# hardware: read through tpm2-tools (no quote), with a quote that failed, or
+# after falling back to SHA-1. Production refuses to start on any of them;
+# development runs, as it always could, on a report that says software-only.
+
+_SHA256_PCRS = "\n".join(["sha256:", *[f"  {i} : 0x" + "cd" * 32 for i in range(8)]])
+_SHA1_PCRS = "\n".join(["sha1:", *[f"  {i} : 0x" + "ab" * 20 for i in range(8)]])
+
+
+def _pcrread(returncode: int, stdout: str = "") -> MagicMock:
+    import subprocess
+
+    result = MagicMock(spec=subprocess.CompletedProcess)
+    result.returncode, result.stdout = returncode, stdout
+    result.stderr = "" if returncode == 0 else "bank unavailable"
+    return result
+
+
+def _tools_only(monkeypatch, *results: MagicMock) -> None:
+    import subprocess
+
+    monkeypatch.setattr("cmcp_runtime.tee.tpm._TSS2_AVAILABLE", False)
+    monkeypatch.setattr(subprocess, "run", MagicMock(side_effect=list(results)))
+
+
+def _esapi(monkeypatch, tmp_path: Path, banks: dict[str, object]) -> None:
+    """tpm2-pytss faked, a quote that fails: the attestation key cannot be made."""
+    from tests.unit.test_tee_providers import _FakeEsapi, fake_tss2
+
+    fake_tss2(tmp_path, monkeypatch)
+    monkeypatch.setattr(_FakeEsapi, "banks", banks)
+    monkeypatch.setattr(
+        "cmcp_runtime.tee.tpm.TPMProvider._attestation_key",
+        MagicMock(side_effect=RuntimeError("TPM2_CreatePrimary failed")),
+    )
+
+
+def _start_with(setup: str, provider):
+    with patch("cmcp_runtime.startup.detect_provider", return_value=provider), \
+         patch("cmcp_runtime.startup._measure_gateway", return_value=None), \
+         patch("cmcp_runtime.startup._extend_measurement", return_value=(None, None)):
+        return run_startup(setup)
+
+
+@pytest.fixture
+def production_setup(complete_setup, monkeypatch):
+    import cmcp_runtime.config as _cfg
+
+    monkeypatch.delenv("CMCP_DEV_MODE", raising=False)
+    monkeypatch.setattr(_cfg, "DEV_MODE", False)
+    return complete_setup
+
+
+def _software_only_tpm(case: str, monkeypatch, tmp_path: Path) -> None:
+    from tests.unit.test_tee_providers import GOOD
+
+    if case == "tpm2-tools, no quote":
+        _tools_only(monkeypatch, _pcrread(0, _SHA256_PCRS))
+    elif case == "tpm2-tools, SHA-1 after detection":
+        _tools_only(monkeypatch, _pcrread(1), _pcrread(0, _SHA1_PCRS))
+    elif case == "ESAPI, quote failed":
+        _esapi(monkeypatch, tmp_path, {"sha256": GOOD})
+    else:  # "ESAPI, SHA-1 after detection"
+        _esapi(monkeypatch, tmp_path, {"sha256": RuntimeError("bank gone"), "sha1": [b"\xab" * 20] * 8})
+
+
+_SOFTWARE_ONLY_TPM = {
+    "tpm2-tools, no quote": "tpm-pcr-read-unsigned",
+    "tpm2-tools, SHA-1 after detection": "sha1-bank-fallback",
+    "ESAPI, quote failed": "tpm-pcr-read-unsigned",
+    "ESAPI, SHA-1 after detection": "sha1-bank-fallback",
+}
+
+
+@pytest.mark.parametrize("case", list(_SOFTWARE_ONLY_TPM))
+def test_production_refuses_a_software_only_report_from_a_tpm(
+    production_setup, monkeypatch, tmp_path, caplog, case
+):
+    from cmcp_runtime.tee.tpm import TPMProvider
+
+    _software_only_tpm(case, monkeypatch, tmp_path)
+    report = TPMProvider().get_attestation_report(b"\x00" * 64)
+    assert (report.provider, report.measurement_note) == ("software-only", _SOFTWARE_ONLY_TPM[case])
+    _software_only_tpm(case, monkeypatch, tmp_path)  # fresh backend answers for the start
+    with caplog.at_level("CRITICAL"), pytest.raises(SystemExit) as exc_info:
+        _start_with(production_setup, TPMProvider())
+    assert exc_info.value.code == 1
+    assert "ATTESTATION_NOT_HARDWARE_BACKED" in caplog.text
+    assert _SOFTWARE_ONLY_TPM[case] in caplog.text
+
+
+@pytest.mark.parametrize("case", list(_SOFTWARE_ONLY_TPM))
+def test_development_runs_on_a_software_only_report_from_a_tpm(
+    complete_setup, monkeypatch, tmp_path, case
+):
+    from cmcp_runtime.tee.tpm import TPMProvider
+
+    _software_only_tpm(case, monkeypatch, tmp_path)
+    ctx = _start_with(complete_setup, TPMProvider())
+    try:
+        assert ctx.attestation_report.provider == "software-only"
+        assert ctx.attestation_report.measurement_note == _SOFTWARE_ONLY_TPM[case]
+    finally:
+        if ctx.audit_store is not None:
+            ctx.audit_store.close()
+
+
+def test_production_passes_a_hardware_report_on_to_the_next_check(production_setup, caplog):
+    """Control: the check refuses software-only reports, not every production start.
+    This one goes on to fail where production always does without a bearer token."""
+    from datetime import UTC, datetime
+
+    from cmcp_runtime.tee.base import AttestationReport
+
+    provider = MagicMock()
+    provider.provider_name.return_value = "tpm"
+    provider.get_attestation_report.return_value = AttestationReport(
+        provider="tpm", measurement="sha256:" + "ab" * 32, report_data="00" * 64,
+        raw_evidence=b"quote", attestation_generated_at=datetime.now(tz=UTC),
+        attestation_validity_seconds=3600,
+    )
+    with caplog.at_level("CRITICAL"), pytest.raises(SystemExit):
+        _start_with(production_setup, provider)
+    assert "ATTESTATION_NOT_HARDWARE_BACKED" not in caplog.text
+    assert "bearer" in caplog.text.lower()

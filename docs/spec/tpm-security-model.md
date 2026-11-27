@@ -18,13 +18,13 @@ This document states what the TPM path guarantees today, what it does not, and t
 
 `src/cmcp_runtime/tee/tpm.py` (collection), `src/cmcp_verify/tpm.py` (verification).
 
-`TPMProvider.detect()` selects the TPM when no confidential-compute provider is present. Auto-detect probe order is `azure-cvm`, `tpm`, `sev-snp`, `tdx`, first match wins. The provider reads PCRs 0 through 7 from the SHA-256 bank via `tpm2-pytss` ESAPI, falling back to a `tpm2_pcrread` subprocess. The measurement is `sha256(PCR0 || ... || PCR7)`.
+`TPMProvider.detect()` selects the TPM when `/dev/tpm0` or `/dev/tpmrm0` exists and the report's own backend reads PCRs 0 through 7 from the SHA-256 bank. Auto-detect probe order is `azure-cvm`, `tpm`, `sev-snp`, `tdx`, first match wins. The backend is `tpm2-pytss` ESAPI when that package is installed and a `tpm2_pcrread` subprocess otherwise; detection and the report use the same one, and neither falls back to the other. The measurement is `sha256(PCR0 || ... || PCR7)`.
 
 The ESAPI path attempts `TPM2_Quote` with the first 32 bytes of the attestation nonce as `qualifyingData` and keeps `attestationData` as `raw_evidence`. The subprocess path never produces a quote.
 
 `verify_tpm_measurement(measurement, raw_evidence, expected_qualifying_data)` validates the measurement string format, parses `TPM2B_ATTEST`, checks the `TPMS_ATTEST` magic value, and compares the embedded `qualifyingData` against the expected nonce in constant time.
 
-If the SHA-256 bank is unavailable the provider falls back to SHA-1, downgrades the reported provider to `software-only`, and records `measurement_note = "sha1-bank-fallback"`. If no provider is detected the gateway refuses to start unless `CMCP_DEV_MODE=1`.
+A TPM that reads only SHA-1 is not detected. If the SHA-256 read fails after detection, the report falls back to SHA-1, downgrades the reported provider to `software-only`, and records `measurement_note = "sha1-bank-fallback"`. A report without a quote is downgraded the same way, with `tpm-pcr-read-unsigned` (section 4.7). If no provider is detected, or the report is `software-only`, the gateway refuses to start unless `CMCP_DEV_MODE=1`.
 
 ## 3. What is claimable today
 
@@ -68,11 +68,9 @@ The signing key can be sealed (#462, [attestation.md](attestation.md) section 4.
 
 `_parse_tpm2_pcrread_output` removed the `0x` prefix with `lstrip("0x")`, which strips a character set rather than a prefix. An all-zero PCR collapsed to one byte, a value beginning `0x0A` became odd-length and was dropped, and every later PCR shifted index. The subprocess path therefore produced a measurement over a misaligned seven-entry list whenever any PCR had a leading zero, which is the normal case. Stable per machine, so it looked correct, but not a digest of the actual PCR values.
 
-### 4.7 Claim tiering (#436, proposed)
+### 4.7 Claim tiering (#436)
 
-Unsigned PCR reads report `provider="tpm"` and present downstream as hardware-attested. The proposal is to downgrade them to `software-only` with note `tpm-pcr-read-unsigned`, matching the existing SHA-1 policy rather than inventing a second one.
-
-This is a behaviour change, not a bug fix: `tests/unit/test_tee_providers.py` currently asserts the opposite, that the subprocess path keeps `provider == "tpm"`. It therefore ships separately and depends on the decision in section 8.
+Unsigned PCR reads, from the `tpm2_pcrread` backend or after a quote that failed, are downgraded to `software-only` with note `tpm-pcr-read-unsigned`, matching the SHA-1 policy rather than inventing a second one. Before, they reported `provider="tpm"` and presented downstream as hardware-attested. A gateway outside development mode refuses to start on either downgrade.
 
 ## 5. Target model
 

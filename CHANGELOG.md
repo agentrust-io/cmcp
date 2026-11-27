@@ -52,15 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configured TCTI is used for that read. Detection only asks when `/dev/tpm0` or
   `/dev/tpmrm0` exists: a TPM reached only through a TCTI with no local device
   node, such as a `swtpm` socket, is not detected. A TPM that cannot give that
-  read is skipped. Dev
-  mode falls back to software-only and logs why, auto-detection moves on to the
-  next provider, and production and an explicit `provider: tpm` still refuse to
-  start, now naming the reason. A TPM that reads only SHA-1 is now refused at
-  detection: its report could only ever be software-only. Usable does not
-  promise a hardware-attested report either: without a quote the report is
-  downgraded to software-only and says so, and a TPM that fails between
-  detection and the report still fails startup closed. A dead TPM is now
-  reported as `ATTESTATION_PROVIDER_UNSUPPORTED` at detection.
+  read is skipped. Dev mode falls back to software-only and logs why,
+  auto-detection moves on to the next provider, and production and an explicit
+  `provider: tpm` still refuse to start, now naming the reason. A TPM that reads
+  only SHA-1 is now refused at detection. A dead TPM is now reported as
+  `ATTESTATION_PROVIDER_UNSUPPORTED` at detection.
 - **A malformed `tpm2_pcrread` output can no longer become a measurement.** The
   parser took any line shaped like `N : 0x...`, so short digests, a repeated or
   missing PCR, or values from another bank were measured. It now takes PCRs
@@ -69,6 +65,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Production could start on a software-only report from a hardware
+  provider.** Detection refused `provider: software-only` outside dev mode, but a
+  detected TPM could still return a report downgraded to software-only: read
+  through `tpm2_pcrread`, which makes no quote, after a quote that failed, or
+  after the SHA-256 read failed and SHA-1 answered. The gateway ran on it. Startup
+  now refuses any software-only report outside dev mode with
+  `ATTESTATION_NOT_HARDWARE_BACKED`, naming the provider and the
+  `measurement_note`. In dev mode such a report still runs and says so. A TPM
+  that stops answering between detection and the report fails startup with
+  `ATTESTATION_REPORT_UNAVAILABLE`, as before. Production on the `tpm2_pcrread`
+  backend alone now refuses to start; install `cmcp-runtime[tpm]` for quotes.
 - **The operator token was measured.** Only the bearer token was excluded from
   the measured configuration, so `CMCP_OPERATOR_TOKEN` fed the gateway digest
   (since #629): rotating it changed the digest, and a digest over it reached the

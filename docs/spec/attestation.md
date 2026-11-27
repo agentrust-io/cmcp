@@ -44,10 +44,11 @@ Production deployments must not start if no hardware TEE is available. The `DEVE
 
 #### TPM (Medium Assurance)
 
-Detection conditions (any of):
-- `/dev/tpm0` exists and is readable by the runtime process, OR
-- `/dev/tpmrm0` exists and is readable by the runtime process (resource manager interface), OR
-- A vTPM device is detected via the TSS2 ESAPI device enumeration call `Esys_GetCapability(TPMS_CAPABILITY_DATA)` returning at least one TPM device handle.
+Detection conditions (all of):
+- `/dev/tpm0` or `/dev/tpmrm0` exists. A TPM reachable only through a configured TCTI with no local device node, such as a `swtpm` socket, is not detected.
+- The backend the report uses reads PCRs 0 through 7 from the SHA-256 bank: eight digests of 32 bytes each. The backend is `tpm2-pytss` ESAPI on the default TCTI when that package is installed, `tpm2_pcrread` otherwise; detection and the report use the same one. A TPM that reads only SHA-1 is not detected.
+
+When a device node exists but the read fails, the reason is logged in development mode and named in the startup error otherwise; a device node this user cannot read and write is named as a possible cause.
 
 What goes in `attestation_report.measurement`:
 
@@ -55,9 +56,11 @@ What goes in `attestation_report.measurement`:
 measurement = SHA-256(PCR0 || PCR1 || PCR2 || PCR3 || PCR4 || PCR5 || PCR6 || PCR7)
 ```
 
-Each PCR value is the raw 32-byte SHA-256 digest read from the TPM. Concatenation is in bank index order (0 through 7), no separators. The result is a 32-byte SHA-256 digest encoded as lowercase hex. The PCR bank used is SHA-256. If the platform only offers a SHA-1 bank, the runtime logs a warning and uses SHA-1 PCR values zero-extended to 32 bytes before hashing; this is noted in `attestation_report.measurement_note: "sha1-bank-fallback"`.
+Each PCR value is the raw 32-byte SHA-256 digest read from the TPM. Concatenation is in bank index order (0 through 7), no separators. The result is a 32-byte SHA-256 digest encoded as lowercase hex. The PCR bank used is SHA-256. If the SHA-256 read fails after detection and the SHA-1 bank reads, the report concatenates the raw 20-byte SHA-1 values instead, logs a warning, and is downgraded to `provider: "software-only"` with `attestation_report.measurement_note: "sha1-bank-fallback"`.
 
-Quote generation: the gateway calls `TPM2_Quote` with `qualifying_data` set to the first 32 bytes of the §3.3 nonce: the `JWK_thumbprint(tee_public_key)`: because TPM `qualifying_data` carries a single digest. A verifier re-derives the thumbprint from `cnf.jwk.x` and checks it against the quote's `qualifying_data`. The quote and its signature are stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use.
+Quote generation: the gateway calls `TPM2_Quote` with `qualifying_data` set to the first 32 bytes of the §3.3 nonce: the `JWK_thumbprint(tee_public_key)`: because TPM `qualifying_data` carries a single digest. A verifier re-derives the thumbprint from `cnf.jwk.x` and checks it against the quote's `qualifying_data`. The quote and its signature are stored in `attestation_report.raw_evidence` (base64-encoded) for verifier use. A report without a quote, from the `tpm2_pcrread` backend or after a quote that failed, is an unsigned PCR read: it is downgraded to `provider: "software-only"` with `measurement_note: "tpm-pcr-read-unsigned"`.
+
+A gateway outside development mode refuses to start on any `software-only` report, whichever provider produced it (section 1.3).
 
 #### SEV-SNP (High Assurance)
 
@@ -113,6 +116,7 @@ When `CMCP_DEV_MODE=1` is set and no hardware TEE is detected:
 ```
 
 Rules:
+- Outside development mode the gateway refuses to start on a `software-only` report, including one a hardware provider downgraded (section 1.2), with `ATTESTATION_NOT_HARDWARE_BACKED`.
 - TRACE Claims with `attestation_assurance: "none"` must not be used for compliance purposes.
 - The runtime logs a prominent warning at startup: `"WARNING: running in software-only mode. TRACE Claims have no hardware attestation and cannot be used for compliance."`.
 - Signing still occurs (the ephemeral Ed25519 key is generated in normal process memory), but the signature only proves the claim was not tampered with after issuance -- it provides no hardware-backed assurance of the enclave's integrity.

@@ -86,3 +86,8 @@ def test_parser_reads_only_the_requested_bank_in_index_order() -> None:
     values = _parse_tpm2_pcrread_output(output)
     assert [v[0] for v in values] == list(range(8))
     assert _parse_tpm2_pcrread_output(output, "sha1") == [bytes.fromhex("ab" * 20)] * 8
+
+
+def test_blank_lines_between_pcrs_are_skipped():
+    output = "\n".join(["", "sha256:", "", *[f"  {i} : 0x" + "0a" * 32 + "\n" for i in range(8)], ""])
+    assert _parse_tpm2_pcrread_output(output) == [b"\x0a" * 32] * 8
