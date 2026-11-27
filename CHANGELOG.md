@@ -65,6 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps the 1.0 form), and `verify_kill_switch_refusal` reports such a claim
   instead of raising.
 
+  The verifiers take native Python objects, so a container that contains itself,
+  or nesting deeper than 64 levels, is refused as `CLAIM_MALFORMED` by
+  `verify_trace_claim` and reported as an error by `verify_kill_switch_refusal`;
+  before, either could raise. A value shared by two members is still accepted.
+  `cmcp verify` reads claim and audit bundle files as strict JSON: a repeated
+  object member, `NaN`, `Infinity` or a number that overflows is refused, since
+  two parsers could read such a file differently.
+
 ### Fixed
 
 - Defer sealed signing-key provisioning/unseal until all `run_startup` checks

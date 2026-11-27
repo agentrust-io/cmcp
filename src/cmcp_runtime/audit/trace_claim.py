@@ -168,37 +168,90 @@ class NullMemberError(ValueError):
 _FREE_FORM = ("gateway", "call_summary", "call_graph_summary", "cross_boundary_events")
 
 
-def _null_path(value: Any, path: tuple[str, ...] = ()) -> str | None:
-    """The first member that is null, outside the free-form evidence, or None."""
-    if path == _FREE_FORM:
-        return None
-    if isinstance(value, dict):
-        items: Any = value.items()
-    elif isinstance(value, list):
-        items = enumerate(value)
-    else:
-        return None
-    for key, child in items:
-        here = (*path, str(key))
-        if child is None:
-            return ".".join(here)
-        found = _null_path(child, here)
-        if found:
-            return found
+#: Deeper than any claim nests: a claim is about six levels deep. The bound keeps
+#: an untrusted object graph from exhausting the recursion of later steps.
+_MAX_DEPTH = 64
+
+
+class ClaimShapeError(ValueError):
+    """A claim that is not a JSON tree: a member contains itself, or nests too
+    deeply. ``path`` names the member for diagnostics."""
+
+    def __init__(self, path: str, problem: str) -> None:
+        super().__init__(f"{path or 'the claim'} {problem}")
+        self.path = path
+
+
+def _walk(value: Any, *, nulls: bool) -> str | None:
+    """Check that *value* is a JSON tree; with *nulls*, also return the first
+    member that is null outside the free-form evidence.
+
+    Walks iteratively, so no input can exhaust the stack. A container met again
+    on its own path is a cycle, which JSON cannot express; one shared between
+    two places is not, and is walked at each. Raises ClaimShapeError for a
+    cycle or for nesting deeper than _MAX_DEPTH, free-form evidence included.
+    """
+    # (node, path, inside free-form evidence, leaving): leaving entries take a
+    # container off the active path once its children are done.
+    stack: list[tuple[Any, tuple[str, ...], bool, bool]] = [(value, (), False, False)]
+    active: set[int] = set()
+    while stack:
+        node, path, free, leaving = stack.pop()
+        if leaving:
+            active.discard(id(node))
+            continue
+        if nulls and node is None and path and not free:
+            return ".".join(path)
+        if isinstance(node, dict):
+            children: list[tuple[str, Any]] = [(str(k), v) for k, v in node.items()]
+        elif isinstance(node, list):
+            children = [(str(i), v) for i, v in enumerate(node)]
+        else:
+            continue
+        if id(node) in active:
+            raise ClaimShapeError(".".join(path), "contains itself")
+        if len(path) >= _MAX_DEPTH:
+            raise ClaimShapeError(".".join(path), f"nests deeper than {_MAX_DEPTH} levels")
+        active.add(id(node))
+        stack.append((node, path, free, True))
+        inner = free or path == _FREE_FORM
+        # Reversed, so members are visited in order and the first null is found first.
+        stack.extend((child, (*path, key), inner, False) for key, child in reversed(children))
     return None
 
 
+def _null_path(value: Any) -> str | None:
+    """The first member that is null, outside the free-form evidence, or None."""
+    return _walk(value, nulls=True)
+
+
+def check_json_tree(value: Any) -> None:
+    """Raise ClaimShapeError unless *value* is a JSON tree: no container that
+    contains itself, nesting no deeper than _MAX_DEPTH."""
+    _walk(value, nulls=False)
+
+
 def _has_unsafe_integer(value: Any) -> bool:
-    """Any number with no fractional part beyond the safe range, at any depth."""
-    if isinstance(value, dict):
-        return any(_has_unsafe_integer(v) for v in value.values())
-    if isinstance(value, list):
-        return any(_has_unsafe_integer(v) for v in value)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return False
-    if isinstance(value, float) and not value.is_integer():
-        return False
-    return abs(value) > MAX_SAFE_INTEGER
+    """Any number with no fractional part beyond the safe range, at any depth.
+
+    Iterative, and each container is looked at once, so a cycle ends the walk.
+    """
+    stack = [value]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (dict, list)):
+            if id(node) not in seen:
+                seen.add(id(node))
+                stack.extend(node.values() if isinstance(node, dict) else node)
+            continue
+        if isinstance(node, bool) or not isinstance(node, (int, float)):
+            continue
+        if isinstance(node, float) and not node.is_integer():
+            continue
+        if abs(node) > MAX_SAFE_INTEGER:
+            return True
+    return False
 
 
 #: An integer as the JSON Schema reads it, within the safe range for every version.

@@ -26,7 +26,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from cmcp_runtime.agent_manifest import verify_agent_manifest_binding
-from cmcp_runtime.audit.trace_claim import NullMemberError, RuntimeClaim
+from cmcp_runtime.audit.trace_claim import (
+    ClaimShapeError,
+    NullMemberError,
+    RuntimeClaim,
+    check_json_tree,
+)
 from cmcp_runtime.config import EnforcementMode
 from cmcp_runtime.errors import ConfigError
 from cmcp_verify.platform_policy import SnpPlatformPolicy
@@ -198,8 +203,11 @@ def _canonical_json(claim_dict: dict[str, Any]) -> bytes:
     """Reproduce the gateway's canonical serialization for signature verification.
 
     The signed ``cmcp_version`` picks it: RFC 8785 (JCS) for 1.1, the 1.0 form
-    (sorted keys, ASCII escapes) otherwise.
+    (sorted keys, ASCII escapes) otherwise. Raises ValueError for anything the
+    signed bytes could not have come from: a value that is not a JSON tree, an
+    unsupported version, or no RFC 8785 form.
     """
+    check_json_tree(claim_dict)  # a cycle or deep nesting would exhaust the serializer
     body = {k: v for k, v in claim_dict.items() if k != "signature"}
     version = claim_dict.get("cmcp_version")
     if version == "1.1":
@@ -568,9 +576,9 @@ def _validation_error_path(exc: ValidationError) -> str:
     """Return the most specific non-missing schema location for diagnostics."""
     errors = exc.errors()
     for error in errors:
-        null = error.get("ctx", {}).get("error")
-        if isinstance(null, NullMemberError):  # raised for the whole claim, names its member
-            return null.path
+        named = error.get("ctx", {}).get("error")
+        if isinstance(named, (NullMemberError, ClaimShapeError)):  # names its member
+            return named.path or "claim"
     for error in errors:
         if error["type"] == "missing":
             continue

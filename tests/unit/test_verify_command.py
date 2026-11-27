@@ -103,6 +103,38 @@ def test_verify_reports_malformed_audit_bundle_json(claim_and_bundle):
 
 
 @pytest.mark.parametrize("target", ["claim", "bundle"])
+@pytest.mark.parametrize(
+    "member, reason",
+    [
+        pytest.param("{top}", "duplicate object member {top!r}", id="repeated-member"),
+        pytest.param('"x": NaN', "NaN is not JSON", id="nan"),
+        pytest.param('"x": Infinity', "Infinity is not JSON", id="infinity"),
+        pytest.param('"x": -Infinity', "-Infinity is not JSON", id="minus-infinity"),
+        pytest.param('"x": 1e400', "1e400 is too large for a finite number", id="overflow"),
+    ],
+)
+def test_verify_refuses_json_two_parsers_could_read_differently(
+    claim_and_bundle, target, member, reason
+):
+    """A repeated member, NaN, Infinity and an overflowing number are refused in
+    a claim and in an audit bundle, rather than read the way Python reads them."""
+    claim_file, bundle_file, _, _, _ = claim_and_bundle
+    path = claim_file if target == "claim" else bundle_file
+    top = "cmcp_version" if target == "claim" else "session_id"  # a member each file has
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("{") and top in json.loads(text)
+    member = member.replace("{top}", f'"{top}": "repeated"')
+    reason = reason.replace("{top!r}", repr(top))
+    path.write_text("{" + member + ", " + text[1:], encoding="utf-8")
+    result = CliRunner().invoke(main, [
+        "verify", str(claim_file), "--audit-bundle", str(bundle_file),
+    ])
+    assert result.exit_code == 1
+    assert f"Invalid JSON in {str(path)!r}: {reason}" in result.stderr
+    assert isinstance(result.exception, SystemExit)
+
+
+@pytest.mark.parametrize("target", ["claim", "bundle"])
 def test_verify_reports_invalid_utf8(claim_and_bundle, target):
     claim_file, bundle_file, _, _, _ = claim_and_bundle
     path = claim_file if target == "claim" else bundle_file

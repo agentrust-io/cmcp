@@ -648,3 +648,146 @@ def test_each_manager_starts_its_own_claim_chain():
         state, chain = manager.create_session()
         first = manager.close_session(state.session_id, state, chain)
         assert "prev_claim_hash" not in first["gateway"]
+
+
+# ── Object graphs that are not JSON trees ────────────────────────────────────
+#
+# verify_trace_claim takes native Python objects, so a caller can hand it a
+# container that contains itself, or one nested past any stack. JSON text
+# cannot express either; each must be refused as malformed, never raised.
+
+
+def _events(claim: dict[str, Any]) -> list[Any]:
+    return claim["gateway"]["call_summary"]["call_graph_summary"]["cross_boundary_events"]
+
+
+def _nested(depth: int) -> list[Any]:
+    value: list[Any] = []
+    for _ in range(depth - 1):
+        value = [value]
+    return value
+
+
+def _self_list() -> list[Any]:
+    loop: list[Any] = []
+    loop.append(loop)
+    return loop
+
+
+def _self_dict() -> dict[str, Any]:
+    loop: dict[str, Any] = {}
+    loop["again"] = loop
+    return loop
+
+
+def _mixed_cycle() -> dict[str, Any]:
+    outer: dict[str, Any] = {"items": [{"back": None}]}
+    outer["items"][0]["back"] = outer  # dict -> list -> dict -> the first dict
+    return outer
+
+
+def _root_cycle(claim: dict[str, Any]) -> dict[str, Any]:
+    claim["self"] = claim
+    return claim
+
+
+def _policy_cycle(claim: dict[str, Any]) -> dict[str, Any]:
+    claim["trace"]["policy"]["again"] = claim["trace"]["policy"]
+    return claim
+
+
+def _in_events(make):
+    def edit(claim: dict[str, Any]) -> dict[str, Any]:
+        _events(claim).append({"evidence": make()})
+        return claim
+    return edit
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param(_root_cycle, id="claim-contains-itself"),
+        pytest.param(_policy_cycle, id="cycle-outside-free-form"),
+        pytest.param(_in_events(_self_list), id="cyclic-list-in-events"),
+        pytest.param(_in_events(_self_dict), id="cyclic-dict-in-events"),
+        pytest.param(_in_events(_mixed_cycle), id="dict-list-dict-cycle-in-events"),
+        pytest.param(_in_events(lambda: _nested(100_000)), id="nested-past-any-stack"),
+    ],
+)
+def test_a_claim_that_is_not_a_json_tree_is_malformed_not_raised(edit):
+    from cmcp_verify import VerificationError
+
+    claim = edit(_to_dict(_claim(SigningKey())))
+    result = _full(claim)
+    assert result.failure_reason == VerificationError.CLAIM_MALFORMED
+    assert "schema" in result.unverified_fields
+
+
+def test_a_bare_container_that_contains_itself_is_malformed_not_raised():
+    from cmcp_verify import ApprovedHashes, VerificationError, verify_trace_claim
+
+    root: dict[str, Any] = {}
+    root["self"] = root
+    result = verify_trace_claim(root, ApprovedHashes("sha256:" + "0" * 64, "sha256:" + "1" * 64))
+    assert result.failure_reason == VerificationError.CLAIM_MALFORMED
+
+
+def test_nesting_is_bounded_at_the_documented_depth():
+    from cmcp_runtime.audit.trace_claim import _MAX_DEPTH, ClaimShapeError, check_json_tree
+
+    # A container's depth is the length of its path: the evidence list below is
+    # at gateway.call_summary.call_graph_summary.cross_boundary_events.<n>.evidence, 6.
+    claim = _to_dict(_claim(SigningKey()))
+    _events(claim).append({"evidence": _nested(_MAX_DEPTH - 6)})
+    check_json_tree(claim)  # its innermost list is at depth _MAX_DEPTH - 1
+    _events(claim)[-1]["evidence"] = _nested(_MAX_DEPTH - 5)
+    with pytest.raises(ClaimShapeError, match=f"deeper than {_MAX_DEPTH}"):
+        check_json_tree(claim)
+
+
+def test_a_value_shared_by_two_members_is_not_a_cycle():
+    """The same object in two places is a tree to JSON: it serializes twice."""
+    key = SigningKey()
+    claim = _to_dict(_claim(key))
+    shared = {"from_domain": "pii", "to_domain": "internal", "tool_name": TOOL}
+    _events(claim).extend([shared, shared])
+    claim = _resigned(claim, key)
+    result = _full(claim)
+    assert result.failure_reason is None or result.failure_reason.value != "CLAIM_MALFORMED"
+    assert {"schema", "signature"} <= set(result.verified_fields)
+
+
+def test_a_receipt_check_against_a_cyclic_claim_is_an_error_not_an_exception():
+    from cmcp_verify import verify_kill_switch_refusal
+    from tests.unit.test_kill_switch_evidence import _receipt_pair
+
+    claim, receipt = _receipt_pair("1.1")
+    _events(claim).append({"evidence": _self_list()})
+    result = verify_kill_switch_refusal(receipt, claim)
+    assert result.valid is False
+    assert any("contains itself" in error for error in result.errors)
+
+
+def test_the_unsafe_integer_walk_ends_on_a_cycle():
+    from cmcp_runtime.audit.trace_claim import _has_unsafe_integer
+
+    loop = _self_list()
+    assert _has_unsafe_integer(loop) is False
+    loop.append({"n": 2**53})
+    assert _has_unsafe_integer(loop) is True
+
+
+def test_null_stays_allowed_anywhere_inside_free_form_evidence():
+    key = SigningKey()
+    claim = _to_dict(_claim(key))
+    _events(claim).append({"from_domain": None, "detail": {"reason": None, "seen": [None]}})
+    claim = _resigned(claim, key)
+    assert {"schema", "signature"} <= set(_full(claim).verified_fields)
+
+
+def test_the_tree_check_looks_past_a_null():
+    """A null is not a shape error: the walk goes on and still finds a cycle."""
+    from cmcp_runtime.audit.trace_claim import ClaimShapeError, check_json_tree
+
+    with pytest.raises(ClaimShapeError, match="contains itself"):
+        check_json_tree({"a": None, "b": _self_list()})
