@@ -635,11 +635,13 @@ def test_object_id_returns_invalid_request():
     assert resp.json()["error"]["code"] == -32600
 
 
-def test_null_id_is_valid_notification():
+def test_null_id_returns_invalid_request():
+    # MCP: a request id is a string or integer and never null.
     server = _make_server()
     client = TestClient(server.app, raise_server_exceptions=False)
     resp = client.post("/mcp", json={"jsonrpc": "2.0", "method": "initialize", "id": None})
-    assert resp.status_code == 200
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == -32600
 
 
 def test_string_id_is_valid():
@@ -879,3 +881,25 @@ def test_non_ascii_bearer_token_returns_401_not_500():
     )
     assert resp.status_code == 401
     assert resp.json()["error_code"] == "INVALID_BEARER_TOKEN"
+
+
+# A notification passes the same gates as a request.
+
+_NOTIFICATION = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+
+
+def test_notification_without_token_returns_401():
+    client = TestClient(_make_server(bearer_token="secret").app, raise_server_exceptions=False)
+    assert client.post("/mcp", json=_NOTIFICATION).status_code == 401
+    ok = client.post("/mcp", json=_NOTIFICATION, headers={"Authorization": "Bearer secret"})
+    assert ok.status_code == 202
+
+
+def test_oversized_notification_returns_413():
+    with patch("cmcp_runtime.mcp.server.StatelessKernel"):
+        proxy = MagicMock()
+        proxy._catalog = MagicMock()
+        proxy._catalog.entries = {}
+        server = MCPServer(proxy, max_request_bytes=16)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    assert client.post("/mcp", content=json.dumps(_NOTIFICATION).encode()).status_code == 413
