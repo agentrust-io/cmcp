@@ -79,3 +79,21 @@ Spec references: [SPEC.md §5](../../SPEC.md), [schemas/trace-claim.schema.json]
 | TRACE-001 | MUST | Every TRACE Claim validates against the JSON Schema. | No validation errors against `schemas/trace-claim.schema.json`. |
 | TRACE-002 | MUST | `signature` field verifies against `tee_public_key` over canonical JSON of the claim. | Signature verification succeeds with `signature` field excluded from the signed payload. |
 | TRACE-003 | MUST | `policy_bundle.hash` matches the SHA-256 of the canonical policy bundle. | Hash matches as defined in [cedar-policy.md §1](../../docs/spec/cedar-policy.md). |
+
+### Group 7: Policy Enforcement Bound to the TEE
+
+Spec references: [attestation.md](../../docs/spec/attestation.md), issue [#124](https://github.com/agentrust-io/cmcp/issues/124), issue [#552](https://github.com/agentrust-io/cmcp/issues/552)
+
+Runnable cases: [test_policy_tee_conformance.py](test_policy_tee_conformance.py). These are software-only: `SoftwareOnlyProvider` presents the same collector-side shape as SEV-SNP and TDX, so the round trip exercises the contract. Whether real silicon signs those 64 bytes is a hardware question, recorded below rather than asserted.
+
+| ID | Level | Description | Expected outcome |
+|---|---|---|---|
+| POLICY-TEE-001 | MUST | The gateway measurement commits installed code, the policy bundle and the config, keeping the three separable. | Digest covers all three; a policy edit moves only the `policy` component. |
+| POLICY-TEE-002 | MUST | On providers committing a launch measurement, the startup report binds the gateway measurement into `report_data[32:64]`. | Bound set is exactly `sev-snp`, `azure-cvm-sev-snp`, `tdx`; a verifier recomputing from scratch matches both halves. |
+| POLICY-TEE-003 | MUST | A policy reload re-attests, so the committed measurement is the live one. | Post-reload `report_data[32:64]` equals the recomputed digest; a stale pre-reload report no longer matches. |
+| POLICY-TEE-004 | MUST | A verifier recomputing the digest rejects a report committing anything else. | `MEASUREMENT_NOT_BOUND`; an unusable expected digest fails closed rather than skipping the check. |
+| POLICY-TEE-005 | MUST | The measurement's policy component and the bundle's canonical hash both track the same policy mutation. | Both move under one mutation and neither moves without one. Their digests are **not** asserted equal: they are separate constructions computed at different startup steps. |
+
+**Provider-specific hardware requirements.** `sev-snp`, `azure-cvm-sev-snp` and `tdx` commit a boot-time launch measurement and have no append-only index, which is why the gateway measurement goes into `report_data`. `tpm` is outside this mechanism: it collects an NV-certify pair at startup, but the current reload path does not extend or re-certify that index and the ordinary TRACE schema does not carry the pair. A negative result for `tpm` means "not handled by this mechanism" and must not be read as evidence that the startup pair is still current after a reload.
+
+**Open, not covered by these cases.** Host-bypass prevention is not demonstrated by any case above. Attestation validation and memory encryption do not by themselves show that a host cannot bypass a deny, and a documentation citation is not a passing conformance case. That criterion remains open in [#124](https://github.com/agentrust-io/cmcp/issues/124), alongside the TPM limitations noted above.
